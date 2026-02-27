@@ -1,1 +1,6 @@
-data/pictures
+data
+comic_backend/__pycache__/
+comic_backend/data/meta_data/*
+comic_backend/data/pictures/*
+设计文档/*.png
+comic_backend/logs/*
