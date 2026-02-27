@@ -20,6 +20,11 @@ const routes = [
     path: '/reader/:id',
     name: 'ComicReader',
     component: () => import('../views/ComicReader.vue')
+  },
+  {
+    path: '/tags',
+    name: 'TagManage',
+    component: () => import('../views/TagManage.vue')
   }
 ]
 
