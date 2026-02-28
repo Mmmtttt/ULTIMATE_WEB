@@ -1,42 +1,58 @@
 from flask import Flask
 from flask_cors import CORS
-from config import Config
-from routes import register_blueprints
-from utils.logger import app_logger
+from api import register_blueprints
+from infrastructure.logger import app_logger
+import json
+import os
 
-# 创建Flask应用
+
+def load_server_config():
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'server_config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "backend": {"host": "0.0.0.0", "port": 5000},
+        "frontend": {"host": "0.0.0.0", "port": 5173}
+    }
+
+
+SERVER_CONFIG = load_server_config()
+HOST = SERVER_CONFIG.get("backend", {}).get("host", "0.0.0.0")
+PORT = SERVER_CONFIG.get("backend", {}).get("port", 5000)
+DEBUG = True
+
 app = Flask(__name__)
-
-# 配置静态文件缓存时间（5分钟）
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300
 
-# 配置CORS
 CORS(app)
 
-# 注册蓝图
 register_blueprints(app)
 
-# 静态文件配置
 app.static_folder = 'static'
+
 
 @app.route('/')
 def index():
-    """根路径"""
     return "Comic Backend API"
+
 
 @app.route('/health')
 def health():
-    """健康检查"""
     return success_response({"status": "ok"})
 
+
 def success_response(data=None):
-    """成功响应"""
     return {
         "code": 200,
         "msg": "成功",
         "data": data
     }
 
+
 if __name__ == '__main__':
-    app_logger.info(f"启动服务器，地址: {Config.HOST}:{Config.PORT}")
-    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
+    app_logger.info(f"启动服务器，地址: {HOST}:{PORT}")
+    app.run(host=HOST, port=PORT, debug=DEBUG)

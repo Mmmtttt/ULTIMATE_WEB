@@ -1,6 +1,2 @@
-from .json_handler import JsonHandler
-
-# 创建全局 json_handler 实例
-json_handler = JsonHandler()
-
-__all__ = ['JsonHandler', 'json_handler']
+from .file_parser import file_parser, FileParser
+from .image_handler import image_handler, ImageHandler
