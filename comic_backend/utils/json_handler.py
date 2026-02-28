@@ -118,14 +118,11 @@ class JsonHandler:
                             error_logger.warning(f"创建备份失败: {e}")
                     
                     # 使用临时文件写入（原子操作）
-                    fd, temp_path = tempfile.mkstemp(
-                        suffix='.json',
-                        prefix='comic_db_',
-                        dir=dir_path if dir_path else '.'
-                    )
+                    import uuid
+                    temp_path = os.path.join(dir_path if dir_path else '.', f'comic_db_{uuid.uuid4().hex}.tmp')
                     
                     try:
-                        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        with open(temp_path, 'w', encoding='utf-8') as f:
                             json.dump(data, f, ensure_ascii=False, indent=2)
                         
                         # 原子性替换文件
@@ -138,12 +135,8 @@ class JsonHandler:
                         return True
                     except Exception as e:
                         # 清理临时文件
-                        try:
-                            os.close(fd)
-                            if os.path.exists(temp_path):
-                                os.remove(temp_path)
-                        except:
-                            pass
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
                         raise e
                         
                 finally:

@@ -35,5 +35,5 @@ def success_response(data=None):
     }
 
 if __name__ == '__main__':
-    app_logger.info(f"启动服务器，端口: {Config.PORT}")
-    app.run(host='0.0.0.0', port=Config.PORT, debug=Config.DEBUG)
+    app_logger.info(f"启动服务器，地址: {Config.HOST}:{Config.PORT}")
+    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)

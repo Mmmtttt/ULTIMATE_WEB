@@ -1,17 +1,42 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { readFileSync, existsSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
 
-// https://vite.dev/config/
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function loadServerConfig() {
+  const configPath = resolve(__dirname, '../server_config.json')
+  if (existsSync(configPath)) {
+    try {
+      const configFile = JSON.parse(readFileSync(configPath, 'utf-8'))
+      return configFile
+    } catch (e) {
+      console.warn('Failed to load server_config.json, using defaults')
+    }
+  }
+  return { backend: { host: '0.0.0.0', port: 5000 }, frontend: { host: '0.0.0.0', port: 5173 } }
+}
+
+const serverConfig = loadServerConfig()
+const frontendConfig = serverConfig.frontend || {}
+const backendConfig = serverConfig.backend || {}
+
 export default defineConfig({
   plugins: [vue()],
   server: {
-    host: '0.0.0.0',  // 监听所有网络接口
-    port: 5173,
+    host: frontendConfig.host || '0.0.0.0',
+    port: frontendConfig.port || 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5000',
+        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendConfig.port || 5000}`,
         changeOrigin: true,
         rewrite: (path) => path
+      },
+      '/static': {
+        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendConfig.port || 5000}`,
+        changeOrigin: true
       }
     }
   }

@@ -40,9 +40,9 @@
           class="page"
         >
           <img 
-            :src="image" 
+            :src="getImageSrc(index)" 
             class="comic-image"
-            loading="lazy"
+            :class="{ 'loading': !loadedPages.has(index + 1) }"
             decoding="async"
             draggable="false"
             @click="handleImageClick"
@@ -67,9 +67,9 @@
           class="up-down-page"
         >
           <img 
-            :src="image" 
+            :src="getImageSrc(index)" 
             class="comic-image"
-            loading="lazy"
+            :class="{ 'loading': !loadedPages.has(index + 1) }"
             decoding="async"
             draggable="false"
             @click="handleImageClick"
@@ -79,7 +79,7 @@
         </div>
       </div>
       
-      <!-- 手机端缩放查看层 -->
+      <!-- 上下翻页模式 -->
       <div 
         v-if="isMobile && isZoomMode" 
         class="zoom-overlay"
@@ -167,6 +167,130 @@ const upDownContainer = ref(null)
 const readerContent = ref(null)
 const sliderPage = ref(1)
 
+// 图片加载队列控制
+const loadedPages = ref(new Set())
+const loadingPages = ref(new Set())
+const loadQueue = ref([])
+let isProcessingQueue = false
+
+// 计算需要加载的页面（向后优先，每向后4页插入1页向前）
+const calculateLoadSequence = (startPage, totalPages) => {
+  const sequence = []
+  const added = new Set()
+  
+  if (totalPages <= 0) return sequence
+  
+  // 先加当前页
+  if (startPage >= 1 && startPage <= totalPages) {
+    sequence.push(startPage)
+    added.add(startPage)
+  }
+  
+  let forwardOffset = 1
+  let backwardOffset = 1
+  let backwardCount = 0
+  let iterations = 0
+  const maxIterations = totalPages * 2 + 10  // 安全限制
+  
+  while (added.size < totalPages && iterations < maxIterations) {
+    iterations++
+    let addedThisRound = false
+    
+    // 向后加载
+    const forwardPage = startPage + forwardOffset
+    if (forwardPage <= totalPages && !added.has(forwardPage)) {
+      sequence.push(forwardPage)
+      added.add(forwardPage)
+      backwardCount++
+      addedThisRound = true
+    }
+    forwardOffset++
+    
+    // 每向后4页，向前加载1页
+    if (backwardCount >= 4) {
+      const backwardPage = startPage - backwardOffset
+      if (backwardPage >= 1 && !added.has(backwardPage)) {
+        sequence.push(backwardPage)
+        added.add(backwardPage)
+        addedThisRound = true
+      }
+      backwardOffset++
+      backwardCount = 0
+    }
+    
+    // 如果向后已遍历完，继续向前加载剩余页面
+    if (forwardOffset > totalPages) {
+      while (startPage - backwardOffset >= 1 && added.size < totalPages) {
+        const backwardPage = startPage - backwardOffset
+        if (!added.has(backwardPage)) {
+          sequence.push(backwardPage)
+          added.add(backwardPage)
+        }
+        backwardOffset++
+      }
+      break
+    }
+  }
+  
+  return sequence
+}
+
+// 处理队列（非递归版本）
+const processLoadQueue = () => {
+  const MAX_CONCURRENT = 20
+  
+  while (loadQueue.value.length > 0 && loadingPages.value.size < MAX_CONCURRENT) {
+    const pageNum = loadQueue.value.shift()
+    
+    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
+      continue
+    }
+    
+    loadingPages.value.add(pageNum)
+    
+    const img = new Image()
+    const imageUrl = getImageUrl(comicId.value, pageNum)
+    
+    img.onload = () => {
+      loadedPages.value.add(pageNum)
+      loadingPages.value.delete(pageNum)
+      // 用 setTimeout 避免递归栈溢出
+      setTimeout(() => processLoadQueue(), 0)
+    }
+    img.onerror = () => {
+      loadingPages.value.delete(pageNum)
+      setTimeout(() => processLoadQueue(), 0)
+    }
+    img.src = imageUrl
+  }
+  
+  isProcessingQueue = loadingPages.value.size > 0
+}
+
+// 触发预加载（清空旧队列，开始新序列）
+const preloadImages = (startPage) => {
+  loadQueue.value = []
+  
+  const sequence = calculateLoadSequence(startPage, totalPage.value)
+  
+  for (const pageNum of sequence) {
+    if (!loadedPages.value.has(pageNum) && !loadingPages.value.has(pageNum)) {
+      loadQueue.value.push(pageNum)
+    }
+  }
+  
+  processLoadQueue()
+}
+
+// 获取图片URL（只在已加载时返回真实URL）
+const getImageSrc = (index) => {
+  const pageNum = index + 1
+  if (loadedPages.value.has(pageNum)) {
+    return images.value[index] || ''
+  }
+  return ''
+}
+
 // 缩放状态
 const zoomLevel = ref(1)
 const panX = ref(0)
@@ -241,6 +365,7 @@ const loadImages = async () => {
     await nextTick()
     setTimeout(() => {
       jumpToPage(currentPage.value, false)
+      preloadImages(currentPage.value)
     }, 100)
   } catch (err) {
     error.value = true
@@ -267,12 +392,14 @@ const prevPage = () => {
   const targetPage = Math.max(1, Math.floor(currentPage.value) - 1)
   jumpToPage(targetPage)
   saveProgress()
+  preloadImages(targetPage)
 }
 
 const nextPage = () => {
   const targetPage = Math.min(totalPage.value, Math.ceil(currentPage.value) + 1)
   jumpToPage(targetPage)
   saveProgress()
+  preloadImages(targetPage)
 }
 
 const jumpToPage = (page, smooth = true) => {
@@ -285,7 +412,10 @@ const jumpToPage = (page, smooth = true) => {
       behavior
     })
   } else if (pageMode.value === 'up_down' && upDownContainer.value) {
-    const scrollPosition = (page - 1) * upDownContainer.value.clientHeight
+    // 获取实际页面高度（单个页面元素的高度）
+    const pageElement = upDownContainer.value.querySelector('.up-down-page')
+    const pageHeight = pageElement ? pageElement.offsetHeight : upDownContainer.value.clientHeight
+    const scrollPosition = (page - 1) * pageHeight
     upDownContainer.value.scrollTo({
       top: scrollPosition,
       behavior
@@ -298,6 +428,7 @@ const handleSliderChange = () => {
   if (page >= 1 && page <= totalPage.value) {
     jumpToPage(page, false)
     saveProgress()
+    preloadImages(page)
   }
 }
 
@@ -321,14 +452,18 @@ const handleScroll = () => {
     newPage = scrollLeft / pageWidth + 1
   } else {
     const scrollTop = container.scrollTop
-    const pageHeight = container.clientHeight
+    // 获取实际页面高度（单个页面元素的高度）
+    const pageElement = container.querySelector('.up-down-page')
+    const pageHeight = pageElement ? pageElement.offsetHeight : container.clientHeight
     newPage = scrollTop / pageHeight + 1
   }
   
   currentPage.value = Math.max(1, Math.min(totalPage.value, newPage))
   
   if (Math.abs(newPage - Math.round(newPage)) < 0.1) {
+    const page = Math.round(newPage)
     saveProgress()
+    preloadImages(page)
   }
 }
 
@@ -619,13 +754,15 @@ onUnmounted(() => {
 .comic-image {
   max-width: 100%;
   max-height: 100%;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
+  image-rendering: -webkit-optimize-quality;
+  image-rendering: high-quality;
 }
 
 .comic-image:active {

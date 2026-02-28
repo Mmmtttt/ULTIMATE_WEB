@@ -1,9 +1,27 @@
+import json
+import os
+
+def load_server_config():
+    """从配置文件加载服务器配置"""
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'server_config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "backend": {"host": "0.0.0.0", "port": 5000},
+        "frontend": {"host": "0.0.0.0", "port": 5173}
+    }
+
+SERVER_CONFIG = load_server_config()
+
 class Config:
-    # 服务器配置
-    PORT = 5000
+    HOST = SERVER_CONFIG.get("backend", {}).get("host", "0.0.0.0")
+    PORT = SERVER_CONFIG.get("backend", {}).get("port", 5000)
     DEBUG = True
     
-    # 路径配置
     DATA_DIR = "data"
     PICTURES_DIR = "data/pictures"
     META_DIR = "data/meta_data"
@@ -11,11 +29,9 @@ class Config:
     COVER_DIR = "static/cover"
     LOGS_DIR = "logs"
     
-    # 图片配置
-    COVER_WIDTH = 500
-    COVER_QUALITY = 85
+    COVER_WIDTH = 800
+    COVER_QUALITY = 95
     SUPPORTED_FORMATS = ['.jpg', '.jpeg', '.png', '.webp']
     
-    # JSON配置
     JSON_FILE = "data/meta_data/comics_database.json"
-    BACKUP_SUFFIX = ".bak"
+    BACKUP_SUFFIX = ".bkp"
