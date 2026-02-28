@@ -13,7 +13,7 @@ class Comic:
     title_jp: str = ""
     author: str = ""
     desc: str = ""
-    score: Optional[float] = None
+    score: Optional[float] = 8.0
     tag_ids: List[str] = field(default_factory=list)
     list_ids: List[str] = field(default_factory=list)
     create_time: str = ""
@@ -30,7 +30,7 @@ class Comic:
             cover_path=data.get("cover_path", ""),
             total_page=data.get("total_page", 0),
             current_page=data.get("current_page", 1),
-            score=data.get("score"),
+            score=data.get("score") if data.get("score") is not None else 8.0,
             tag_ids=data.get("tag_ids") or [],
             list_ids=data.get("list_ids") or [],
             create_time=data.get("create_time", ""),

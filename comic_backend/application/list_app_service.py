@@ -62,7 +62,9 @@ class ListAppService:
                     "total_page": c.total_page,
                     "current_page": c.current_page,
                     "score": c.score,
-                    "last_read_time": c.last_read_time
+                    "tag_ids": c.tag_ids,
+                    "last_read_time": c.last_read_time,
+                    "create_time": c.create_time
                 })
             
             result = {

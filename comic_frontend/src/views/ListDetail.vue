@@ -16,14 +16,79 @@
     <template v-else-if="listInfo">
       <div class="list-header">
         <p class="list-desc">{{ listInfo.desc || '暂无描述' }}</p>
-        <p class="list-count">共 {{ listInfo.comic_count }} 部漫画</p>
+        <p class="list-count">共 {{ filteredComics.length }} 部漫画</p>
       </div>
       
-      <van-empty v-if="comics.length === 0" description="清单内暂无漫画" />
+      <div class="action-bar">
+        <van-button 
+          size="small" 
+          type="primary" 
+          plain 
+          @click="showSortPanel = true"
+          class="action-btn"
+        >
+          排序
+          <van-icon name="sort" />
+        </van-button>
+        <van-button 
+          size="small" 
+          type="primary" 
+          plain 
+          @click="showFilterPanel = true"
+          class="action-btn"
+        >
+          筛选
+          <van-icon name="filter-o" />
+        </van-button>
+      </div>
+      
+      <div v-if="hasActiveFilter" class="active-filter-bar">
+        <van-tag 
+          v-if="currentSortType" 
+          type="primary" 
+          closeable 
+          @close="clearSort"
+          class="filter-tag"
+        >
+          {{ sortLabel }}
+        </van-tag>
+        <van-tag 
+          v-if="minScore !== null && minScore > 0" 
+          type="primary" 
+          closeable 
+          @close="clearScoreFilter"
+          class="filter-tag"
+        >
+          评分 ≥ {{ minScore }}
+        </van-tag>
+        <van-tag 
+          v-for="tag in selectedIncludeTags" 
+          :key="tag.id" 
+          type="success" 
+          closeable 
+          @close="removeIncludeTag(tag.id)"
+          class="filter-tag"
+        >
+          包含: {{ tag.name }}
+        </van-tag>
+        <van-tag 
+          v-for="tag in selectedExcludeTags" 
+          :key="tag.id" 
+          type="danger" 
+          closeable 
+          @close="removeExcludeTag(tag.id)"
+          class="filter-tag"
+        >
+          排除: {{ tag.name }}
+        </van-tag>
+        <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
+      </div>
+      
+      <van-empty v-if="filteredComics.length === 0" description="没有匹配的漫画" />
       
       <div v-else class="comic-grid">
         <div
-          v-for="comic in comics"
+          v-for="comic in filteredComics"
           :key="comic.id"
           class="comic-card"
           @click="goToComic(comic.id)"
@@ -45,25 +110,201 @@
         </div>
       </div>
     </template>
+    
+    <van-popup 
+      v-model:show="showSortPanel" 
+      position="bottom" 
+      round 
+      :style="{ height: '40%' }"
+    >
+      <div class="sort-panel">
+        <van-nav-bar title="排序方式" left-text="关闭" @click-left="showSortPanel = false" />
+        <van-cell-group>
+          <van-cell 
+            title="按添加时间" 
+            clickable 
+            @click="setSortType('create_time')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'create_time'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+          <van-cell 
+            title="按评分从高到低" 
+            clickable 
+            @click="setSortType('score')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'score'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+          <van-cell 
+            title="按最后阅读时间" 
+            clickable 
+            @click="setSortType('read_time')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'read_time'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+          <van-cell 
+            title="已读/未读（未读优先）" 
+            clickable 
+            @click="setSortType('read_status')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'read_status'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+        </van-cell-group>
+      </div>
+    </van-popup>
+    
+    <van-popup 
+      v-model:show="showFilterPanel" 
+      position="bottom" 
+      round 
+      :style="{ height: '70%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="筛选" left-text="关闭" @click-left="showFilterPanel = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="applyFilterAndClose">确定</van-button>
+          </template>
+        </van-nav-bar>
+        
+        <div class="filter-content">
+          <div class="score-filter-section">
+            <div class="section-title">评分筛选</div>
+            <div class="score-input">
+              <span class="label">最低评分</span>
+              <van-stepper v-model="tempMinScore" :min="0" :max="10" :step="0.5" />
+            </div>
+          </div>
+          
+          <div class="tag-filter-section">
+            <TagFilter
+              v-model:include-tags="tempIncludeTags"
+              v-model:exclude-tags="tempExcludeTags"
+              :tags="allTags"
+              show-count
+            />
+          </div>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useListStore } from '@/stores'
+import { useListStore, useTagStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
+import { TagFilter } from '@/components'
 
 const route = useRoute()
 const router = useRouter()
 const listStore = useListStore()
+const tagStore = useTagStore()
 
 const loading = ref(false)
 const listInfo = ref(null)
 const listId = computed(() => route.params.id)
 
+const showSortPanel = ref(false)
+const showFilterPanel = ref(false)
+const currentSortType = ref('')
+const minScore = ref(null)
+const maxScore = ref(null)
+const includeTags = ref([])
+const excludeTags = ref([])
+
+const tempMinScore = ref(0)
+const tempIncludeTags = ref([])
+const tempExcludeTags = ref([])
+
 const comics = computed(() => listInfo.value?.comics || [])
+const allTags = computed(() => tagStore.tags)
+
+const sortLabel = computed(() => {
+  const labels = {
+    'create_time': '按添加时间',
+    'score': '按评分',
+    'read_time': '按阅读时间',
+    'read_status': '已读/未读'
+  }
+  return labels[currentSortType.value] || ''
+})
+
+const selectedIncludeTags = computed(() => {
+  return includeTags.value
+    .map(id => allTags.value.find(tag => tag.id === id))
+    .filter(Boolean)
+})
+
+const selectedExcludeTags = computed(() => {
+  return excludeTags.value
+    .map(id => allTags.value.find(tag => tag.id === id))
+    .filter(Boolean)
+})
+
+const hasActiveFilter = computed(() => {
+  return currentSortType.value || 
+         (minScore.value !== null && minScore.value > 0) || 
+         includeTags.value.length > 0 || 
+         excludeTags.value.length > 0
+})
+
+const filteredComics = computed(() => {
+  let result = [...comics.value]
+  
+  if (minScore.value !== null && minScore.value > 0) {
+    result = result.filter(c => {
+      const score = c.score ?? 0
+      return score >= minScore.value
+    })
+  }
+  
+  if (includeTags.value.length > 0) {
+    result = result.filter(c => {
+      const comicTags = c.tag_ids || []
+      return includeTags.value.every(tagId => comicTags.includes(tagId))
+    })
+  }
+  
+  if (excludeTags.value.length > 0) {
+    result = result.filter(c => {
+      const comicTags = c.tag_ids || []
+      return !excludeTags.value.some(tagId => comicTags.includes(tagId))
+    })
+  }
+  
+  if (currentSortType.value) {
+    switch (currentSortType.value) {
+      case 'create_time':
+        result.sort((a, b) => (b.create_time || '').localeCompare(a.create_time || ''))
+        break
+      case 'score':
+        result.sort((a, b) => (b.score || 0) - (a.score || 0))
+        break
+      case 'read_time':
+        result.sort((a, b) => (b.last_read_time || '').localeCompare(a.last_read_time || ''))
+        break
+      case 'read_status':
+        result.sort((a, b) => {
+          const aRead = a.current_page >= a.total_page
+          const bRead = b.current_page >= b.total_page
+          if (aRead !== bRead) return aRead ? 1 : -1
+          return (b.score || 0) - (a.score || 0)
+        })
+        break
+    }
+  }
+  
+  return result
+})
 
 function getCoverUrl(coverPath) {
   return buildCoverUrl(coverPath)
@@ -108,8 +349,58 @@ async function confirmDelete() {
     .catch(() => {})
 }
 
-onMounted(() => {
-  loadDetail()
+function setSortType(sortType) {
+  currentSortType.value = sortType
+  showSortPanel.value = false
+}
+
+function clearSort() {
+  currentSortType.value = ''
+}
+
+function removeIncludeTag(tagId) {
+  includeTags.value = includeTags.value.filter(id => id !== tagId)
+}
+
+function removeExcludeTag(tagId) {
+  excludeTags.value = excludeTags.value.filter(id => id !== tagId)
+}
+
+function clearScoreFilter() {
+  minScore.value = null
+  tempMinScore.value = 0
+}
+
+function clearAllFilters() {
+  currentSortType.value = ''
+  minScore.value = null
+  tempMinScore.value = 0
+  includeTags.value = []
+  excludeTags.value = []
+  tempIncludeTags.value = []
+  tempExcludeTags.value = []
+}
+
+function applyFilterAndClose() {
+  minScore.value = tempMinScore.value > 0 ? tempMinScore.value : null
+  includeTags.value = [...tempIncludeTags.value]
+  excludeTags.value = [...tempExcludeTags.value]
+  showFilterPanel.value = false
+}
+
+watch(showFilterPanel, (val) => {
+  if (val) {
+    tempMinScore.value = minScore.value || 0
+    tempIncludeTags.value = [...includeTags.value]
+    tempExcludeTags.value = [...excludeTags.value]
+  }
+})
+
+onMounted(async () => {
+  if (tagStore.tags.length === 0) {
+    await tagStore.fetchTags()
+  }
+  await loadDetail()
 })
 </script>
 
@@ -141,6 +432,32 @@ onMounted(() => {
 .list-count {
   font-size: 12px;
   color: #999;
+}
+
+.action-bar {
+  padding: 8px 16px;
+  background: #fff;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.action-btn {
+  flex: 1;
+}
+
+.active-filter-bar {
+  padding: 8px 16px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.filter-tag {
+  margin-right: 4px;
 }
 
 .comic-grid {
@@ -198,6 +515,46 @@ onMounted(() => {
   border-radius: 50%;
   padding: 4px;
   font-size: 12px;
+}
+
+.filter-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.filter-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.score-filter-section {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #eee;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.score-input {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.score-input .label {
+  font-size: 14px;
+  color: #666;
+}
+
+.tag-filter-section {
+  margin-top: 8px;
 }
 
 @media (min-width: 768px) {
