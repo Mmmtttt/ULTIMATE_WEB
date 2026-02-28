@@ -79,7 +79,7 @@ export const useReaderStore = defineStore('reader', () => {
    */
   const preloadQueue = computed(() => {
     const queue = []
-    const preloadCount = configStore.preloadNum
+    const preloadCount = 5
     
     // 向后加载
     for (let i = 0; i <= preloadCount; i++) {

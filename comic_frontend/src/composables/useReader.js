@@ -4,8 +4,7 @@ import { useComicStore, useConfigStore } from '@/stores'
 import { 
   PAGE_MODE, 
   validatePage, 
-  formatProgress,
-  PRELOAD_RANGE 
+  formatProgress
 } from '@/utils'
 
 /**
@@ -100,7 +99,7 @@ export function useReader() {
    */
   const preloadQueue = computed(() => {
     const queue = []
-    const preloadCount = configStore.preloadNum
+    const preloadCount = 5
     
     // 向后加载
     for (let i = 0; i <= preloadCount; i++) {

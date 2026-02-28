@@ -85,11 +85,14 @@ export const useComicStore = defineStore('comic', () => {
   /**
    * 获取漫画列表
    * @param {boolean} forceRefresh - 是否强制刷新
+   * @param {object} options - 可选参数
+   * @param {string} options.sortType - 排序类型
+   * @param {number} options.minScore - 最低评分
+   * @param {number} options.maxScore - 最高评分
    * @returns {Array} 漫画列表
    */
-  async function fetchComics(forceRefresh = false) {
-    // 检查缓存
-    if (!forceRefresh) {
+  async function fetchComics(forceRefresh = false, options = {}) {
+    if (!forceRefresh && Object.keys(options).length === 0) {
       const cached = cacheStore.getListCache()
       if (cached) {
         comics.value = cached
@@ -101,12 +104,13 @@ export const useComicStore = defineStore('comic', () => {
     error.value = null
     
     try {
-      console.log('[Comic] 获取漫画列表')
-      const response = await comicApi.getList()
+      console.log('[Comic] 获取漫画列表', options)
+      const response = await comicApi.getList(options)
       comics.value = response.data || []
       
-      // 更新缓存
-      cacheStore.setListCache(comics.value)
+      if (Object.keys(options).length === 0) {
+        cacheStore.setListCache(comics.value)
+      }
       
       return comics.value
     } catch (err) {

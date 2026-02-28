@@ -1,2 +1,4 @@
 from .comic_repository_impl import ComicJsonRepository
 from .tag_repository_impl import TagJsonRepository
+from .list_repository_impl import ListJsonRepository
+from .config_repository_impl import ConfigJsonRepository

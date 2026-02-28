@@ -4,10 +4,10 @@ import {
   DEFAULT_CONFIG, 
   PAGE_MODE, 
   BACKGROUND,
-  PRELOAD_RANGE,
   STORAGE_KEYS 
 } from '@/utils'
 import { getItem, setItem } from '@/utils/storage'
+import { configApi } from '@/api'
 
 /**
  * 配置管理 Store
@@ -15,9 +15,6 @@ import { getItem, setItem } from '@/utils/storage'
  */
 export const useConfigStore = defineStore('config', () => {
   // ============ State ============
-  
-  // 预加载数量
-  const preloadNum = ref(DEFAULT_CONFIG.PRELOAD_NUM)
   
   // 默认翻页模式
   const defaultPageMode = ref(DEFAULT_CONFIG.PAGE_MODE)
@@ -40,7 +37,6 @@ export const useConfigStore = defineStore('config', () => {
    * 当前配置对象
    */
   const config = computed(() => ({
-    preloadNum: preloadNum.value,
     defaultPageMode: defaultPageMode.value,
     defaultBackground: defaultBackground.value,
     autoHideToolbar: autoHideToolbar.value,
@@ -102,12 +98,37 @@ export const useConfigStore = defineStore('config', () => {
   function loadConfig() {
     const saved = getItem(STORAGE_KEYS.CONFIG, null)
     if (saved) {
-      preloadNum.value = saved.preloadNum ?? DEFAULT_CONFIG.PRELOAD_NUM
       defaultPageMode.value = saved.defaultPageMode ?? DEFAULT_CONFIG.PAGE_MODE
       defaultBackground.value = saved.defaultBackground ?? DEFAULT_CONFIG.BACKGROUND
       autoHideToolbar.value = saved.autoHideToolbar ?? DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
       showPageNumber.value = saved.showPageNumber ?? DEFAULT_CONFIG.SHOW_PAGE_NUMBER
       console.log('[Config] 从本地加载配置')
+    }
+  }
+  
+  /**
+   * 从服务器加载配置
+   */
+  async function loadConfigFromServer() {
+    loading.value = true
+    try {
+      const res = await configApi.get()
+      if (res.code === 200 && res.data) {
+        const serverConfig = res.data
+        defaultPageMode.value = serverConfig.default_page_mode ?? DEFAULT_CONFIG.PAGE_MODE
+        defaultBackground.value = serverConfig.default_background ?? DEFAULT_CONFIG.BACKGROUND
+        autoHideToolbar.value = serverConfig.auto_hide_toolbar ?? DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
+        showPageNumber.value = serverConfig.show_page_number ?? DEFAULT_CONFIG.SHOW_PAGE_NUMBER
+        saveConfig()
+        console.log('[Config] 从服务器加载配置成功')
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('[Config] 从服务器加载配置失败:', e)
+      return false
+    } finally {
+      loading.value = false
     }
   }
   
@@ -120,14 +141,26 @@ export const useConfigStore = defineStore('config', () => {
   }
   
   /**
-   * 设置预加载数量
-   * @param {number} num - 预加载数量
+   * 保存配置到服务器
    */
-  function setPreloadNum(num) {
-    const value = Math.max(PRELOAD_RANGE.MIN, Math.min(PRELOAD_RANGE.MAX, num))
-    preloadNum.value = value
-    saveConfig()
-    console.log('[Config] 设置预加载数量:', value)
+  async function saveConfigToServer() {
+    try {
+      const data = {
+        default_page_mode: defaultPageMode.value,
+        default_background: defaultBackground.value,
+        auto_hide_toolbar: autoHideToolbar.value,
+        show_page_number: showPageNumber.value
+      }
+      const res = await configApi.update(data)
+      if (res.code === 200) {
+        console.log('[Config] 保存配置到服务器成功')
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('[Config] 保存配置到服务器失败:', e)
+      return false
+    }
   }
   
   /**
@@ -193,13 +226,13 @@ export const useConfigStore = defineStore('config', () => {
   /**
    * 重置为默认配置
    */
-  function resetConfig() {
-    preloadNum.value = DEFAULT_CONFIG.PRELOAD_NUM
+  async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
     autoHideToolbar.value = DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
     showPageNumber.value = DEFAULT_CONFIG.SHOW_PAGE_NUMBER
     saveConfig()
+    await saveConfigToServer()
     console.log('[Config] 重置为默认配置')
   }
   
@@ -208,9 +241,6 @@ export const useConfigStore = defineStore('config', () => {
    * @param {Object} newConfig - 新配置对象
    */
   function updateConfig(newConfig) {
-    if (newConfig.preloadNum !== undefined) {
-      setPreloadNum(newConfig.preloadNum)
-    }
     if (newConfig.defaultPageMode !== undefined) {
       setPageMode(newConfig.defaultPageMode)
     }
@@ -230,7 +260,6 @@ export const useConfigStore = defineStore('config', () => {
   
   return {
     // State
-    preloadNum,
     defaultPageMode,
     defaultBackground,
     autoHideToolbar,
@@ -247,8 +276,9 @@ export const useConfigStore = defineStore('config', () => {
     
     // Actions
     loadConfig,
+    loadConfigFromServer,
     saveConfig,
-    setPreloadNum,
+    saveConfigToServer,
     setPageMode,
     togglePageMode,
     setBackground,

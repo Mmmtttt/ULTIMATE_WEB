@@ -137,7 +137,6 @@ class JsonStorage:
             "lists": [],
             "comics": [],
             "user_config": {
-                "preload_num": 3,
                 "default_page_mode": "left_right",
                 "default_background": "white"
             }

@@ -12,6 +12,12 @@ export { comicApi } from './comic'
 // 标签 API
 export { tagApi } from './tag'
 
+// 清单 API
+export { listApi } from './list'
+
+// 配置 API
+export { configApi } from './config'
+
 // 图片 API
 export { imageApi, buildImageUrl, buildCoverUrl, buildThumbnailUrl } from './image'
 

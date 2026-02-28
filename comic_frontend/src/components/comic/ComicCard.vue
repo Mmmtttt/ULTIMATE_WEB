@@ -22,6 +22,11 @@
         </div>
       </div>
       
+      <!-- 收藏标识 -->
+      <div v-if="comic.is_favorited" class="favorite-badge">
+        <van-icon name="star" color="#ffd21e" />
+      </div>
+      
       <!-- 已读标记 -->
       <div class="comic-badge" v-if="comic.current_page > 1 && comic.total_page > 0">
         {{ readProgress }}%
@@ -141,6 +146,19 @@ function toggleSelect() {
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 10px;
+}
+
+.favorite-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .score-badge {

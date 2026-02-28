@@ -3,7 +3,7 @@
  * 提供各种数据校验函数
  */
 
-import { PRELOAD_RANGE, SCORE_RANGE, PAGE_MODE, BACKGROUND, IMAGE_FORMATS } from './constants'
+import { SCORE_RANGE, PAGE_MODE, BACKGROUND, IMAGE_FORMATS } from './constants'
 
 /**
  * 校验页码是否有效
@@ -44,33 +44,6 @@ export function validatePage(page, total) {
   
   if (pageNum > total) {
     return { valid: false, message: `页码不能大于${total}` }
-  }
-  
-  return { valid: true, message: '' }
-}
-
-/**
- * 校验预加载数量
- * @param {number} num - 预加载数量
- * @returns {{valid: boolean, message: string}} 校验结果
- */
-export function validatePreloadNum(num) {
-  const numValue = Number(num)
-  
-  if (isNaN(numValue)) {
-    return { valid: false, message: '预加载数量必须是数字' }
-  }
-  
-  if (!Number.isInteger(numValue)) {
-    return { valid: false, message: '预加载数量必须是整数' }
-  }
-  
-  if (numValue < PRELOAD_RANGE.MIN) {
-    return { valid: false, message: `预加载数量不能小于${PRELOAD_RANGE.MIN}` }
-  }
-  
-  if (numValue > PRELOAD_RANGE.MAX) {
-    return { valid: false, message: `预加载数量不能大于${PRELOAD_RANGE.MAX}` }
   }
   
   return { valid: true, message: '' }
@@ -237,13 +210,6 @@ export function validateImageHostUrl(url) {
  */
 export function validateConfig(config) {
   const errors = {}
-  
-  if (config.preload_num !== undefined) {
-    const result = validatePreloadNum(config.preload_num)
-    if (!result.valid) {
-      errors.preload_num = result.message
-    }
-  }
   
   if (config.default_page_mode !== undefined) {
     if (!isValidPageMode(config.default_page_mode)) {

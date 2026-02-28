@@ -91,3 +91,11 @@ class Comic:
             self.desc = meta['desc']
         if 'cover_path' in meta and meta['cover_path']:
             self.cover_path = meta['cover_path']
+    
+    def add_to_list(self, list_id: str):
+        if list_id not in self.list_ids:
+            self.list_ids.append(list_id)
+    
+    def remove_from_list(self, list_id: str):
+        if list_id in self.list_ids:
+            self.list_ids = [lid for lid in self.list_ids if lid != list_id]

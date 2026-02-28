@@ -2,7 +2,6 @@
   <div class="home">
     <van-nav-bar title="漫画库" />
     
-    <!-- 搜索栏 -->
     <div class="search-bar">
       <van-search
         v-model="keyword"
@@ -15,6 +14,16 @@
         size="small" 
         type="primary" 
         plain 
+        @click="showSortPanel = true"
+        class="sort-btn"
+      >
+        排序
+        <van-icon name="sort" />
+      </van-button>
+      <van-button 
+        size="small" 
+        type="primary" 
+        plain 
         @click="showFilterPanel = true"
         class="filter-btn"
       >
@@ -23,9 +32,16 @@
       </van-button>
     </div>
     
-    <!-- 活跃筛选标签 -->
-    <div v-if="isFiltering" class="active-filter-bar">
-      <span class="filter-label">当前筛选:</span>
+    <div v-if="isFiltering || currentSortType" class="active-filter-bar">
+      <van-tag 
+        v-if="currentSortType" 
+        type="primary" 
+        closeable 
+        @close="clearSort"
+        class="filter-tag"
+      >
+        {{ sortLabel }}
+      </van-tag>
       <van-tag 
         v-for="tag in selectedIncludeTags" 
         :key="tag.id" 
@@ -99,6 +115,46 @@
       </div>
     </van-popup>
     
+    <van-popup 
+      v-model:show="showSortPanel" 
+      position="bottom" 
+      round 
+      :style="{ height: '40%' }"
+    >
+      <div class="sort-panel">
+        <van-nav-bar title="排序方式" left-text="关闭" @click-left="showSortPanel = false" />
+        <van-cell-group>
+          <van-cell 
+            title="按添加时间" 
+            clickable 
+            @click="setSortType('create_time')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'create_time'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+          <van-cell 
+            title="按评分从高到低" 
+            clickable 
+            @click="setSortType('score')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'score'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+          <van-cell 
+            title="按最后阅读时间" 
+            clickable 
+            @click="setSortType('read_time')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'read_time'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
+        </van-cell-group>
+      </div>
+    </van-popup>
+    
     <!-- 底部导航 -->
     <van-tabbar v-model="active" route>
       <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
@@ -119,7 +175,6 @@ const route = useRoute()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
 
-// 使用搜索组合
 const {
   keyword,
   includeTags,
@@ -139,14 +194,22 @@ const {
   init
 } = useSearch()
 
-// 本地状态
 const active = ref(0)
 const showFilterPanel = ref(false)
+const showSortPanel = ref(false)
+const currentSortType = ref('')
 
-// 计算属性
 const isLoading = computed(() => loading.value || comicStore.loading)
 
-// 方法
+const sortLabel = computed(() => {
+  const labels = {
+    'create_time': '按添加时间',
+    'score': '按评分',
+    'read_time': '按阅读时间'
+  }
+  return labels[currentSortType.value] || ''
+})
+
 function handleSearch() {
   search()
 }
@@ -170,7 +233,6 @@ function removeExcludeTag(tagId) {
 }
 
 function handleFilterChange() {
-  // 筛选变化时自动应用
   if (includeTags.value.length > 0 || excludeTags.value.length > 0) {
     filterByTags()
   } else {
@@ -182,11 +244,20 @@ function applyFilterAndClose() {
   showFilterPanel.value = false
 }
 
-// 初始化
+async function setSortType(sortType) {
+  currentSortType.value = sortType
+  showSortPanel.value = false
+  await comicStore.fetchComics(true, { sortType })
+}
+
+function clearSort() {
+  currentSortType.value = ''
+  comicStore.fetchComics(true)
+}
+
 onMounted(async () => {
   await init()
   
-  // 处理 URL 中的 tagId 参数
   const tagId = route.query.tagId
   if (tagId && !includeTags.value.includes(tagId)) {
     includeTags.value = [tagId]
@@ -207,7 +278,7 @@ onMounted(async () => {
   background: #fff;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .search-bar .van-search {
@@ -215,8 +286,10 @@ onMounted(async () => {
   padding: 0;
 }
 
+.sort-btn,
 .filter-btn {
   flex-shrink: 0;
+  padding: 0 8px;
 }
 
 .active-filter-bar {

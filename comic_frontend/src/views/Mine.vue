@@ -2,12 +2,22 @@
   <div class="mine">
     <van-nav-bar title="我的" />
     
+    <div class="stats-overview">
+      <van-grid :column-num="4" :border="false">
+        <van-grid-item icon="photo-o" :text="comicCount + ' 漫画'" />
+        <van-grid-item icon="bookmark-o" :text="readCount + ' 已读'" />
+        <van-grid-item icon="tag-o" :text="tagCount + ' 标签'" />
+        <van-grid-item icon="list-switch-o" :text="listCount + ' 清单'" />
+      </van-grid>
+    </div>
+    
     <van-cell-group class="mine-menu">
-      <van-cell title="导入漫画" icon="add-o" @click="showImportDialog = true" is-link />
+      <van-cell title="我的清单" icon="list-switch-o" to="/lists" is-link />
+      <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
       <van-cell title="标签管理" icon="tag-o" to="/tags" is-link />
-      <van-cell title="清单管理" icon="list-o" is-link />
-      <van-cell title="缓存管理" icon="cache" @click="showCachePanel = true" is-link />
-      <van-cell title="系统设置" icon="settings-o" is-link />
+      <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
+      <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />
+      <van-cell title="导入漫画" icon="add-o" @click="showImportDialog = true" is-link />
     </van-cell-group>
     
     <!-- 缓存管理面板 -->
@@ -92,9 +102,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useComicStore, useCacheStore } from '@/stores'
+import { useRouter } from 'vue-router'
+import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
+const router = useRouter()
 const active = ref(1)
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
@@ -105,6 +117,16 @@ const cacheExpiryMinutes = ref(30)
 
 const comicStore = useComicStore()
 const cacheStore = useCacheStore()
+const tagStore = useTagStore()
+const listStore = useListStore()
+
+const comicCount = computed(() => comicStore.comics?.length || 0)
+const readCount = computed(() => {
+  const comics = comicStore.comics || []
+  return comics.filter(c => c.current_page > 1).length
+})
+const tagCount = computed(() => tagStore.tags?.length || 0)
+const listCount = computed(() => listStore.lists?.length || 0)
 
 // 缓存状态
 const listCacheStatus = computed(() => {
@@ -186,8 +208,17 @@ function loadCacheExpiry() {
   }
 }
 
-onMounted(() => {
+function goToFavorites() {
+  router.push('/list/list_favorites')
+}
+
+onMounted(async () => {
   loadCacheExpiry()
+  await Promise.all([
+    comicStore.fetchComics(),
+    tagStore.fetchTags(),
+    listStore.fetchLists()
+  ])
 })
 
 const importComic = async () => {
@@ -226,6 +257,11 @@ const importComic = async () => {
   min-height: 100vh;
   background: #f5f5f5;
   padding-bottom: 50px;
+}
+
+.stats-overview {
+  background: #fff;
+  padding: 12px 0;
 }
 
 .mine-menu {

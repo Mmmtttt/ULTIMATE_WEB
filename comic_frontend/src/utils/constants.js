@@ -25,17 +25,10 @@ export const BACKGROUND_COLORS = {
 
 // 默认配置
 export const DEFAULT_CONFIG = {
-  PRELOAD_NUM: 3,
   PAGE_MODE: PAGE_MODE.LEFT_RIGHT,
   BACKGROUND: BACKGROUND.WHITE,
   AUTO_HIDE_TOOLBAR: true,
   SHOW_PAGE_NUMBER: true
-}
-
-// 预加载数量范围
-export const PRELOAD_RANGE = {
-  MIN: 1,
-  MAX: 10
 }
 
 // 评分范围

@@ -84,7 +84,11 @@ def comic_init():
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
     try:
-        result = comic_service.get_comic_list()
+        sort_type = request.args.get('sort_type')
+        min_score = request.args.get('min_score', type=float)
+        max_score = request.args.get('max_score', type=float)
+        
+        result = comic_service.get_comic_list(sort_type, min_score, max_score)
         if result.success:
             return success_response(result.data)
         else:

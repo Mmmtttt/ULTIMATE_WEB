@@ -6,6 +6,8 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, get_preview_pages
 
+FAVORITES_LIST_ID = "list_favorites"
+
 
 class ComicAppService:
     def __init__(
@@ -16,14 +18,32 @@ class ComicAppService:
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
     
-    def get_comic_list(self) -> ServiceResult:
+    def get_comic_list(
+        self,
+        sort_type: str = None,
+        min_score: float = None,
+        max_score: float = None
+    ) -> ServiceResult:
         try:
             comics = self._comic_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
             
+            if min_score is not None:
+                comics = [c for c in comics if c.score is not None and c.score >= min_score]
+            if max_score is not None:
+                comics = [c for c in comics if c.score is not None and c.score <= max_score]
+            
+            if sort_type == "create_time":
+                comics = sorted(comics, key=lambda c: c.create_time or "", reverse=True)
+            elif sort_type == "score":
+                comics = sorted(comics, key=lambda c: c.score or 0, reverse=True)
+            elif sort_type == "read_time":
+                comics = sorted(comics, key=lambda c: c.last_read_time or "", reverse=True)
+            
             comic_list = []
             for c in comics:
+                is_favorited = FAVORITES_LIST_ID in c.list_ids
                 comic_info = {
                     "id": c.id,
                     "title": c.title,
@@ -35,7 +55,9 @@ class ComicAppService:
                     "score": c.score,
                     "tag_ids": c.tag_ids,
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
-                    "last_read_time": c.last_read_time
+                    "last_read_time": c.last_read_time,
+                    "create_time": c.create_time,
+                    "is_favorited": is_favorited
                 }
                 comic_list.append(comic_info)
             
@@ -56,6 +78,8 @@ class ComicAppService:
             
             preview_pages = get_preview_pages(comic.total_page)
             
+            is_favorited = FAVORITES_LIST_ID in comic.list_ids
+            
             detail = {
                 "id": comic.id,
                 "title": comic.title,
@@ -71,7 +95,9 @@ class ComicAppService:
                 "preview_images": [f"/api/v1/comic/image?comic_id={comic_id}&page_num={p}" for p in preview_pages],
                 "preview_pages": preview_pages,
                 "last_read_time": comic.last_read_time,
-                "create_time": comic.create_time
+                "create_time": comic.create_time,
+                "list_ids": comic.list_ids,
+                "is_favorited": is_favorited
             }
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")

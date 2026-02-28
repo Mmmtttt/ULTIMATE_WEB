@@ -15,10 +15,25 @@ export const comicApi = {
   
   /**
    * 获取漫画列表
+   * @param {object} params - 查询参数
+   * @param {string} params.sort_type - 排序类型（create_time/score/read_time）
+   * @param {number} params.min_score - 最低评分
+   * @param {number} params.max_score - 最高评分
    * @returns {Promise}
    */
-  getList: () => {
-    return request.get('/v1/comic/list')
+  getList: (params = {}) => {
+    const queryParams = new URLSearchParams()
+    if (params.sort_type) {
+      queryParams.append('sort_type', params.sort_type)
+    }
+    if (params.min_score !== undefined) {
+      queryParams.append('min_score', params.min_score)
+    }
+    if (params.max_score !== undefined) {
+      queryParams.append('max_score', params.max_score)
+    }
+    const queryString = queryParams.toString()
+    return request.get(`/v1/comic/list${queryString ? '?' + queryString : ''}`)
   },
   
   /**

@@ -17,3 +17,6 @@ export { useTagStore } from './tag'
 
 // 漫画管理
 export { useComicStore } from './comic'
+
+// 清单管理
+export { useListStore } from './list'
