@@ -257,6 +257,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { useComic } from '@/composables'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
+import { comicApi } from '@/api/comic'
 import { showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
@@ -280,6 +281,7 @@ const selectedTagIds = ref([])
 const selectedListIds = ref([])
 const scoreValue = ref(6)
 const favoriteLoading = ref(false)
+const downloadLoading = ref(false)
 
 const editForm = ref({
   title: '',
@@ -288,6 +290,7 @@ const editForm = ref({
 })
 
 const actions = [
+  { name: '下载漫画', value: 'download' },
   { name: '编辑信息', value: 'edit' },
   { name: '绑定标签', value: 'tags' }
 ]
@@ -390,10 +393,27 @@ async function handleScoreChange(value) {
 
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'edit') {
+  if (action.value === 'download') {
+    handleDownload()
+  } else if (action.value === 'edit') {
     showEditPopup.value = true
   } else if (action.value === 'tags') {
     showTagPopup.value = true
+  }
+}
+
+async function handleDownload() {
+  if (!comic.value) return
+  
+  downloadLoading.value = true
+  try {
+    await comicApi.download(comic.value.id, comic.value.title)
+    showSuccessToast('下载成功')
+  } catch (error) {
+    console.error('下载失败:', error)
+    showFailToast('下载失败')
+  } finally {
+    downloadLoading.value = false
   }
 }
 

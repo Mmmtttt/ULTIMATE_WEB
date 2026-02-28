@@ -18,6 +18,7 @@
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />
       <van-cell title="导入漫画" icon="add-o" @click="showImportDialog = true" is-link />
+      <van-cell title="批量上传" icon="description" @click="showUploadPanel = true" is-link />
     </van-cell-group>
     
     <!-- 缓存管理面板 -->
@@ -97,6 +98,55 @@
         </div>
       </div>
     </van-popup>
+    
+    <van-popup 
+      v-model:show="showUploadPanel" 
+      position="bottom" 
+      round 
+      :style="{ height: '50%' }"
+    >
+      <div class="upload-panel">
+        <van-nav-bar title="批量上传" left-text="关闭" @click-left="showUploadPanel = false" />
+        
+        <div class="upload-content">
+          <div class="upload-area" @click="triggerFileInput" @dragover.prevent @drop.prevent="handleDrop">
+            <van-icon name="add-o" size="40" />
+            <p class="upload-hint">点击或拖拽 ZIP 文件到此处</p>
+            <p class="upload-tip">支持多个 ZIP 文件同时上传</p>
+          </div>
+          
+          <input 
+            ref="fileInput" 
+            type="file" 
+            accept=".zip" 
+            multiple 
+            style="display: none" 
+            @change="handleFileSelect"
+          />
+          
+          <div v-if="selectedFiles.length > 0" class="selected-files">
+            <p class="files-title">已选择 {{ selectedFiles.length }} 个文件:</p>
+            <div class="files-list">
+              <div v-for="(file, index) in selectedFiles" :key="index" class="file-item">
+                <van-icon name="description" />
+                <span class="file-name">{{ file.name }}</span>
+                <van-icon name="cross" @click="removeFile(index)" />
+              </div>
+            </div>
+          </div>
+          
+          <van-button 
+            type="primary" 
+            block 
+            :disabled="selectedFiles.length === 0" 
+            :loading="uploading"
+            @click="handleUpload"
+          >
+            开始上传
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -104,16 +154,21 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
+import { comicApi } from '@/api/comic'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
 const active = ref(1)
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
+const showUploadPanel = ref(false)
 const comicId = ref('')
 const comicTitle = ref('')
 const importing = ref(false)
 const cacheExpiryMinutes = ref(30)
+const fileInput = ref(null)
+const selectedFiles = ref([])
+const uploading = ref(false)
 
 const comicStore = useComicStore()
 const cacheStore = useCacheStore()
@@ -250,6 +305,54 @@ const importComic = async () => {
     importing.value = false
   }
 }
+
+function triggerFileInput() {
+  fileInput.value?.click()
+}
+
+function handleFileSelect(event) {
+  const files = Array.from(event.target.files || [])
+  const zipFiles = files.filter(f => f.name.toLowerCase().endsWith('.zip'))
+  
+  if (zipFiles.length !== files.length) {
+    showToast('只支持 .zip 格式文件')
+  }
+  
+  selectedFiles.value = [...selectedFiles.value, ...zipFiles]
+  event.target.value = ''
+}
+
+function handleDrop(event) {
+  const files = Array.from(event.dataTransfer?.files || [])
+  const zipFiles = files.filter(f => f.name.toLowerCase().endsWith('.zip'))
+  
+  if (zipFiles.length !== files.length) {
+    showToast('只支持 .zip 格式文件')
+  }
+  
+  selectedFiles.value = [...selectedFiles.value, ...zipFiles]
+}
+
+function removeFile(index) {
+  selectedFiles.value.splice(index, 1)
+}
+
+async function handleUpload() {
+  if (selectedFiles.value.length === 0) return
+  
+  uploading.value = true
+  try {
+    const result = await comicApi.batchUpload(selectedFiles.value)
+    showSuccessToast(`成功上传 ${result.count} 部漫画`)
+    selectedFiles.value = []
+    showUploadPanel.value = false
+    await comicStore.fetchComics()
+  } catch (error) {
+    showFailToast(error.message || '上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -326,5 +429,84 @@ const importComic = async () => {
 
 .action-buttons {
   padding: 16px;
+}
+
+.upload-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.upload-content {
+  flex: 1;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.upload-area {
+  border: 2px dashed #ddd;
+  border-radius: 8px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.upload-area:hover {
+  border-color: #1989fa;
+  background: #f0f7ff;
+}
+
+.upload-hint {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #333;
+}
+
+.upload-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #999;
+}
+
+.selected-files {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.files-title {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 4px;
+}
+
+.file-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-item .van-icon-cross {
+  cursor: pointer;
+  color: #999;
 }
 </style>

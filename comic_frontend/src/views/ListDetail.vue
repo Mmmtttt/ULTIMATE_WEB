@@ -40,6 +40,18 @@
           筛选
           <van-icon name="filter-o" />
         </van-button>
+        <van-button 
+          size="small" 
+          type="primary" 
+          plain 
+          @click="handleBatchDownload"
+          :loading="downloadLoading"
+          :disabled="filteredComics.length === 0"
+          class="action-btn"
+        >
+          批量下载
+          <van-icon name="down" />
+        </van-button>
       </div>
       
       <div v-if="hasActiveFilter" class="active-filter-bar">
@@ -201,6 +213,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useListStore, useTagStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
+import { comicApi } from '@/api/comic'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import { TagFilter } from '@/components'
 
@@ -224,6 +237,7 @@ const excludeTags = ref([])
 const tempMinScore = ref(0)
 const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
+const downloadLoading = ref(false)
 
 const comics = computed(() => listInfo.value?.comics || [])
 const allTags = computed(() => tagStore.tags)
@@ -386,6 +400,25 @@ function applyFilterAndClose() {
   includeTags.value = [...tempIncludeTags.value]
   excludeTags.value = [...tempExcludeTags.value]
   showFilterPanel.value = false
+}
+
+async function handleBatchDownload() {
+  if (filteredComics.value.length === 0) {
+    showFailToast('没有可下载的漫画')
+    return
+  }
+  
+  downloadLoading.value = true
+  try {
+    const comicIds = filteredComics.value.map(c => c.id)
+    await comicApi.batchDownload(comicIds)
+    showSuccessToast(`成功下载 ${comicIds.length} 部漫画`)
+  } catch (error) {
+    console.error('批量下载失败:', error)
+    showFailToast('批量下载失败')
+  } finally {
+    downloadLoading.value = false
+  }
 }
 
 watch(showFilterPanel, (val) => {

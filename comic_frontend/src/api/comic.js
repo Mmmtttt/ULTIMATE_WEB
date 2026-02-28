@@ -189,6 +189,87 @@ export const comicApi = {
     return request.get('/v1/comic/filter-by-score', {
       params: { min_score: minScore, max_score: maxScore }
     })
+  },
+  
+  download: async (comicId, comicTitle) => {
+    const safeTitle = comicTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s\-_]/g, '').trim()
+    const filename = `${comicId}-${safeTitle}.zip`
+    
+    const response = await fetch(`/api/v1/comic/download?comic_id=${comicId}`)
+    if (!response.ok) {
+      throw new Error('下载失败')
+    }
+    
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  },
+  
+  batchDownload: async (comicIds) => {
+    const response = await fetch('/api/v1/comic/batch-download', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ comic_ids: comicIds })
+    })
+    
+    if (!response.ok) {
+      throw new Error('批量下载失败')
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const filename = `comics_batch_${timestamp}.zip`
+    
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  },
+  
+  upload: async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    const response = await fetch('/api/v1/comic/upload', {
+      method: 'POST',
+      body: formData
+    })
+    
+    const result = await response.json()
+    if (result.code !== 200) {
+      throw new Error(result.msg || '上传失败')
+    }
+    return result.data
+  },
+  
+  batchUpload: async (files) => {
+    const formData = new FormData()
+    files.forEach(file => {
+      formData.append('files', file)
+    })
+    
+    const response = await fetch('/api/v1/comic/batch-upload', {
+      method: 'POST',
+      body: formData
+    })
+    
+    const result = await response.json()
+    if (result.code !== 200) {
+      throw new Error(result.msg || '批量上传失败')
+    }
+    return result.data
   }
 }
 
