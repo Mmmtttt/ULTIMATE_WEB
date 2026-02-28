@@ -352,9 +352,11 @@ const loadImages = async () => {
   loading.value = true
   error.value = false
   try {
-    const response = await comicApi.getImages(comicId.value)
-    images.value = response.data.map((path, index) => getImageUrl(comicId.value, index + 1))
-    totalPage.value = images.value.length
+    const imageData = await comicStore.fetchImages(comicId.value)
+    if (imageData) {
+      images.value = imageData.map((path, index) => getImageUrl(comicId.value, index + 1))
+      totalPage.value = images.value.length
+    }
     
     const comic = await comicStore.fetchComicDetail(comicId.value)
     if (comic && comic.current_page > 1) {
@@ -672,6 +674,7 @@ watch(currentPage, (newPage) => {
 })
 
 onMounted(() => {
+  console.log('[Reader] onMounted, id:', comicId.value, 'cache status:', comicStore.cacheStatus)
   loadImages()
   // 双击事件监听
   if (readerContent.value) {

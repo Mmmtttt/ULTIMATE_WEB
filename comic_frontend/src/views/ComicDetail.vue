@@ -185,12 +185,14 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { comicApi, tagApi } from '../api/comic'
+import { useComicStore } from '../store/modules/comic'
+import { comicApi } from '../api/comic'
 import apiConfig from '../config/api'
 import { showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
 const router = useRouter()
+const comicStore = useComicStore()
 const comic = ref(null)
 const isLoading = ref(true)
 const showActionSheet = ref(false)
@@ -224,15 +226,15 @@ const fetchComicDetail = async () => {
   isLoading.value = true
   
   try {
-    const response = await comicApi.getDetail(comicId)
-    if (response.code === 200) {
-      comic.value = response.data
-      scoreValue.value = response.data.score || 6
-      selectedTagIds.value = response.data.tag_ids || []
+    const detail = await comicStore.fetchComicDetail(comicId)
+    if (detail) {
+      comic.value = detail
+      scoreValue.value = detail.score || 6
+      selectedTagIds.value = detail.tag_ids || []
       editForm.value = {
-        title: response.data.title,
-        author: response.data.author || '',
-        desc: response.data.desc || ''
+        title: detail.title,
+        author: detail.author || '',
+        desc: detail.desc || ''
       }
     }
   } catch (error) {
@@ -244,9 +246,9 @@ const fetchComicDetail = async () => {
 
 const fetchAllTags = async () => {
   try {
-    const response = await tagApi.list()
-    if (response.code === 200) {
-      allTags.value = response.data
+    const tags = await comicStore.fetchTags()
+    if (tags) {
+      allTags.value = tags
     }
   } catch (error) {
     console.error('获取标签列表失败:', error)
@@ -320,6 +322,7 @@ const saveTags = async () => {
   try {
     const response = await comicApi.bindTags(comic.value.id, selectedTagIds.value)
     if (response.code === 200) {
+      comicStore.clearCache('detail', comic.value.id)
       await fetchComicDetail()
       showTagPopup.value = false
       showSuccessToast('标签绑定成功')
@@ -333,11 +336,13 @@ const saveTags = async () => {
 }
 
 onMounted(async () => {
+  console.log('[Detail] onMounted, id:', route.params.id)
   await fetchComicDetail()
   await fetchAllTags()
 })
 
-watch(() => route.params.id, async () => {
+watch(() => route.params.id, async (newId) => {
+  console.log('[Detail] watch id:', newId)
   await fetchComicDetail()
 })
 </script>

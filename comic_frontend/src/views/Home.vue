@@ -176,7 +176,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useComicStore } from '../store/modules/comic'
 import { comicApi, tagApi } from '../api/comic'
@@ -198,6 +198,7 @@ const tempExcludeIds = ref([])
 
 const searchResults = ref([])
 const isSearchMode = ref(false)
+const filteredResults = ref([])
 
 const includeTags = computed(() => {
   return allTags.value.filter(t => includeTagIds.value.includes(t.id))
@@ -216,7 +217,7 @@ const displayList = computed(() => {
     return searchResults.value
   }
   if (hasActiveFilter.value) {
-    return comicStore.comicList
+    return filteredResults.value
   }
   return comicStore.comicList
 })
@@ -294,11 +295,14 @@ const toggleExcludeTag = (tagId) => {
 }
 
 const applyFilters = async () => {
+  console.log('[Home] applyFilters called')
   includeTagIds.value = [...tempIncludeIds.value]
   excludeTagIds.value = [...tempExcludeIds.value]
   showFilterPanel.value = false
   
   if (includeTagIds.value.length === 0 && excludeTagIds.value.length === 0) {
+    console.log('[Home] No filters, fetching comics')
+    filteredResults.value = []
     await comicStore.fetchComics()
     return
   }
@@ -307,7 +311,7 @@ const applyFilters = async () => {
   try {
     const response = await comicApi.filter(includeTagIds.value, excludeTagIds.value)
     if (response.code === 200) {
-      comicStore.comics = response.data
+      filteredResults.value = response.data
     }
   } catch (error) {
     console.error('筛选失败:', error)
@@ -366,9 +370,9 @@ const hideTooltip = () => {
 
 const fetchAllTags = async () => {
   try {
-    const response = await tagApi.list()
-    if (response.code === 200) {
-      allTags.value = response.data
+    const tags = await comicStore.fetchTags()
+    if (tags) {
+      allTags.value = tags
     }
   } catch (error) {
     console.error('获取标签列表失败:', error)
@@ -376,17 +380,42 @@ const fetchAllTags = async () => {
 }
 
 watch(() => route.query.tagId, async (tagId) => {
+  console.log('[Home] watch tagId:', tagId, 'current filter:', includeTagIds.value)
   if (tagId) {
     includeTagIds.value = [tagId]
     tempIncludeIds.value = [tagId]
     await applyFilters()
+  } else if (includeTagIds.value.length > 0) {
+    // 清除筛选状态
+    includeTagIds.value = []
+    tempIncludeIds.value = []
+    await applyFilters()
   }
 }, { immediate: true })
 
-onMounted(async () => {
-  await comicStore.fetchComics()
-  await fetchAllTags()
-})
+// 监听路由变化，处理返回等情况
+watch(() => route.path, async (newPath, oldPath) => {
+  console.log('[Home] route changed:', oldPath, '->', newPath)
+  if (newPath === '/' && oldPath !== '/') {
+    // 从其他页面返回主页
+    console.log('[Home] Returned to home, query:', route.query)
+    
+    // 如果没有 tagId 参数，清除筛选状态
+    if (!route.query.tagId) {
+      includeTagIds.value = []
+      tempIncludeIds.value = []
+      excludeTagIds.value = []
+      tempExcludeIds.value = []
+      filteredResults.value = []
+    }
+    
+    // 只有在没有筛选条件时才获取列表
+    if (includeTagIds.value.length === 0 && !isSearchMode.value) {
+      await comicStore.fetchComics()
+    }
+    await fetchAllTags()
+  }
+}, { immediate: true })
 </script>
 
 <style scoped>

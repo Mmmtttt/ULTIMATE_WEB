@@ -151,7 +151,10 @@ def comic_image():
             mimetype = 'image/jpeg'
         
         app_logger.info(f"获取图片成功: {comic_id}, 第 {page_num} 页")
-        return send_file(stream, mimetype=mimetype)
+        response = send_file(stream, mimetype=mimetype)
+        # 设置缓存头：缓存5分钟
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        return response
     except Exception as e:
         error_logger.error(f"获取图片失败: {e}")
         return error_response(500, "服务器内部错误")

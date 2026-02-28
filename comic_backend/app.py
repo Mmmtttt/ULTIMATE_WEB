@@ -7,6 +7,9 @@ from utils.logger import app_logger
 # 创建Flask应用
 app = Flask(__name__)
 
+# 配置静态文件缓存时间（5分钟）
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300
+
 # 配置CORS
 CORS(app)
 
