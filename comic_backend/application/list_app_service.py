@@ -20,6 +20,8 @@ class ListAppService:
     
     def get_list_all(self) -> ServiceResult:
         try:
+            self._list_repo.ensure_default_list()
+            
             lists = self._list_repo.get_all()
             
             result = []
@@ -42,6 +44,8 @@ class ListAppService:
     
     def get_list_detail(self, list_id: str) -> ServiceResult:
         try:
+            self._list_repo.ensure_default_list()
+            
             lst = self._list_repo.get_by_id(list_id)
             if not lst:
                 return ServiceResult.error("清单不存在")
@@ -200,6 +204,8 @@ class ListAppService:
     
     def toggle_favorite(self, comic_id: str) -> ServiceResult:
         try:
+            self._list_repo.ensure_default_list()
+            
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
                 return ServiceResult.error("漫画不存在")

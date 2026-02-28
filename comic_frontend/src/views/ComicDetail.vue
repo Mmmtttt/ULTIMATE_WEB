@@ -113,6 +113,33 @@
       />
       
       <div class="action-section">
+        <div class="action-buttons">
+          <van-button 
+            :type="isFavorited ? 'warning' : 'default'" 
+            size="small"
+            @click="handleToggleFavorite"
+            :loading="favoriteLoading"
+          >
+            <van-icon :name="isFavorited ? 'star' : 'star-o'" />
+            {{ isFavorited ? '已收藏' : '收藏' }}
+          </van-button>
+          <van-button 
+            type="default" 
+            size="small"
+            @click="showListPopup = true"
+          >
+            <van-icon name="add-o" />
+            加入清单
+          </van-button>
+          <van-button 
+            :type="isRead ? 'success' : 'default'" 
+            size="small"
+            @click="markAsRead"
+          >
+            <van-icon :name="isRead ? 'passed' : 'circle'" />
+            {{ isRead ? '已读' : '标记已读' }}
+          </van-button>
+        </div>
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ comic.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
@@ -187,13 +214,47 @@
         </div>
       </div>
     </van-popup>
+    
+    <van-popup 
+      v-model:show="showListPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '50%' }"
+    >
+      <div class="list-popup">
+        <van-nav-bar title="管理清单" left-text="取消" @click-left="showListPopup = false" />
+        
+        <van-checkbox-group v-model="selectedListIds">
+          <van-cell-group inset>
+            <van-cell 
+              v-for="list in customLists" 
+              :key="list.id"
+              clickable
+              @click="toggleListItem(list.id)"
+            >
+              <template #title>
+                <span>{{ list.name }}</span>
+                <span class="list-count">({{ list.comic_count || 0 }})</span>
+              </template>
+              <template #right-icon>
+                <van-checkbox :name="list.id" />
+              </template>
+            </van-cell>
+          </van-cell-group>
+        </van-checkbox-group>
+        
+        <div class="list-action">
+          <van-button type="primary" block @click="addToLists">保存</van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useComicStore, useTagStore } from '@/stores'
+import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { useComic } from '@/composables'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { showSuccessToast, showFailToast } from 'vant'
@@ -202,21 +263,23 @@ const route = useRoute()
 const router = useRouter()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
+const listStore = useListStore()
 
-// 使用漫画组合函数
 const { updateScore } = useComic()
 
-// 状态
 const comic = ref(null)
 const isLoading = ref(true)
 const showActionSheet = ref(false)
 const showEditPopup = ref(false)
 const showTagPopup = ref(false)
+const showListPopup = ref(false)
 const showPreview = ref(false)
 const previewIndex = ref(0)
 const allTags = ref([])
 const selectedTagIds = ref([])
+const selectedListIds = ref([])
 const scoreValue = ref(6)
+const favoriteLoading = ref(false)
 
 const editForm = ref({
   title: '',
@@ -229,7 +292,6 @@ const actions = [
   { name: '绑定标签', value: 'tags' }
 ]
 
-// 计算属性
 const coverUrl = computed(() => {
   return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
 })
@@ -242,6 +304,17 @@ const progressPercent = computed(() => {
 const previewImages = computed(() => {
   if (!comic.value || !comic.value.preview_pages) return []
   return comic.value.preview_pages.map(page => getImageUrl(comic.value.id, page))
+})
+
+const isFavorited = computed(() => {
+  return listStore.isFavorited(comic.value)
+})
+
+const customLists = computed(() => listStore.lists || [])
+
+const isRead = computed(() => {
+  if (!comic.value) return false
+  return comic.value.current_page >= comic.value.total_page
 })
 
 // 方法
@@ -368,15 +441,135 @@ async function saveTags() {
   }
 }
 
+async function handleToggleFavorite() {
+  favoriteLoading.value = true
+  try {
+    const result = await listStore.toggleFavorite(comic.value.id)
+    if (result !== null) {
+      const FAVORITES_LIST_ID = 'list_favorites'
+      if (result) {
+        if (!comic.value.list_ids) {
+          comic.value.list_ids = []
+        }
+        if (!comic.value.list_ids.includes(FAVORITES_LIST_ID)) {
+          comic.value.list_ids.push(FAVORITES_LIST_ID)
+        }
+      } else {
+        if (comic.value.list_ids) {
+          comic.value.list_ids = comic.value.list_ids.filter(id => id !== FAVORITES_LIST_ID)
+        }
+      }
+      comicStore.clearCache('detail', comic.value.id)
+    }
+  } finally {
+    favoriteLoading.value = false
+  }
+}
+
+function toggleListItem(listId) {
+  const index = selectedListIds.value.indexOf(listId)
+  if (index > -1) {
+    selectedListIds.value.splice(index, 1)
+  } else {
+    selectedListIds.value.push(listId)
+  }
+}
+
+async function addToLists() {
+  console.log('[Detail] addToLists called')
+  console.log('[Detail] selectedListIds:', selectedListIds.value)
+  console.log('[Detail] comic.value:', comic.value)
+  
+  if (selectedListIds.value.length === 0 && (!comic.value.list_ids || comic.value.list_ids.length === 0)) {
+    showFailToast('请选择清单')
+    return
+  }
+  
+  try {
+    const currentListIds = comic.value.list_ids || []
+    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
+    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
+    
+    console.log('[Detail] currentListIds:', currentListIds)
+    console.log('[Detail] toAdd:', toAdd)
+    console.log('[Detail] toRemove:', toRemove)
+    
+    let addCount = 0
+    let removeCount = 0
+    
+    for (const listId of toAdd) {
+      const result = await listStore.bindComics(listId, [comic.value.id])
+      if (result) addCount++
+    }
+    
+    for (const listId of toRemove) {
+      const result = await listStore.removeComics(listId, [comic.value.id])
+      if (result) removeCount++
+    }
+    
+    console.log('[Detail] addCount:', addCount, 'removeCount:', removeCount)
+    
+    if (addCount > 0 || removeCount > 0) {
+      showListPopup.value = false
+      selectedListIds.value = []
+      await fetchComicDetail()
+      
+      let message = ''
+      if (addCount > 0) message += `加入${addCount}个清单 `
+      if (removeCount > 0) message += `移出${removeCount}个清单`
+      showSuccessToast(message.trim())
+    } else if (toAdd.length === 0 && toRemove.length === 0) {
+      showSuccessToast('清单无变化')
+      showListPopup.value = false
+    }
+  } catch (error) {
+    console.error('[Detail] addToLists error:', error)
+    showFailToast('操作失败')
+  }
+}
+
+async function markAsRead() {
+  try {
+    if (isRead.value) {
+      await comicStore.saveProgress(comic.value.id, 1)
+      comic.value.current_page = 1
+      showSuccessToast('已标记为未读')
+    } else {
+      await comicStore.saveProgress(comic.value.id, comic.value.total_page)
+      comic.value.current_page = comic.value.total_page
+      showSuccessToast('已标记为已读')
+    }
+  } catch (error) {
+    showFailToast('标记失败')
+  }
+}
+
 onMounted(async () => {
   console.log('[Detail] onMounted, id:', route.params.id)
   await fetchComicDetail()
   await fetchAllTags()
+  await listStore.fetchLists()
 })
 
 watch(() => route.params.id, async (newId) => {
   console.log('[Detail] watch id:', newId)
   await fetchComicDetail()
+})
+
+watch(showListPopup, async (val) => {
+  console.log('[Detail] showListPopup changed:', val)
+  if (val) {
+    if (listStore.lists.length === 0) {
+      console.log('[Detail] lists empty, fetching...')
+      await listStore.fetchLists()
+    }
+    console.log('[Detail] listStore.lists:', listStore.lists)
+    console.log('[Detail] customLists:', customLists.value)
+    if (comic.value) {
+      selectedListIds.value = [...(comic.value.list_ids || [])]
+      console.log('[Detail] selectedListIds initialized:', selectedListIds.value)
+    }
+  }
 })
 </script>
 
@@ -565,12 +758,24 @@ watch(() => route.params.id, async (newId) => {
   text-align: center;
 }
 
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.action-buttons .van-button {
+  min-width: 80px;
+}
+
 .read-button {
   width: 100%;
 }
 
 .edit-popup,
-.tag-popup {
+.tag-popup,
+.list-popup {
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -581,9 +786,14 @@ watch(() => route.params.id, async (newId) => {
   overflow-y: auto;
 }
 
-.tag-count {
+.tag-count,
+.list-count {
   font-size: 12px;
   color: #999;
   margin-left: 4px;
+}
+
+.list-action {
+  padding: 16px;
 }
 </style>

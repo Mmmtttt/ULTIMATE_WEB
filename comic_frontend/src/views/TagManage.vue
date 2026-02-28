@@ -212,7 +212,7 @@ const fetchComicList = async () => {
   try {
     const response = await comicStore.fetchComics()
     if (response) {
-      comicList.value = response.data || []
+      comicList.value = response
     }
   } catch (error) {
     console.error('获取漫画列表失败:', error)

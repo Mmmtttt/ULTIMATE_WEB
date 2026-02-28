@@ -151,6 +151,15 @@
               <van-icon v-if="currentSortType === 'read_time'" name="success" color="#1989fa" />
             </template>
           </van-cell>
+          <van-cell 
+            title="已读/未读（未读优先）" 
+            clickable 
+            @click="setSortType('read_status')"
+          >
+            <template #right-icon>
+              <van-icon v-if="currentSortType === 'read_status'" name="success" color="#1989fa" />
+            </template>
+          </van-cell>
         </van-cell-group>
       </div>
     </van-popup>
@@ -205,7 +214,8 @@ const sortLabel = computed(() => {
   const labels = {
     'create_time': '按添加时间',
     'score': '按评分',
-    'read_time': '按阅读时间'
+    'read_time': '按阅读时间',
+    'read_status': '已读/未读'
   }
   return labels[currentSortType.value] || ''
 })

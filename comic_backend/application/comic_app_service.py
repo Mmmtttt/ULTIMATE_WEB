@@ -40,6 +40,11 @@ class ComicAppService:
                 comics = sorted(comics, key=lambda c: c.score or 0, reverse=True)
             elif sort_type == "read_time":
                 comics = sorted(comics, key=lambda c: c.last_read_time or "", reverse=True)
+            elif sort_type == "read_status":
+                def read_status_sort_key(c):
+                    is_read = c.current_page >= c.total_page if c.total_page > 0 else False
+                    return (is_read, -(c.score or 0))
+                comics = sorted(comics, key=read_status_sort_key)
             
             comic_list = []
             for c in comics:

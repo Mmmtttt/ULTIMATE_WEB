@@ -6,8 +6,8 @@
       <van-grid :column-num="4" :border="false">
         <van-grid-item icon="photo-o" :text="comicCount + ' 漫画'" />
         <van-grid-item icon="bookmark-o" :text="readCount + ' 已读'" />
-        <van-grid-item icon="tag-o" :text="tagCount + ' 标签'" />
-        <van-grid-item icon="list-switch-o" :text="listCount + ' 清单'" />
+        <van-grid-item icon="label-o" :text="tagCount + ' 标签'" />
+        <van-grid-item icon="bars" :text="listCount + ' 清单'" />
       </van-grid>
     </div>
     

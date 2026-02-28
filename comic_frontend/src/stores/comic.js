@@ -359,6 +359,15 @@ export const useComicStore = defineStore('comic', () => {
     currentComic.value = null
   }
   
+  /**
+   * 清除缓存
+   * @param {string} type - 缓存类型
+   * @param {string} id - 漫画ID
+   */
+  function clearCache(type = 'all', id = null) {
+    cacheStore.clearCache(type, id)
+  }
+  
   return {
     // State
     comics,
@@ -389,6 +398,7 @@ export const useComicStore = defineStore('comic', () => {
     sortComics,
     clearFilter,
     setCurrentComic,
-    clearCurrentComic
+    clearCurrentComic,
+    clearCache
   }
 })

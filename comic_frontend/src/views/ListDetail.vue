@@ -52,6 +52,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useListStore } from '@/stores'
+import { buildCoverUrl } from '@/api/image'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
@@ -65,9 +66,7 @@ const listId = computed(() => route.params.id)
 const comics = computed(() => listInfo.value?.comics || [])
 
 function getCoverUrl(coverPath) {
-  if (!coverPath) return ''
-  if (coverPath.startsWith('http')) return coverPath
-  return `/api${coverPath}`
+  return buildCoverUrl(coverPath)
 }
 
 async function loadDetail() {

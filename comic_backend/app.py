@@ -2,6 +2,7 @@ from flask import Flask
 from flask_cors import CORS
 from api import register_blueprints
 from infrastructure.logger import app_logger
+from application.list_app_service import ListAppService
 import json
 import os
 
@@ -45,6 +46,15 @@ def health():
     return success_response({"status": "ok"})
 
 
+def init_default_data():
+    try:
+        list_service = ListAppService()
+        list_service.ensure_default_list()
+        app_logger.info("默认清单初始化完成")
+    except Exception as e:
+        app_logger.error(f"初始化默认清单失败: {e}")
+
+
 def success_response(data=None):
     return {
         "code": 200,
@@ -54,5 +64,6 @@ def success_response(data=None):
 
 
 if __name__ == '__main__':
+    init_default_data()
     app_logger.info(f"启动服务器，地址: {HOST}:{PORT}")
     app.run(host=HOST, port=PORT, debug=DEBUG)
