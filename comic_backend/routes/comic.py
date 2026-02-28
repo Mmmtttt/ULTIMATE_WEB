@@ -183,10 +183,15 @@ def comic_progress():
 def get_tags():
     """获取标签列表"""
     try:
-        db_data = json_handler.read_json()
-        tags = db_data.get('tags', [])
-        app_logger.info(f"获取标签列表成功，共 {len(tags)} 个标签")
-        return success_response(tags)
+        from services.tag_service import TagService
+        tag_service = TagService()
+        result = tag_service.get_tag_list()
+        
+        if result.success:
+            app_logger.info(f"获取标签列表成功，共 {len(result.data)} 个标签")
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
     except Exception as e:
         error_logger.error(f"获取标签列表失败: {e}")
         return error_response(500, "服务器内部错误")
