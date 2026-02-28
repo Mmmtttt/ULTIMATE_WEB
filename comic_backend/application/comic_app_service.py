@@ -25,6 +25,7 @@ class ComicAppService:
         max_score: float = None
     ) -> ServiceResult:
         try:
+            app_logger.info(f"[get_comic_list] sort_type={sort_type}, min_score={min_score}, max_score={max_score}")
             comics = self._comic_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -33,6 +34,10 @@ class ComicAppService:
                 comics = [c for c in comics if c.score is not None and c.score >= min_score]
             if max_score is not None:
                 comics = [c for c in comics if c.score is not None and c.score <= max_score]
+            
+            app_logger.info(f"[get_comic_list] 排序前漫画数量: {len(comics)}")
+            if sort_type:
+                app_logger.info(f"[get_comic_list] 执行排序: {sort_type}")
             
             if sort_type == "create_time":
                 comics = sorted(comics, key=lambda c: c.create_time or "", reverse=True)
@@ -45,6 +50,8 @@ class ComicAppService:
                     is_read = c.current_page >= c.total_page if c.total_page > 0 else False
                     return (is_read, -(c.score or 0))
                 comics = sorted(comics, key=read_status_sort_key)
+            
+            app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
             
             comic_list = []
             for c in comics:

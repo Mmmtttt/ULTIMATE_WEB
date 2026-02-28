@@ -92,9 +92,12 @@ export const useComicStore = defineStore('comic', () => {
    * @returns {Array} 漫画列表
    */
   async function fetchComics(forceRefresh = false, options = {}) {
+    console.log('[Comic] fetchComics called, forceRefresh:', forceRefresh, 'options:', options)
+    
     if (!forceRefresh && Object.keys(options).length === 0) {
       const cached = cacheStore.getListCache()
       if (cached) {
+        console.log('[Comic] 使用缓存数据')
         comics.value = cached
         return cached
       }
@@ -104,8 +107,9 @@ export const useComicStore = defineStore('comic', () => {
     error.value = null
     
     try {
-      console.log('[Comic] 获取漫画列表', options)
+      console.log('[Comic] 获取漫画列表, options:', options)
       const response = await comicApi.getList(options)
+      console.log('[Comic] API响应:', response)
       comics.value = response.data || []
       
       if (Object.keys(options).length === 0) {

@@ -257,11 +257,13 @@ function applyFilterAndClose() {
 async function setSortType(sortType) {
   currentSortType.value = sortType
   showSortPanel.value = false
-  await comicStore.fetchComics(true, { sortType })
+  comicStore.clearFilter()
+  await comicStore.fetchComics(true, { sort_type: sortType })
 }
 
 function clearSort() {
   currentSortType.value = ''
+  comicStore.clearFilter()
   comicStore.fetchComics(true)
 }
 
