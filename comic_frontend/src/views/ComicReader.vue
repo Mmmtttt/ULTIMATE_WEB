@@ -146,9 +146,8 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { useComicStore } from '../store/modules/comic'
-import { comicApi } from '../api/comic'
-import apiConfig from '../config/api'
+import { useComicStore } from '@/stores'
+import { buildImageUrl } from '@/api/image'
 
 const route = useRoute()
 const comicStore = useComicStore()
@@ -249,7 +248,7 @@ const processLoadQueue = () => {
     loadingPages.value.add(pageNum)
     
     const img = new Image()
-    const imageUrl = getImageUrl(comicId.value, pageNum)
+    const imageUrl = buildImageUrl(comicId.value, pageNum)
     
     img.onload = () => {
       loadedPages.value.add(pageNum)
@@ -325,11 +324,6 @@ const isMobile = computed(() => {
   return false
 })
 
-// 获取图片URL
-const getImageUrl = (comicId, pageNum) => {
-  return apiConfig.getImageUrl(comicId, pageNum)
-}
-
 // 获取容器样式（电脑端缩放时应用到整个容器）
 const getContainerStyle = computed(() => {
   if (isMobile.value || zoomLevel.value === 1) {
@@ -342,11 +336,6 @@ const getContainerStyle = computed(() => {
   }
 })
 
-// 获取图片样式
-const getImageStyle = (index) => {
-  return {}
-}
-
 // 方法
 const loadImages = async () => {
   loading.value = true
@@ -354,7 +343,7 @@ const loadImages = async () => {
   try {
     const imageData = await comicStore.fetchImages(comicId.value)
     if (imageData) {
-      images.value = imageData.map((path, index) => getImageUrl(comicId.value, index + 1))
+      images.value = imageData.map((path, index) => buildImageUrl(comicId.value, index + 1))
       totalPage.value = images.value.length
     }
     

@@ -35,8 +35,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useComicStore } from '../store/modules/comic'
-import { comicApi } from '../api/comic'
+import { useComicStore } from '@/stores'
 import { showSuccessToast, showFailToast } from 'vant'
 
 const active = ref(1)
@@ -56,7 +55,7 @@ const importComic = async () => {
   importing.value = true
   
   try {
-    const response = await comicApi.init({
+    const response = await comicStore.initComic({
       comic_id: comicId.value,
       title: comicTitle.value || comicId.value
     })

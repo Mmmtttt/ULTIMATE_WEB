@@ -15,7 +15,7 @@
     <div v-else class="detail-content">
       <div class="cover-section">
         <van-image 
-          :src="getCoverUrl(comic.cover_path)" 
+          :src="coverUrl" 
           fit="cover" 
           class="cover" 
           lazy-load
@@ -29,7 +29,7 @@
           <div class="stats">
             <span class="stat-item">总页数: {{ comic.total_page }}</span>
             <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
-            <span class="stat-item">{{ Math.round((comic.current_page / comic.total_page) * 100) }}%</span>
+            <span class="stat-item">{{ progressPercent }}%</span>
           </div>
           
           <div class="score-section">
@@ -91,7 +91,7 @@
             v-for="(page, index) in comic.preview_pages" 
             :key="index" 
             class="preview-item" 
-            @click="goToPage(page)"
+            @click="previewImage(index)"
           >
             <van-image 
               :src="getImageUrl(comic.id, page)" 
@@ -103,6 +103,16 @@
           </div>
         </div>
       </div>
+      
+      <!-- 图片预览 -->
+      <van-image-preview
+        v-model:show="showPreview"
+        :images="previewImages"
+        :start-position="previewIndex"
+        :closeable="true"
+        close-icon="close"
+        @change="onPreviewChange"
+      />
       
       <div class="action-section">
         <van-button type="primary" size="large" @click="startReading" class="read-button">
@@ -185,19 +195,27 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useComicStore } from '../store/modules/comic'
-import { comicApi } from '../api/comic'
-import apiConfig from '../config/api'
+import { useComicStore, useTagStore } from '@/stores'
+import { useComic } from '@/composables'
+import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
 const router = useRouter()
 const comicStore = useComicStore()
+const tagStore = useTagStore()
+
+// 使用漫画组合函数
+const { updateScore } = useComic()
+
+// 状态
 const comic = ref(null)
 const isLoading = ref(true)
 const showActionSheet = ref(false)
 const showEditPopup = ref(false)
 const showTagPopup = ref(false)
+const showPreview = ref(false)
+const previewIndex = ref(0)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const scoreValue = ref(6)
@@ -213,15 +231,27 @@ const actions = [
   { name: '绑定标签', value: 'tags' }
 ]
 
-const getCoverUrl = (coverPath) => {
-  return apiConfig.getCoverUrl(coverPath)
+// 计算属性
+const coverUrl = computed(() => {
+  return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
+})
+
+const progressPercent = computed(() => {
+  if (!comic.value || !comic.value.total_page || comic.value.total_page === 0) return 0
+  return Math.round((comic.value.current_page / comic.value.total_page) * 100)
+})
+
+const previewImages = computed(() => {
+  if (!comic.value || !comic.value.preview_pages) return []
+  return comic.value.preview_pages.map(page => getImageUrl(comic.value.id, page))
+})
+
+// 方法
+function getImageUrl(comicId, pageNum) {
+  return buildImageUrl(comicId, pageNum)
 }
 
-const getImageUrl = (comicId, pageNum) => {
-  return apiConfig.getImageUrl(comicId, pageNum)
-}
-
-const fetchComicDetail = async () => {
+async function fetchComicDetail() {
   const comicId = route.params.id
   isLoading.value = true
   
@@ -244,9 +274,9 @@ const fetchComicDetail = async () => {
   }
 }
 
-const fetchAllTags = async () => {
+async function fetchAllTags() {
   try {
-    const tags = await comicStore.fetchTags()
+    const tags = await tagStore.fetchTags()
     if (tags) {
       allTags.value = tags
     }
@@ -255,34 +285,39 @@ const fetchAllTags = async () => {
   }
 }
 
-const startReading = () => {
+function startReading() {
   router.push(`/reader/${comic.value.id}`)
 }
 
-const goToPage = (page) => {
+function goToPage(page) {
   router.push(`/reader/${comic.value.id}?page=${page}`)
 }
 
-const filterByTag = (tagId) => {
+function previewImage(index) {
+  previewIndex.value = index
+  showPreview.value = true
+}
+
+function onPreviewChange(index) {
+  previewIndex.value = index
+}
+
+function filterByTag(tagId) {
   router.push(`/?tagId=${tagId}`)
 }
 
-const handleScoreChange = async (value) => {
+async function handleScoreChange(value) {
   try {
-    const response = await comicApi.updateScore(comic.value.id, value)
-    if (response.code === 200) {
-      comic.value.score = value
-      showSuccessToast('评分保存成功')
-    } else {
-      showFailToast(response.msg || '评分保存失败')
-    }
+    await updateScore(comic.value.id, value)
+    comic.value.score = value
+    showSuccessToast('评分保存成功')
   } catch (error) {
     console.error('保存评分失败:', error)
     showFailToast('评分保存失败')
   }
 }
 
-const onActionSelect = (action) => {
+function onActionSelect(action) {
   showActionSheet.value = false
   if (action.value === 'edit') {
     showEditPopup.value = true
@@ -291,9 +326,9 @@ const onActionSelect = (action) => {
   }
 }
 
-const saveEdit = async () => {
+async function saveEdit() {
   try {
-    const response = await comicApi.editComic(comic.value.id, editForm.value)
+    const response = await comicStore.editComic(comic.value.id, editForm.value)
     if (response.code === 200) {
       comic.value.title = editForm.value.title
       comic.value.author = editForm.value.author
@@ -309,7 +344,7 @@ const saveEdit = async () => {
   }
 }
 
-const toggleTag = (tagId) => {
+function toggleTag(tagId) {
   const index = selectedTagIds.value.indexOf(tagId)
   if (index > -1) {
     selectedTagIds.value.splice(index, 1)
@@ -318,9 +353,9 @@ const toggleTag = (tagId) => {
   }
 }
 
-const saveTags = async () => {
+async function saveTags() {
   try {
-    const response = await comicApi.bindTags(comic.value.id, selectedTagIds.value)
+    const response = await comicStore.bindTags(comic.value.id, selectedTagIds.value)
     if (response.code === 200) {
       comicStore.clearCache('detail', comic.value.id)
       await fetchComicDetail()
@@ -480,8 +515,26 @@ watch(() => route.params.id, async (newId) => {
 
 .preview-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+@media (min-width: 480px) {
+  .preview-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 768px) {
+  .preview-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .preview-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
 }
 
 .preview-item {
@@ -498,39 +551,24 @@ watch(() => route.params.id, async (newId) => {
   display: block;
 }
 
-.preview-image :deep(.van-image__img) {
-  width: 100%;
-  height: auto;
-  object-fit: contain;
-}
-
 .preview-page {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: 4px;
+  left: 4px;
   background: rgba(0, 0, 0, 0.7);
   color: #fff;
   font-size: 10px;
-  padding: 4px;
-  text-align: center;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .action-section {
   padding: 16px;
-  position: sticky;
-  bottom: 0;
-  background: #fff;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+  text-align: center;
 }
 
 .read-button {
-  border-radius: 24px;
-}
-
-.empty {
-  padding: 40px 0;
-  text-align: center;
+  width: 100%;
 }
 
 .edit-popup,
@@ -543,39 +581,11 @@ watch(() => route.params.id, async (newId) => {
 .tag-select-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 0;
 }
 
 .tag-count {
   font-size: 12px;
   color: #999;
-  margin-left: 8px;
-}
-
-@media (max-width: 480px) {
-  .cover-section {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
-  
-  .cover {
-    width: 160px;
-    height: 200px;
-    margin-bottom: 16px;
-  }
-  
-  .info {
-    margin-left: 0;
-    width: 100%;
-  }
-  
-  .stats {
-    justify-content: center;
-  }
-  
-  .preview-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
+  margin-left: 4px;
 }
 </style>
