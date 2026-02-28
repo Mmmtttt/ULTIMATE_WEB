@@ -46,10 +46,21 @@ export const SCORE_RANGE = {
 
 // 缓存过期时间（毫秒）
 export const CACHE_EXPIRY = {
-  COMIC_LIST: 5 * 60 * 1000,    // 5分钟
-  COMIC_DETAIL: 5 * 60 * 1000,  // 5分钟
-  TAGS: 10 * 60 * 1000,         // 10分钟
-  IMAGES: 30 * 60 * 1000        // 30分钟
+  COMIC_LIST: getCacheExpiry(),    // 动态获取
+  COMIC_DETAIL: getCacheExpiry(),  // 动态获取
+  TAGS: getCacheExpiry() * 2,      // 2倍时间
+  IMAGES: getCacheExpiry() * 6     // 6倍时间
+}
+
+// 获取缓存过期时间（支持用户自定义）
+function getCacheExpiry() {
+  if (typeof window !== 'undefined') {
+    const minutes = parseInt(localStorage.getItem('cache_expiry_minutes'), 10)
+    if (minutes && minutes > 0) {
+      return minutes * 60 * 1000
+    }
+  }
+  return 30 * 60 * 1000 // 默认30分钟
 }
 
 // 本地存储键名

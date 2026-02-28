@@ -281,10 +281,11 @@ const preloadImages = (startPage) => {
   processLoadQueue()
 }
 
-// 获取图片URL（只在已加载时返回真实URL）
+// 获取图片URL（只返回已加载或在加载队列中的图片URL）
 const getImageSrc = (index) => {
   const pageNum = index + 1
-  if (loadedPages.value.has(pageNum)) {
+  // 只返回已加载或正在加载的图片URL
+  if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
     return images.value[index] || ''
   }
   return ''
@@ -341,22 +342,26 @@ const loadImages = async () => {
   loading.value = true
   error.value = false
   try {
-    const imageData = await comicStore.fetchImages(comicId.value)
-    if (imageData) {
-      images.value = imageData.map((path, index) => buildImageUrl(comicId.value, index + 1))
-      totalPage.value = images.value.length
-    }
-    
+    // 先获取详情，确定当前页
     const comic = await comicStore.fetchComicDetail(comicId.value)
     if (comic && comic.current_page > 1) {
       currentPage.value = comic.current_page
       sliderPage.value = comic.current_page
     }
     
+    // 再获取图片列表
+    const imageData = await comicStore.fetchImages(comicId.value)
+    if (imageData) {
+      images.value = imageData.map((path, index) => buildImageUrl(comicId.value, index + 1))
+      totalPage.value = images.value.length
+      
+      // 立即开始预加载，按正确顺序加载图片
+      preloadImages(currentPage.value)
+    }
+    
     await nextTick()
     setTimeout(() => {
       jumpToPage(currentPage.value, false)
-      preloadImages(currentPage.value)
     }, 100)
   } catch (err) {
     error.value = true
@@ -554,6 +559,9 @@ const endZoomDrag = () => {
 
 // 全屏切换
 const toggleFullscreen = () => {
+  // 保存当前进度
+  const savedPage = currentPage.value
+  
   if (!document.fullscreenElement) {
     document.documentElement.requestFullscreen().catch(err => {
       console.error('全屏失败:', err)
@@ -561,6 +569,19 @@ const toggleFullscreen = () => {
   } else {
     document.exitFullscreen()
   }
+  
+  // 全屏切换后恢复进度
+  setTimeout(() => {
+    jumpToPage(savedPage, false)
+  }, 100)
+}
+
+// 全屏变化处理
+const handleFullscreenChange = () => {
+  // 全屏变化后恢复进度
+  setTimeout(() => {
+    jumpToPage(currentPage.value, false)
+  }, 100)
 }
 
 // 手机端触摸拖拽
@@ -669,11 +690,14 @@ onMounted(() => {
   if (readerContent.value) {
     readerContent.value.addEventListener('dblclick', handleDoubleClick)
   }
+  // 全屏变化监听
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
 })
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', handleZoomDrag)
   document.removeEventListener('mouseup', endZoomDrag)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
   if (readerContent.value) {
     readerContent.value.removeEventListener('dblclick', handleDoubleClick)
   }

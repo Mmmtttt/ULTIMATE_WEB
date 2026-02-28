@@ -93,11 +93,9 @@
             class="preview-item" 
             @click="previewImage(index)"
           >
-            <van-image 
+            <img 
               :src="getImageUrl(comic.id, page)" 
-              fit="contain" 
               class="preview-image"
-              lazy-load
             />
             <span class="preview-page">第{{ page }}页</span>
           </div>
