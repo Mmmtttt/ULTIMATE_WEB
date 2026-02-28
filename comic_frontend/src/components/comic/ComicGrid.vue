@@ -10,10 +10,6 @@
         :comic="comic"
         :selected="isSelected(comic.id)"
         :selectable="selectable"
-        :show-tags="showTags"
-        :show-progress="showProgress"
-        :max-tag-count="maxTagCount"
-        :tag-name-map="tagNameMap"
         @click="handleCardClick"
         @toggle-select="handleToggleSelect"
       />
@@ -53,22 +49,6 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  showTags: {
-    type: Boolean,
-    default: true
-  },
-  showProgress: {
-    type: Boolean,
-    default: true
-  },
-  maxTagCount: {
-    type: Number,
-    default: 3
-  },
-  tagNameMap: {
-    type: Object,
-    default: () => ({})
-  },
   loading: {
     type: Boolean,
     default: false
@@ -79,7 +59,7 @@ const props = defineProps({
   },
   gap: {
     type: Number,
-    default: 16
+    default: 12
   },
   emptyTitle: {
     type: String,
@@ -97,7 +77,7 @@ const props = defineProps({
 
 const emit = defineEmits(['card-click', 'toggle-select'])
 
-// 网格样式
+// 网格样式 - 与原 Home.vue 一致
 const gridStyle = computed(() => {
   if (props.columns > 0) {
     return {
@@ -107,10 +87,10 @@ const gridStyle = computed(() => {
     }
   }
   
-  // 响应式布局
+  // 响应式布局 - 与原 Home.vue 一致
   return {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
     gap: `${props.gap}px`
   }
 })
@@ -133,7 +113,9 @@ function handleToggleSelect(id) {
 
 <style scoped>
 .comic-grid {
+  padding: 10px;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .grid-container {
@@ -144,19 +126,5 @@ function handleToggleSelect(id) {
   display: flex;
   justify-content: center;
   padding: 30px;
-}
-
-@media (max-width: 768px) {
-  .grid-container {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
-    gap: 12px !important;
-  }
-}
-
-@media (max-width: 480px) {
-  .grid-container {
-    grid-template-columns: repeat(2, 1fr) !important;
-    gap: 10px !important;
-  }
 }
 </style>

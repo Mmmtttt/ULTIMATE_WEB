@@ -144,7 +144,7 @@ export function useReader() {
       }
       
       comic.value = detail
-      totalPage.value = detail.total_pages || 0
+      totalPage.value = detail.total_page || 0
       
       // 获取图片列表
       const imageList = await comicStore.fetchImages(comicId)

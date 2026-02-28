@@ -25,6 +25,11 @@ const backendConfig = serverConfig.backend || {}
 
 export default defineConfig({
   plugins: [vue()],
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src')
+    }
+  },
   server: {
     host: frontendConfig.host || '0.0.0.0',
     port: frontendConfig.port || 5173,

@@ -218,8 +218,8 @@ export function useComic() {
    * @param {Object} comic - 漫画对象
    */
   function getProgressPercent(comic) {
-    if (!comic || !comic.total_pages || comic.total_pages === 0) return 0
-    return Math.round((comic.current_page / comic.total_pages) * 100)
+    if (!comic || !comic.total_page || comic.total_page === 0) return 0
+    return Math.round((comic.current_page / comic.total_page) * 100)
   }
   
   /**
@@ -229,7 +229,7 @@ export function useComic() {
   function formatProgress(comic) {
     if (!comic) return '0/0'
     const current = comic.current_page || 0
-    const total = comic.total_pages || 0
+    const total = comic.total_page || 0
     return `${current}/${total}`
   }
   
@@ -279,7 +279,7 @@ export function useComic() {
    * @param {Object} comic - 漫画对象
    */
   function isCompleted(comic) {
-    return comic && comic.current_page >= comic.total_pages
+    return comic && comic.current_page >= comic.total_page
   }
   
   return {
