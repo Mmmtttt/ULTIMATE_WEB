@@ -152,17 +152,26 @@ class ListAppService:
     
     def bind_comics(self, list_id: str, comic_ids: ListType[str]) -> ServiceResult:
         try:
+            app_logger.info(f"[bind_comics] 开始绑定: list_id={list_id}, comic_ids={comic_ids}")
+            
             lst = self._list_repo.get_by_id(list_id)
             if not lst:
+                app_logger.error(f"[bind_comics] 清单不存在: {list_id}")
                 return ServiceResult.error("清单不存在")
             
             updated_count = 0
             for comic_id in comic_ids:
                 comic = self._comic_repo.get_by_id(comic_id)
                 if comic:
+                    app_logger.info(f"[bind_comics] 找到漫画: {comic_id}, 当前list_ids={comic.list_ids}")
                     comic.add_to_list(list_id)
-                    if self._comic_repo.save(comic):
+                    app_logger.info(f"[bind_comics] 添加后list_ids={comic.list_ids}")
+                    save_result = self._comic_repo.save(comic)
+                    app_logger.info(f"[bind_comics] 保存结果: {save_result}")
+                    if save_result:
                         updated_count += 1
+                else:
+                    app_logger.warning(f"[bind_comics] 漫画不存在: {comic_id}")
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")

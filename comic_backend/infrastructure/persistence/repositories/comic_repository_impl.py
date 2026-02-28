@@ -22,13 +22,16 @@ class ComicJsonRepository(ComicRepository):
     
     def save(self, comic: Comic) -> bool:
         try:
+            app_logger.info(f"[ComicRepo.save] 保存漫画: id={comic.id}, list_ids={comic.list_ids}")
             data = self._storage.read()
             comics = data.get("comics", [])
             
             index = next((i for i, c in enumerate(comics) if c["id"] == comic.id), -1)
+            app_logger.info(f"[ComicRepo.save] 找到索引: {index}")
             
             if index >= 0:
                 comics[index] = comic.to_dict()
+                app_logger.info(f"[ComicRepo.save] 更新后的list_ids: {comics[index]['list_ids']}")
             else:
                 comics.append(comic.to_dict())
             
@@ -36,7 +39,9 @@ class ComicJsonRepository(ComicRepository):
             data["total_comics"] = len(comics)
             data["last_updated"] = get_current_date()
             
-            return self._storage.write(data)
+            result = self._storage.write(data)
+            app_logger.info(f"[ComicRepo.save] 写入结果: {result}")
+            return result
         except Exception as e:
             error_logger.error(f"保存漫画失败: {e}")
             return False

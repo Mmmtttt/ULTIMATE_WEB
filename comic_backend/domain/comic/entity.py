@@ -31,8 +31,8 @@ class Comic:
             total_page=data.get("total_page", 0),
             current_page=data.get("current_page", 1),
             score=data.get("score"),
-            tag_ids=data.get("tag_ids", []),
-            list_ids=data.get("list_ids", []),
+            tag_ids=data.get("tag_ids") or [],
+            list_ids=data.get("list_ids") or [],
             create_time=data.get("create_time", ""),
             last_read_time=data.get("last_read_time", "")
         )

@@ -1068,3 +1068,6 @@
 [2026-03-01 02:23:31,158] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_8a35e0361f1246b9a23ec2c2793cd957.tmp' -> 'data/meta_data/comics_database.json'
 [2026-03-01 02:23:31,510] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_66cc54924f054ca1b38988dbbd956114.tmp' -> 'data/meta_data/comics_database.json'
 [2026-03-01 02:23:48,607] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_647a9f93a7d74e8daf2d3892c9dfe220.tmp' -> 'data/meta_data/comics_database.json'
+[2026-03-01 03:19:40,451] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_fd8d5a9fa02f43eda09c73efafa1c321.tmp' -> 'data/meta_data/comics_database.json'
+[2026-03-01 03:19:40,691] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_317706f00bae47ac8733397e0dbe128f.tmp' -> 'data/meta_data/comics_database.json'
+[2026-03-01 03:28:10,242] [ERROR] [json_storage] 权限错误 (尝试 1/3): [WinError 5] 拒绝访问。: 'data/meta_data\\comic_db_520a5b97931d434186a472678dc5ef65.tmp' -> 'data/meta_data/comics_database.json'

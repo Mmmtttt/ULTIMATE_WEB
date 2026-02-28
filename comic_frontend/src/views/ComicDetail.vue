@@ -498,12 +498,16 @@ async function addToLists() {
     let removeCount = 0
     
     for (const listId of toAdd) {
+      console.log('[Detail] 绑定清单:', listId, '漫画ID:', comic.value.id)
       const result = await listStore.bindComics(listId, [comic.value.id])
+      console.log('[Detail] 绑定结果:', result)
       if (result) addCount++
     }
     
     for (const listId of toRemove) {
+      console.log('[Detail] 移除清单:', listId, '漫画ID:', comic.value.id)
       const result = await listStore.removeComics(listId, [comic.value.id])
+      console.log('[Detail] 移除结果:', result)
       if (result) removeCount++
     }
     
@@ -512,7 +516,9 @@ async function addToLists() {
     if (addCount > 0 || removeCount > 0) {
       showListPopup.value = false
       selectedListIds.value = []
+      comicStore.clearCache('detail', comic.value.id)
       await fetchComicDetail()
+      await listStore.fetchLists()
       
       let message = ''
       if (addCount > 0) message += `加入${addCount}个清单 `
@@ -559,10 +565,7 @@ watch(() => route.params.id, async (newId) => {
 watch(showListPopup, async (val) => {
   console.log('[Detail] showListPopup changed:', val)
   if (val) {
-    if (listStore.lists.length === 0) {
-      console.log('[Detail] lists empty, fetching...')
-      await listStore.fetchLists()
-    }
+    await listStore.fetchLists()
     console.log('[Detail] listStore.lists:', listStore.lists)
     console.log('[Detail] customLists:', customLists.value)
     if (comic.value) {
