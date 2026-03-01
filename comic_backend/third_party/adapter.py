@@ -1,7 +1,6 @@
 import json
 import time
 from typing import Dict, List, Any, Optional, Tuple
-from infrastructure.logger import app_logger
 
 
 class MetaDataAdapter:
@@ -10,7 +9,6 @@ class MetaDataAdapter:
     def __init__(self, is_recommendation: bool = False, existing_tags: List[Dict] = None):
         self.is_recommendation = is_recommendation
         self.existing_tags = existing_tags or []
-        app_logger.info(f"[MetaDataAdapter] 初始化: is_recommendation={is_recommendation}, existing_tags数量={len(self.existing_tags)}")
 
     def parse_meta_data(self, meta_json: Dict[str, Any]) -> Dict[str, Any]:
         """解析元数据并转换为应用格式
@@ -49,20 +47,15 @@ class MetaDataAdapter:
         for tag in self.existing_tags:
             tag_name_to_id[tag["name"]] = tag["id"]
         
-        app_logger.info(f"[MetaDataAdapter] 现有标签映射: {tag_name_to_id}")
-        
         # 找出所有新标签
         all_new_tags = set()
         for album in albums:
             tags = album.get("tags", [])
             all_new_tags.update(tags)
         
-        app_logger.info(f"[MetaDataAdapter] 导入的标签: {all_new_tags}")
-        
         # 为新标签分配ID
         existing_ids = {tag["id"] for tag in self.existing_tags}
         new_tag_counter = 1
-        new_tags_created = []
         
         for tag_name in sorted(all_new_tags):
             if tag_name not in tag_name_to_id:
@@ -75,14 +68,11 @@ class MetaDataAdapter:
                 
                 tag_name_to_id[tag_name] = new_id
                 existing_ids.add(new_id)
-                new_tags_created.append({"id": new_id, "name": tag_name})
                 result["tags"].append({
                     "id": new_id,
                     "name": tag_name,
                     "create_time": time.strftime("%Y-%m-%dT%H:%M:%S")
                 })
-        
-        app_logger.info(f"[MetaDataAdapter] 新创建的标签: {new_tags_created}")
         
         # 转换漫画数据
         for album in albums:

@@ -1,6 +1,7 @@
 from typing import List, Optional
 from domain.tag import Tag, TagRepository
 from infrastructure.persistence.json_storage import JsonStorage
+from core.constants import RECOMMENDATION_JSON_FILE
 from infrastructure.logger import error_logger
 from core.utils import get_current_time, generate_id
 
@@ -79,3 +80,31 @@ class TagJsonRepository(TagRepository):
         if self.save(tag):
             return tag
         return None
+
+
+class RecommendationTagJsonRepository(TagJsonRepository):
+    """推荐页标签仓库 - 使用推荐页数据库"""
+    
+    def __init__(self):
+        super().__init__(storage=JsonStorage(RECOMMENDATION_JSON_FILE))
+    
+    def delete(self, tag_id: str) -> bool:
+        try:
+            data = self._storage.read()
+            tags = data.get("tags", [])
+            recommendations = data.get("recommendations", [])
+            
+            tags = [t for t in tags if t["id"] != tag_id]
+            
+            for rec in recommendations:
+                if tag_id in rec.get("tag_ids", []):
+                    rec["tag_ids"] = [t for t in rec.get("tag_ids", []) if t != tag_id]
+            
+            data["tags"] = tags
+            data["recommendations"] = recommendations
+            data["last_updated"] = get_current_time()
+            
+            return self._storage.write(data)
+        except Exception as e:
+            error_logger.error(f"删除推荐标签失败: {e}")
+            return False

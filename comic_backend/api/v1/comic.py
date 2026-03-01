@@ -876,14 +876,11 @@ def import_online():
         
         # 合并新标签到现有标签
         new_tags = converted_data.get("tags", [])
-        app_logger.info(f"[导入] 新标签数量: {len(new_tags)}, 标签列表: {new_tags}")
-        app_logger.info(f"[导入] 现有标签数量: {len(db_data.get('tags', []))}")
         existing_tag_ids = {t["id"] for t in db_data.get("tags", [])}
         for tag in new_tags:
             if tag["id"] not in existing_tag_ids:
                 db_data.setdefault("tags", []).append(tag)
                 existing_tag_ids.add(tag["id"])
-                app_logger.info(f"[导入] 添加新标签: {tag}")
         
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
