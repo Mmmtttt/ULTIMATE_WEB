@@ -852,11 +852,10 @@ def import_online():
                 for comic in new_comics:
                     try:
                         album_id = int(comic['id'])
-                        detail, success = download_album(album_id, show_progress=False)
+                        detail, success = download_album(album_id, show_progress=False, decode_images=True)
                         
                         if success:
                             downloaded_comics.append(comic['id'])
-                            # 更新本地页数
                             comic['total_page'] = detail.get('local_pages', comic['total_page'])
                         else:
                             failed_downloads.append(comic['id'])
