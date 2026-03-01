@@ -18,6 +18,7 @@ class Recommendation:
     list_ids: List[str] = field(default_factory=list)
     create_time: str = ""
     last_read_time: str = ""
+    is_deleted: bool = False
     
     @classmethod
     def from_dict(cls, data: dict) -> "Recommendation":
@@ -34,7 +35,8 @@ class Recommendation:
             tag_ids=data.get("tag_ids") or [],
             list_ids=data.get("list_ids") or [],
             create_time=data.get("create_time", ""),
-            last_read_time=data.get("last_read_time", "")
+            last_read_time=data.get("last_read_time", ""),
+            is_deleted=data.get("is_deleted", False)
         )
     
     def to_dict(self) -> dict:
@@ -51,7 +53,8 @@ class Recommendation:
             "tag_ids": self.tag_ids,
             "list_ids": self.list_ids,
             "create_time": self.create_time,
-            "last_read_time": self.last_read_time
+            "last_read_time": self.last_read_time,
+            "is_deleted": self.is_deleted
         }
     
     def update_progress(self, page: int):
@@ -76,3 +79,9 @@ class Recommendation:
         """从清单移除"""
         if list_id in self.list_ids:
             self.list_ids.remove(list_id)
+    
+    def move_to_trash(self):
+        self.is_deleted = True
+    
+    def restore_from_trash(self):
+        self.is_deleted = False

@@ -33,6 +33,9 @@ class RecommendationAppService:
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
             
+            # 过滤掉已删除的漫画
+            recommendations = [r for r in recommendations if not r.is_deleted]
+            
             # 评分筛选
             if min_score is not None:
                 recommendations = [r for r in recommendations if r.score is not None and r.score >= min_score]
@@ -369,3 +372,141 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"删除推荐漫画失败: {e}")
             return ServiceResult.error("删除推荐漫画失败")
+    
+    def get_trash_list(self) -> ServiceResult:
+        """获取回收站漫画列表"""
+        try:
+            recommendations = self._recommendation_repo.get_all()
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            # 只获取已删除的漫画
+            trash_list = [r for r in recommendations if r.is_deleted]
+            
+            result = []
+            for r in trash_list:
+                result.append({
+                    "id": r.id,
+                    "title": r.title,
+                    "author": r.author,
+                    "cover_path": r.cover_path,
+                    "total_page": r.total_page,
+                    "score": r.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "create_time": r.create_time
+                })
+            
+            app_logger.info(f"获取回收站列表成功，共 {len(result)} 个漫画")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取回收站列表失败: {e}")
+            return ServiceResult.error("获取回收站列表失败")
+    
+    def move_to_trash(self, recommendation_id: str) -> ServiceResult:
+        """移动漫画到回收站"""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation:
+                return ServiceResult.error("漫画不存在")
+            
+            recommendation.move_to_trash()
+            
+            if not self._recommendation_repo.save(recommendation):
+                return ServiceResult.error("移入回收站失败")
+            
+            app_logger.info(f"漫画移入回收站: {recommendation_id}")
+            return ServiceResult.ok({"id": recommendation_id}, "已移入回收站")
+        except Exception as e:
+            error_logger.error(f"移入回收站失败: {e}")
+            return ServiceResult.error("移入回收站失败")
+    
+    def restore_from_trash(self, recommendation_id: str) -> ServiceResult:
+        """从回收站恢复漫画"""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation:
+                return ServiceResult.error("漫画不存在")
+            
+            recommendation.restore_from_trash()
+            
+            if not self._recommendation_repo.save(recommendation):
+                return ServiceResult.error("恢复失败")
+            
+            app_logger.info(f"漫画从回收站恢复: {recommendation_id}")
+            return ServiceResult.ok({"id": recommendation_id}, "已从回收站恢复")
+        except Exception as e:
+            error_logger.error(f"从回收站恢复失败: {e}")
+            return ServiceResult.error("从回收站恢复失败")
+    
+    def batch_move_to_trash(self, recommendation_ids: List[str]) -> ServiceResult:
+        """批量移动漫画到回收站"""
+        try:
+            updated_count = 0
+            for rec_id in recommendation_ids:
+                recommendation = self._recommendation_repo.get_by_id(rec_id)
+                if recommendation:
+                    recommendation.move_to_trash()
+                    if self._recommendation_repo.save(recommendation):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的漫画")
+            
+            app_logger.info(f"批量移入回收站成功: {updated_count}个漫画")
+            return ServiceResult.ok({"updated_count": updated_count}, f"已将{updated_count}个漫画移入回收站")
+        except Exception as e:
+            error_logger.error(f"批量移入回收站失败: {e}")
+            return ServiceResult.error("批量移入回收站失败")
+    
+    def batch_restore_from_trash(self, recommendation_ids: List[str]) -> ServiceResult:
+        """批量从回收站恢复漫画"""
+        try:
+            updated_count = 0
+            for rec_id in recommendation_ids:
+                recommendation = self._recommendation_repo.get_by_id(rec_id)
+                if recommendation:
+                    recommendation.restore_from_trash()
+                    if self._recommendation_repo.save(recommendation):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的漫画")
+            
+            app_logger.info(f"批量从回收站恢复成功: {updated_count}个漫画")
+            return ServiceResult.ok({"updated_count": updated_count}, f"已恢复{updated_count}个漫画")
+        except Exception as e:
+            error_logger.error(f"批量从回收站恢复失败: {e}")
+            return ServiceResult.error("批量从回收站恢复失败")
+    
+    def delete_permanently(self, recommendation_id: str) -> ServiceResult:
+        """永久删除漫画"""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation:
+                return ServiceResult.error("漫画不存在")
+            
+            if not self._recommendation_repo.delete(recommendation_id):
+                return ServiceResult.error("永久删除失败")
+            
+            app_logger.info(f"漫画已永久删除: {recommendation_id}")
+            return ServiceResult.ok({"id": recommendation_id}, "已永久删除")
+        except Exception as e:
+            error_logger.error(f"永久删除失败: {e}")
+            return ServiceResult.error("永久删除失败")
+    
+    def batch_delete_permanently(self, recommendation_ids: List[str]) -> ServiceResult:
+        """批量永久删除漫画"""
+        try:
+            deleted_count = 0
+            for rec_id in recommendation_ids:
+                if self._recommendation_repo.delete(rec_id):
+                    deleted_count += 1
+            
+            if deleted_count == 0:
+                return ServiceResult.error("没有找到有效的漫画")
+            
+            app_logger.info(f"批量永久删除成功: {deleted_count}个漫画")
+            return ServiceResult.ok({"deleted_count": deleted_count}, f"已永久删除{deleted_count}个漫画")
+        except Exception as e:
+            error_logger.error(f"批量永久删除失败: {e}")
+            return ServiceResult.error("批量永久删除失败")

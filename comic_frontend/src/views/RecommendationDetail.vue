@@ -139,6 +139,14 @@
             <van-icon :name="isRead ? 'passed' : 'circle'" />
             {{ isRead ? '已读' : '标记已读' }}
           </van-button>
+          <van-button
+            type="danger"
+            size="small"
+            @click="handleMoveToTrash"
+          >
+            <van-icon name="delete-o" />
+            移入回收站
+          </van-button>
         </div>
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ recommendation.current_page > 1 ? '继续阅读' : '开始阅读' }}
@@ -228,7 +236,8 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { showSuccessToast, showFailToast } from 'vant'
+import { recommendationApi } from '@/api'
+import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const route = useRoute()
 const router = useRouter()
@@ -251,7 +260,8 @@ const scoreValue = ref(6)
 const favoriteLoading = ref(false)
 
 const actions = [
-  { name: '绑定标签', value: 'tags' }
+  { name: '绑定标签', value: 'tags' },
+  { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ]
 
 // ============ Computed ============
@@ -369,6 +379,31 @@ function onActionSelect(action) {
   showActionSheet.value = false
   if (action.value === 'tags') {
     showTagPopup.value = true
+  } else if (action.value === 'trash') {
+    handleMoveToTrash()
+  }
+}
+
+async function handleMoveToTrash() {
+  if (!recommendation.value) return
+  
+  try {
+    await showConfirmDialog({
+      title: '确认操作',
+      message: '确定将此漫画移入回收站吗？'
+    })
+    
+    const res = await recommendationApi.moveToTrash(recommendation.value.id)
+    if (res.code === 200) {
+      showSuccessToast('已移入回收站')
+      router.back()
+    } else {
+      showFailToast(res.msg || '操作失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      showFailToast('操作失败')
+    }
   }
 }
 
@@ -534,6 +569,7 @@ watch(showListPopup, async (val) => {
 
 <style scoped>
 .recommendation-detail {
+  padding-bottom: 20px;
   min-height: 100vh;
   background: #f5f5f5;
 }
@@ -543,13 +579,14 @@ watch(showListPopup, async (val) => {
 }
 
 .detail-content {
-  padding-bottom: 24px;
+  background: #fff;
 }
 
 .cover-section {
   display: flex;
   padding: 16px;
-  background: #fff;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
   gap: 16px;
 }
 
@@ -558,73 +595,69 @@ watch(showListPopup, async (val) => {
   height: 160px;
   border-radius: 8px;
   overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .title {
   margin: 0 0 8px 0;
   font-size: 18px;
   font-weight: 600;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  line-height: 1.3;
 }
 
 .author {
   margin: 0 0 12px 0;
   font-size: 14px;
-  color: #666;
+  opacity: 0.9;
 }
 
 .stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 16px;
-  font-size: 13px;
-  color: #666;
 }
 
 .stat-item {
-  background: #f5f5f5;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.2);
   padding: 4px 8px;
   border-radius: 4px;
 }
 
 .score-section {
-  background: #f8f8f8;
-  padding: 12px;
-  border-radius: 8px;
+  margin-top: auto;
 }
 
 .score-display {
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-bottom: 8px;
 }
 
 .score-label {
   font-size: 14px;
-  color: #666;
+  margin-right: 8px;
 }
 
 .score-value {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: bold;
   color: #ff9900;
 }
 
 .score-value.no-score {
-  color: #999;
   font-size: 14px;
+  color: #ccc;
 }
 
 .score-slider {
@@ -634,22 +667,22 @@ watch(showListPopup, async (val) => {
 .score-labels {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
-  color: #999;
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 .tags-section,
 .desc-section,
 .preview-section {
-  margin-top: 12px;
   padding: 16px;
-  background: #fff;
+  border-bottom: 1px solid #eee;
 }
 
 .section-title {
   margin: 0 0 12px 0;
   font-size: 16px;
   font-weight: 600;
+  color: #333;
 }
 
 .tags-container {
@@ -666,53 +699,74 @@ watch(showListPopup, async (val) => {
   margin: 0;
   font-size: 14px;
   line-height: 1.6;
-  color: #333;
+  color: #666;
   white-space: pre-wrap;
 }
 
 .preview-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+@media (min-width: 480px) {
+  .preview-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 768px) {
+  .preview-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1200px) {
+  .preview-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
 }
 
 .preview-item {
   position: relative;
-  aspect-ratio: 3/4;
-  border-radius: 4px;
-  overflow: hidden;
   cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f0f0f0;
 }
 
 .preview-image {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
+  display: block;
 }
 
 .preview-page {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgba(0, 0, 0, 0.6);
+  bottom: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.7);
   color: #fff;
-  font-size: 12px;
-  text-align: center;
-  padding: 4px 0;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .action-section {
-  margin-top: 12px;
   padding: 16px;
-  background: #fff;
+  text-align: center;
 }
 
 .action-buttons {
   display: flex;
+  justify-content: center;
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.action-buttons .van-button {
+  min-width: 80px;
 }
 
 .read-button {
@@ -726,11 +780,9 @@ watch(showListPopup, async (val) => {
   flex-direction: column;
 }
 
-.tag-select-list,
-.list-popup :deep(.van-checkbox-group) {
+.tag-select-list {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
 }
 
 .tag-count,

@@ -55,6 +55,11 @@ const routes = [
     path: '/config',
     name: 'SystemConfig',
     component: () => import('../views/SystemConfig.vue')
+  },
+  {
+    path: '/trash',
+    name: 'Trash',
+    component: () => import('../views/Trash.vue')
   }
 ]
 

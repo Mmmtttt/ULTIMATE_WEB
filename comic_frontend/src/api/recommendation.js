@@ -170,5 +170,69 @@ export const recommendationApi = {
       recommendation_id: recommendationId,
       ...data
     })
+  },
+  
+  // ==================== 回收站相关 ====================
+  
+  /**
+   * 获取回收站漫画列表
+   * @returns {Promise}
+   */
+  getTrashList: () => {
+    return request.get('/v1/recommendation/trash/list')
+  },
+  
+  /**
+   * 移动漫画到回收站
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  moveToTrash: (recommendationId) => {
+    return request.put('/v1/recommendation/trash/move', { recommendation_id: recommendationId })
+  },
+  
+  /**
+   * 从回收站恢复漫画
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  restoreFromTrash: (recommendationId) => {
+    return request.put('/v1/recommendation/trash/restore', { recommendation_id: recommendationId })
+  },
+  
+  /**
+   * 批量移动漫画到回收站
+   * @param {string[]} recommendationIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchMoveToTrash: (recommendationIds) => {
+    return request.put('/v1/recommendation/trash/batch-move', { recommendation_ids: recommendationIds })
+  },
+  
+  /**
+   * 批量从回收站恢复漫画
+   * @param {string[]} recommendationIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchRestoreFromTrash: (recommendationIds) => {
+    return request.put('/v1/recommendation/trash/batch-restore', { recommendation_ids: recommendationIds })
+  },
+  
+  /**
+   * 永久删除漫画
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  deletePermanently: (recommendationId) => {
+    return request.delete('/v1/recommendation/trash/delete', { data: { recommendation_id: recommendationId } })
+  },
+  
+  /**
+   * 批量永久删除漫画
+   * @param {string[]} recommendationIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchDeletePermanently: (recommendationIds) => {
+    return request.delete('/v1/recommendation/trash/batch-delete', { data: { recommendation_ids: recommendationIds } })
   }
 }

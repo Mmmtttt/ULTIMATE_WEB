@@ -139,6 +139,14 @@
             <van-icon :name="isRead ? 'passed' : 'circle'" />
             {{ isRead ? '已读' : '标记已读' }}
           </van-button>
+          <van-button 
+            type="danger" 
+            size="small"
+            @click="handleMoveToTrash"
+          >
+            <van-icon name="delete-o" />
+            移入回收站
+          </van-button>
         </div>
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ comic.current_page > 1 ? '继续阅读' : '开始阅读' }}
@@ -292,7 +300,8 @@ const editForm = ref({
 const actions = [
   { name: '下载漫画', value: 'download' },
   { name: '编辑信息', value: 'edit' },
-  { name: '绑定标签', value: 'tags' }
+  { name: '绑定标签', value: 'tags' },
+  { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ]
 
 const coverUrl = computed(() => {
@@ -399,6 +408,8 @@ function onActionSelect(action) {
     showEditPopup.value = true
   } else if (action.value === 'tags') {
     showTagPopup.value = true
+  } else if (action.value === 'trash') {
+    handleMoveToTrash()
   }
 }
 
@@ -414,6 +425,30 @@ async function handleDownload() {
     showFailToast('下载失败')
   } finally {
     downloadLoading.value = false
+  }
+}
+
+async function handleMoveToTrash() {
+  if (!comic.value) return
+  
+  try {
+    const { showConfirmDialog } = await import('vant')
+    await showConfirmDialog({
+      title: '确认操作',
+      message: '确定将此漫画移入回收站吗？'
+    })
+    
+    const res = await comicApi.moveToTrash(comic.value.id)
+    if (res.code === 200) {
+      showSuccessToast('已移入回收站')
+      router.back()
+    } else {
+      showFailToast(res.msg || '操作失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      showFailToast('操作失败')
+    }
   }
 }
 

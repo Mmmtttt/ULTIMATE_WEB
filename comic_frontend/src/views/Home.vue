@@ -1,6 +1,12 @@
 <template>
   <div class="home">
-    <van-nav-bar title="漫画库" />
+    <van-nav-bar title="漫画库">
+      <template #right>
+        <van-dropdown-menu direction="down">
+          <van-dropdown-item v-model="menuValue" :options="menuOptions" @change="handleMenuChange" />
+        </van-dropdown-menu>
+      </template>
+    </van-nav-bar>
     
     <div class="search-bar">
       <van-search
@@ -65,6 +71,17 @@
       <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
     </div>
     
+    <!-- 批量操作模式 -->
+    <div v-if="isManageMode" class="manage-bar">
+      <span class="selected-info">已选 {{ selectedComicIds.length }} 个</span>
+      <div class="manage-actions">
+        <van-button size="small" type="primary" :disabled="selectedComicIds.length === 0" @click="batchMoveToTrash">
+          移入回收站
+        </van-button>
+        <van-button size="small" plain @click="cancelManageMode">取消</van-button>
+      </div>
+    </div>
+    
     <!-- 加载状态 -->
     <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
     
@@ -82,7 +99,28 @@
       </template>
     </EmptyState>
     
-    <!-- 漫画网格 -->
+    <!-- 漫画网格 - 管理模式 -->
+    <div v-else-if="isManageMode" class="comic-select-grid">
+      <div 
+        v-for="comic in results" 
+        :key="comic.id" 
+        class="comic-select-item"
+        :class="{ selected: selectedComicIds.includes(comic.id) }"
+        @click="toggleComicSelection(comic.id)"
+      >
+        <van-image 
+          :src="getCoverUrl(comic.cover_path)" 
+          fit="contain" 
+          class="comic-thumb"
+        />
+        <div class="comic-title-line">{{ comic.title }}</div>
+        <div class="select-check" v-if="selectedComicIds.includes(comic.id)">
+          <van-icon name="success" />
+        </div>
+      </div>
+    </div>
+    
+    <!-- 漫画网格 - 普通模式 -->
     <ComicGrid
       v-else
       :comics="results"
@@ -176,9 +214,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { showToast, showConfirmDialog } from 'vant'
 import { useComicStore, useTagStore } from '@/stores'
 import { useSearch } from '@/composables'
 import { ComicGrid, EmptyState, TagFilter } from '@/components'
+import { comicApi } from '@/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -209,6 +249,15 @@ const showFilterPanel = ref(false)
 const showSortPanel = ref(false)
 const currentSortType = ref('')
 
+// 管理模式相关
+const isManageMode = ref(false)
+const selectedComicIds = ref([])
+const menuValue = ref(0)
+const menuOptions = [
+  { text: '更多操作', value: 0 },
+  { text: '管理漫画', value: 1 }
+]
+
 const isLoading = computed(() => loading.value || comicStore.loading)
 
 const sortLabel = computed(() => {
@@ -220,6 +269,64 @@ const sortLabel = computed(() => {
   }
   return labels[currentSortType.value] || ''
 })
+
+function handleMenuChange(value) {
+  if (value === 1) {
+    isManageMode.value = true
+    selectedComicIds.value = []
+    menuValue.value = 0
+  }
+}
+
+function cancelManageMode() {
+  isManageMode.value = false
+  selectedComicIds.value = []
+}
+
+function toggleComicSelection(comicId) {
+  const index = selectedComicIds.value.indexOf(comicId)
+  if (index > -1) {
+    selectedComicIds.value.splice(index, 1)
+  } else {
+    selectedComicIds.value.push(comicId)
+  }
+}
+
+function getCoverUrl(coverPath) {
+  if (!coverPath) return ''
+  if (coverPath.startsWith('http')) return coverPath
+  if (coverPath.startsWith('/static/')) return coverPath
+  if (coverPath.startsWith('/')) return coverPath
+  return `/${coverPath}`
+}
+
+async function batchMoveToTrash() {
+  if (selectedComicIds.value.length === 0) {
+    showToast('请先选择漫画')
+    return
+  }
+  
+  try {
+    await showConfirmDialog({
+      title: '确认操作',
+      message: `确定将 ${selectedComicIds.value.length} 个漫画移入回收站吗？`
+    })
+    
+    const res = await comicApi.batchMoveToTrash(selectedComicIds.value)
+    if (res.code === 200) {
+      showToast(res.msg || '已移入回收站')
+      selectedComicIds.value = []
+      isManageMode.value = false
+      await comicStore.fetchComics(true, currentSortType.value ? { sort_type: currentSortType.value } : {})
+    } else {
+      showToast(res.msg || '操作失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      showToast('操作失败')
+    }
+  }
+}
 
 function handleSearch() {
   search()
@@ -333,5 +440,73 @@ onMounted(async () => {
 .filter-panel :deep(.tag-filter) {
   flex: 1;
   overflow-y: auto;
+}
+
+.manage-bar {
+  padding: 10px 16px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #eee;
+}
+
+.selected-info {
+  font-size: 14px;
+  color: #333;
+}
+
+.manage-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.comic-select-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
+.comic-select-item {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.comic-select-item.selected {
+  border-color: #1989fa;
+}
+
+.comic-thumb {
+  width: 100%;
+  aspect-ratio: 3/4;
+}
+
+.comic-title-line {
+  padding: 4px 6px;
+  font-size: 12px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  background: #1989fa;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
 }
 </style>

@@ -12,10 +12,10 @@ comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
 
 
-def success_response(data=None):
+def success_response(data=None, msg="成功"):
     return jsonify({
         "code": 200,
-        "msg": "成功",
+        "msg": msg,
         "data": data
     })
 
@@ -927,4 +927,126 @@ def import_online():
         return error_response(500, "第三方库未配置，请先配置外部 API")
     except Exception as e:
         error_logger.error(f"在线导入失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/list', methods=['GET'])
+def get_trash_list():
+    """获取回收站漫画列表"""
+    try:
+        result = comic_service.get_trash_list()
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取回收站列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/move', methods=['PUT'])
+def move_to_trash():
+    """移动漫画到回收站"""
+    try:
+        data = request.json
+        if not data or 'comic_id' not in data:
+            return error_response(400, "缺少参数: comic_id")
+        
+        result = comic_service.move_to_trash(data['comic_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"移入回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/restore', methods=['PUT'])
+def restore_from_trash():
+    """从回收站恢复漫画"""
+    try:
+        data = request.json
+        if not data or 'comic_id' not in data:
+            return error_response(400, "缺少参数: comic_id")
+        
+        result = comic_service.restore_from_trash(data['comic_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"从回收站恢复失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/batch-move', methods=['PUT'])
+def batch_move_to_trash():
+    """批量移动漫画到回收站"""
+    try:
+        data = request.json
+        if not data or 'comic_ids' not in data:
+            return error_response(400, "缺少参数: comic_ids")
+        
+        result = comic_service.batch_move_to_trash(data['comic_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移入回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/batch-restore', methods=['PUT'])
+def batch_restore_from_trash():
+    """批量从回收站恢复漫画"""
+    try:
+        data = request.json
+        if not data or 'comic_ids' not in data:
+            return error_response(400, "缺少参数: comic_ids")
+        
+        result = comic_service.batch_restore_from_trash(data['comic_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量从回收站恢复失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/delete', methods=['DELETE'])
+def delete_permanently():
+    """永久删除漫画"""
+    try:
+        data = request.json
+        if not data or 'comic_id' not in data:
+            return error_response(400, "缺少参数: comic_id")
+        
+        result = comic_service.delete_permanently(data['comic_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"永久删除失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/trash/batch-delete', methods=['DELETE'])
+def batch_delete_permanently():
+    """批量永久删除漫画"""
+    try:
+        data = request.json
+        if not data or 'comic_ids' not in data:
+            return error_response(400, "缺少参数: comic_ids")
+        
+        result = comic_service.batch_delete_permanently(data['comic_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量永久删除失败: {e}")
         return error_response(500, "服务器内部错误")

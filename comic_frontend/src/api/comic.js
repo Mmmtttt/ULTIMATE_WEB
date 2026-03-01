@@ -295,6 +295,70 @@ export const comicApi = {
    */
   saveThirdPartyConfig: (data) => {
     return request.post('/v1/comic/third-party/config', data)
+  },
+  
+  // ==================== 回收站相关 ====================
+  
+  /**
+   * 获取回收站漫画列表
+   * @returns {Promise}
+   */
+  getTrashList: () => {
+    return request.get('/v1/comic/trash/list')
+  },
+  
+  /**
+   * 移动漫画到回收站
+   * @param {string} comicId - 漫画ID
+   * @returns {Promise}
+   */
+  moveToTrash: (comicId) => {
+    return request.put('/v1/comic/trash/move', { comic_id: comicId })
+  },
+  
+  /**
+   * 从回收站恢复漫画
+   * @param {string} comicId - 漫画ID
+   * @returns {Promise}
+   */
+  restoreFromTrash: (comicId) => {
+    return request.put('/v1/comic/trash/restore', { comic_id: comicId })
+  },
+  
+  /**
+   * 批量移动漫画到回收站
+   * @param {string[]} comicIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchMoveToTrash: (comicIds) => {
+    return request.put('/v1/comic/trash/batch-move', { comic_ids: comicIds })
+  },
+  
+  /**
+   * 批量从回收站恢复漫画
+   * @param {string[]} comicIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchRestoreFromTrash: (comicIds) => {
+    return request.put('/v1/comic/trash/batch-restore', { comic_ids: comicIds })
+  },
+  
+  /**
+   * 永久删除漫画
+   * @param {string} comicId - 漫画ID
+   * @returns {Promise}
+   */
+  deletePermanently: (comicId) => {
+    return request.delete('/v1/comic/trash/delete', { data: { comic_id: comicId } })
+  },
+  
+  /**
+   * 批量永久删除漫画
+   * @param {string[]} comicIds - 漫画ID数组
+   * @returns {Promise}
+   */
+  batchDeletePermanently: (comicIds) => {
+    return request.delete('/v1/comic/trash/batch-delete', { data: { comic_ids: comicIds } })
   }
 }
 

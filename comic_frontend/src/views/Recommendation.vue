@@ -1,6 +1,12 @@
 <template>
   <div class="recommendation">
-    <van-nav-bar title="推荐漫画" />
+    <van-nav-bar title="推荐漫画">
+      <template #right>
+        <van-dropdown-menu direction="down">
+          <van-dropdown-item v-model="menuValue" :options="menuOptions" @change="handleMenuChange" />
+        </van-dropdown-menu>
+      </template>
+    </van-nav-bar>
 
     <div class="search-bar">
       <van-search
@@ -65,6 +71,17 @@
       <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
     </div>
 
+    <!-- 批量操作模式 -->
+    <div v-if="isManageMode" class="manage-bar">
+      <span class="selected-info">已选 {{ selectedComicIds.length }} 个</span>
+      <div class="manage-actions">
+        <van-button size="small" type="primary" :disabled="selectedComicIds.length === 0" @click="batchMoveToTrash">
+          移入回收站
+        </van-button>
+        <van-button size="small" plain @click="cancelManageMode">取消</van-button>
+      </div>
+    </div>
+
     <!-- 加载状态 -->
     <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
 
@@ -82,7 +99,28 @@
       </template>
     </EmptyState>
 
-    <!-- 推荐漫画网格 -->
+    <!-- 推荐漫画网格 - 管理模式 -->
+    <div v-else-if="isManageMode" class="comic-select-grid">
+      <div 
+        v-for="comic in results" 
+        :key="comic.id" 
+        class="comic-select-item"
+        :class="{ selected: selectedComicIds.includes(comic.id) }"
+        @click="toggleComicSelection(comic.id)"
+      >
+        <van-image 
+          :src="getCoverUrl(comic.cover_path)" 
+          fit="contain" 
+          class="comic-thumb"
+        />
+        <div class="comic-title-line">{{ comic.title }}</div>
+        <div class="select-check" v-if="selectedComicIds.includes(comic.id)">
+          <van-icon name="success" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 推荐漫画网格 - 普通模式 -->
     <ComicGrid
       v-else
       :comics="results"
@@ -151,9 +189,10 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { showToast } from 'vant'
+import { showToast, showConfirmDialog } from 'vant'
 import { useRecommendationStore, useTagStore } from '@/stores'
 import { SORT_TYPE } from '@/utils'
+import { recommendationApi } from '@/api'
 import ComicGrid from '@/components/comic/ComicGrid.vue'
 import TagFilter from '@/components/tag/TagFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -170,7 +209,16 @@ const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
 const selectedIncludeTags = ref([])
 const selectedExcludeTags = ref([])
-const active = ref(1) // 底部导航当前选中项，推荐页是第2个（索引1）
+const active = ref(1)
+
+// 管理模式相关
+const isManageMode = ref(false)
+const selectedComicIds = ref([])
+const menuValue = ref(0)
+const menuOptions = [
+  { text: '更多操作', value: 0 },
+  { text: '管理漫画', value: 1 }
+]
 
 // ============ Computed ============
 const isLoading = computed(() => recommendationStore.loading)
@@ -200,25 +248,74 @@ const sortColumns = [
 
 // ============ Methods ============
 
-/**
- * 获取推荐漫画列表
- */
+function handleMenuChange(value) {
+  if (value === 1) {
+    isManageMode.value = true
+    selectedComicIds.value = []
+    menuValue.value = 0
+  }
+}
+
+function cancelManageMode() {
+  isManageMode.value = false
+  selectedComicIds.value = []
+}
+
+function toggleComicSelection(comicId) {
+  const index = selectedComicIds.value.indexOf(comicId)
+  if (index > -1) {
+    selectedComicIds.value.splice(index, 1)
+  } else {
+    selectedComicIds.value.push(comicId)
+  }
+}
+
+function getCoverUrl(coverPath) {
+  if (!coverPath) return ''
+  if (coverPath.startsWith('http')) return coverPath
+  if (coverPath.startsWith('/static/')) return coverPath
+  if (coverPath.startsWith('/')) return coverPath
+  return `/${coverPath}`
+}
+
+async function batchMoveToTrash() {
+  if (selectedComicIds.value.length === 0) {
+    showToast('请先选择漫画')
+    return
+  }
+  
+  try {
+    await showConfirmDialog({
+      title: '确认操作',
+      message: `确定将 ${selectedComicIds.value.length} 个漫画移入回收站吗？`
+    })
+    
+    const res = await recommendationApi.batchMoveToTrash(selectedComicIds.value)
+    if (res.code === 200) {
+      showToast(res.msg || '已移入回收站')
+      selectedComicIds.value = []
+      isManageMode.value = false
+      await recommendationStore.fetchRecommendations(true, currentSortType.value ? { sortType: currentSortType.value } : {})
+    } else {
+      showToast(res.msg || '操作失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') {
+      showToast('操作失败')
+    }
+  }
+}
+
 async function fetchRecommendations() {
   console.log('[Recommendation] 获取推荐列表')
   await recommendationStore.fetchRecommendations()
 }
 
-/**
- * 跳转到详情页
- */
 function goToDetail(comic) {
   console.log('[Recommendation] 跳转到详情页:', comic.id)
   router.push(`/recommendation/${comic.id}`)
 }
 
-/**
- * 搜索
- */
 async function handleSearch() {
   if (!keyword.value.trim()) {
     clearSearch()
@@ -228,17 +325,11 @@ async function handleSearch() {
   await recommendationStore.searchRecommendations(keyword.value)
 }
 
-/**
- * 清除搜索
- */
 function clearSearch() {
   keyword.value = ''
   recommendationStore.clearFilter()
 }
 
-/**
- * 排序确认
- */
 async function onSortConfirm({ selectedOptions }) {
   const sortType = selectedOptions[0]?.value
   console.log('[Recommendation] 排序:', sortType)
@@ -247,17 +338,11 @@ async function onSortConfirm({ selectedOptions }) {
   await recommendationStore.fetchRecommendations(true, { sortType })
 }
 
-/**
- * 清除排序
- */
 async function clearSort() {
   recommendationStore.clearSort()
   await recommendationStore.fetchRecommendations(true)
 }
 
-/**
- * 应用筛选
- */
 async function applyFilter() {
   console.log('[Recommendation] 应用筛选:', {
     include: tempIncludeTags.value,
@@ -279,27 +364,18 @@ async function applyFilter() {
   showFilterPanel.value = false
 }
 
-/**
- * 移除包含标签
- */
 async function removeIncludeTag(tagId) {
   tempIncludeTags.value = tempIncludeTags.value.filter(id => id !== tagId)
   selectedIncludeTags.value = selectedIncludeTags.value.filter(tag => tag.id !== tagId)
   await applyFilter()
 }
 
-/**
- * 移除排除标签
- */
 async function removeExcludeTag(tagId) {
   tempExcludeTags.value = tempExcludeTags.value.filter(id => id !== tagId)
   selectedExcludeTags.value = selectedExcludeTags.value.filter(tag => tag.id !== tagId)
   await applyFilter()
 }
 
-/**
- * 清除所有筛选
- */
 async function clearAllFilters() {
   keyword.value = ''
   tempIncludeTags.value = []
@@ -314,13 +390,10 @@ async function clearAllFilters() {
 // ============ Lifecycle ============
 onMounted(async () => {
   console.log('[Recommendation] 页面挂载')
-  // 获取标签列表
   await tagStore.fetchTags()
-  // 获取推荐漫画列表
   await fetchRecommendations()
 })
 
-// 监听排序变化
 watch(currentSortType, async (newSort) => {
   if (newSort) {
     await recommendationStore.fetchRecommendations(true, { sortType: newSort })
@@ -332,7 +405,7 @@ watch(currentSortType, async (newSort) => {
 .recommendation {
   min-height: 100vh;
   background: #f5f5f5;
-  padding-bottom: 50px; /* 为底部导航栏留出空间 */
+  padding-bottom: 50px;
 }
 
 .search-bar {
@@ -392,5 +465,73 @@ watch(currentSortType, async (newSort) => {
   display: flex;
   justify-content: center;
   padding: 40px 0;
+}
+
+.manage-bar {
+  padding: 10px 16px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #eee;
+}
+
+.selected-info {
+  font-size: 14px;
+  color: #333;
+}
+
+.manage-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.comic-select-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
+.comic-select-item {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.comic-select-item.selected {
+  border-color: #1989fa;
+}
+
+.comic-thumb {
+  width: 100%;
+  aspect-ratio: 3/4;
+}
+
+.comic-title-line {
+  padding: 4px 6px;
+  font-size: 12px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  background: #1989fa;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
 }
 </style>

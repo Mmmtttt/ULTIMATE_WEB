@@ -14,6 +14,7 @@
     <van-cell-group class="mine-menu">
       <van-cell title="我的清单" icon="list-switch-o" to="/lists" is-link />
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
+      <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
       <van-cell title="标签管理" icon="tag-o" to="/tags" is-link />
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />

@@ -6,10 +6,10 @@ recommendation_bp = Blueprint('recommendation', __name__)
 recommendation_service = RecommendationAppService()
 
 
-def success_response(data=None):
+def success_response(data=None, msg="成功"):
     return jsonify({
         "code": 200,
-        "msg": "成功",
+        "msg": msg,
         "data": data
     })
 
@@ -297,4 +297,126 @@ def get_recommendation_images():
         return success_response(image_urls)
     except Exception as e:
         error_logger.error(f"获取图片列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/list', methods=['GET'])
+def get_trash_list():
+    """获取回收站漫画列表"""
+    try:
+        result = recommendation_service.get_trash_list()
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取回收站列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/move', methods=['PUT'])
+def move_to_trash():
+    """移动漫画到回收站"""
+    try:
+        data = request.json
+        if not data or 'recommendation_id' not in data:
+            return error_response(400, "缺少参数: recommendation_id")
+        
+        result = recommendation_service.move_to_trash(data['recommendation_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"移入回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/restore', methods=['PUT'])
+def restore_from_trash():
+    """从回收站恢复漫画"""
+    try:
+        data = request.json
+        if not data or 'recommendation_id' not in data:
+            return error_response(400, "缺少参数: recommendation_id")
+        
+        result = recommendation_service.restore_from_trash(data['recommendation_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"从回收站恢复失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/batch-move', methods=['PUT'])
+def batch_move_to_trash():
+    """批量移动漫画到回收站"""
+    try:
+        data = request.json
+        if not data or 'recommendation_ids' not in data:
+            return error_response(400, "缺少参数: recommendation_ids")
+        
+        result = recommendation_service.batch_move_to_trash(data['recommendation_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移入回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/batch-restore', methods=['PUT'])
+def batch_restore_from_trash():
+    """批量从回收站恢复漫画"""
+    try:
+        data = request.json
+        if not data or 'recommendation_ids' not in data:
+            return error_response(400, "缺少参数: recommendation_ids")
+        
+        result = recommendation_service.batch_restore_from_trash(data['recommendation_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量从回收站恢复失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/delete', methods=['DELETE'])
+def delete_permanently():
+    """永久删除漫画"""
+    try:
+        data = request.json
+        if not data or 'recommendation_id' not in data:
+            return error_response(400, "缺少参数: recommendation_id")
+        
+        result = recommendation_service.delete_permanently(data['recommendation_id'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"永久删除失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@recommendation_bp.route('/trash/batch-delete', methods=['DELETE'])
+def batch_delete_permanently():
+    """批量永久删除漫画"""
+    try:
+        data = request.json
+        if not data or 'recommendation_ids' not in data:
+            return error_response(400, "缺少参数: recommendation_ids")
+        
+        result = recommendation_service.batch_delete_permanently(data['recommendation_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量永久删除失败: {e}")
         return error_response(500, "服务器内部错误")
