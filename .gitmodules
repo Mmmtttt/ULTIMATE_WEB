@@ -1,0 +1,3 @@
+[submodule "comic_backend/third_party/JMComic-Crawler-Python"]
+	path = comic_backend/third_party/JMComic-Crawler-Python
+	url = https://github.com/Mmmtttt/JMComic-Crawler-Python.git

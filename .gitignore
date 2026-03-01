@@ -5,3 +5,17 @@ comic_backend/data/pictures/*
 comic_backend/static/*
 设计文档/*.png
 comic_backend/logs/*
+
+# 第三方库：忽略配置和数据文件（Submodule 代码会被跟踪）
+comic_backend/third_party/*/.git/
+comic_backend/third_party/*/.vscode/
+comic_backend/third_party/*/__pycache__/
+comic_backend/third_party/*/pictures/*
+comic_backend/third_party/*/test/pictures/*
+comic_backend/third_party/*/test/*.json
+comic_backend/third_party/*/test/*.txt
+comic_backend/third_party/*/downloads/
+comic_backend/third_party/*/config.json
+comic_backend/third_party/*/comics_database.json
+comic_backend/third_party/*/download_progress.json
+comic_backend/third_party/*/favorite_comics.txt

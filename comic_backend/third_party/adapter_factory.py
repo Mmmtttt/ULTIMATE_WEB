@@ -1,0 +1,187 @@
+"""
+适配器工厂和配置管理
+支持多个第三方 API 的动态加载和切换
+"""
+from typing import Dict, Any, Optional, Type
+from .base_adapter import BaseAdapter
+from .jmcomic_adapter import JMComicAdapter
+
+
+class AdapterFactory:
+    """适配器工厂
+    
+    负责创建和管理不同的 API 适配器
+    """
+    
+    _adapters: Dict[str, Type[BaseAdapter]] = {
+        'jmcomic': JMComicAdapter,
+    }
+    
+    _instances: Dict[str, BaseAdapter] = {}
+    
+    @classmethod
+    def register_adapter(cls, name: str, adapter_class: Type[BaseAdapter]):
+        """注册新的适配器
+        
+        Args:
+            name: 适配器名称
+            adapter_class: 适配器类
+        """
+        cls._adapters[name] = adapter_class
+    
+    @classmethod
+    def get_adapter(cls, name: str, config: Optional[Dict[str, Any]] = None) -> BaseAdapter:
+        """获取适配器实例（单例模式）
+        
+        Args:
+            name: 适配器名称
+            config: 配置字典
+            
+        Returns:
+            适配器实例
+            
+        Raises:
+            ValueError: 适配器不存在
+        """
+        if name not in cls._adapters:
+            raise ValueError(f"未知的适配器: {name}，可用适配器: {list(cls._adapters.keys())}")
+        
+        if name not in cls._instances:
+            adapter_class = cls._adapters[name]
+            cls._instances[name] = adapter_class(config)
+        
+        return cls._instances[name]
+    
+    @classmethod
+    def list_adapters(cls) -> list:
+        """列出所有可用的适配器
+        
+        Returns:
+            适配器名称列表
+        """
+        return list(cls._adapters.keys())
+    
+    @classmethod
+    def reset_instance(cls, name: str):
+        """重置适配器实例
+        
+        Args:
+            name: 适配器名称
+        """
+        if name in cls._instances:
+            del cls._instances[name]
+
+
+class AdapterConfig:
+    """适配器配置管理
+    
+    管理不同 API 的配置信息
+    """
+    
+    def __init__(self, config_path: Optional[str] = None):
+        """初始化配置管理器
+        
+        Args:
+            config_path: 配置文件路径
+        """
+        self.config_path = config_path or 'third_party_config.json'
+        self._config: Dict[str, Any] = {}
+        self._load_config()
+    
+    def _load_config(self):
+        """加载配置文件"""
+        import json
+        import os
+        
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    self._config = json.load(f)
+            except Exception as e:
+                print(f"加载配置文件失败: {e}")
+                self._config = {}
+        else:
+            self._config = self._get_default_config()
+            self._save_config()
+    
+    def _save_config(self):
+        """保存配置文件"""
+        import json
+        try:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self._config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存配置文件失败: {e}")
+    
+    def _get_default_config(self) -> Dict[str, Any]:
+        """获取默认配置"""
+        return {
+            "default_adapter": "jmcomic",
+            "adapters": {
+                "jmcomic": {
+                    "enabled": True,
+                    "config_path": "JMComic-Crawler-Python/config.json",
+                    "username": "",
+                    "password": "",
+                    "download_dir": "../../data/pictures",
+                    "output_json": "comics_database.json",
+                    "progress_file": "download_progress.json",
+                    "favorite_list_file": "favorite_comics.txt",
+                    "consecutive_hit_threshold": 10,
+                    "collection_name": "我的最爱"
+                }
+            }
+        }
+    
+    def get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
+        """获取指定适配器的配置
+        
+        Args:
+            adapter_name: 适配器名称
+            
+        Returns:
+            适配器配置字典
+        """
+        return self._config.get('adapters', {}).get(adapter_name, {})
+    
+    def set_adapter_config(self, adapter_name: str, config: Dict[str, Any]):
+        """设置适配器配置
+        
+        Args:
+            adapter_name: 适配器名称
+            config: 配置字典
+        """
+        if 'adapters' not in self._config:
+            self._config['adapters'] = {}
+        
+        self._config['adapters'][adapter_name] = config
+        self._save_config()
+    
+    def get_default_adapter(self) -> str:
+        """获取默认适配器名称
+        
+        Returns:
+            适配器名称
+        """
+        return self._config.get('default_adapter', 'jmcomic')
+    
+    def set_default_adapter(self, adapter_name: str):
+        """设置默认适配器
+        
+        Args:
+            adapter_name: 适配器名称
+        """
+        self._config['default_adapter'] = adapter_name
+        self._save_config()
+    
+    def get_enabled_adapters(self) -> list:
+        """获取所有启用的适配器
+        
+        Returns:
+            启用的适配器名称列表
+        """
+        enabled = []
+        for name, config in self._config.get('adapters', {}).items():
+            if config.get('enabled', True):
+                enabled.append(name)
+        return enabled

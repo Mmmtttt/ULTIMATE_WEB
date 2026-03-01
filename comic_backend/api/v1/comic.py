@@ -4,7 +4,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
-from core.constants import CACHE_MAX_AGE, PICTURES_DIR, SUPPORTED_FORMATS
+from core.constants import CACHE_MAX_AGE, PICTURES_DIR, SUPPORTED_FORMATS, RECOMMENDATION_JSON_FILE
 import os
 import time
 
@@ -80,6 +80,81 @@ def comic_init():
         return success_response(new_comic)
     except Exception as e:
         error_logger.error(f"漫画初始化失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/config', methods=['GET'])
+def get_third_party_config():
+    try:
+        from third_party.adapter_factory import AdapterConfig
+        
+        config_manager = AdapterConfig()
+        
+        jmcomic_config = config_manager.get_adapter_config('jmcomic')
+        
+        return success_response({
+            "jmcomic": {
+                "username": jmcomic_config.get('username', ''),
+                "password": jmcomic_config.get('password', ''),
+                "download_dir": jmcomic_config.get('download_dir', '../../data/pictures'),
+                "output_json": jmcomic_config.get('output_json', 'comics_database.json'),
+                "progress_file": jmcomic_config.get('progress_file', 'download_progress.json'),
+                "favorite_list_file": jmcomic_config.get('favorite_list_file', 'favorite_comics.txt'),
+                "consecutive_hit_threshold": jmcomic_config.get('consecutive_hit_threshold', 10),
+                "collection_name": jmcomic_config.get('collection_name', '我的最爱')
+            }
+        })
+        
+    except Exception as e:
+        error_logger.error(f"获取第三方库配置失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/config', methods=['POST'])
+def save_third_party_config():
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少参数")
+        
+        adapter = data.get('adapter')
+        username = data.get('username', '')
+        password = data.get('password', '')
+        download_dir = data.get('download_dir', '../../data/pictures')
+        output_json = data.get('output_json', 'comics_database.json')
+        progress_file = data.get('progress_file', 'download_progress.json')
+        favorite_list_file = data.get('favorite_list_file', 'favorite_comics.txt')
+        consecutive_hit_threshold = data.get('consecutive_hit_threshold', 10)
+        collection_name = data.get('collection_name', '我的最爱')
+        
+        if adapter != 'jmcomic':
+            return error_response(400, "不支持的适配器")
+        
+        from third_party.adapter_factory import AdapterConfig
+        
+        config_manager = AdapterConfig()
+        
+        config_manager.set_adapter_config(adapter, {
+            "enabled": True,
+            "username": username,
+            "password": password,
+            "download_dir": download_dir,
+            "output_json": output_json,
+            "progress_file": progress_file,
+            "favorite_list_file": favorite_list_file,
+            "consecutive_hit_threshold": consecutive_hit_threshold,
+            "collection_name": collection_name
+        })
+        
+        from third_party.adapter_factory import AdapterFactory
+        AdapterFactory.reset_instance(adapter)
+        
+        app_logger.info(f"保存第三方库配置成功: 适配器={adapter}")
+        
+        return success_response({"message": "配置保存成功"})
+        
+    except Exception as e:
+        error_logger.error(f"保存第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -682,4 +757,127 @@ def batch_upload_comics():
         
     except Exception as e:
         error_logger.error(f"批量上传漫画失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/import/online', methods=['POST'])
+def import_online():
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少参数")
+        
+        import_type = data.get('import_type')
+        target = data.get('target', 'home')
+        
+        if import_type not in ['by_id', 'by_search', 'by_favorite']:
+            return error_response(400, "无效的导入方式")
+        
+        if target not in ['home', 'recommendation']:
+            return error_response(400, "无效的目标目录")
+        
+        is_recommendation = (target == 'recommendation')
+        
+        from third_party.adapter import MetaDataAdapter, DuplicateChecker
+        from third_party.external_api import get_album_by_id, search_albums, get_favorites
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        storage = JsonStorage() if not is_recommendation else JsonStorage(RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        
+        existing_ids = [c['id'] for c in db_data.get('comics', [])]
+        checker = DuplicateChecker(existing_ids)
+        
+        adapter = MetaDataAdapter(is_recommendation)
+        
+        meta_json = None
+        
+        if import_type == 'by_id':
+            comic_id = data.get('comic_id')
+            if not comic_id:
+                return error_response(400, "缺少漫画ID")
+            
+            if checker.is_duplicate(comic_id):
+                return error_response(400, f"漫画 {comic_id} 已存在")
+            
+            meta_json = get_album_by_id(comic_id)
+            
+        elif import_type == 'by_search':
+            keyword = data.get('keyword')
+            if not keyword:
+                return error_response(400, "缺少搜索关键词")
+            
+            max_pages = data.get('max_pages', 1)
+            meta_json = search_albums(keyword, max_pages)
+            
+        elif import_type == 'by_favorite':
+            meta_json = get_favorites()
+        
+        if not meta_json or not meta_json.get('albums'):
+            return error_response(404, "未找到相关漫画")
+        
+        converted_data = adapter.parse_meta_data(meta_json)
+        new_comics = converted_data.get('comics', [])
+        
+        new_comics, skipped_ids = checker.filter_duplicates(new_comics)
+        
+        if not new_comics:
+            return error_response(400, "所有漫画已存在，无需导入")
+        
+        # 如果是导入到主页，同时下载图片
+        downloaded_comics = []
+        failed_downloads = []
+        
+        if not is_recommendation:
+            try:
+                import sys
+                import os
+                
+                jmcomic_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    'third_party', 'JMComic-Crawler-Python'
+                )
+                if jmcomic_path not in sys.path:
+                    sys.path.insert(0, jmcomic_path)
+                
+                from jmcomic_api import download_album
+                
+                for comic in new_comics:
+                    try:
+                        album_id = int(comic['id'])
+                        detail, success = download_album(album_id, show_progress=False)
+                        
+                        if success:
+                            downloaded_comics.append(comic['id'])
+                            # 更新本地页数
+                            comic['total_page'] = detail.get('local_pages', comic['total_page'])
+                        else:
+                            failed_downloads.append(comic['id'])
+                    except Exception as e:
+                        error_logger.error(f"下载漫画 {comic['id']} 失败: {e}")
+                        failed_downloads.append(comic['id'])
+                        
+            except ImportError as e:
+                error_logger.warning(f"无法导入下载模块: {e}")
+        
+        merged_data = adapter.merge_to_existing(db_data, new_comics)
+        
+        if not storage.write(merged_data):
+            return error_response(500, "数据写入失败")
+        
+        app_logger.info(f"在线导入成功: 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
+        
+        return success_response({
+            "imported_count": len(new_comics),
+            "skipped_count": len(skipped_ids),
+            "skipped_ids": skipped_ids,
+            "downloaded_count": len(downloaded_comics),
+            "failed_downloads": failed_downloads
+        })
+        
+    except ImportError as e:
+        error_logger.error(f"第三方库未安装: {e}")
+        return error_response(500, "第三方库未配置，请先配置外部 API")
+    except Exception as e:
+        error_logger.error(f"在线导入失败: {e}")
         return error_response(500, "服务器内部错误")

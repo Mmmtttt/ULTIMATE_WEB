@@ -1,0 +1,17 @@
+{
+  "default_adapter": "jmcomic",
+  "adapters": {
+    "jmcomic": {
+      "enabled": true,
+      "config_path": "JMComic-Crawler-Python/config.json",
+      "username": "",
+      "password": "",
+      "download_dir": "../../data/pictures",
+      "output_json": "comics_database.json",
+      "progress_file": "download_progress.json",
+      "favorite_list_file": "favorite_comics.txt",
+      "consecutive_hit_threshold": 10,
+      "collection_name": "我的最爱"
+    }
+  }
+}

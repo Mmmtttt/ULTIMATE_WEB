@@ -270,6 +270,31 @@ export const comicApi = {
       throw new Error(result.msg || '批量上传失败')
     }
     return result.data
+  },
+  
+  onlineImport: async (data) => {
+    return request.post('/v1/comic/import/online', data)
+  },
+  
+  /**
+   * 获取第三方库配置
+   * @returns {Promise}
+   */
+  getThirdPartyConfig: () => {
+    return request.get('/v1/comic/third-party/config')
+  },
+  
+  /**
+   * 保存第三方库配置
+   * @param {object} data - 配置数据
+   * @param {string} data.adapter - 适配器名称
+   * @param {string} data.username - 用户名
+   * @param {string} data.password - 密码
+   * @param {string} data.download_dir - 下载目录
+   * @returns {Promise}
+   */
+  saveThirdPartyConfig: (data) => {
+    return request.post('/v1/comic/third-party/config', data)
   }
 }
 

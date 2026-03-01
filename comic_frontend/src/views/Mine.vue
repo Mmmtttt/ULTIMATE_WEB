@@ -90,12 +90,50 @@
     
     <van-popup v-model:show="showImportDialog" round position="center">
       <div class="import-dialog">
-        <h3>导入漫画</h3>
-        <van-field v-model="comicId" label="漫画ID" placeholder="请输入漫画ID" />
-        <van-field v-model="comicTitle" label="漫画标题" placeholder="请输入漫画标题" />
+        <h3>在线导入漫画</h3>
+        
+        <van-radio-group v-model="importType" class="import-options">
+          <div class="option-group">
+            <div class="option-title">导入方式</div>
+            <van-radio name="by_id">通过 ID 导入</van-radio>
+            <van-radio name="by_search">通过搜索导入</van-radio>
+            <van-radio name="by_favorite">从收藏夹导入</van-radio>
+          </div>
+        </van-radio-group>
+        
+        <van-radio-group v-model="importTarget" class="import-options">
+          <div class="option-group">
+            <div class="option-title">导入目录</div>
+            <van-radio name="home">导入主页</van-radio>
+            <van-radio name="recommendation">导入推荐页</van-radio>
+          </div>
+        </van-radio-group>
+        
+        <van-field
+          v-if="importType === 'by_id'"
+          v-model="importId"
+          label="漫画ID"
+          placeholder="请输入漫画ID"
+        />
+        
+        <van-field
+          v-if="importType === 'by_search'"
+          v-model="importKeyword"
+          label="搜索关键词"
+          placeholder="请输入搜索关键词"
+        />
+        
+        <van-field
+          v-if="importType === 'by_search'"
+          v-model="importMaxPages"
+          type="number"
+          label="最大页数"
+          placeholder="默认为1页"
+        />
+        
         <div class="dialog-buttons">
           <van-button @click="showImportDialog = false">取消</van-button>
-          <van-button type="primary" @click="importComic" :loading="importing">确定</van-button>
+          <van-button type="primary" @click="handleOnlineImport" :loading="importing">导入</van-button>
         </div>
       </div>
     </van-popup>
@@ -166,6 +204,11 @@ const showUploadPanel = ref(false)
 const comicId = ref('')
 const comicTitle = ref('')
 const importing = ref(false)
+const importType = ref('by_id')
+const importTarget = ref('home')
+const importId = ref('')
+const importKeyword = ref('')
+const importMaxPages = ref(1)
 const cacheExpiryMinutes = ref(30)
 const fileInput = ref(null)
 const selectedFiles = ref([])
@@ -307,6 +350,57 @@ const importComic = async () => {
   }
 }
 
+const handleOnlineImport = async () => {
+  if (importType.value === 'by_id' && !importId.value.trim()) {
+    showFailToast('请输入漫画ID')
+    return
+  }
+  if (importType.value === 'by_search' && !importKeyword.value.trim()) {
+    showFailToast('请输入搜索关键词')
+    return
+  }
+  
+  importing.value = true
+  
+  try {
+    const response = await comicApi.onlineImport({
+      import_type: importType.value,
+      target: importTarget.value,
+      comic_id: importId.value.trim(),
+      keyword: importKeyword.value.trim(),
+      max_pages: importMaxPages.value || 1
+    })
+    
+    if (response.code === 200) {
+      const data = response.data
+      let message = `导入成功！新增 ${data.imported_count} 部，跳过 ${data.skipped_count} 部`
+      
+      // 如果导入到主页，显示下载结果
+      if (importTarget.value === 'home' && data.downloaded_count !== undefined) {
+        message += `，下载成功 ${data.downloaded_count} 部`
+        if (data.failed_downloads && data.failed_downloads.length > 0) {
+          message += `，下载失败 ${data.failed_downloads.length} 部`
+        }
+      }
+      
+      showSuccessToast(message)
+      showImportDialog.value = false
+      importId.value = ''
+      importKeyword.value = ''
+      importMaxPages.value = 1
+      if (importTarget.value === 'home') {
+        await comicStore.fetchComics()
+      }
+    } else {
+      showFailToast(response.msg || '导入失败')
+    }
+  } catch (error) {
+    showFailToast('导入失败：' + (error.message || '未知错误'))
+  } finally {
+    importing.value = false
+  }
+}
+
 function triggerFileInput() {
   fileInput.value?.click()
 }
@@ -388,13 +482,27 @@ async function handleUpload() {
 }
 
 .import-dialog {
-  width: 300px;
+  width: 320px;
   padding: 20px;
 }
 
 .import-dialog h3 {
   text-align: center;
   margin-bottom: 20px;
+}
+
+.import-options {
+  margin-bottom: 16px;
+}
+
+.option-group {
+  margin-bottom: 12px;
+}
+
+.option-title {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 8px;
 }
 
 .dialog-buttons {
