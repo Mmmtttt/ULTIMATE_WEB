@@ -873,7 +873,6 @@ def import_online():
         db_data[total_key] = len(db_data[comics_key])
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
-        # 合并新标签到现有标签
         new_tags = converted_data.get("tags", [])
         existing_tag_ids = {t["id"] for t in db_data.get("tags", [])}
         for tag in new_tags:
@@ -884,7 +883,6 @@ def import_online():
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
         
-        # 如果是导入到主页，生成封面
         if not is_recommendation and downloaded_comics:
             try:
                 from utils.file_parser import file_parser
@@ -898,7 +896,6 @@ def import_online():
                         if image_paths:
                             cover_path = image_handler.generate_cover(comic_id, image_paths[0])
                             if cover_path:
-                                # 更新数据库中的封面路径
                                 for comic in db_data[comics_key]:
                                     if comic['id'] == comic_id:
                                         comic['cover_path'] = cover_path
@@ -906,10 +903,35 @@ def import_online():
                     except Exception as e:
                         error_logger.error(f"生成封面失败 {comic_id}: {e}")
                 
-                # 重新保存更新了封面路径的数据
                 storage.write(db_data)
             except ImportError as e:
                 error_logger.warning(f"无法导入封面生成模块: {e}")
+        
+        if is_recommendation:
+            try:
+                import requests
+                from core.constants import COVER_DIR
+                
+                os.makedirs(COVER_DIR, exist_ok=True)
+                
+                for comic in new_comics:
+                    comic_id = comic['id']
+                    cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{comic_id}.jpg"
+                    cover_path = os.path.join(COVER_DIR, f"{comic_id}.jpg")
+                    
+                    if not os.path.exists(cover_path):
+                        try:
+                            resp = requests.get(cover_url, timeout=10)
+                            if resp.status_code == 200:
+                                with open(cover_path, 'wb') as f:
+                                    f.write(resp.content)
+                                app_logger.info(f"下载推荐页封面成功: {comic_id}")
+                            else:
+                                error_logger.warning(f"下载推荐页封面失败 {comic_id}: HTTP {resp.status_code}")
+                        except Exception as e:
+                            error_logger.error(f"下载推荐页封面失败 {comic_id}: {e}")
+            except ImportError as e:
+                error_logger.warning(f"无法导入requests模块: {e}")
         
         app_logger.info(f"在线导入成功: 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
         

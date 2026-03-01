@@ -234,5 +234,64 @@ export const recommendationApi = {
    */
   batchDeletePermanently: (recommendationIds) => {
     return request.delete('/v1/recommendation/trash/batch-delete', { data: { recommendation_ids: recommendationIds } })
+  },
+  
+  // ==================== 缓存相关 ====================
+  
+  /**
+   * 下载漫画到缓存
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  downloadToCache: (recommendationId) => {
+    return request.post('/v1/recommendation/cache/download', { recommendation_id: recommendationId })
+  },
+  
+  /**
+   * 获取缓存图片
+   * @param {string} recommendationId - 漫画ID
+   * @param {number} pageNum - 页码
+   * @returns {string} 图片URL
+   */
+  getCachedImageUrl: (recommendationId, pageNum) => {
+    return `/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=${pageNum}`
+  },
+  
+  /**
+   * 获取漫画缓存状态
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  getCacheStatus: (recommendationId) => {
+    return request.get('/v1/recommendation/cache/status', {
+      params: { recommendation_id: recommendationId }
+    })
+  },
+  
+  /**
+   * 获取缓存统计信息
+   * @returns {Promise}
+   */
+  getCacheStats: () => {
+    return request.get('/v1/recommendation/cache/stats')
+  },
+  
+  /**
+   * 清空缓存
+   * @returns {Promise}
+   */
+  clearCache: () => {
+    return request.delete('/v1/recommendation/cache/clear')
+  },
+  
+  /**
+   * 从缓存中移除指定漫画
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  removeFromCache: (recommendationId) => {
+    return request.delete('/v1/recommendation/cache/remove', {
+      params: { recommendation_id: recommendationId }
+    })
   }
 }

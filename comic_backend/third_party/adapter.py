@@ -96,11 +96,7 @@ class MetaDataAdapter:
             漫画对象
         """
         album_id = str(album.get("album_id", ""))
-        
-        if self.is_recommendation:
-            cover_path = album.get("cover_url", "")
-        else:
-            cover_path = f"/static/cover/{album_id}.jpg"
+        cover_path = f"/static/cover/{album_id}.jpg"
         
         tag_names = album.get("tags", [])
         tag_ids = [tag_id_map.get(tag) for tag in tag_names if tag in tag_id_map]

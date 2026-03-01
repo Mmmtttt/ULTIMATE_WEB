@@ -17,6 +17,9 @@
     
     <div v-if="loading" class="loading">
       <van-loading type="spinner" color="#fff" />
+      <div v-if="downloadProgress" class="download-progress">
+        {{ downloadProgress }}
+      </div>
     </div>
     
     <div v-else-if="error" class="error">
@@ -147,11 +150,11 @@
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRecommendationStore } from '@/stores'
+import { recommendationApi } from '@/api/recommendation'
 
 const route = useRoute()
 const recommendationStore = useRecommendationStore()
 
-// 状态
 const images = ref([])
 const currentPage = ref(1)
 const totalPage = ref(0)
@@ -164,6 +167,9 @@ const leftRightContainer = ref(null)
 const upDownContainer = ref(null)
 const readerContent = ref(null)
 const sliderPage = ref(1)
+
+const downloadProgress = ref('')
+const isCached = ref(false)
 
 // 图片加载队列控制
 const loadedPages = ref(new Set())
@@ -341,28 +347,74 @@ const getContainerStyle = computed(() => {
 const loadImages = async () => {
   loading.value = true
   error.value = false
+  
   try {
-    // 先获取详情，确定当前页
     const recommendation = await recommendationStore.fetchRecommendationDetail(recommendationId.value)
     if (recommendation && recommendation.current_page > 1) {
       currentPage.value = recommendation.current_page
       sliderPage.value = recommendation.current_page
     }
+    totalPage.value = recommendation?.total_page || 0
+    
+    const cacheStatus = await recommendationApi.getCacheStatus(recommendationId.value)
+    
+    if (cacheStatus.code === 200 && cacheStatus.data.is_cached) {
+      isCached.value = true
+      const cachedPages = cacheStatus.data.cached_pages || []
+      
+      images.value = cachedPages.map(pageNum => 
+        recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
+      )
+      
+      if (images.value.length > 0) {
+        preloadImages(currentPage.value)
+      }
 
-    // 再获取图片列表（从图床）
-    const imageData = await recommendationStore.fetchImages(recommendationId.value)
-    if (imageData) {
-      images.value = imageData  // 直接使用返回的完整URL
-      totalPage.value = images.value.length
+      await nextTick()
+      setTimeout(() => {
+        jumpToPage(currentPage.value, false)
+      }, 100)
+    } else {
+      isCached.value = false
+      downloadProgress.value = '正在下载漫画到缓存...'
+      loading.value = true
+      
+      const result = await recommendationApi.downloadToCache(recommendationId.value)
+      
+      if (result.code === 200) {
+        downloadProgress.value = `下载完成，正在加载...`
+        
+        isCached.value = true
+        const cachedPages = result.data.cached_pages || result.data.total_pages || []
+        
+        if (typeof cachedPages === 'number') {
+          const pages = []
+          for (let i = 1; i <= cachedPages; i++) {
+            pages.push(i)
+          }
+          images.value = pages.map(pageNum => 
+            recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
+          )
+        } else {
+          images.value = cachedPages.map(pageNum => 
+            recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
+          )
+        }
+        
+        if (images.value.length > 0) {
+          preloadImages(currentPage.value)
+        }
 
-      // 立即开始预加载，按正确顺序加载图片
-      preloadImages(currentPage.value)
+        await nextTick()
+        setTimeout(() => {
+          jumpToPage(currentPage.value, false)
+        }, 100)
+      } else {
+        error.value = true
+        console.error('下载失败:', result.msg)
+      }
+      downloadProgress.value = ''
     }
-
-    await nextTick()
-    setTimeout(() => {
-      jumpToPage(currentPage.value, false)
-    }, 100)
   } catch (err) {
     error.value = true
     console.error('加载图片失败:', err)
@@ -719,6 +771,13 @@ onUnmounted(() => {
   justify-content: center;
   height: 100vh;
   background: #000;
+  color: #fff;
+}
+
+.download-progress {
+  margin-top: 16px;
+  font-size: 14px;
+  color: #999;
 }
 
 .reader-content {
