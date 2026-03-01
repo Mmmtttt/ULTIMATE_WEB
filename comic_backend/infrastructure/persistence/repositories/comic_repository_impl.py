@@ -21,25 +21,26 @@ class ComicJsonRepository(ComicRepository):
         return [Comic.from_dict(c) for c in comics]
     
     def save(self, comic: Comic) -> bool:
+        """保存漫画 - 使用原子更新防止并发竞争"""
         try:
             app_logger.info(f"[ComicRepo.save] 保存漫画: id={comic.id}, list_ids={comic.list_ids}")
-            data = self._storage.read()
-            comics = data.get("comics", [])
             
-            index = next((i for i, c in enumerate(comics) if c["id"] == comic.id), -1)
-            app_logger.info(f"[ComicRepo.save] 找到索引: {index}")
+            def update_data(data):
+                comics = data.get("comics", [])
+                
+                index = next((i for i, c in enumerate(comics) if c["id"] == comic.id), -1)
+                
+                if index >= 0:
+                    comics[index] = comic.to_dict()
+                else:
+                    comics.append(comic.to_dict())
+                
+                data["comics"] = comics
+                data["total_comics"] = len(comics)
+                data["last_updated"] = get_current_date()
+                return data
             
-            if index >= 0:
-                comics[index] = comic.to_dict()
-                app_logger.info(f"[ComicRepo.save] 更新后的list_ids: {comics[index]['list_ids']}")
-            else:
-                comics.append(comic.to_dict())
-            
-            data["comics"] = comics
-            data["total_comics"] = len(comics)
-            data["last_updated"] = get_current_date()
-            
-            result = self._storage.write(data)
+            result = self._storage.atomic_update(update_data)
             app_logger.info(f"[ComicRepo.save] 写入结果: {result}")
             return result
         except Exception as e:
@@ -47,17 +48,17 @@ class ComicJsonRepository(ComicRepository):
             return False
     
     def delete(self, comic_id: str) -> bool:
+        """删除漫画 - 使用原子更新防止并发竞争"""
         try:
-            data = self._storage.read()
-            comics = data.get("comics", [])
+            def update_data(data):
+                comics = data.get("comics", [])
+                comics = [c for c in comics if c["id"] != comic_id]
+                data["comics"] = comics
+                data["total_comics"] = len(comics)
+                data["last_updated"] = get_current_date()
+                return data
             
-            comics = [c for c in comics if c["id"] != comic_id]
-            
-            data["comics"] = comics
-            data["total_comics"] = len(comics)
-            data["last_updated"] = get_current_date()
-            
-            return self._storage.write(data)
+            return self._storage.atomic_update(update_data)
         except Exception as e:
             error_logger.error(f"删除漫画失败: {e}")
             return False

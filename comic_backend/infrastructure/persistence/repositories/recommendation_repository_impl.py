@@ -26,24 +26,26 @@ class RecommendationJsonRepository(RecommendationRepository):
         return [Recommendation.from_dict(r) for r in recommendations]
     
     def save(self, recommendation: Recommendation) -> bool:
-        """保存推荐漫画"""
+        """保存推荐漫画 - 使用原子更新防止并发竞争"""
         try:
             app_logger.info(f"[RecommendationRepo.save] 保存推荐: id={recommendation.id}")
-            data = self._storage.read()
-            recommendations = data.get("recommendations", [])
             
-            index = next((i for i, r in enumerate(recommendations) if r["id"] == recommendation.id), -1)
+            def update_data(data):
+                recommendations = data.get("recommendations", [])
+                
+                index = next((i for i, r in enumerate(recommendations) if r["id"] == recommendation.id), -1)
+                
+                if index >= 0:
+                    recommendations[index] = recommendation.to_dict()
+                else:
+                    recommendations.append(recommendation.to_dict())
+                
+                data["recommendations"] = recommendations
+                data["total_recommendations"] = len(recommendations)
+                data["last_updated"] = get_current_date()
+                return data
             
-            if index >= 0:
-                recommendations[index] = recommendation.to_dict()
-            else:
-                recommendations.append(recommendation.to_dict())
-            
-            data["recommendations"] = recommendations
-            data["total_recommendations"] = len(recommendations)
-            data["last_updated"] = get_current_date()
-            
-            result = self._storage.write(data)
+            result = self._storage.atomic_update(update_data)
             app_logger.info(f"[RecommendationRepo.save] 写入结果: {result}")
             return result
         except Exception as e:
@@ -51,18 +53,17 @@ class RecommendationJsonRepository(RecommendationRepository):
             return False
     
     def delete(self, recommendation_id: str) -> bool:
-        """删除推荐漫画"""
+        """删除推荐漫画 - 使用原子更新防止并发竞争"""
         try:
-            data = self._storage.read()
-            recommendations = data.get("recommendations", [])
+            def update_data(data):
+                recommendations = data.get("recommendations", [])
+                recommendations = [r for r in recommendations if r["id"] != recommendation_id]
+                data["recommendations"] = recommendations
+                data["total_recommendations"] = len(recommendations)
+                data["last_updated"] = get_current_date()
+                return data
             
-            recommendations = [r for r in recommendations if r["id"] != recommendation_id]
-            
-            data["recommendations"] = recommendations
-            data["total_recommendations"] = len(recommendations)
-            data["last_updated"] = get_current_date()
-            
-            return self._storage.write(data)
+            return self._storage.atomic_update(update_data)
         except Exception as e:
             error_logger.error(f"删除推荐漫画失败: {e}")
             return False

@@ -165,3 +165,79 @@ class JsonStorage:
         except Exception as e:
             error_logger.error(f"从备份恢复失败: {e}")
             return self._create_empty_data()
+    
+    def atomic_update(self, update_func, max_retries: int = 3) -> bool:
+        """
+        原子性更新数据
+        
+        在持有锁的情况下执行读取-修改-写入操作，防止并发竞争
+        
+        Args:
+            update_func: 更新函数，接收当前数据，返回更新后的数据
+            max_retries: 最大重试次数
+        
+        Returns:
+            是否成功
+        """
+        for attempt in range(max_retries):
+            try:
+                if not self._acquire_lock():
+                    if attempt < max_retries - 1:
+                        time.sleep(0.1 * (attempt + 1))
+                        continue
+                    else:
+                        error_logger.error("获取文件锁失败")
+                        return False
+                
+                try:
+                    # 在锁保护下读取数据
+                    if not os.path.exists(self.json_file):
+                        data = self._create_empty_data()
+                    else:
+                        with open(self.json_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                    
+                    # 执行更新
+                    data = update_func(data)
+                    if data is None:
+                        return False
+                    
+                    # 在锁保护下写入数据
+                    json_file_abs = os.path.abspath(self.json_file)
+                    dir_path = os.path.dirname(json_file_abs)
+                    if dir_path:
+                        os.makedirs(dir_path, exist_ok=True)
+                    
+                    # 创建备份
+                    backup_file = json_file_abs + BACKUP_SUFFIX
+                    if os.path.exists(json_file_abs):
+                        try:
+                            shutil.copy2(json_file_abs, backup_file)
+                        except Exception as e:
+                            error_logger.warning(f"创建备份失败: {e}")
+                    
+                    # 写入临时文件然后原子替换
+                    temp_path = os.path.join(dir_path if dir_path else '.', f'comic_db_{uuid.uuid4().hex}.tmp')
+                    
+                    with open(temp_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    
+                    if os.path.exists(json_file_abs):
+                        os.replace(temp_path, json_file_abs)
+                    else:
+                        os.rename(temp_path, json_file_abs)
+                    
+                    app_logger.info(f"JSON 文件原子更新成功: {json_file_abs}")
+                    return True
+                    
+                finally:
+                    self._release_lock()
+                    
+            except Exception as e:
+                error_logger.error(f"原子更新失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                return False
+        
+        return False

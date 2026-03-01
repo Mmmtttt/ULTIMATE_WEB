@@ -114,7 +114,14 @@ class JMComicAdapter(BaseAdapter):
             return self._convert_to_meta_format([detail])
             
         except Exception as e:
-            raise RuntimeError(f"获取专辑 {album_id} 失败: {e}")
+            error_msg = str(e)
+            # 检查是否是第三方API服务器错误
+            if "Could not connect to mysql" in error_msg or "conn2" in error_msg:
+                raise RuntimeError(f"第三方API服务器暂时不可用（数据库错误），请稍后重试。专辑ID: {album_id}")
+            elif "Not legal request" in error_msg or "401" in error_msg:
+                raise RuntimeError(f"第三方API拒绝请求，可能是ID无效或需要登录。专辑ID: {album_id}")
+            else:
+                raise RuntimeError(f"获取专辑 {album_id} 失败: {e}")
     
     def search_albums(self, keyword: str, max_pages: int = 1) -> Dict[str, Any]:
         """搜索漫画专辑
@@ -135,7 +142,11 @@ class JMComicAdapter(BaseAdapter):
             return self._convert_to_meta_format(albums)
             
         except Exception as e:
-            raise RuntimeError(f"搜索漫画失败: {e}")
+            error_msg = str(e)
+            if "Could not connect to mysql" in error_msg or "conn2" in error_msg:
+                raise RuntimeError(f"第三方API服务器暂时不可用（数据库错误），请稍后重试。关键词: {keyword}")
+            else:
+                raise RuntimeError(f"搜索漫画失败: {e}")
     
     def get_favorites(self) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画
@@ -152,7 +163,11 @@ class JMComicAdapter(BaseAdapter):
             return self._convert_to_meta_format(albums)
             
         except Exception as e:
-            raise RuntimeError(f"获取收藏夹失败: {e}")
+            error_msg = str(e)
+            if "Could not connect to mysql" in error_msg or "conn2" in error_msg:
+                raise RuntimeError("第三方API服务器暂时不可用（数据库错误），请稍后重试。")
+            else:
+                raise RuntimeError(f"获取收藏夹失败: {e}")
     
     def _convert_to_meta_format(self, albums: List[Dict[str, Any]]) -> Dict[str, Any]:
         """将 JMComic 格式转换为元数据格式
