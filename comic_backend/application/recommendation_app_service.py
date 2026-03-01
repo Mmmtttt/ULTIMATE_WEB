@@ -4,6 +4,7 @@ from domain.tag import TagRepository
 from infrastructure.persistence.repositories import RecommendationJsonRepository, RecommendationTagJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import get_current_time, get_preview_pages
 
 FAVORITES_LIST_ID = "list_favorites"
@@ -99,12 +100,16 @@ class RecommendationAppService:
             preview_pages = get_preview_pages(recommendation.total_page)
             is_favorited = FAVORITES_LIST_ID in recommendation.list_ids
             
-            # 动态生成预览图片 URL
+            cache_status = recommendation_cache_manager.get_cache_status(recommendation_id)
+            is_cached = cache_status.get("is_cached", False)
+            
             preview_image_urls = []
             for page in preview_pages:
-                image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{recommendation_id}/{page:05d}.webp"
+                if is_cached:
+                    image_url = f"/api/v1/recommendation/cache/image?recommendation_id={recommendation_id}&page_num={page}"
+                else:
+                    image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{recommendation_id}/{page:05d}.webp"
                 preview_image_urls.append(image_url)
-            is_favorited = FAVORITES_LIST_ID in recommendation.list_ids
             
             detail = {
                 "id": recommendation.id,
@@ -121,12 +126,13 @@ class RecommendationAppService:
                 "list_ids": recommendation.list_ids,
                 "preview_pages": preview_pages,
                 "preview_image_urls": preview_image_urls,
+                "is_cached": is_cached,
                 "last_read_time": recommendation.last_read_time,
                 "create_time": recommendation.create_time,
                 "is_favorited": is_favorited
             }
             
-            app_logger.info(f"获取推荐详情成功: {recommendation_id}")
+            app_logger.info(f"获取推荐详情成功: {recommendation_id}, 缓存状态: {is_cached}")
             return ServiceResult.ok(detail)
         except Exception as e:
             error_logger.error(f"获取推荐详情失败: {e}")

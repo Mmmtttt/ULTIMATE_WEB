@@ -160,6 +160,27 @@ class RecommendationCacheManager:
                 return info
             return None
     
+    def get_cache_status(self, comic_id: str) -> Dict:
+        """获取漫画缓存状态
+        
+        Args:
+            comic_id: 漫画ID
+            
+        Returns:
+            缓存状态字典，包含 is_cached 和 cached_pages
+        """
+        with self._cache_lock:
+            is_cached = comic_id in self._cache_index
+            cached_pages = []
+            
+            if is_cached:
+                cached_pages = self.get_cached_pages(comic_id)
+            
+            return {
+                "is_cached": is_cached,
+                "cached_pages": cached_pages
+            }
+    
     def update_access_time(self, comic_id: str):
         """更新访问时间（移到队列末尾）"""
         with self._cache_lock:
