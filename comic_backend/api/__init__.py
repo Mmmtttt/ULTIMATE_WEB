@@ -1,5 +1,5 @@
 from flask import Blueprint
-from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp
+from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp, backup_bp
 
 
 def register_blueprints(app):
@@ -8,3 +8,4 @@ def register_blueprints(app):
     app.register_blueprint(list_bp, url_prefix='/api/v1/list')
     app.register_blueprint(config_bp, url_prefix='/api/v1/config')
     app.register_blueprint(recommendation_bp, url_prefix='/api/v1/recommendation')
+    app.register_blueprint(backup_bp, url_prefix='/api/v1/backup')

@@ -88,77 +88,147 @@
         <h2 class="section-title">内容预览</h2>
         <div class="preview-grid">
           <div
-            v-for="(page, index) in recommendation.preview_pages"
+            v-for="(url, index) in recommendation.preview_image_urls"
             :key="index"
             class="preview-item"
-            @click="startReadingFromPage(page)"
+            @click="previewImage(index)"
           >
             <img
-              :src="getPreviewImageUrl(page)"
+              :src="url"
               class="preview-image"
             />
-            <span class="preview-page">第{{ page }}页</span>
+            <span class="preview-page">第{{ recommendation.preview_pages[index] }}页</span>
           </div>
         </div>
       </div>
 
+      <!-- 图片预览 -->
+      <van-image-preview
+        v-model:show="showPreview"
+        :images="previewImages"
+        :start-position="previewIndex"
+        :closeable="true"
+        close-icon="close"
+        @change="onPreviewChange"
+      />
+
       <div class="action-section">
-        <van-button
-          type="primary"
-          size="large"
-          block
-          @click="startReading"
-        >
-          开始阅读
-        </van-button>
-        <van-button
-          :type="recommendation.is_favorited ? 'danger' : 'default'"
-          size="large"
-          block
-          @click="toggleFavorite"
-        >
-          {{ recommendation.is_favorited ? '取消收藏' : '加入收藏' }}
+        <div class="action-buttons">
+          <van-button
+            :type="isFavorited ? 'warning' : 'default'"
+            size="small"
+            @click="handleToggleFavorite"
+            :loading="favoriteLoading"
+          >
+            <van-icon :name="isFavorited ? 'star' : 'star-o'" />
+            {{ isFavorited ? '已收藏' : '收藏' }}
+          </van-button>
+          <van-button
+            type="default"
+            size="small"
+            @click="showListPopup = true"
+          >
+            <van-icon name="add-o" />
+            加入清单
+          </van-button>
+          <van-button
+            :type="isRead ? 'success' : 'default'"
+            size="small"
+            @click="markAsRead"
+          >
+            <van-icon :name="isRead ? 'passed' : 'circle'" />
+            {{ isRead ? '已读' : '标记已读' }}
+          </van-button>
+        </div>
+        <van-button type="primary" size="large" @click="startReading" class="read-button">
+          {{ recommendation.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
       </div>
     </div>
 
-    <!-- 操作菜单 -->
     <van-action-sheet
       v-model:show="showActionSheet"
       :actions="actions"
       @select="onActionSelect"
-      cancel-text="取消"
     />
 
-    <!-- 标签选择弹窗 -->
     <van-popup
-      v-model:show="showTagPicker"
+      v-model:show="showTagPopup"
       position="bottom"
       round
-      :style="{ height: '70%' }"
+      :style="{ height: '60%' }"
     >
-      <div class="tag-picker">
-        <van-nav-bar title="选择标签" left-text="关闭" @click-left="showTagPicker = false">
+      <div class="tag-popup">
+        <van-nav-bar title="绑定标签">
           <template #right>
-            <van-button type="primary" size="small" @click="confirmTagSelection">确定</van-button>
+            <van-button type="primary" size="small" @click="saveTags">保存</van-button>
           </template>
         </van-nav-bar>
-        <TagFilter
-          :tags="availableTags"
-          :selected-ids="selectedTagIds"
-          @change="selectedTagIds = $event"
-        />
+
+        <div class="tag-select-list">
+          <van-checkbox-group v-model="selectedTagIds">
+            <van-cell-group inset>
+              <van-cell
+                v-for="tag in allTags"
+                :key="tag.id"
+                clickable
+                @click="toggleTag(tag.id)"
+              >
+                <template #title>
+                  <span>{{ tag.name }}</span>
+                  <span class="tag-count">({{ tag.comic_count || 0 }})</span>
+                </template>
+                <template #right-icon>
+                  <van-checkbox :name="tag.id" />
+                </template>
+              </van-cell>
+            </van-cell-group>
+          </van-checkbox-group>
+        </div>
+      </div>
+    </van-popup>
+
+    <van-popup
+      v-model:show="showListPopup"
+      position="bottom"
+      round
+      :style="{ height: '50%' }"
+    >
+      <div class="list-popup">
+        <van-nav-bar title="管理清单" left-text="取消" @click-left="showListPopup = false" />
+
+        <van-checkbox-group v-model="selectedListIds">
+          <van-cell-group inset>
+            <van-cell
+              v-for="list in customLists"
+              :key="list.id"
+              clickable
+              @click="toggleListItem(list.id)"
+            >
+              <template #title>
+                <span>{{ list.name }}</span>
+                <span class="list-count">({{ list.comic_count || 0 }})</span>
+              </template>
+              <template #right-icon>
+                <van-checkbox :name="list.id" />
+              </template>
+            </van-cell>
+          </van-cell-group>
+        </van-checkbox-group>
+
+        <div class="list-action">
+          <van-button type="primary" block @click="addToLists">保存</van-button>
+        </div>
       </div>
     </van-popup>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { showToast, showConfirmDialog } from 'vant'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import TagFilter from '@/components/tag/TagFilter.vue'
+import { showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
 const router = useRouter()
@@ -167,31 +237,46 @@ const tagStore = useTagStore()
 const listStore = useListStore()
 
 // ============ State ============
+const recommendation = ref(null)
+const isLoading = ref(true)
 const showActionSheet = ref(false)
-const showTagPicker = ref(false)
+const showTagPopup = ref(false)
+const showListPopup = ref(false)
+const showPreview = ref(false)
+const previewIndex = ref(0)
+const allTags = ref([])
 const selectedTagIds = ref([])
+const selectedListIds = ref([])
+const scoreValue = ref(6)
+const favoriteLoading = ref(false)
+
+const actions = [
+  { name: '绑定标签', value: 'tags' }
+]
 
 // ============ Computed ============
 const recommendationId = computed(() => route.params.id)
-const recommendation = computed(() => recommendationStore.currentRecommendationInfo)
-const isLoading = computed(() => recommendationStore.loading)
-const availableTags = computed(() => tagStore.tags)
-
-const scoreValue = computed({
-  get: () => recommendation.value?.score || 0,
-  set: (val) => {}
-})
 
 const progressPercent = computed(() => {
-  if (!recommendation.value || recommendation.value.total_page === 0) return 0
+  if (!recommendation.value || !recommendation.value.total_page || recommendation.value.total_page === 0) return 0
   return Math.round((recommendation.value.current_page / recommendation.value.total_page) * 100)
 })
 
-const actions = [
-  { name: '编辑标签', value: 'edit_tags' },
-  { name: '添加到清单', value: 'add_to_list' },
-  { name: '删除', value: 'delete', color: '#ee0a24' }
-]
+const previewImages = computed(() => {
+  if (!recommendation.value || !recommendation.value.preview_image_urls) return []
+  return recommendation.value.preview_image_urls
+})
+
+const isFavorited = computed(() => {
+  return listStore.isFavorited(recommendation.value)
+})
+
+const customLists = computed(() => listStore.lists || [])
+
+const isRead = computed(() => {
+  if (!recommendation.value) return false
+  return recommendation.value.current_page >= recommendation.value.total_page
+})
 
 // ============ Methods ============
 
@@ -199,10 +284,34 @@ const actions = [
  * 获取推荐漫画详情
  */
 async function fetchDetail() {
-  console.log('[RecommendationDetail] 获取详情:', recommendationId.value)
-  await recommendationStore.fetchRecommendationDetail(recommendationId.value)
-  if (recommendation.value) {
-    selectedTagIds.value = recommendation.value.tag_ids || []
+  const id = recommendationId.value
+  isLoading.value = true
+
+  try {
+    const detail = await recommendationStore.fetchRecommendationDetail(id)
+    if (detail) {
+      recommendation.value = detail
+      scoreValue.value = detail.score || 6
+      selectedTagIds.value = detail.tag_ids || []
+    }
+  } catch (error) {
+    console.error('获取推荐漫画详情失败:', error)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+/**
+ * 获取所有标签
+ */
+async function fetchAllTags() {
+  try {
+    const tags = await tagStore.fetchTags()
+    if (tags) {
+      allTags.value = tags
+    }
+  } catch (error) {
+    console.error('获取标签列表失败:', error)
   }
 }
 
@@ -210,60 +319,47 @@ async function fetchDetail() {
  * 开始阅读
  */
 function startReading() {
-  console.log('[RecommendationDetail] 开始阅读:', recommendationId.value)
-  router.push(`/recommendation-reader/${recommendationId.value}`)
+  router.push(`/recommendation-reader/${recommendation.value.id}`)
 }
 
 /**
- * 从指定页开始阅读
+ * 预览图片
  */
-function startReadingFromPage(page) {
-  console.log('[RecommendationDetail] 从第', page, '页开始阅读')
-  router.push(`/recommendation-reader/${recommendationId.value}?page=${page}`)
+function previewImage(index) {
+  previewIndex.value = index
+  showPreview.value = true
 }
 
 /**
- * 获取预览图片 URL
- * 推荐漫画的图片存储在图床，直接返回 URL
+ * 预览图片变化
  */
-function getPreviewImageUrl(page) {
-  // 假设图片 URL 格式为: base_url/001.jpg, base_url/002.jpg, ...
-  const baseUrl = recommendation.value?.cover_path?.replace(/\/[^\/]*$/, '') || ''
-  return `${baseUrl}/${String(page).padStart(3, '0')}.jpg`
+function onPreviewChange(index) {
+  previewIndex.value = index
+}
+
+/**
+ * 根据标签筛选
+ */
+function filterByTag(tagId) {
+  router.push(`/recommendation?tagId=${tagId}`)
 }
 
 /**
  * 评分变化
  */
 async function handleScoreChange(value) {
-  console.log('[RecommendationDetail] 更新评分:', value)
-  const success = await recommendationStore.updateScore(recommendationId.value, value)
-  if (success) {
-    showToast('评分已更新')
-  } else {
-    showToast('评分更新失败')
+  try {
+    const success = await recommendationStore.updateScore(recommendation.value.id, value)
+    if (success) {
+      recommendation.value.score = value
+      showSuccessToast('评分保存成功')
+    } else {
+      showFailToast('评分保存失败')
+    }
+  } catch (error) {
+    console.error('保存评分失败:', error)
+    showFailToast('评分保存失败')
   }
-}
-
-/**
- * 切换收藏状态
- */
-async function toggleFavorite() {
-  console.log('[RecommendationDetail] 切换收藏状态')
-  const isFavorited = recommendation.value.is_favorited
-
-  if (isFavorited) {
-    // 取消收藏 - 从收藏清单中移除
-    await listStore.removeComicFromList('list_favorites', recommendationId.value)
-    showToast('已取消收藏')
-  } else {
-    // 添加收藏 - 添加到收藏清单
-    await listStore.addComicToList('list_favorites', recommendationId.value)
-    showToast('已加入收藏')
-  }
-
-  // 刷新详情
-  await fetchDetail()
 }
 
 /**
@@ -271,73 +367,168 @@ async function toggleFavorite() {
  */
 function onActionSelect(action) {
   showActionSheet.value = false
-
-  switch (action.value) {
-    case 'edit_tags':
-      showTagPicker.value = true
-      break
-    case 'add_to_list':
-      router.push(`/recommendation-add-to-list/${recommendationId.value}`)
-      break
-    case 'delete':
-      handleDelete()
-      break
+  if (action.value === 'tags') {
+    showTagPopup.value = true
   }
 }
 
 /**
- * 确认标签选择
+ * 切换标签选择
  */
-async function confirmTagSelection() {
-  console.log('[RecommendationDetail] 更新标签:', selectedTagIds.value)
-  const success = await recommendationStore.bindTags(recommendationId.value, selectedTagIds.value)
-  if (success) {
-    showToast('标签已更新')
-    showTagPicker.value = false
-    await fetchDetail()
+function toggleTag(tagId) {
+  const index = selectedTagIds.value.indexOf(tagId)
+  if (index > -1) {
+    selectedTagIds.value.splice(index, 1)
   } else {
-    showToast('标签更新失败')
+    selectedTagIds.value.push(tagId)
   }
 }
 
 /**
- * 根据标签筛选
+ * 保存标签
  */
-function filterByTag(tagId) {
-  console.log('[RecommendationDetail] 根据标签筛选:', tagId)
-  router.push({
-    path: '/recommendation',
-    query: { tag: tagId }
-  })
+async function saveTags() {
+  try {
+    const success = await recommendationStore.bindTags(recommendation.value.id, selectedTagIds.value)
+    if (success) {
+      recommendationStore.clearCache('detail', recommendation.value.id)
+      await fetchDetail()
+      showTagPopup.value = false
+      showSuccessToast('标签绑定成功')
+    } else {
+      showFailToast('标签绑定失败')
+    }
+  } catch (error) {
+    console.error('标签绑定失败:', error)
+    showFailToast('标签绑定失败')
+  }
 }
 
 /**
- * 删除推荐漫画
+ * 切换收藏状态
  */
-async function handleDelete() {
+async function handleToggleFavorite() {
+  favoriteLoading.value = true
   try {
-    await showConfirmDialog({
-      title: '确认删除',
-      message: '确定要删除这个推荐漫画吗？此操作不可恢复。'
-    })
-
-    const success = await recommendationStore.deleteRecommendation(recommendationId.value)
-    if (success) {
-      showToast('删除成功')
-      router.back()
-    } else {
-      showToast('删除失败')
+    const result = await listStore.toggleFavorite(recommendation.value.id)
+    if (result !== null) {
+      const FAVORITES_LIST_ID = 'list_favorites'
+      if (result) {
+        if (!recommendation.value.list_ids) {
+          recommendation.value.list_ids = []
+        }
+        if (!recommendation.value.list_ids.includes(FAVORITES_LIST_ID)) {
+          recommendation.value.list_ids.push(FAVORITES_LIST_ID)
+        }
+      } else {
+        if (recommendation.value.list_ids) {
+          recommendation.value.list_ids = recommendation.value.list_ids.filter(id => id !== FAVORITES_LIST_ID)
+        }
+      }
+      recommendationStore.clearCache('detail', recommendation.value.id)
     }
-  } catch {
-    // 用户取消
+  } finally {
+    favoriteLoading.value = false
+  }
+}
+
+/**
+ * 切换清单项
+ */
+function toggleListItem(listId) {
+  const index = selectedListIds.value.indexOf(listId)
+  if (index > -1) {
+    selectedListIds.value.splice(index, 1)
+  } else {
+    selectedListIds.value.push(listId)
+  }
+}
+
+/**
+ * 添加到清单
+ */
+async function addToLists() {
+  if (selectedListIds.value.length === 0 && (!recommendation.value.list_ids || recommendation.value.list_ids.length === 0)) {
+    showFailToast('请选择清单')
+    return
+  }
+
+  try {
+    const currentListIds = recommendation.value.list_ids || []
+    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
+    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
+
+    let addCount = 0
+    let removeCount = 0
+
+    for (const listId of toAdd) {
+      const result = await listStore.bindComics(listId, [recommendation.value.id])
+      if (result) addCount++
+    }
+
+    for (const listId of toRemove) {
+      const result = await listStore.removeComics(listId, [recommendation.value.id])
+      if (result) removeCount++
+    }
+
+    if (addCount > 0 || removeCount > 0) {
+      showListPopup.value = false
+      selectedListIds.value = []
+      recommendationStore.clearCache('detail', recommendation.value.id)
+      await fetchDetail()
+      await listStore.fetchLists()
+
+      let message = ''
+      if (addCount > 0) message += `加入${addCount}个清单 `
+      if (removeCount > 0) message += `移出${removeCount}个清单`
+      showSuccessToast(message.trim())
+    } else if (toAdd.length === 0 && toRemove.length === 0) {
+      showSuccessToast('清单无变化')
+      showListPopup.value = false
+    }
+  } catch (error) {
+    console.error('addToLists error:', error)
+    showFailToast('操作失败')
+  }
+}
+
+/**
+ * 标记已读
+ */
+async function markAsRead() {
+  try {
+    if (isRead.value) {
+      await recommendationStore.saveProgress(recommendation.value.id, 1)
+      recommendation.value.current_page = 1
+      showSuccessToast('已标记为未读')
+    } else {
+      await recommendationStore.saveProgress(recommendation.value.id, recommendation.value.total_page)
+      recommendation.value.current_page = recommendation.value.total_page
+      showSuccessToast('已标记为已读')
+    }
+  } catch (error) {
+    showFailToast('标记失败')
   }
 }
 
 // ============ Lifecycle ============
 onMounted(async () => {
-  console.log('[RecommendationDetail] 页面挂载')
-  await tagStore.fetchTags()
   await fetchDetail()
+  await fetchAllTags()
+  await listStore.fetchLists()
+})
+
+watch(() => route.params.id, async (newId) => {
+  await fetchDetail()
+})
+
+watch(showListPopup, async (val) => {
+  if (val) {
+    await listStore.fetchLists()
+    if (recommendation.value) {
+      selectedListIds.value = [...(recommendation.value.list_ids || [])]
+    }
+  }
 })
 </script>
 
@@ -397,11 +588,14 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 16px;
+  font-size: 13px;
+  color: #666;
 }
 
 .stat-item {
-  font-size: 12px;
-  color: #999;
+  background: #f5f5f5;
+  padding: 4px 8px;
+  border-radius: 4px;
 }
 
 .score-section {
@@ -472,7 +666,8 @@ onMounted(async () => {
   margin: 0;
   font-size: 14px;
   line-height: 1.6;
-  color: #666;
+  color: #333;
+  white-space: pre-wrap;
 }
 
 .preview-grid {
@@ -500,35 +695,53 @@ onMounted(async () => {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 4px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   font-size: 12px;
   text-align: center;
+  padding: 4px 0;
 }
 
 .action-section {
   margin-top: 12px;
   padding: 16px;
   background: #fff;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
-.tag-picker {
+.action-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.read-button {
+  width: 100%;
+}
+
+.tag-popup,
+.list-popup {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.tag-picker .van-nav-bar {
-  flex-shrink: 0;
-}
-
-.tag-picker TagFilter {
+.tag-select-list,
+.list-popup :deep(.van-checkbox-group) {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 12px 0;
+}
+
+.tag-count,
+.list-count {
+  margin-left: 4px;
+  color: #999;
+  font-size: 12px;
+}
+
+.list-action {
+  padding: 12px 16px;
+  border-top: 1px solid #eee;
 }
 </style>
