@@ -492,11 +492,12 @@ def upload_comic():
             shutil.rmtree(comic_dir)
         os.makedirs(comic_dir, exist_ok=True)
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-            file.save(tmp_file.name)
-            tmp_path = tmp_file.name
-        
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                file.save(tmp_file.name)
+                tmp_path = tmp_file.name
+            
             image_count = 0
             with zipfile.ZipFile(tmp_path, 'r') as zf:
                 for name in zf.namelist():
@@ -509,6 +510,7 @@ def upload_comic():
                         target_path = os.path.join(comic_dir, os.path.basename(name))
                         with open(target_path, 'wb') as target:
                             shutil.copyfileobj(source, target)
+                        source.close()
                         image_count += 1
             
             if image_count == 0:
@@ -546,8 +548,11 @@ def upload_comic():
             return success_response(new_comic)
             
         finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
                 
     except Exception as e:
         error_logger.error(f"上传漫画失败: {e}")
@@ -602,11 +607,12 @@ def batch_upload_comics():
                 shutil.rmtree(comic_dir)
             os.makedirs(comic_dir, exist_ok=True)
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
-                file.save(tmp_file.name)
-                tmp_path = tmp_file.name
-            
+            tmp_path = None
             try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                    file.save(tmp_file.name)
+                    tmp_path = tmp_file.name
+                
                 image_count = 0
                 with zipfile.ZipFile(tmp_path, 'r') as zf:
                     for name in zf.namelist():
@@ -619,6 +625,7 @@ def batch_upload_comics():
                             target_path = os.path.join(comic_dir, os.path.basename(name))
                             with open(target_path, 'wb') as target:
                                 shutil.copyfileobj(source, target)
+                            source.close()
                             image_count += 1
                 
                 if image_count == 0:
@@ -652,8 +659,11 @@ def batch_upload_comics():
                 if os.path.exists(comic_dir):
                     shutil.rmtree(comic_dir)
             finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except:
+                        pass
         
         if not uploaded_comics:
             return error_response(400, "没有成功上传任何漫画")
