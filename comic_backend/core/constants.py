@@ -12,6 +12,7 @@ COVER_QUALITY = 95
 SUPPORTED_FORMATS = ['.jpg', '.jpeg', '.png', '.webp']
 
 JSON_FILE = "data/meta_data/comics_database.json"
+RECOMMENDATION_JSON_FILE = "data/meta_data/recommendations_database.json"
 BACKUP_SUFFIX = ".bkp"
 
 DEFAULT_PAGE_MODE = "left_right"

@@ -8,22 +8,30 @@ import { CACHE_EXPIRY } from '@/utils'
  */
 export const useCacheStore = defineStore('cache', () => {
   // ============ State ============
-  
+
   // 漫画列表缓存
   const listCache = ref(null)
   const listCacheTime = ref(0)
-  
+
   // 漫画详情缓存（按ID存储）
   const detailCache = ref({})
   const detailCacheTime = ref({})
-  
+
   // 图片列表缓存（按漫画ID存储）
   const imagesCache = ref({})
   const imagesCacheTime = ref({})
-  
+
   // 标签列表缓存
   const tagsCache = ref(null)
   const tagsCacheTime = ref(0)
+
+  // 推荐漫画列表缓存
+  const recommendationListCache = ref(null)
+  const recommendationListCacheTime = ref(0)
+
+  // 推荐漫画详情缓存（按ID存储）
+  const recommendationDetailCache = ref({})
+  const recommendationDetailCacheTime = ref({})
   
   // ============ Getters ============
   
@@ -51,6 +59,14 @@ export const useCacheStore = defineStore('cache', () => {
   const isTagsCacheValid = computed(() => {
     if (!tagsCache.value) return false
     return Date.now() - tagsCacheTime.value < CACHE_EXPIRY.TAGS
+  })
+
+  /**
+   * 检查推荐列表缓存是否有效
+   */
+  const isRecommendationListCacheValid = computed(() => {
+    if (!recommendationListCache.value) return false
+    return Date.now() - recommendationListCacheTime.value < CACHE_EXPIRY.COMIC_LIST
   })
   
   // ============ Actions ============
@@ -168,6 +184,75 @@ export const useCacheStore = defineStore('cache', () => {
     tagsCacheTime.value = Date.now()
     console.log('[Cache] 缓存标签列表')
   }
+
+  // ============ 推荐漫画缓存操作 ============
+
+  /**
+   * 获取推荐列表缓存
+   * @returns {Array|null} 缓存数据或null
+   */
+  function getRecommendationListCache() {
+    if (isRecommendationListCacheValid.value) {
+      console.log('[Cache] 使用缓存的推荐列表', {
+        age: Math.round((Date.now() - recommendationListCacheTime.value) / 1000) + 's'
+      })
+      return recommendationListCache.value
+    }
+    return null
+  }
+
+  /**
+   * 设置推荐列表缓存
+   * @param {Array} data - 推荐漫画列表数据
+   */
+  function setRecommendationListCache(data) {
+    recommendationListCache.value = data
+    recommendationListCacheTime.value = Date.now()
+    console.log('[Cache] 缓存推荐列表')
+  }
+
+  /**
+   * 获取推荐详情缓存
+   * @param {string} id - 推荐漫画ID
+   * @returns {Object|null} 缓存数据或null
+   */
+  function getRecommendationDetailCache(id) {
+    const cache = recommendationDetailCache.value[id]
+    const cacheTime = recommendationDetailCacheTime.value[id]
+
+    if (cache && cacheTime) {
+      const age = Date.now() - cacheTime
+      if (age < CACHE_EXPIRY.COMIC_DETAIL) {
+        console.log('[Cache] 使用缓存的推荐详情', {
+          id,
+          age: Math.round(age / 1000) + 's'
+        })
+        return cache
+      }
+    }
+    return null
+  }
+
+  /**
+   * 设置推荐详情缓存
+   * @param {string} id - 推荐漫画ID
+   * @param {Object} data - 推荐漫画详情数据
+   */
+  function setRecommendationDetailCache(id, data) {
+    recommendationDetailCache.value[id] = data
+    recommendationDetailCacheTime.value[id] = Date.now()
+    console.log('[Cache] 缓存推荐详情', { id })
+  }
+
+  /**
+   * 清除推荐详情缓存
+   * @param {string} id - 推荐漫画ID
+   */
+  function clearRecommendationDetailCache(id) {
+    delete recommendationDetailCache.value[id]
+    delete recommendationDetailCacheTime.value[id]
+    console.log('[Cache] 清除推荐详情缓存', { id })
+  }
   
   /**
    * 清除缓存
@@ -249,12 +334,15 @@ export const useCacheStore = defineStore('cache', () => {
     detailCache: computed(() => detailCache.value),
     imagesCache: computed(() => imagesCache.value),
     tagsCache: computed(() => tagsCache.value),
-    
+    recommendationListCache: computed(() => recommendationListCache.value),
+    recommendationDetailCache: computed(() => recommendationDetailCache.value),
+
     // Getters
     cacheStats,
     isListCacheValid,
     isTagsCacheValid,
-    
+    isRecommendationListCacheValid,
+
     // Actions
     getListCache,
     setListCache,
@@ -264,6 +352,11 @@ export const useCacheStore = defineStore('cache', () => {
     setImagesCache,
     getTagsCache,
     setTagsCache,
+    getRecommendationListCache,
+    setRecommendationListCache,
+    getRecommendationDetailCache,
+    setRecommendationDetailCache,
+    clearRecommendationDetailCache,
     clearCache,
     clearExpiredCache
   }

@@ -18,5 +18,8 @@ export { useTagStore } from './tag'
 // 漫画管理
 export { useComicStore } from './comic'
 
+// 推荐漫画管理
+export { useRecommendationStore } from './recommendation'
+
 // 清单管理
 export { useListStore } from './list'

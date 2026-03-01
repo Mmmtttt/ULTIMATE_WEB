@@ -7,6 +7,21 @@ const routes = [
     component: () => import('../views/Home.vue')
   },
   {
+    path: '/recommendation',
+    name: 'Recommendation',
+    component: () => import('../views/Recommendation.vue')
+  },
+  {
+    path: '/recommendation/:id',
+    name: 'RecommendationDetail',
+    component: () => import('../views/RecommendationDetail.vue')
+  },
+  {
+    path: '/recommendation-reader/:id',
+    name: 'RecommendationReader',
+    component: () => import('../views/RecommendationReader.vue')
+  },
+  {
     path: '/mine',
     name: 'Mine',
     component: () => import('../views/Mine.vue')

@@ -9,6 +9,9 @@ export { default as request } from './request'
 // 漫画 API
 export { comicApi } from './comic'
 
+// 推荐漫画 API
+export { recommendationApi } from './recommendation'
+
 // 标签 API
 export { tagApi } from './tag'
 
