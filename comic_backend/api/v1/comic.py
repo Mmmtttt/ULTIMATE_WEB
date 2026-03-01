@@ -792,7 +792,9 @@ def import_online():
         existing_ids = [c['id'] for c in db_data.get(comics_key, [])]
         checker = DuplicateChecker(existing_ids)
         
-        adapter = MetaDataAdapter(is_recommendation)
+        # 获取现有标签，用于导入时合并
+        existing_tags = db_data.get('tags', [])
+        adapter = MetaDataAdapter(is_recommendation, existing_tags)
         
         meta_json = None
         
@@ -871,6 +873,17 @@ def import_online():
         db_data[comics_key].extend(new_comics)
         db_data[total_key] = len(db_data[comics_key])
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
+        
+        # 合并新标签到现有标签
+        new_tags = converted_data.get("tags", [])
+        app_logger.info(f"[导入] 新标签数量: {len(new_tags)}, 标签列表: {new_tags}")
+        app_logger.info(f"[导入] 现有标签数量: {len(db_data.get('tags', []))}")
+        existing_tag_ids = {t["id"] for t in db_data.get("tags", [])}
+        for tag in new_tags:
+            if tag["id"] not in existing_tag_ids:
+                db_data.setdefault("tags", []).append(tag)
+                existing_tag_ids.add(tag["id"])
+                app_logger.info(f"[导入] 添加新标签: {tag}")
         
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
