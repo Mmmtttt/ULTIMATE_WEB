@@ -286,14 +286,11 @@ def get_recommendation_images():
         detail = result.data
         total_page = detail.get('total_page', 0)
         
-        # 假设图片 URL 按页码存储，格式为 cover_path 中的基础 URL + 页码
-        base_url = detail.get('cover_path', '').rsplit('/', 1)[0] if detail.get('cover_path') else ''
-        
-        # 构建图片 URL 列表
+        # 根据图床格式生成图片 URL
+        # 格式: https://cdn-msp.jmapinodeudzn.net/media/photos/{comic_id}/{page_num:05d}.webp
         image_urls = []
         for i in range(1, total_page + 1):
-            # 根据你的图床格式调整 URL 构建逻辑
-            image_url = f"{base_url}/{i:03d}.jpg" if base_url else ""
+            image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{recommendation_id}/{i:05d}.webp"
             image_urls.append(image_url)
         
         app_logger.info(f"获取图片列表成功: {recommendation_id}, 共 {len(image_urls)} 张")

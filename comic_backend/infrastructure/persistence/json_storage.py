@@ -8,13 +8,15 @@ from infrastructure.logger import app_logger, error_logger
 
 
 class JsonStorage:
-    _instance = None
+    _instances = {}
     
     def __new__(cls, json_file: str = None):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+        file_key = json_file or JSON_FILE
+        if file_key not in cls._instances:
+            cls._instances[file_key] = super().__new__(cls)
+            cls._instances[file_key]._initialized = False
+            cls._instances[file_key]._file_key = file_key
+        return cls._instances[file_key]
     
     def __init__(self, json_file: str = None):
         if self._initialized:
@@ -79,14 +81,16 @@ class JsonStorage:
                         return False
                 
                 try:
-                    dir_path = os.path.dirname(self.json_file)
+                    # 使用绝对路径
+                    json_file_abs = os.path.abspath(self.json_file)
+                    dir_path = os.path.dirname(json_file_abs)
                     if dir_path:
                         os.makedirs(dir_path, exist_ok=True)
                     
-                    backup_file = self.json_file + BACKUP_SUFFIX
-                    if os.path.exists(self.json_file):
+                    backup_file = json_file_abs + BACKUP_SUFFIX
+                    if os.path.exists(json_file_abs):
                         try:
-                            shutil.copy2(self.json_file, backup_file)
+                            shutil.copy2(json_file_abs, backup_file)
                             app_logger.info(f"创建 JSON 备份: {backup_file}")
                         except Exception as e:
                             error_logger.warning(f"创建备份失败: {e}")
@@ -97,12 +101,12 @@ class JsonStorage:
                         with open(temp_path, 'w', encoding='utf-8') as f:
                             json.dump(data, f, ensure_ascii=False, indent=2)
                         
-                        if os.path.exists(self.json_file):
-                            os.replace(temp_path, self.json_file)
+                        if os.path.exists(json_file_abs):
+                            os.replace(temp_path, json_file_abs)
                         else:
-                            os.rename(temp_path, self.json_file)
+                            os.rename(temp_path, json_file_abs)
                         
-                        app_logger.info(f"JSON 文件写入成功: {self.json_file}")
+                        app_logger.info(f"JSON 文件写入成功: {json_file_abs}")
                         return True
                     except Exception as e:
                         if os.path.exists(temp_path):
@@ -128,17 +132,21 @@ class JsonStorage:
         return False
     
     def _create_empty_data(self) -> dict:
+        is_recommendation = "recommendations" in self.json_file
+        comics_key = "recommendations" if is_recommendation else "comics"
+        total_key = "total_recommendations" if is_recommendation else "total_comics"
+        
         return {
-            "collection_name": "我的收藏集",
+            "collection_name": "推荐漫画" if is_recommendation else "我的收藏集",
             "user": "用户名",
-            "total_comics": 0,
+            total_key: 0,
             "last_updated": time.strftime("%Y-%m-%d"),
             "tags": [],
             "lists": [],
-            "comics": [],
+            comics_key: [],
             "user_config": {
                 "default_page_mode": "left_right",
-                "default_background": "white"
+                "default_background": "dark" if is_recommendation else "white"
             }
         }
     

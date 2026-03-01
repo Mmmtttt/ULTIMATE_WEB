@@ -96,6 +96,13 @@ class RecommendationAppService:
             preview_pages = get_preview_pages(recommendation.total_page)
             is_favorited = FAVORITES_LIST_ID in recommendation.list_ids
             
+            # 动态生成预览图片 URL
+            preview_image_urls = []
+            for page in preview_pages:
+                image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{recommendation_id}/{page:05d}.webp"
+                preview_image_urls.append(image_url)
+            is_favorited = FAVORITES_LIST_ID in recommendation.list_ids
+            
             detail = {
                 "id": recommendation.id,
                 "title": recommendation.title,
@@ -110,6 +117,7 @@ class RecommendationAppService:
                 "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids],
                 "list_ids": recommendation.list_ids,
                 "preview_pages": preview_pages,
+                "preview_image_urls": preview_image_urls,
                 "last_read_time": recommendation.last_read_time,
                 "create_time": recommendation.create_time,
                 "is_favorited": is_favorited

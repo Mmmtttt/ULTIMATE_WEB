@@ -785,7 +785,11 @@ def import_online():
         storage = JsonStorage() if not is_recommendation else JsonStorage(RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
         
-        existing_ids = [c['id'] for c in db_data.get('comics', [])]
+        # 根据目标选择正确的字段名
+        comics_key = 'recommendations' if is_recommendation else 'comics'
+        total_key = 'total_recommendations' if is_recommendation else 'total_comics'
+        
+        existing_ids = [c['id'] for c in db_data.get(comics_key, [])]
         checker = DuplicateChecker(existing_ids)
         
         adapter = MetaDataAdapter(is_recommendation)
@@ -860,10 +864,42 @@ def import_online():
             except ImportError as e:
                 error_logger.warning(f"无法导入下载模块: {e}")
         
-        merged_data = adapter.merge_to_existing(db_data, new_comics)
+        # 合并数据到正确的字段
+        if comics_key not in db_data:
+            db_data[comics_key] = []
+        db_data[comics_key].extend(new_comics)
+        db_data[total_key] = len(db_data[comics_key])
+        db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
-        if not storage.write(merged_data):
+        if not storage.write(db_data):
             return error_response(500, "数据写入失败")
+        
+        # 如果是导入到主页，生成封面
+        if not is_recommendation and downloaded_comics:
+            try:
+                from utils.file_parser import file_parser
+                from utils.image_handler import ImageHandler
+                
+                image_handler = ImageHandler()
+                
+                for comic_id in downloaded_comics:
+                    try:
+                        image_paths = file_parser.parse_comic_images(comic_id)
+                        if image_paths:
+                            cover_path = image_handler.generate_cover(comic_id, image_paths[0])
+                            if cover_path:
+                                # 更新数据库中的封面路径
+                                for comic in db_data[comics_key]:
+                                    if comic['id'] == comic_id:
+                                        comic['cover_path'] = cover_path
+                                        break
+                    except Exception as e:
+                        error_logger.error(f"生成封面失败 {comic_id}: {e}")
+                
+                # 重新保存更新了封面路径的数据
+                storage.write(db_data)
+            except ImportError as e:
+                error_logger.warning(f"无法导入封面生成模块: {e}")
         
         app_logger.info(f"在线导入成功: 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
         

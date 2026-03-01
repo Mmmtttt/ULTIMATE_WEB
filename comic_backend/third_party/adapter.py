@@ -20,14 +20,18 @@ class MetaDataAdapter:
         """
         albums = meta_json.get("albums", [])
         
+        # 根据是否为推荐页选择正确的字段名
+        comics_key = "recommendations" if self.is_recommendation else "comics"
+        total_key = "total_recommendations" if self.is_recommendation else "total_comics"
+        
         result = {
             "collection_name": meta_json.get("collection_name", "我的收藏集"),
             "user": meta_json.get("user", "用户名"),
-            "total_comics": len(albums),
+            total_key: len(albums),
             "last_updated": meta_json.get("last_updated", time.strftime("%Y-%m-%d")),
             "tags": [],
             "lists": [],
-            "comics": [],
+            comics_key: [],
             "user_config": {
                 "default_page_mode": "left_right",
                 "default_background": "dark",
@@ -53,7 +57,7 @@ class MetaDataAdapter:
         
         for album in albums:
             comic = self._convert_album_to_comic(album, tag_id_map)
-            result["comics"].append(comic)
+            result[comics_key].append(comic)
         
         return result
 
