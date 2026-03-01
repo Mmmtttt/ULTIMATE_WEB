@@ -821,7 +821,8 @@ def import_online():
             return error_response(404, "未找到相关漫画")
         
         converted_data = adapter.parse_meta_data(meta_json)
-        new_comics = converted_data.get('comics', [])
+        # 根据目标选择正确的字段名获取新漫画列表
+        new_comics = converted_data.get(comics_key, [])
         
         new_comics, skipped_ids = checker.filter_duplicates(new_comics)
         
