@@ -425,3 +425,186 @@ class ComicAppService:
         except Exception as e:
             error_logger.error(f"批量永久删除失败: {e}")
             return ServiceResult.error("批量永久删除失败")
+    
+    def organize_database(self) -> ServiceResult:
+        """整理数据库"""
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.platform import remove_platform_prefix, Platform
+            from core.constants import JSON_FILE, JM_PICTURES_DIR, JM_COVER_DIR
+            from utils.file_parser import file_parser
+            import os
+            import requests
+            from PIL import Image
+            from io import BytesIO
+            
+            app_logger.info("开始整理数据库...")
+            
+            # 整理主页数据库
+            storage = JsonStorage(JSON_FILE)
+            db_data = storage.read()
+            comics = db_data.get('comics', [])
+            
+            total_comics = len(comics)
+            processed_comics = 0
+            downloaded_covers = 0
+            re_downloaded_comics = 0
+            
+            app_logger.info(f"主页数据库中共有 {total_comics} 个漫画")
+            
+            # 遍历所有漫画
+            for comic in comics:
+                comic_id = comic['id']
+                processed_comics += 1
+                
+                if processed_comics % 10 == 0:
+                    app_logger.info(f"已处理 {processed_comics}/{total_comics} 个漫画")
+                
+                platform, original_id = remove_platform_prefix(comic_id)
+                
+                # 检查封面
+                cover_path = comic.get('cover_path', '')
+                if not cover_path or cover_path.startswith('http'):
+                    # 下载封面
+                    if platform == Platform.JM:
+                        cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg"
+                        local_cover_path = os.path.join(JM_COVER_DIR, f"{original_id}.jpg")
+                        
+                        # 检查本地是否已有封面文件
+                        if os.path.exists(local_cover_path):
+                            # 本地已有封面，直接更新数据库
+                            comic['cover_path'] = f"/static/cover/JM/{original_id}.jpg"
+                            downloaded_covers += 1
+                            app_logger.info(f"封面已存在，更新数据库: {comic_id} (累计: {downloaded_covers})")
+                        else:
+                            # 本地没有封面，下载并保存
+                            try:
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                }
+                                response = requests.get(cover_url, headers=headers, timeout=30)
+                                response.raise_for_status()
+                                
+                                with Image.open(BytesIO(response.content)) as img:
+                                    if img.mode in ('RGBA', 'P'):
+                                        img = img.convert('RGB')
+                                    img.save(local_cover_path, 'JPEG', quality=95)
+                                
+                                comic['cover_path'] = f"/static/cover/JM/{original_id}.jpg"
+                                downloaded_covers += 1
+                                app_logger.info(f"下载封面成功: {comic_id} (累计: {downloaded_covers})")
+                            except Exception as e:
+                                error_logger.error(f"下载封面失败 {comic_id}: {e}")
+                    
+                # 检查漫画页数
+                total_page = comic.get('total_page', 0)
+                if total_page > 0:
+                    try:
+                        image_paths = file_parser.parse_comic_images(comic_id)
+                        if len(image_paths) < total_page:
+                            # 重新下载漫画
+                            import sys
+                            jmcomic_path = os.path.join(os.path.dirname(__file__), '..', 'third_party', 'JMComic-Crawler-Python')
+                            if jmcomic_path not in sys.path:
+                                sys.path.insert(0, jmcomic_path)
+                            
+                            from jmcomic_api import download_album
+                            
+                            detail, success = download_album(
+                                original_id,
+                                download_dir=JM_PICTURES_DIR,
+                                show_progress=False,
+                                decode_images=True
+                            )
+                            
+                            if success:
+                                re_downloaded_comics += 1
+                                app_logger.info(f"重新下载漫画成功: {comic_id} (累计: {re_downloaded_comics})")
+                    except Exception as e:
+                        error_logger.error(f"重新下载漫画失败 {comic_id}: {e}")
+            
+            # 保存主页数据库
+            storage.write(db_data)
+            
+            # 整理推荐页数据库
+            app_logger.info("开始整理推荐页数据库...")
+            from core.constants import RECOMMENDATION_JSON_FILE
+            
+            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+            rec_data = rec_storage.read()
+            recommendations = rec_data.get('recommendations', [])
+            
+            total_recommendations = len(recommendations)
+            processed_recommendations = 0
+            rec_downloaded_covers = 0
+            
+            app_logger.info(f"推荐页数据库中共有 {total_recommendations} 个漫画")
+            
+            # 遍历所有推荐漫画
+            for comic in recommendations:
+                comic_id = comic['id']
+                processed_recommendations += 1
+                
+                if processed_recommendations % 10 == 0:
+                    app_logger.info(f"已处理 {processed_recommendations}/{total_recommendations} 个推荐漫画")
+                
+                platform, original_id = remove_platform_prefix(comic_id)
+                
+                # 检查封面（推荐页只检查封面，不检查漫画页数）
+                cover_path = comic.get('cover_path', '')
+                if not cover_path or cover_path.startswith('http'):
+                    # 下载封面
+                    if platform == Platform.JM:
+                        cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg"
+                        local_cover_path = os.path.join(JM_COVER_DIR, f"{original_id}.jpg")
+                        
+                        # 检查本地是否已有封面文件
+                        if os.path.exists(local_cover_path):
+                            # 本地已有封面，直接更新数据库
+                            comic['cover_path'] = f"/static/cover/JM/{original_id}.jpg"
+                            rec_downloaded_covers += 1
+                            app_logger.info(f"推荐页封面已存在，更新数据库: {comic_id} (累计: {rec_downloaded_covers})")
+                        else:
+                            # 本地没有封面，下载并保存
+                            try:
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                }
+                                response = requests.get(cover_url, headers=headers, timeout=30)
+                                response.raise_for_status()
+                                
+                                with Image.open(BytesIO(response.content)) as img:
+                                    if img.mode in ('RGBA', 'P'):
+                                        img = img.convert('RGB')
+                                    img.save(local_cover_path, 'JPEG', quality=95)
+                                
+                                comic['cover_path'] = f"/static/cover/JM/{original_id}.jpg"
+                                rec_downloaded_covers += 1
+                                app_logger.info(f"下载推荐页封面成功: {comic_id} (累计: {rec_downloaded_covers})")
+                            except Exception as e:
+                                error_logger.error(f"下载推荐页封面失败 {comic_id}: {e}")
+            
+            # 保存推荐页数据库
+            rec_storage.write(rec_data)
+            
+            app_logger.info(f"数据库整理完成！")
+            app_logger.info(f"主页 - 处理漫画总数: {total_comics}")
+            app_logger.info(f"主页 - 下载封面数量: {downloaded_covers}")
+            app_logger.info(f"主页 - 重新下载漫画数量: {re_downloaded_comics}")
+            app_logger.info(f"推荐页 - 处理漫画总数: {total_recommendations}")
+            app_logger.info(f"推荐页 - 下载封面数量: {rec_downloaded_covers}")
+            
+            return ServiceResult.ok({
+                "home": {
+                    "total_comics": total_comics,
+                    "downloaded_covers": downloaded_covers,
+                    "re_downloaded_comics": re_downloaded_comics
+                },
+                "recommendation": {
+                    "total_comics": total_recommendations,
+                    "downloaded_covers": rec_downloaded_covers
+                }
+            }, "数据库整理完成")
+        except Exception as e:
+            error_logger.error(f"整理数据库失败: {e}")
+            return ServiceResult.error("整理数据库失败")

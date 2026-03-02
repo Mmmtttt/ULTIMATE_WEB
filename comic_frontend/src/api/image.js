@@ -30,12 +30,26 @@ export function buildCoverUrl(coverPath) {
     return '/default-cover.jpg'
   }
   
-  // 如果是完整URL（图床），直接返回
-  if (coverPath.startsWith('http')) {
+  // 如果是本地路径，直接返回
+  if (coverPath.startsWith('/static/') || coverPath.startsWith('/')) {
     return coverPath
   }
   
-  // 本地路径
+  // 如果是图床URL，提取ID并构建本地路径
+  if (coverPath.startsWith('http')) {
+    // 尝试从图床URL中提取漫画ID
+    // 例如: https://cdn-msp3.18comic.vip/media/albums/1257321.jpg
+    const match = coverPath.match(/\/(\d+)\.jpg$/)
+    if (match) {
+      const comicId = match[1]
+      // 返回本地路径
+      return `/static/cover/JM/${comicId}.jpg`
+    }
+    // 如果无法提取ID，返回原图床URL
+    return coverPath
+  }
+  
+  // 其他情况，作为本地路径处理
   return coverPath.startsWith('/') ? coverPath : `/${coverPath}`
 }
 

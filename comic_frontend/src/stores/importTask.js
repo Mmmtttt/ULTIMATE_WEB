@@ -9,6 +9,8 @@ export const useImportTaskStore = defineStore('importTask', () => {
   const loading = ref(false)
   const currentTaskId = ref(null)
   const pollingInterval = ref(null)
+  const lastFetchSuccess = ref(true)
+  const consecutiveFailures = ref(0)
 
   // Getters
   const pendingTasks = computed(() => 
@@ -38,10 +40,29 @@ export const useImportTaskStore = defineStore('importTask', () => {
       const response = await request.get('/api/v1/comic/import/tasks')
       if (response && response.code === 200) {
         tasks.value = response.data.tasks || []
+        lastFetchSuccess.value = true
+        consecutiveFailures.value = 0
         return tasks.value
+      } else {
+        // 后端返回错误，可能是服务重启
+        consecutiveFailures.value++
+        if (consecutiveFailures.value >= 3) {
+          lastFetchSuccess.value = false
+          // 如果连续失败3次，停止轮询
+          stopPolling()
+          showFailToast('后端服务异常，已停止轮询')
+        }
       }
     } catch (error) {
       console.error('获取导入任务失败:', error)
+      // 网络错误或后端不可用
+      consecutiveFailures.value++
+      if (consecutiveFailures.value >= 3) {
+        lastFetchSuccess.value = false
+        // 如果连续失败3次，停止轮询
+        stopPolling()
+        showFailToast('后端服务不可用，已停止轮询')
+      }
     }
     return []
   }
@@ -166,6 +187,8 @@ export const useImportTaskStore = defineStore('importTask', () => {
     tasks,
     loading,
     currentTaskId,
+    lastFetchSuccess,
+    consecutiveFailures,
     pendingTasks,
     processingTasks,
     completedTasks,

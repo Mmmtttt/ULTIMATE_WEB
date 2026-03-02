@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, send_from_directory, make_response
 from flask_cors import CORS
 from api import register_blueprints
 from infrastructure.logger import app_logger
@@ -46,6 +46,18 @@ def index():
 @app.route('/health')
 def health():
     return success_response({"status": "ok"})
+
+@app.route('/static/cover/<path:filename>')
+def serve_cover(filename):
+    """提供封面图片，并设置正确的 Content-Type"""
+    response = make_response(send_from_directory('static/cover', filename))
+    if filename.endswith('.jpg') or filename.endswith('.jpeg'):
+        response.headers['Content-Type'] = 'image/jpeg'
+    elif filename.endswith('.png'):
+        response.headers['Content-Type'] = 'image/png'
+    elif filename.endswith('.webp'):
+        response.headers['Content-Type'] = 'image/webp'
+    return response
 
 
 def init_default_data():

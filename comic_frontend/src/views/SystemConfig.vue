@@ -91,7 +91,10 @@
     </van-popup>
     
     <div class="action-area">
-      <van-button type="danger" block round @click="confirmReset">
+      <van-button type="primary" block round @click="organizeDatabase">
+        整理数据库
+      </van-button>
+      <van-button type="danger" block round @click="confirmReset" style="margin-top: 10px;">
         重置为默认设置
       </van-button>
     </div>
@@ -198,6 +201,22 @@ async function confirmReset() {
       await configStore.resetConfig()
       initValues()
       showSuccessToast('已重置为默认设置')
+    })
+    .catch(() => {})
+}
+
+async function organizeDatabase() {
+  showConfirmDialog({
+    title: '整理数据库',
+    message: '确定要整理数据库吗？这将下载缺失的封面并重新下载不完整的漫画。',
+  })
+    .then(async () => {
+      try {
+        const response = await comicApi.organizeDatabase()
+        showSuccessToast('数据库整理完成')
+      } catch (error) {
+        showErrorToast(error.message || '数据库整理失败')
+      }
     })
     .catch(() => {})
 }

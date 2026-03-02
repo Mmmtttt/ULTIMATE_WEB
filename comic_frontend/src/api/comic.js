@@ -192,7 +192,7 @@ export const comicApi = {
   },
   
   download: async (comicId, comicTitle) => {
-    const safeTitle = comicTitle.replace(/[^a-zA-Z0-9\u4e00-\u9fa5\s\-_]/g, '').trim()
+    const safeTitle = comicTitle.replace(/[^a-zA-Z0-9一-龥\s\-_]/g, '').trim()
     const filename = `${comicId}-${safeTitle}.zip`
     
     const response = await fetch(`/api/v1/comic/download?comic_id=${comicId}`)
@@ -207,8 +207,16 @@ export const comicApi = {
     a.download = filename
     document.body.appendChild(a)
     a.click()
-    document.body.removeChild(a)
     window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  },
+  
+  /**
+   * 整理数据库
+   * @returns {Promise}
+   */
+  organizeDatabase: () => {
+    return request.post('/v1/comic/organize')
   },
   
   batchDownload: async (comicIds) => {

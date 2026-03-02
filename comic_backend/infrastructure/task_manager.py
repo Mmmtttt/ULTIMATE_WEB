@@ -141,8 +141,16 @@ class TaskManager:
     
     def _worker_loop(self):
         """工作线程循环"""
+        last_timeout_check = 0
+        
         while self._running:
             try:
+                # 每30秒检查一次超时任务
+                current_time = time.time()
+                if current_time - last_timeout_check > 30:
+                    self._check_timeout_tasks()
+                    last_timeout_check = current_time
+                
                 # 查找待处理的任务
                 pending_task = None
                 with self._task_lock:
@@ -160,6 +168,31 @@ class TaskManager:
             except Exception as e:
                 error_logger.error(f"工作线程异常: {e}")
                 time.sleep(1)
+    
+    def _check_timeout_tasks(self):
+        """检查并处理超时任务"""
+        try:
+            with self._task_lock:
+                current_time = time.time()
+                for task in self._tasks.values():
+                    if task.status == TaskStatus.PROCESSING:
+                        # 检查任务是否超时（超过10分钟）
+                        if task.start_time:
+                            try:
+                                start_timestamp = time.mktime(time.strptime(task.start_time, "%Y-%m-%dT%H:%M:%S"))
+                                if current_time - start_timestamp > 600:  # 10分钟
+                                    task.status = TaskStatus.FAILED
+                                    task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
+                                    task.error_msg = "任务执行超时"
+                                    task.message = "导入失败: 任务执行超时"
+                                    error_logger.error(f"任务超时: {task.task_id}")
+                            except Exception as e:
+                                error_logger.error(f"检查任务超时失败: {e}")
+            
+            # 保存更新后的任务状态
+            self._save_tasks()
+        except Exception as e:
+            error_logger.error(f"检查超时任务失败: {e}")
     
     def _process_task(self, task: ImportTask):
         """处理单个任务"""
@@ -330,8 +363,13 @@ class TaskManager:
     
     def _convert_to_standard_format(self, albums: List[Dict], existing_tags: List[Dict], platform) -> Dict:
         """将平台数据转换为系统标准格式"""
-        from core.platform import add_platform_prefix
+        from core.platform import add_platform_prefix, get_original_id, PLATFORM_PREFIXES
         from datetime import datetime
+        import os
+        import requests
+        from PIL import Image
+        from io import BytesIO
+        from core.constants import JM_COVER_DIR, PK_COVER_DIR
         
         # 标签去重和ID生成
         tag_name_to_id = {}
@@ -360,14 +398,19 @@ class TaskManager:
                     tag_id_counter += 1
                 comic_tag_ids.append(tag_name_to_id[tag_name])
             
+            # 下载并保存封面
+            album_id = str(album.get("album_id", ""))
+            cover_url = album.get("cover_url", "")
+            local_cover_path = self._download_cover(album_id, cover_url, platform)
+            
             # 构建标准漫画格式
             comic = {
-                "id": add_platform_prefix(platform, str(album.get("album_id", ""))),
+                "id": add_platform_prefix(platform, album_id),
                 "title": album.get("title", ""),
                 "title_jp": album.get("title_jp", ""),
                 "author": album.get("author", ""),
                 "desc": album.get("desc", ""),
-                "cover_path": album.get("cover_url", ""),
+                "cover_path": local_cover_path if local_cover_path else cover_url,
                 "total_page": album.get("pages", 0),
                 "current_page": 1,
                 "score": None,
@@ -383,6 +426,77 @@ class TaskManager:
             "comics": comics,
             "tags": new_tags
         }
+    
+    def _download_cover(self, album_id: str, cover_url: str, platform) -> str:
+        """下载封面图片并保存到本地"""
+        import os
+        import requests
+        from PIL import Image
+        from io import BytesIO
+        from core.constants import JM_COVER_DIR, PK_COVER_DIR, COVER_WIDTH, COVER_QUALITY
+        from core.platform import Platform, PLATFORM_PREFIXES
+        
+        if not cover_url:
+            return ""
+        
+        try:
+            # 确定封面目录
+            if platform == Platform.JM:
+                cover_dir = JM_COVER_DIR
+            elif platform == Platform.PK:
+                cover_dir = PK_COVER_DIR
+            else:
+                return ""
+            
+            # 确保封面目录存在
+            os.makedirs(cover_dir, exist_ok=True)
+            
+            # 封面保存路径
+            cover_path = os.path.join(cover_dir, f"{album_id}.jpg")
+            
+            # 如果封面已存在，直接返回本地路径
+            if os.path.exists(cover_path):
+                platform_prefix = PLATFORM_PREFIXES.get(platform, "")
+                if platform_prefix:
+                    return f"/static/cover/{platform_prefix}/{album_id}.jpg"
+                else:
+                    return f"/static/cover/{album_id}.jpg"
+            
+            # 下载封面
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(cover_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            # 处理图片
+            with Image.open(BytesIO(response.content)) as img:
+                # 转换为RGB模式（处理RGBA等格式）
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                
+                # 计算缩放比例
+                width, height = img.size
+                ratio = COVER_WIDTH / width
+                new_height = int(height * ratio)
+                
+                # 缩放图片
+                resized_img = img.resize((COVER_WIDTH, new_height), Image.LANCZOS)
+                
+                # 保存为JPEG格式
+                resized_img.save(cover_path, 'JPEG', quality=COVER_QUALITY)
+            
+            platform_prefix = PLATFORM_PREFIXES.get(platform, "")
+            if platform_prefix:
+                local_path = f"/static/cover/{platform_prefix}/{album_id}.jpg"
+            else:
+                local_path = f"/static/cover/{album_id}.jpg"
+            app_logger.info(f"封面下载成功: {album_id} -> {local_path}")
+            return local_path
+            
+        except Exception as e:
+            error_logger.error(f"下载封面失败 {album_id}: {e}")
+            return ""
     
     def _save_to_database(self, converted_data: Dict, target: str):
         """保存到数据库"""
