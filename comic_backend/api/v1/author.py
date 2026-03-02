@@ -155,3 +155,18 @@ def get_works_batch_detail():
     except Exception as e:
         error_logger.error(f"批量获取作品详情失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@author_bp.route('/cover-cache/clear', methods=['DELETE'])
+def clear_author_cover_cache():
+    """清理作者作品封面缓存"""
+    try:
+        result = author_service.clear_author_cover_cache()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清理作者封面缓存失败: {e}")
+        return error_response(500, "服务器内部错误")

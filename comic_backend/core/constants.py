@@ -11,6 +11,8 @@ JM_PICTURES_DIR = "data/pictures/JM"
 PK_PICTURES_DIR = "data/pictures/PK"
 JM_COVER_DIR = "static/cover/JM"
 PK_COVER_DIR = "static/cover/PK"
+JM_AUTHOR_COVER_CACHE_DIR = "static/cover/JM/author_cache"
+PK_AUTHOR_COVER_CACHE_DIR = "static/cover/PK/author_cache"
 JM_RECOMMENDATION_CACHE_DIR = "data/recommendation_cache/JM"
 PK_RECOMMENDATION_CACHE_DIR = "data/recommendation_cache/PK"
 
@@ -37,6 +39,7 @@ def ensure_platform_dirs():
     dirs = [
         JM_PICTURES_DIR, PK_PICTURES_DIR,
         JM_COVER_DIR, PK_COVER_DIR,
+        JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR,
         JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
     ]
     for d in dirs:

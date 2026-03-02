@@ -81,5 +81,13 @@ export const authorApi = {
    */
   getWorksBatchDetail: (ids) => {
     return request.post('/v1/author/works/batch-detail', { ids })
+  },
+
+  /**
+   * 清理作者封面缓存
+   * @returns {Promise}
+   */
+  clearCoverCache: () => {
+    return request.delete('/v1/author/cover-cache/clear')
   }
 }

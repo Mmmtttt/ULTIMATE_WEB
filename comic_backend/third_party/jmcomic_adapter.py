@@ -165,14 +165,15 @@ class JMComicAdapter(BaseAdapter):
         converted_albums = []
         
         for album in albums:
+            album_id = album.get('album_id', 0)
             converted = {
                 "rank": album.get('rank', 0),
-                "album_id": album.get('album_id', 0),
+                "album_id": album_id,
                 "title": album.get('title', ''),
                 "title_jp": '',
                 "author": '',
                 "pages": 0,
-                "cover_url": '',
+                "cover_url": f"https://cdn-msp3.18comic.vip/media/albums/{album_id}.jpg",
                 "album_url": '',
                 "tags": album.get('tags', []),
                 "category_tags": [],

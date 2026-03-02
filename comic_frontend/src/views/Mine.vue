@@ -240,7 +240,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
 import { useImportTaskStore } from '@/stores/importTask'
-import { comicApi, authorApi } from '@/api'
+import { comicApi, authorApi, recommendationApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
@@ -328,8 +328,14 @@ function confirmClearCache() {
 }
 
 // 清除所有缓存
-function clearAllCache() {
+async function clearAllCache() {
   try {
+    // 清除推荐页缓存
+    await recommendationApi.clearCache()
+    
+    // 清除作者封面缓存
+    await authorApi.clearCoverCache()
+    
     // 清除 store 缓存
     cacheStore.clearCache('all')
 

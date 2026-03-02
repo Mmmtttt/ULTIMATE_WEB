@@ -94,14 +94,17 @@
                 <template #title>
                   <div class="work-title">
                     <van-checkbox :name="work.id" @click.stop />
-                    <span class="title-text">{{ work.title }}</span>
-                  </div>
-                </template>
-                <template #label>
-                  <div class="work-info">
-                    <span v-if="work.has_detail">{{ work.author || '' }}</span>
-                    <van-loading v-else-if="loadingDetailIds.includes(work.id)" size="12" />
-                    <span v-else class="loading-hint">等待加载详情...</span>
+                    <div v-if="work.cover_url" class="work-cover">
+                      <img :src="work.cover_url" :alt="work.title" @load="handleCoverLoad(work)" @error="handleCoverError(work)" ref="imgRef" />
+                    </div>
+                    <div class="work-content">
+                      <span class="title-text">{{ work.title }}</span>
+                      <div class="work-info">
+                        <span v-if="work.has_detail">{{ work.author || '' }}</span>
+                        <van-loading v-else-if="loadingDetailIds.includes(work.id)" size="12" />
+                        <span v-else class="loading-hint">等待加载详情...</span>
+                      </div>
+                    </div>
                   </div>
                 </template>
                 <template #value>
@@ -169,6 +172,7 @@ const totalWorks = ref(0)
 const currentOffset = ref(0)
 const hasMore = ref(false)
 const loadingDetailIds = ref([])
+const coverCheckTimers = ref({})
 
 const selectedWorks = computed(() => {
   return works.value.filter(w => selectedIds.value.includes(w.id))
@@ -280,6 +284,55 @@ function showAuthorDetail(author) {
 
 function closeDetailPopup() {
   showDetailPopup.value = false
+  Object.values(coverCheckTimers.value).forEach(timer => clearInterval(timer))
+  coverCheckTimers.value = {}
+}
+
+function handleCoverLoad(work) {
+  if (!work.cover_url.startsWith('http')) return
+  
+  startCoverCheck(work)
+}
+
+function handleCoverError(work) {
+  if (!work.cover_url.startsWith('http')) return
+  
+  startCoverCheck(work)
+}
+
+function startCoverCheck(work) {
+  if (coverCheckTimers.value[work.id]) return
+  
+  if (!work.original_cover_url) {
+    work.original_cover_url = work.cover_url
+  }
+  
+  const localCoverUrl = `/static/cover/JM/author_cache/${work.id}.jpg`
+  let checkCount = 0
+  
+  coverCheckTimers.value[work.id] = setInterval(() => {
+    checkCount++
+    
+    const tempImg = new Image()
+    tempImg.onload = () => {
+      clearInterval(coverCheckTimers.value[work.id])
+      delete coverCheckTimers.value[work.id]
+      
+      const index = works.value.findIndex(w => w.id === work.id)
+      if (index !== -1) {
+        works.value[index].cover_url = localCoverUrl + '?t=' + Date.now()
+      }
+    }
+    
+    tempImg.onerror = () => {
+      if (checkCount > 30) {
+        clearInterval(coverCheckTimers.value[work.id])
+        delete coverCheckTimers.value[work.id]
+      }
+    }
+    
+    tempImg.src = localCoverUrl + '?t=' + Date.now()
+  }, 500)
 }
 
 async function loadWorks() {
@@ -326,7 +379,9 @@ function loadDetailsAsync(ids) {
         detailWorks.forEach(detailWork => {
           const index = works.value.findIndex(w => w.id === detailWork.id)
           if (index !== -1) {
+            const existingCoverUrl = works.value[index].cover_url
             works.value[index] = { ...works.value[index], ...detailWork }
+            works.value[index].cover_url = existingCoverUrl
           }
         })
       }
@@ -484,14 +539,45 @@ onMounted(async () => {
   gap: 8px;
 }
 
-.title-text {
+.work-cover {
+  width: 60px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f5f5f5;
+}
+
+.work-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.work-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title-text {
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .work-info {
   display: flex;
   align-items: center;
   gap: 4px;
+  font-size: 12px;
+  color: #969799;
 }
 
 .loading-hint {

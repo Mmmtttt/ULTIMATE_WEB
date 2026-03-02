@@ -1,10 +1,17 @@
-from typing import List, Dict
+from typing import List, Dict, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+import requests
+import threading
+from PIL import Image
+from io import BytesIO
 from domain.author import AuthorSubscription, AuthorRepository
 from infrastructure.persistence.repositories import AuthorJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.json_storage import JsonStorage
 from core.utils import get_current_time, generate_id
+from core.constants import JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR
 from third_party import external_api
 
 
@@ -231,11 +238,80 @@ class AuthorAppService:
             error_logger.error(f"清除新作品计数失败: {e}")
             return ServiceResult.error("清除新作品计数失败")
     
+    def _download_author_cover(self, album_id: str, cover_url: str, platform: str = 'JM') -> str:
+        """下载作者作品封面到缓存目录
+        
+        Args:
+            album_id: 作品ID
+            cover_url: 封面URL
+            platform: 平台名称
+            
+        Returns:
+            本地封面路径，失败返回空字符串
+        """
+        if not cover_url:
+            return ""
+        
+        cache_dir = JM_AUTHOR_COVER_CACHE_DIR if platform == 'JM' else PK_AUTHOR_COVER_CACHE_DIR
+        local_path = os.path.join(cache_dir, f"{album_id}.jpg")
+        
+        if os.path.exists(local_path):
+            return f"/static/cover/{platform}/author_cache/{album_id}.jpg"
+        
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(cover_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            with Image.open(BytesIO(response.content)) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                img.save(local_path, 'JPEG', quality=85)
+            
+            return f"/static/cover/{platform}/author_cache/{album_id}.jpg"
+        except Exception as e:
+            error_logger.error(f"下载作者作品封面失败 {album_id}: {e}")
+            return cover_url
+    
+    def _get_existing_comic_ids(self) -> Set[str]:
+        """获取已有漫画ID集合"""
+        existing_ids = set()
+        
+        try:
+            home_storage = JsonStorage('data/meta_data/comics_database.json')
+            home_data = home_storage.read()
+            for comic in home_data.get('comics', []):
+                raw_id = comic.get('id', '')
+                if raw_id.startswith('JM_'):
+                    raw_id = raw_id[3:]
+                existing_ids.add(raw_id)
+        except Exception as e:
+            error_logger.error(f"获取主页漫画ID失败: {e}")
+        
+        try:
+            rec_storage = JsonStorage('data/meta_data/recommendations_database.json')
+            rec_data = rec_storage.read()
+            for comic in rec_data.get('recommendations', []):
+                raw_id = comic.get('id', '')
+                if raw_id.startswith('JM_'):
+                    raw_id = raw_id[3:]
+                existing_ids.add(raw_id)
+        except Exception as e:
+            error_logger.error(f"获取推荐页漫画ID失败: {e}")
+        
+        return existing_ids
+    
     def get_author_works_paginated(self, author_id: str, offset: int = 0, limit: int = 5) -> ServiceResult:
         try:
             author = self._author_repo.get_by_id(author_id)
             if not author:
                 return ServiceResult.error("订阅不存在")
+            
+            existing_ids = self._get_existing_comic_ids()
             
             works = []
             try:
@@ -243,14 +319,17 @@ class AuthorAppService:
                 albums = result.get("albums", [])
                 
                 for album in albums:
-                    works.append({
-                        "id": str(album.get("album_id", "")),
-                        "title": album.get("title", ""),
-                        "author": author.name,
-                        "cover_url": "",
-                        "pages": 0,
-                        "has_detail": False
-                    })
+                    work_id = str(album.get("album_id", ""))
+                    if work_id not in existing_ids:
+                        works.append({
+                            "id": work_id,
+                            "title": album.get("title", ""),
+                            "author": author.name,
+                            "cover_url": album.get("cover_url", ""),
+                            "pages": 0,
+                            "has_detail": False,
+                            "is_new": True
+                        })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author.name} 作品失败: {e}")
@@ -265,9 +344,10 @@ class AuthorAppService:
             
             total = len(works)
             paginated_works = works[offset:offset + limit]
+            
             has_more = offset + limit < total
             
-            return ServiceResult.ok({
+            result = ServiceResult.ok({
                 "author": author.to_dict(),
                 "works": paginated_works,
                 "total": total,
@@ -275,9 +355,56 @@ class AuthorAppService:
                 "limit": limit,
                 "has_more": has_more
             })
+            
+            def download_covers_async():
+                for work in paginated_works:
+                    if work.get("cover_url"):
+                        try:
+                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                        except Exception as e:
+                            error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
+            
+            threading.Thread(target=download_covers_async, daemon=True).start()
+            
+            return result
         except Exception as e:
             error_logger.error(f"获取作者作品失败: {e}")
             return ServiceResult.error("获取作者作品失败")
+    
+    def clear_author_cover_cache(self) -> ServiceResult:
+        """清理作者作品封面缓存
+        
+        Returns:
+            清理结果
+        """
+        import shutil
+        
+        cleared_count = 0
+        freed_size = 0
+        
+        try:
+            for cache_dir in [JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR]:
+                if os.path.exists(cache_dir):
+                    for filename in os.listdir(cache_dir):
+                        filepath = os.path.join(cache_dir, filename)
+                        try:
+                            if os.path.isfile(filepath):
+                                file_size = os.path.getsize(filepath)
+                                os.remove(filepath)
+                                cleared_count += 1
+                                freed_size += file_size
+                        except Exception as e:
+                            error_logger.error(f"删除文件失败 {filepath}: {e}")
+            
+            app_logger.info(f"清理作者封面缓存完成: 清理 {cleared_count} 个文件, 释放 {freed_size} 字节")
+            return ServiceResult.ok({
+                "cleared_count": cleared_count,
+                "freed_size_bytes": freed_size,
+                "freed_size_mb": round(freed_size / (1024 * 1024), 2)
+            })
+        except Exception as e:
+            error_logger.error(f"清理作者封面缓存失败: {e}")
+            return ServiceResult.error("清理作者封面缓存失败")
     
     def get_works_batch_detail(self, ids: List[str]) -> ServiceResult:
         try:
