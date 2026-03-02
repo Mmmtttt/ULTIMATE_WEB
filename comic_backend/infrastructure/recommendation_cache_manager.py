@@ -393,20 +393,32 @@ class RecommendationCacheManager:
         with self._cache_lock:
             count = 0
             
-            if not os.path.exists(self.cache_dir):
-                return 0
+            # 扫描所有平台缓存目录
+            cache_dirs = [JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR]
             
-            for entry in os.scandir(self.cache_dir):
-                if entry.is_dir():
-                    comic_id = entry.name
-                    if comic_id not in self._cache_index:
-                        try:
-                            import shutil
-                            shutil.rmtree(entry.path)
-                            count += 1
-                            app_logger.info(f"清理孤立缓存目录: {comic_id}")
-                        except Exception as e:
-                            error_logger.error(f"清理孤立目录失败 {comic_id}: {e}")
+            for cache_dir in cache_dirs:
+                if not os.path.exists(cache_dir):
+                    continue
+                
+                for entry in os.scandir(cache_dir):
+                    if entry.is_dir():
+                        original_id = entry.name
+                        # 根据目录推断完整的漫画ID
+                        if cache_dir == JM_RECOMMENDATION_CACHE_DIR:
+                            comic_id = f"JM{original_id}"
+                        elif cache_dir == PK_RECOMMENDATION_CACHE_DIR:
+                            comic_id = f"PK{original_id}"
+                        else:
+                            continue
+                        
+                        if comic_id not in self._cache_index:
+                            try:
+                                import shutil
+                                shutil.rmtree(entry.path)
+                                count += 1
+                                app_logger.info(f"清理孤立缓存目录: {comic_id}")
+                            except Exception as e:
+                                error_logger.error(f"清理孤立目录失败 {comic_id}: {e}")
             
             return count
 
