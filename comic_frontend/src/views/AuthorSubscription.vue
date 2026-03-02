@@ -94,6 +94,7 @@
                 <template #title>
                   <div class="work-title">
                     <van-checkbox :name="work.id" @click.stop />
+                    <span class="work-index">{{ work.backendIndex }}</span>
                     <div v-if="work.cover_url" class="work-cover">
                       <img :src="work.cover_url" :alt="work.title" @load="handleCoverLoad(work)" @error="handleCoverError(work)" ref="imgRef" />
                     </div>
@@ -116,7 +117,7 @@
 
           <div v-if="hasMore" class="load-more">
             <van-button block :loading="loadingWorks" @click="loadMore">
-              加载更多 ({{ works.length }}/{{ totalWorks }})
+              加载更多 ({{ actualFetchedCount }}/{{ totalWorks }})
             </van-button>
           </div>
 
@@ -173,6 +174,7 @@ const currentOffset = ref(0)
 const hasMore = ref(false)
 const loadingDetailIds = ref([])
 const coverCheckTimers = ref({})
+const actualFetchedCount = ref(0)
 
 const selectedWorks = computed(() => {
   return works.value.filter(w => selectedIds.value.includes(w.id))
@@ -279,6 +281,7 @@ function showAuthorDetail(author) {
   selectedIds.value = []
   totalWorks.value = 0
   currentOffset.value = 0
+  actualFetchedCount.value = 0
   hasMore.value = false
 }
 
@@ -342,12 +345,16 @@ async function loadWorks() {
 async function loadMore() {
   loadingWorks.value = true
   try {
-    const response = await authorApi.getWorks(selectedAuthor.value.id, currentOffset.value, 5)
+    const response = await authorApi.getWorks(selectedAuthor.value.id, actualFetchedCount.value, 5)
     if (response.code === 200) {
       const data = response.data
-      works.value = [...works.value, ...data.works]
+      const worksWithIndex = data.works.map((work, index) => ({
+        ...work,
+        backendIndex: data.offset + index + 1
+      }))
+      works.value = [...works.value, ...worksWithIndex]
       totalWorks.value = data.total
-      currentOffset.value = data.offset + data.limit
+      actualFetchedCount.value = data.offset + data.limit
       hasMore.value = data.has_more
       
       loadDetailsAsync(data.works.map(w => w.id))
@@ -376,12 +383,32 @@ function loadDetailsAsync(ids) {
     .then(response => {
       if (response.code === 200) {
         const detailWorks = response.data.works
+        const worksToRemove = []
+        
         detailWorks.forEach(detailWork => {
           const index = works.value.findIndex(w => w.id === detailWork.id)
           if (index !== -1) {
             const existingCoverUrl = works.value[index].cover_url
             works.value[index] = { ...works.value[index], ...detailWork }
             works.value[index].cover_url = existingCoverUrl
+            
+            if (selectedAuthor.value && detailWork.author) {
+              if (detailWork.author.trim().toLowerCase() !== selectedAuthor.value.name.trim().toLowerCase()) {
+                worksToRemove.push(detailWork.id)
+              }
+            }
+          }
+        })
+        
+        worksToRemove.forEach(id => {
+          const index = works.value.findIndex(w => w.id === id)
+          if (index !== -1) {
+            works.value.splice(index, 1)
+          }
+          
+          const idIndex = selectedIds.value.indexOf(id)
+          if (idIndex !== -1) {
+            selectedIds.value.splice(idIndex, 1)
           }
         })
       }
@@ -537,6 +564,14 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.work-index {
+  font-size: 14px;
+  font-weight: bold;
+  color: #1989fa;
+  min-width: 28px;
+  text-align: center;
 }
 
 .work-cover {
