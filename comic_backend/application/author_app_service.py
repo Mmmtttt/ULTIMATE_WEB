@@ -111,41 +111,32 @@ class AuthorAppService:
                         continue
                     
                     latest_work = works[0]
-                    new_works = []
+                    latest_work_id = latest_work.get("id", "")
+                    latest_work_title = latest_work.get("title", "")
+                    
+                    has_update = False
+                    new_count = 0
                     
                     if not author.last_work_id:
-                        new_works = works[:5]
-                    else:
-                        found_last = False
-                        for work in works:
-                            if work.get("id") == author.last_work_id:
-                                found_last = True
-                                break
-                            new_works.append(work)
-                        
-                        if not found_last:
-                            new_works = works[:5]
+                        has_update = True
+                        new_count = 1
+                    elif author.last_work_id != latest_work_id:
+                        has_update = True
+                        new_count = 1
                     
-                    if new_works:
-                        author.update_check_info(
-                            latest_work.get("id", ""),
-                            latest_work.get("title", ""),
-                            len(new_works)
-                        )
-                        self._author_repo.save(author)
-                        
+                    author.update_check_info(
+                        latest_work_id,
+                        latest_work_title,
+                        new_count
+                    )
+                    self._author_repo.save(author)
+                    
+                    if has_update:
                         updated_authors.append({
                             "author": author.to_dict(),
-                            "new_works": new_works
+                            "new_works": [latest_work]
                         })
-                        total_new_works += len(new_works)
-                    else:
-                        author.update_check_info(
-                            latest_work.get("id", ""),
-                            latest_work.get("title", ""),
-                            0
-                        )
-                        self._author_repo.save(author)
+                        total_new_works += new_count
                         
                 except Exception as e:
                     error_logger.error(f"检查作者 {author.name} 更新失败: {e}")
