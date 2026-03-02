@@ -6,10 +6,10 @@ tag_bp = Blueprint('tag', __name__)
 tag_service = TagAppService()
 
 
-def success_response(data=None):
+def success_response(data=None, msg="成功"):
     return jsonify({
         "code": 200,
-        "msg": "成功",
+        "msg": msg,
         "data": data
     })
 
@@ -113,4 +113,62 @@ def get_tag_comics():
             return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"获取标签下漫画失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/all-comics', methods=['GET'])
+def get_all_comics():
+    try:
+        result = tag_service.get_all_comics()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取所有漫画失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/batch-add-tags', methods=['POST'])
+def batch_add_tags():
+    try:
+        data = request.json
+        if not data or 'comic_data' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: comic_data 或 tag_ids")
+        
+        comic_data = data['comic_data']
+        tag_ids = data['tag_ids']
+        
+        result = tag_service.batch_add_tags(comic_data, tag_ids)
+        
+        if result.success:
+            app_logger.info(f"批量添加标签成功")
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量添加标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/batch-remove-tags', methods=['POST'])
+def batch_remove_tags():
+    try:
+        data = request.json
+        if not data or 'comic_data' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: comic_data 或 tag_ids")
+        
+        comic_data = data['comic_data']
+        tag_ids = data['tag_ids']
+        
+        result = tag_service.batch_remove_tags(comic_data, tag_ids)
+        
+        if result.success:
+            app_logger.info(f"批量移除标签成功")
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移除标签失败: {e}")
         return error_response(500, "服务器内部错误")

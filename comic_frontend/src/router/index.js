@@ -42,6 +42,11 @@ const routes = [
     component: () => import('../views/TagManage.vue')
   },
   {
+    path: '/tag/:id',
+    name: 'TagDetail',
+    component: () => import('../views/TagDetail.vue')
+  },
+  {
     path: '/lists',
     name: 'ListManage',
     component: () => import('../views/ListManage.vue')

@@ -1,7 +1,8 @@
 from typing import List
 from domain.tag import Tag, TagRepository
 from domain.comic import ComicRepository
-from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository
+from domain.recommendation import RecommendationRepository
+from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
@@ -11,19 +12,26 @@ class TagAppService:
     def __init__(
         self,
         tag_repo: TagRepository = None,
-        comic_repo: ComicRepository = None
+        comic_repo: ComicRepository = None,
+        recommendation_repo: RecommendationRepository = None
     ):
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
+        self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
     
     def get_tag_list(self) -> ServiceResult:
         try:
             tags = self._tag_repo.get_all()
             comics = self._comic_repo.get_all()
+            recommendations = self._recommendation_repo.get_all()
             
             tag_comic_count = {}
             for comic in comics:
                 for tag_id in comic.tag_ids:
+                    tag_comic_count[tag_id] = tag_comic_count.get(tag_id, 0) + 1
+            
+            for recommendation in recommendations:
+                for tag_id in recommendation.tag_ids:
                     tag_comic_count[tag_id] = tag_comic_count.get(tag_id, 0) + 1
             
             tag_list = []
@@ -105,11 +113,11 @@ class TagAppService:
             if not tag:
                 return ServiceResult.error("标签不存在")
             
-            comics = self._comic_repo.filter_by_tags([tag_id], [])
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
             
-            results = []
+            home_comics = []
+            comics = self._comic_repo.filter_by_tags([tag_id], [])
             for c in comics:
                 comic_info = {
                     "id": c.id,
@@ -118,12 +126,166 @@ class TagAppService:
                     "cover_path": c.cover_path,
                     "total_page": c.total_page,
                     "score": c.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids]
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
+                    "source": "home"
                 }
-                results.append(comic_info)
+                home_comics.append(comic_info)
             
-            app_logger.info(f"获取标签下漫画成功: {tag_id}, 数量: {len(results)}")
-            return ServiceResult.ok(results)
+            recommendation_comics = []
+            recommendations = self._recommendation_repo.filter_by_tags([tag_id], [])
+            for r in recommendations:
+                rec_info = {
+                    "id": r.id,
+                    "title": r.title,
+                    "author": r.author,
+                    "cover_path": r.cover_path,
+                    "total_page": r.total_page,
+                    "score": r.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "source": "recommendation"
+                }
+                recommendation_comics.append(rec_info)
+            
+            result = {
+                "tag": {"id": tag.id, "name": tag.name},
+                "home_comics": home_comics,
+                "recommendation_comics": recommendation_comics,
+                "home_count": len(home_comics),
+                "recommendation_count": len(recommendation_comics),
+                "total_count": len(home_comics) + len(recommendation_comics)
+            }
+            
+            app_logger.info(f"获取标签下漫画成功: {tag_id}, 主页: {len(home_comics)}, 推荐: {len(recommendation_comics)}")
+            return ServiceResult.ok(result)
         except Exception as e:
             error_logger.error(f"获取标签下漫画失败: {e}")
             return ServiceResult.error("获取标签下漫画失败")
+
+    def get_all_comics(self) -> ServiceResult:
+        try:
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            home_comics = []
+            comics = self._comic_repo.get_all()
+            for c in comics:
+                comic_info = {
+                    "id": c.id,
+                    "title": c.title,
+                    "author": c.author,
+                    "cover_path": c.cover_path,
+                    "total_page": c.total_page,
+                    "score": c.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
+                    "tag_ids": c.tag_ids,
+                    "source": "home"
+                }
+                home_comics.append(comic_info)
+            
+            recommendation_comics = []
+            recommendations = self._recommendation_repo.get_all()
+            for r in recommendations:
+                rec_info = {
+                    "id": r.id,
+                    "title": r.title,
+                    "author": r.author,
+                    "cover_path": r.cover_path,
+                    "total_page": r.total_page,
+                    "score": r.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "tag_ids": r.tag_ids,
+                    "source": "recommendation"
+                }
+                recommendation_comics.append(rec_info)
+            
+            result = {
+                "home_comics": home_comics,
+                "recommendation_comics": recommendation_comics,
+                "home_count": len(home_comics),
+                "recommendation_count": len(recommendation_comics),
+                "total_count": len(home_comics) + len(recommendation_comics)
+            }
+            
+            app_logger.info(f"获取所有漫画成功, 主页: {len(home_comics)}, 推荐: {len(recommendation_comics)}")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取所有漫画失败: {e}")
+            return ServiceResult.error("获取所有漫画失败")
+
+    def batch_add_tags(self, comic_data: List[dict], tag_ids: List[str]) -> ServiceResult:
+        try:
+            for tag_id in tag_ids:
+                if not self._tag_repo.get_by_id(tag_id):
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            
+            home_updated = 0
+            rec_updated = 0
+            
+            for item in comic_data:
+                comic_id = item.get('id')
+                source = item.get('source')
+                
+                if source == 'home':
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.add_tags(tag_ids)
+                        if self._comic_repo.save(comic):
+                            home_updated += 1
+                elif source == 'recommendation':
+                    recommendation = self._recommendation_repo.get_by_id(comic_id)
+                    if recommendation:
+                        recommendation.add_tags(tag_ids)
+                        if self._recommendation_repo.save(recommendation):
+                            rec_updated += 1
+            
+            total_updated = home_updated + rec_updated
+            if total_updated == 0:
+                return ServiceResult.error("没有找到有效的漫画")
+            
+            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
+            return ServiceResult.ok({
+                "home_updated": home_updated,
+                "recommendation_updated": rec_updated,
+                "total_updated": total_updated,
+                "tag_ids": tag_ids
+            }, f"成功为{total_updated}个漫画添加标签")
+        except Exception as e:
+            error_logger.error(f"批量添加标签失败: {e}")
+            return ServiceResult.error("批量添加标签失败")
+
+    def batch_remove_tags(self, comic_data: List[dict], tag_ids: List[str]) -> ServiceResult:
+        try:
+            home_updated = 0
+            rec_updated = 0
+            
+            for item in comic_data:
+                comic_id = item.get('id')
+                source = item.get('source')
+                
+                if source == 'home':
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.remove_tags(tag_ids)
+                        if self._comic_repo.save(comic):
+                            home_updated += 1
+                elif source == 'recommendation':
+                    recommendation = self._recommendation_repo.get_by_id(comic_id)
+                    if recommendation:
+                        recommendation.remove_tags(tag_ids)
+                        if self._recommendation_repo.save(recommendation):
+                            rec_updated += 1
+            
+            total_updated = home_updated + rec_updated
+            if total_updated == 0:
+                return ServiceResult.error("没有找到有效的漫画")
+            
+            app_logger.info(f"批量移除标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
+            return ServiceResult.ok({
+                "home_updated": home_updated,
+                "recommendation_updated": rec_updated,
+                "total_updated": total_updated,
+                "tag_ids": tag_ids
+            }, f"成功从{total_updated}个漫画移除标签")
+        except Exception as e:
+            error_logger.error(f"批量移除标签失败: {e}")
+            return ServiceResult.error("批量移除标签失败")

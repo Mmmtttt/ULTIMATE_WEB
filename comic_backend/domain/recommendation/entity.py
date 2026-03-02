@@ -70,6 +70,18 @@ class Recommendation:
         """绑定标签"""
         self.tag_ids = tag_ids
     
+    def add_tags(self, tag_ids: List[str]):
+        """添加标签"""
+        for tag_id in tag_ids:
+            if tag_id not in self.tag_ids:
+                self.tag_ids.append(tag_id)
+    
+    def remove_tags(self, tag_ids: List[str]):
+        """移除标签"""
+        for tag_id in tag_ids:
+            if tag_id in self.tag_ids:
+                self.tag_ids.remove(tag_id)
+    
     def add_to_list(self, list_id: str):
         """添加到清单"""
         if list_id not in self.list_ids:

@@ -160,6 +160,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useTagStore } from '@/stores'
+import { tagApi } from '@/api'
 import { buildCoverUrl } from '@/api/image'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
@@ -210,9 +211,11 @@ const fetchTagList = async () => {
 
 const fetchComicList = async () => {
   try {
-    const response = await comicStore.fetchComics()
-    if (response) {
-      comicList.value = response
+    const response = await tagApi.getAllComics()
+    if (response.code === 200) {
+      const homeComics = response.data.home_comics || []
+      const recommendationComics = response.data.recommendation_comics || []
+      comicList.value = [...homeComics, ...recommendationComics]
     }
   } catch (error) {
     console.error('获取漫画列表失败:', error)
@@ -296,7 +299,7 @@ const deleteTag = async (tagId) => {
 }
 
 const goToTagComics = (tagId) => {
-  router.push(`/?tagId=${tagId}`)
+  router.push(`/tag/${tagId}`)
 }
 
 const toggleComicSelection = (comicId) => {
@@ -324,14 +327,19 @@ const batchAddTags = async () => {
       message: `确定为 ${selectedComicIds.value.length} 个漫画添加 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const response = await tagStore.batchAddTags(selectedComicIds.value, selectedTagIds.value)
-    if (response.success) {
-      showSuccessToast('操作成功')
+    const comicData = comicList.value
+      .filter(c => selectedComicIds.value.includes(c.id))
+      .map(c => ({ id: c.id, source: c.source }))
+    
+    const response = await tagApi.batchAddTags(comicData, selectedTagIds.value)
+    if (response.code === 200) {
+      showSuccessToast(response.msg || '操作成功')
       selectedComicIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
+      await fetchComicList()
     } else {
-      showFailToast(response.message || '操作失败')
+      showFailToast(response.msg || '操作失败')
     }
   } catch {
   }
@@ -344,14 +352,19 @@ const batchRemoveTags = async () => {
       message: `确定从 ${selectedComicIds.value.length} 个漫画移除 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const response = await tagStore.batchRemoveTags(selectedComicIds.value, selectedTagIds.value)
-    if (response.success) {
-      showSuccessToast('操作成功')
+    const comicData = comicList.value
+      .filter(c => selectedComicIds.value.includes(c.id))
+      .map(c => ({ id: c.id, source: c.source }))
+    
+    const response = await tagApi.batchRemoveTags(comicData, selectedTagIds.value)
+    if (response.code === 200) {
+      showSuccessToast(response.msg || '操作成功')
       selectedComicIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
+      await fetchComicList()
     } else {
-      showFailToast(response.message || '操作失败')
+      showFailToast(response.msg || '操作失败')
     }
   } catch {
   }

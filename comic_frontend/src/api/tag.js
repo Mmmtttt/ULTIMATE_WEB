@@ -54,5 +54,39 @@ export const tagApi = {
     return request.get('/v1/tag/comics', {
       params: { tag_id: tagId }
     })
+  },
+
+  /**
+   * 获取所有漫画（主页+推荐页）
+   * @returns {Promise}
+   */
+  getAllComics: () => {
+    return request.get('/v1/tag/all-comics')
+  },
+
+  /**
+   * 批量添加标签（支持主页和推荐页）
+   * @param {Array} comicData - 漫画数据数组，包含id和source
+   * @param {Array} tagIds - 标签ID数组
+   * @returns {Promise}
+   */
+  batchAddTags: (comicData, tagIds) => {
+    return request.post('/v1/tag/batch-add-tags', {
+      comic_data: comicData,
+      tag_ids: tagIds
+    })
+  },
+
+  /**
+   * 批量移除标签（支持主页和推荐页）
+   * @param {Array} comicData - 漫画数据数组，包含id和source
+   * @param {Array} tagIds - 标签ID数组
+   * @returns {Promise}
+   */
+  batchRemoveTags: (comicData, tagIds) => {
+    return request.post('/v1/tag/batch-remove-tags', {
+      comic_data: comicData,
+      tag_ids: tagIds
+    })
   }
 }
