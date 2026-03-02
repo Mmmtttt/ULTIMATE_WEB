@@ -105,6 +105,7 @@
             <div class="option-title">导入方式</div>
             <van-radio name="by_id">通过 ID 导入</van-radio>
             <van-radio name="by_search">通过搜索导入</van-radio>
+            <van-radio name="by_list">批量导入</van-radio>
             <van-radio name="by_favorite">从收藏夹导入</van-radio>
           </div>
         </van-radio-group>
@@ -130,6 +131,29 @@
           label="漫画ID"
           placeholder="请输入漫画ID"
         />
+        
+        <van-field
+          v-if="importType === 'by_list'"
+          :model-value="importFile ? importFile.name : ''"
+          label="批量导入文件"
+          placeholder="请选择包含漫画ID的txt文件"
+          readonly
+          @click="triggerImportFileInput"
+        />
+        
+        <input 
+          ref="importFileInput" 
+          type="file" 
+          accept=".txt" 
+          style="display: none" 
+          @change="handleImportFileSelect"
+        />
+        
+        <div v-if="importType === 'by_list' && importFile" class="file-info">
+          <van-icon name="description" />
+          <span class="file-name">{{ importFile.name }}</span>
+          <van-icon name="cross" @click="clearImportFile" />
+        </div>
         
         <van-field
           v-if="importType === 'by_search'"
@@ -226,6 +250,8 @@ const importPlatform = ref('JM')
 const importId = ref('')
 const importKeyword = ref('')
 const importMaxPages = ref(1)
+const importFile = ref(null)
+const importFileInput = ref(null)
 const cacheExpiryMinutes = ref(30)
 const fileInput = ref(null)
 const selectedFiles = ref([])
@@ -386,27 +412,65 @@ const handleOnlineImport = async () => {
     showFailToast('请输入搜索关键词')
     return
   }
+  if (importType.value === 'by_list' && !importFile.value) {
+    showFailToast('请选择批量导入文件')
+    return
+  }
   
   importing.value = true
   
   try {
     // 使用异步导入API
-    const result = await importTaskStore.createImportTask({
+    const params = {
       import_type: importType.value,
       target: importTarget.value,
       platform: importPlatform.value,
       comic_id: importId.value.trim(),
       keyword: importKeyword.value.trim()
-    })
+    }
     
-    if (result) {
-      showImportDialog.value = false
-      importId.value = ''
-      importKeyword.value = ''
-      importMaxPages.value = 1
+    // 如果是批量导入，读取文件内容
+    if (importType.value === 'by_list' && importFile.value) {
+      const file = importFile.value
+      const reader = new FileReader()
+      reader.onload = async (e) => {
+        const content = e.target.result
+        const lines = content.split('\n')
+        const comicIds = lines
+          .map(line => line.trim())
+          .filter(line => line.length > 0)
+        
+        if (comicIds.length === 0) {
+          showFailToast('文件中没有找到有效的漫画ID')
+          importing.value = false
+          return
+        }
+        
+        params.comic_ids = comicIds
+        
+        const result = await importTaskStore.createImportTask(params)
+        
+        if (result) {
+          showImportDialog.value = false
+          importId.value = ''
+          importKeyword.value = ''
+          importMaxPages.value = 1
+          importFile.value = null
+        }
+      }
+      reader.readAsText(file)
+    } else {
+      const result = await importTaskStore.createImportTask(params)
+      
+      if (result) {
+        showImportDialog.value = false
+        importId.value = ''
+        importKeyword.value = ''
+        importMaxPages.value = 1
+      }
     }
   } catch (error) {
-    showFailToast('创建导入任务失败：' + (error.message || '未知错误'))
+    showFailToast('创建导入任务失败')
   } finally {
     importing.value = false
   }
@@ -414,6 +478,28 @@ const handleOnlineImport = async () => {
 
 function triggerFileInput() {
   fileInput.value?.click()
+}
+
+function triggerImportFileInput() {
+  importFileInput.value?.click()
+}
+
+function handleImportFileSelect(event) {
+  const file = event.target.files[0]
+  if (file) {
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      showFailToast('只支持 .txt 格式文件')
+      return
+    }
+    importFile.value = file
+  }
+}
+
+function clearImportFile() {
+  importFile.value = null
+  if (importFileInput.value) {
+    importFileInput.value.value = ''
+  }
 }
 
 function handleFileSelect(event) {
@@ -626,6 +712,29 @@ async function handleUpload() {
 }
 
 .file-item .van-icon-cross {
+  cursor: pointer;
+  color: #999;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.file-info .file-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-info .van-icon-cross {
   cursor: pointer;
   color: #999;
 }

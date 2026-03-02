@@ -1102,9 +1102,10 @@ def import_async():
         platform_name = data.get('platform', 'JM').upper()
         comic_id = data.get('comic_id')
         keyword = data.get('keyword')
+        comic_ids = data.get('comic_ids')
         
-        if import_type not in ['by_id', 'by_search']:
-            return error_response(400, "无效的导入方式，支持: by_id, by_search")
+        if import_type not in ['by_id', 'by_search', 'by_list']:
+            return error_response(400, "无效的导入方式，支持: by_id, by_search, by_list")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
@@ -1136,7 +1137,8 @@ def import_async():
             import_type=import_type,
             target=target,
             comic_id=comic_id,
-            keyword=keyword
+            keyword=keyword,
+            comic_ids=comic_ids
         )
         
         app_logger.info(f"创建异步导入任务: {task_id}, 平台={platform_name}, 类型={import_type}, 目标={target}")

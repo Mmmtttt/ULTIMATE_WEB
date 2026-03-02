@@ -29,10 +29,11 @@ class ImportTask:
     task_id: str
     status: TaskStatus
     platform: str
-    import_type: str  # by_id, by_search, by_favorite
+    import_type: str  # by_id, by_search, by_list, by_favorite
     target: str       # home, recommendation
     comic_id: Optional[str]
     keyword: Optional[str]
+    comic_ids: Optional[List[str]]
     title: str        # 漫画标题（用于显示）
     progress: int     # 0-100
     total_pages: int
@@ -232,17 +233,42 @@ class TaskManager:
             elif task.import_type == 'by_search':
                 result = adapter.search_albums(task.keyword, max_pages=1)
                 albums = result.get('albums', [])
+            elif task.import_type == 'by_list':
+                # 批量导入：遍历所有ID
+                albums = []
+                comic_ids = task.comic_ids or []
+                total_comics = len(comic_ids)
+                for idx, comic_id in enumerate(comic_ids):
+                    try:
+                        result = adapter.get_album_by_id(comic_id)
+                        if result.get('albums'):
+                            albums.extend(result['albums'])
+                        
+                        # 更新任务信息 - 显示漫画进度
+                        task.title = f"批量导入 ({idx+1}/{total_comics})"
+                        task.message = f"正在处理第 {idx+1}/{total_comics} 部漫画..."
+                        task.progress = int((idx + 1) / total_comics * 50) if total_comics > 0 else 0
+                        self._save_tasks()
+                    except Exception as e:
+                        error_logger.error(f"获取漫画 {comic_id} 详情失败: {e}")
+                        continue
             else:
                 return {'success': False, 'error': '不支持的导入类型'}
             
-            if not albums or not albums[0]:
+            if not albums:
                 return {'success': False, 'error': '未找到漫画'}
             
-            # 更新任务信息
-            album = albums[0]
-            task.title = album.get('title', '未知漫画')
-            task.total_pages = album.get('pages', 0)
-            self._save_tasks()
+            # 如果是批量导入，更新任务标题
+            if task.import_type == 'by_list':
+                task.title = f"批量导入 ({len(albums)} 部漫画)"
+                task.total_pages = len(albums)
+                self._save_tasks()
+            else:
+                # 更新任务信息
+                album = albums[0]
+                task.title = album.get('title', '未知漫画')
+                task.total_pages = album.get('pages', 0)
+                self._save_tasks()
             
             # 转换数据
             converted_data = self._convert_to_standard_format(albums, existing_tags, platform)
@@ -252,17 +278,18 @@ class TaskManager:
                 from core.platform import get_original_id
                 from core.constants import JM_PICTURES_DIR
                 
-                for comic in converted_data.get('comics', []):
+                total_comics = len(converted_data.get('comics', []))
+                for idx, comic in enumerate(converted_data.get('comics', [])):
                     try:
                         original_id = get_original_id(comic['id'])
                         album_id = int(original_id)
                         
-                        # 更新进度回调
-                        def progress_callback(current, total, image_filename, status):
-                            task.downloaded_pages = current
-                            task.total_pages = total
-                            task.progress = min(95, int((current / total) * 95)) if total > 0 else 0
-                            task.message = f"下载中... {current}/{total}"
+                        # 如果是批量导入，更新进度 - 显示漫画进度
+                        if task.import_type == 'by_list':
+                            task.message = f"正在下载第 {idx+1}/{total_comics} 部漫画..."
+                            task.progress = int(50 + (idx + 1) / total_comics * 40) if total_comics > 0 else 50
+                            task.downloaded_pages = idx + 1
+                            task.total_pages = total_comics
                             self._save_tasks()
                         
                         # 下载漫画
@@ -279,8 +306,7 @@ class TaskManager:
                             album_id,
                             download_dir=JM_PICTURES_DIR,
                             show_progress=False,
-                            decode_images=True,
-                            progress_callback=progress_callback
+                            decode_images=True
                         )
                         
                         if success:
@@ -403,7 +429,8 @@ class TaskManager:
         import_type: str,
         target: str,
         comic_id: Optional[str] = None,
-        keyword: Optional[str] = None
+        keyword: Optional[str] = None,
+        comic_ids: Optional[List[str]] = None
     ) -> str:
         """创建新任务"""
         task_id = str(uuid.uuid4())[:8]
@@ -416,6 +443,7 @@ class TaskManager:
             target=target,
             comic_id=comic_id,
             keyword=keyword,
+            comic_ids=comic_ids,
             title="等待导入...",
             progress=0,
             total_pages=0,

@@ -194,9 +194,9 @@ const handleCancel = async (taskId) => {
 const handleClear = async () => {
   showConfirmDialog({
     title: '清理任务',
-    message: '确定要清理已完成的任务吗？将保留最近20个任务。',
+    message: '确定要清理已完成的任务吗？将保留最近10个任务。',
   }).then(async () => {
-    await taskStore.clearCompletedTasks(20)
+    await taskStore.clearCompletedTasks(10)
   }).catch(() => {
     // 取消
   })
