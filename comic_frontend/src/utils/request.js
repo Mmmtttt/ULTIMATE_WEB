@@ -1,9 +1,26 @@
 import axios from 'axios'
 import { showFailToast } from 'vant'
 
+// 动态获取 baseURL
+// 如果是开发环境且没有设置环境变量，使用当前页面的主机名
+const getBaseURL = () => {
+  // 如果设置了环境变量，使用环境变量
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+  
+  // 否则使用当前页面的主机名（支持局域网访问）
+  // 例如：http://192.168.1.100:5001 或 http://localhost:5001
+  const protocol = window.location.protocol // http: 或 https:
+  const hostname = window.location.hostname // localhost 或 IP地址
+  const port = 5001 // 后端端口
+  
+  return `${protocol}//${hostname}:${port}`
+}
+
 // 创建 axios 实例
 const request = axios.create({
-  baseURL: 'http://localhost:5001', // 后端 API 地址
+  baseURL: getBaseURL(),
   timeout: 30000, // 30秒超时
   headers: {
     'Content-Type': 'application/json'
