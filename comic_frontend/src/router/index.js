@@ -60,6 +60,11 @@ const routes = [
     path: '/trash',
     name: 'Trash',
     component: () => import('../views/Trash.vue')
+  },
+  {
+    path: '/import-tasks',
+    name: 'ImportTasks',
+    component: () => import('../views/ImportTasks.vue')
   }
 ]
 

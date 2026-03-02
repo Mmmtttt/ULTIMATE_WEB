@@ -19,6 +19,13 @@
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />
       <van-cell title="导入漫画" icon="add-o" @click="showImportDialog = true" is-link />
+      <van-cell title="导入任务" icon="clock-o" to="/import-tasks" is-link>
+        <template #value>
+          <van-tag v-if="activeTaskCount > 0" type="primary" round>
+            {{ activeTaskCount }}
+          </van-tag>
+        </template>
+      </van-cell>
       <van-cell title="批量上传" icon="description" @click="showUploadPanel = true" is-link />
     </van-cell-group>
     
@@ -198,9 +205,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
+import { useImportTaskStore } from '@/stores/importTask'
 import { comicApi } from '@/api/comic'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
@@ -227,6 +235,10 @@ const comicStore = useComicStore()
 const cacheStore = useCacheStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
+const importTaskStore = useImportTaskStore()
+
+// 活跃任务数
+const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 
 const comicCount = computed(() => comicStore.comics?.length || 0)
 const readCount = computed(() => {
@@ -327,6 +339,12 @@ onMounted(async () => {
     tagStore.fetchTags(),
     listStore.fetchLists()
   ])
+  // 加载导入任务状态
+  await importTaskStore.fetchTasks()
+})
+
+onUnmounted(() => {
+  importTaskStore.stopPolling()
 })
 
 const importComic = async () => {
@@ -372,40 +390,23 @@ const handleOnlineImport = async () => {
   importing.value = true
   
   try {
-    const response = await comicApi.onlineImport({
+    // 使用异步导入API
+    const result = await importTaskStore.createImportTask({
       import_type: importType.value,
       target: importTarget.value,
       platform: importPlatform.value,
       comic_id: importId.value.trim(),
-      keyword: importKeyword.value.trim(),
-      max_pages: importMaxPages.value || 1
+      keyword: importKeyword.value.trim()
     })
     
-    if (response.code === 200) {
-      const data = response.data
-      let message = `导入成功！新增 ${data.imported_count} 部，跳过 ${data.skipped_count} 部`
-      
-      // 如果导入到主页，显示下载结果
-      if (importTarget.value === 'home' && data.downloaded_count !== undefined) {
-        message += `，下载成功 ${data.downloaded_count} 部`
-        if (data.failed_downloads && data.failed_downloads.length > 0) {
-          message += `，下载失败 ${data.failed_downloads.length} 部`
-        }
-      }
-      
-      showSuccessToast(message)
+    if (result) {
       showImportDialog.value = false
       importId.value = ''
       importKeyword.value = ''
       importMaxPages.value = 1
-      if (importTarget.value === 'home') {
-        await comicStore.fetchComics()
-      }
-    } else {
-      showFailToast(response.msg || '导入失败')
     }
   } catch (error) {
-    showFailToast('导入失败：' + (error.message || '未知错误'))
+    showFailToast('创建导入任务失败：' + (error.message || '未知错误'))
   } finally {
     importing.value = false
   }

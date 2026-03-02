@@ -1085,3 +1085,140 @@ def batch_delete_permanently():
     except Exception as e:
         error_logger.error(f"批量永久删除失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+# ==================== 异步导入任务 API ====================
+
+@comic_bp.route('/import/async', methods=['POST'])
+def import_async():
+    """创建异步导入任务"""
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少参数")
+        
+        import_type = data.get('import_type')
+        target = data.get('target', 'home')
+        platform_name = data.get('platform', 'JM').upper()
+        comic_id = data.get('comic_id')
+        keyword = data.get('keyword')
+        
+        if import_type not in ['by_id', 'by_search']:
+            return error_response(400, "无效的导入方式，支持: by_id, by_search")
+        
+        if target not in ['home', 'recommendation']:
+            return error_response(400, "无效的目标目录")
+        
+        from core.platform import Platform, is_platform_supported, get_supported_platforms
+        if not is_platform_supported(platform_name):
+            return error_response(400, f"不支持的平台: {platform_name}，支持的平台: {get_supported_platforms()}")
+        
+        # 检查是否已存在
+        if import_type == 'by_id' and comic_id:
+            from core.platform import add_platform_prefix
+            full_comic_id = add_platform_prefix(Platform(platform_name), comic_id)
+            
+            # 检查是否已存在
+            from infrastructure.persistence.json_storage import JsonStorage
+            db_file = 'data/meta_data/comics_database.json' if target == 'home' else 'data/meta_data/recommendations_database.json'
+            storage = JsonStorage(db_file)
+            db_data = storage.read()
+            comics_key = 'comics' if target == 'home' else 'recommendations'
+            
+            existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
+            if full_comic_id in existing_ids:
+                return error_response(400, f"漫画 {full_comic_id} 已存在")
+        
+        # 创建异步任务
+        from infrastructure.task_manager import task_manager
+        task_id = task_manager.create_task(
+            platform=platform_name,
+            import_type=import_type,
+            target=target,
+            comic_id=comic_id,
+            keyword=keyword
+        )
+        
+        app_logger.info(f"创建异步导入任务: {task_id}, 平台={platform_name}, 类型={import_type}, 目标={target}")
+        
+        return success_response({
+            "task_id": task_id,
+            "message": "导入任务已创建"
+        }, "导入任务已创建，请通过任务ID查询进度")
+        
+    except Exception as e:
+        error_logger.error(f"创建异步导入任务失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/import/tasks', methods=['GET'])
+def get_import_tasks():
+    """获取导入任务列表"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        
+        from infrastructure.task_manager import task_manager
+        tasks = task_manager.get_all_tasks(limit)
+        
+        tasks_data = [task.to_dict() for task in tasks]
+        
+        return success_response({
+            "tasks": tasks_data,
+            "count": len(tasks_data)
+        })
+        
+    except Exception as e:
+        error_logger.error(f"获取导入任务列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/import/task/<task_id>', methods=['GET'])
+def get_import_task(task_id):
+    """获取单个导入任务详情"""
+    try:
+        from infrastructure.task_manager import task_manager
+        task = task_manager.get_task(task_id)
+        
+        if not task:
+            return error_response(404, "任务不存在")
+        
+        return success_response(task.to_dict())
+        
+    except Exception as e:
+        error_logger.error(f"获取导入任务详情失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/import/task/<task_id>/cancel', methods=['POST'])
+def cancel_import_task(task_id):
+    """取消导入任务"""
+    try:
+        from infrastructure.task_manager import task_manager
+        success = task_manager.cancel_task(task_id)
+        
+        if success:
+            return success_response(None, "任务已取消")
+        else:
+            return error_response(400, "任务不存在或已开始处理，无法取消")
+        
+    except Exception as e:
+        error_logger.error(f"取消导入任务失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/import/tasks/clear', methods=['POST'])
+def clear_completed_tasks():
+    """清理已完成的任务"""
+    try:
+        keep_count = request.json.get('keep_count', 20) if request.json else 20
+        
+        from infrastructure.task_manager import task_manager
+        deleted_count = task_manager.clear_completed_tasks(keep_count)
+        
+        return success_response({
+            "deleted_count": deleted_count
+        }, f"已清理 {deleted_count} 个已完成任务")
+        
+    except Exception as e:
+        error_logger.error(f"清理已完成任务失败: {e}")
+        return error_response(500, "服务器内部错误")
