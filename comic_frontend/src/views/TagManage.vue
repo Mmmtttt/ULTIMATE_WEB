@@ -227,13 +227,13 @@ const addTag = async () => {
   
   try {
     const response = await tagStore.addTag(newTagName.value.trim())
-    if (response.code === 200) {
+    if (response.success) {
       showAddPopup.value = false
       newTagName.value = ''
       showSuccessToast('添加成功')
       await fetchTagList()
     } else {
-      showFailToast(response.msg || '添加失败')
+      showFailToast(response.message || '添加失败')
     }
   } catch (error) {
     console.error('添加标签失败:', error)
@@ -255,12 +255,12 @@ const editTag = async () => {
   
   try {
     const response = await tagStore.editTag(editingTag.value.id, editTagName.value.trim())
-    if (response.code === 200) {
+    if (response.success) {
       showEditPopup.value = false
       showSuccessToast('修改成功')
       await fetchTagList()
     } else {
-      showFailToast(response.msg || '修改失败')
+      showFailToast(response.message || '修改失败')
     }
   } catch (error) {
     console.error('修改标签失败:', error)
@@ -283,11 +283,11 @@ const confirmDelete = async (tag) => {
 const deleteTag = async (tagId) => {
   try {
     const response = await tagStore.deleteTag(tagId)
-    if (response.code === 200) {
+    if (response.success) {
       showSuccessToast('删除成功')
       await fetchTagList()
     } else {
-      showFailToast(response.msg || '删除失败')
+      showFailToast(response.message || '删除失败')
     }
   } catch (error) {
     console.error('删除标签失败:', error)
@@ -324,14 +324,14 @@ const batchAddTags = async () => {
       message: `确定为 ${selectedComicIds.value.length} 个漫画添加 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const response = await comicStore.batchAddTags(selectedComicIds.value, selectedTagIds.value)
-    if (response.code === 200) {
-      showSuccessToast(response.data.message || '操作成功')
+    const response = await tagStore.batchAddTags(selectedComicIds.value, selectedTagIds.value)
+    if (response.success) {
+      showSuccessToast('操作成功')
       selectedComicIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
     } else {
-      showFailToast(response.msg || '操作失败')
+      showFailToast(response.message || '操作失败')
     }
   } catch {
   }
@@ -344,14 +344,14 @@ const batchRemoveTags = async () => {
       message: `确定从 ${selectedComicIds.value.length} 个漫画移除 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const response = await comicStore.batchRemoveTags(selectedComicIds.value, selectedTagIds.value)
-    if (response.code === 200) {
-      showSuccessToast(response.data.message || '操作成功')
+    const response = await tagStore.batchRemoveTags(selectedComicIds.value, selectedTagIds.value)
+    if (response.success) {
+      showSuccessToast('操作成功')
       selectedComicIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
     } else {
-      showFailToast(response.msg || '操作失败')
+      showFailToast(response.message || '操作失败')
     }
   } catch {
   }

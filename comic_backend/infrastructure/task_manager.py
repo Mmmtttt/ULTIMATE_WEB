@@ -371,39 +371,54 @@ class TaskManager:
         from io import BytesIO
         from core.constants import JM_COVER_DIR, PK_COVER_DIR
         
-        # 标签去重和ID生成
         tag_name_to_id = {}
-        tag_id_counter = 1
+        existing_tag_ids = set()
+        max_tag_num = 0
         
-        # 处理已有标签
         for tag in existing_tags:
             tag_name_to_id[tag["name"]] = tag["id"]
+            existing_tag_ids.add(tag["id"])
+            if tag["id"].startswith("tag_"):
+                try:
+                    num = int(tag["id"][4:])
+                    max_tag_num = max(max_tag_num, num)
+                except ValueError:
+                    pass
         
         new_tags = []
         comics = []
         
         for album in albums:
-            # 处理标签
             comic_tag_ids = []
+            seen_tags = set()
+            
             for tag_name in album.get("tags", []):
+                if tag_name in seen_tags:
+                    continue
+                seen_tags.add(tag_name)
+                
                 if tag_name not in tag_name_to_id:
-                    # 新标签
-                    tag_id = f"tag_{tag_id_counter:03d}"
-                    tag_name_to_id[tag_name] = tag_id
+                    max_tag_num += 1
+                    new_id = f"tag_{max_tag_num:03d}"
+                    
+                    while new_id in existing_tag_ids:
+                        max_tag_num += 1
+                        new_id = f"tag_{max_tag_num:03d}"
+                    
+                    tag_name_to_id[tag_name] = new_id
+                    existing_tag_ids.add(new_id)
                     new_tags.append({
-                        "id": tag_id,
+                        "id": new_id,
                         "name": tag_name,
                         "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                     })
-                    tag_id_counter += 1
+                
                 comic_tag_ids.append(tag_name_to_id[tag_name])
             
-            # 下载并保存封面
             album_id = str(album.get("album_id", ""))
             cover_url = album.get("cover_url", "")
             local_cover_path = self._download_cover(album_id, cover_url, platform)
             
-            # 构建标准漫画格式
             comic = {
                 "id": add_platform_prefix(platform, album_id),
                 "title": album.get("title", ""),

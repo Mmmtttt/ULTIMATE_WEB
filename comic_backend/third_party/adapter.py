@@ -43,27 +43,35 @@ class MetaDataAdapter:
         }
         
         tag_name_to_id = {}
+        existing_tag_ids = set()
+        max_tag_num = 0
+        
         for tag in self.existing_tags:
             tag_name_to_id[tag["name"]] = tag["id"]
+            existing_tag_ids.add(tag["id"])
+            if tag["id"].startswith("tag_"):
+                try:
+                    num = int(tag["id"][4:])
+                    max_tag_num = max(max_tag_num, num)
+                except ValueError:
+                    pass
         
         all_new_tags = set()
         for album in albums:
             tags = album.get("tags", [])
             all_new_tags.update(tags)
         
-        existing_ids = {tag["id"] for tag in self.existing_tags}
-        new_tag_counter = 1
-        
         for tag_name in sorted(all_new_tags):
             if tag_name not in tag_name_to_id:
-                while True:
-                    new_id = f"tag_{new_tag_counter:03d}"
-                    new_tag_counter += 1
-                    if new_id not in existing_ids:
-                        break
+                max_tag_num += 1
+                new_id = f"tag_{max_tag_num:03d}"
+                
+                while new_id in existing_tag_ids:
+                    max_tag_num += 1
+                    new_id = f"tag_{max_tag_num:03d}"
                 
                 tag_name_to_id[tag_name] = new_id
-                existing_ids.add(new_id)
+                existing_tag_ids.add(new_id)
                 result["tags"].append({
                     "id": new_id,
                     "name": tag_name,
@@ -97,7 +105,14 @@ class MetaDataAdapter:
         cover_path = f"/static/cover/{platform_prefix}/{original_id}.jpg"
         
         tag_names = album.get("tags", [])
-        tag_ids = [tag_id_map.get(tag) for tag in tag_names if tag in tag_id_map]
+        tag_ids = []
+        seen_tag_ids = set()
+        for tag in tag_names:
+            if tag in tag_id_map:
+                tag_id = tag_id_map[tag]
+                if tag_id not in seen_tag_ids:
+                    tag_ids.append(tag_id)
+                    seen_tag_ids.add(tag_id)
         
         return {
             "id": comic_id,
