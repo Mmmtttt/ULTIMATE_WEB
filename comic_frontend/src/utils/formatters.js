@@ -150,7 +150,7 @@ export function formatBackground(background) {
  */
 export function formatSortType(sortType) {
   const sortMap = {
-    [SORT_TYPE.CREATE_TIME]: '添加时间',
+    [SORT_TYPE.CREATE_TIME]: '最近导入',
     [SORT_TYPE.SCORE]: '评分',
     [SORT_TYPE.READ_TIME]: '最后阅读'
   }

@@ -516,6 +516,10 @@ class TaskManager:
     def _save_to_database(self, converted_data: Dict, target: str):
         """保存到数据库"""
         from infrastructure.persistence.json_storage import JsonStorage
+        from datetime import datetime
+        
+        RECENT_IMPORT_TAG_ID = "tag_recent_import"
+        RECENT_IMPORT_TAG_NAME = "最近导入"
         
         if target == 'home':
             json_file = 'data/meta_data/comics_database.json'
@@ -529,16 +533,36 @@ class TaskManager:
         storage = JsonStorage(json_file)
         db_data = storage.read()
         
-        # 添加新漫画
         new_comics = converted_data.get('comics', [])
         existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
         
+        if new_comics:
+            existing_tag_ids = {t['id'] for t in db_data.get('tags', [])}
+            if RECENT_IMPORT_TAG_ID not in existing_tag_ids:
+                db_data.setdefault('tags', []).append({
+                    "id": RECENT_IMPORT_TAG_ID,
+                    "name": RECENT_IMPORT_TAG_NAME,
+                    "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                })
+                app_logger.info(f"创建系统标签: {RECENT_IMPORT_TAG_NAME}")
+            
+            for comic in db_data.get(comics_key, []):
+                if RECENT_IMPORT_TAG_ID in comic.get('tag_ids', []):
+                    comic['tag_ids'].remove(RECENT_IMPORT_TAG_ID)
+            
+            app_logger.info(f"清除旧漫画的'{RECENT_IMPORT_TAG_NAME}'标签")
+        
         for comic in new_comics:
             if comic['id'] not in existing_ids:
+                if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
+                    comic.setdefault('tag_ids', []).append(RECENT_IMPORT_TAG_ID)
+                
                 db_data.setdefault(comics_key, []).append(comic)
                 existing_ids.add(comic['id'])
         
-        # 添加新标签
+        if new_comics:
+            app_logger.info(f"为 {len(new_comics)} 个新漫画添加'{RECENT_IMPORT_TAG_NAME}'标签")
+        
         new_tags = converted_data.get('tags', [])
         existing_tag_ids = {t['id'] for t in db_data.get('tags', [])}
         for tag in new_tags:
@@ -546,7 +570,6 @@ class TaskManager:
                 db_data.setdefault('tags', []).append(tag)
                 existing_tag_ids.add(tag['id'])
         
-        # 更新统计
         db_data[total_key] = len(db_data.get(comics_key, []))
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         

@@ -28,7 +28,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
   const error = ref(null)
 
   // 当前排序方式
-  const currentSort = ref(SORT_TYPE.CREATE_TIME)
+  const currentSort = ref(null)
 
   // 筛选结果
   const filteredRecommendations = ref([])
@@ -362,7 +362,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    */
   function clearSort() {
     console.log('[Recommendation] clearSort called')
-    currentSort.value = SORT_TYPE.CREATE_TIME
+    currentSort.value = null
   }
 
   /**

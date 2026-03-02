@@ -141,25 +141,12 @@
           </template>
         </van-nav-bar>
 
-        <div class="filter-content">
-          <div class="filter-section">
-            <h3>包含标签</h3>
-            <TagFilter
-              :tags="availableTags"
-              :selected-ids="tempIncludeTags"
-              @change="tempIncludeTags = $event"
-            />
-          </div>
-
-          <div class="filter-section">
-            <h3>排除标签</h3>
-            <TagFilter
-              :tags="availableTags"
-              :selected-ids="tempExcludeTags"
-              @change="tempExcludeTags = $event"
-            />
-          </div>
-        </div>
+        <TagFilter
+          v-model:include-tags="tempIncludeTags"
+          v-model:exclude-tags="tempExcludeTags"
+          :tags="availableTags"
+          show-count
+        />
       </div>
     </van-popup>
 
@@ -240,7 +227,7 @@ const sortLabel = computed(() => {
 
 // ============ Sort Options ============
 const sortColumns = [
-  { text: '添加时间', value: SORT_TYPE.CREATE_TIME },
+  { text: '最近导入', value: SORT_TYPE.CREATE_TIME },
   { text: '评分', value: SORT_TYPE.SCORE },
   { text: '阅读时间', value: SORT_TYPE.READ_TIME },
   { text: '阅读状态', value: SORT_TYPE.READ_STATUS }
@@ -349,16 +336,19 @@ async function applyFilter() {
     exclude: tempExcludeTags.value
   })
 
+  const includeArray = Array.isArray(tempIncludeTags.value) ? tempIncludeTags.value : []
+  const excludeArray = Array.isArray(tempExcludeTags.value) ? tempExcludeTags.value : []
+
   selectedIncludeTags.value = availableTags.value.filter(
-    tag => tempIncludeTags.value.includes(tag.id)
+    tag => includeArray.includes(tag.id)
   )
   selectedExcludeTags.value = availableTags.value.filter(
-    tag => tempExcludeTags.value.includes(tag.id)
+    tag => excludeArray.includes(tag.id)
   )
 
   await recommendationStore.filterByTags(
-    tempIncludeTags.value,
-    tempExcludeTags.value
+    includeArray,
+    excludeArray
   )
 
   showFilterPanel.value = false
@@ -367,13 +357,21 @@ async function applyFilter() {
 async function removeIncludeTag(tagId) {
   tempIncludeTags.value = tempIncludeTags.value.filter(id => id !== tagId)
   selectedIncludeTags.value = selectedIncludeTags.value.filter(tag => tag.id !== tagId)
-  await applyFilter()
+  if (tempIncludeTags.value.length === 0 && tempExcludeTags.value.length === 0) {
+    await clearAllFilters()
+  } else {
+    await recommendationStore.filterByTags(tempIncludeTags.value, tempExcludeTags.value)
+  }
 }
 
 async function removeExcludeTag(tagId) {
   tempExcludeTags.value = tempExcludeTags.value.filter(id => id !== tagId)
   selectedExcludeTags.value = selectedExcludeTags.value.filter(tag => tag.id !== tagId)
-  await applyFilter()
+  if (tempIncludeTags.value.length === 0 && tempExcludeTags.value.length === 0) {
+    await clearAllFilters()
+  } else {
+    await recommendationStore.filterByTags(tempIncludeTags.value, tempExcludeTags.value)
+  }
 }
 
 async function clearAllFilters() {
@@ -443,22 +441,6 @@ watch(currentSortType, async (newSort) => {
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.filter-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.filter-section {
-  margin-bottom: 24px;
-}
-
-.filter-section h3 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  color: #666;
 }
 
 .van-loading {

@@ -72,7 +72,7 @@ export const SORT_TYPE = {
 
 // 排序选项
 export const SORT_OPTIONS = [
-  { label: '添加时间', value: SORT_TYPE.CREATE_TIME },
+  { label: '最近导入', value: SORT_TYPE.CREATE_TIME },
   { label: '评分', value: SORT_TYPE.SCORE },
   { label: '最后阅读', value: SORT_TYPE.READ_TIME }
 ]

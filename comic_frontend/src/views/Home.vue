@@ -157,13 +157,14 @@
       v-model:show="showSortPanel" 
       position="bottom" 
       round 
-      :style="{ height: '40%' }"
+      :style="{ height: '50%' }"
     >
       <div class="sort-panel">
         <van-nav-bar title="排序方式" left-text="关闭" @click-left="showSortPanel = false" />
         <van-cell-group>
           <van-cell 
-            title="按添加时间" 
+            title="最近导入" 
+            label="按导入时间倒序排列"
             clickable 
             @click="setSortType('create_time')"
           >
@@ -262,7 +263,7 @@ const isLoading = computed(() => loading.value || comicStore.loading)
 
 const sortLabel = computed(() => {
   const labels = {
-    'create_time': '按添加时间',
+    'create_time': '最近导入',
     'score': '按评分',
     'read_time': '按阅读时间',
     'read_status': '已读/未读'

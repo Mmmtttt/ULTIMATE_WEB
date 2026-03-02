@@ -27,7 +27,7 @@ export const useComicStore = defineStore('comic', () => {
   const error = ref(null)
   
   // 当前排序方式
-  const currentSort = ref(SORT_TYPE.CREATE_TIME)
+  const currentSort = ref(null)
   
   // 筛选结果
   const filteredComics = ref([])
