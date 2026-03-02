@@ -769,12 +769,19 @@ def import_online():
         
         import_type = data.get('import_type')
         target = data.get('target', 'home')
+        platform_name = data.get('platform', 'JM').upper()
         
         if import_type not in ['by_id', 'by_search', 'by_favorite']:
             return error_response(400, "无效的导入方式")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
+        
+        from core.platform import Platform, is_platform_supported, get_supported_platforms
+        if not is_platform_supported(platform_name):
+            return error_response(400, f"不支持的平台: {platform_name}，支持的平台: {get_supported_platforms()}")
+        
+        platform = Platform(platform_name)
         
         is_recommendation = (target == 'recommendation')
         
@@ -785,16 +792,14 @@ def import_online():
         storage = JsonStorage() if not is_recommendation else JsonStorage(RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
         
-        # 根据目标选择正确的字段名
         comics_key = 'recommendations' if is_recommendation else 'comics'
         total_key = 'total_recommendations' if is_recommendation else 'total_comics'
         
         existing_ids = [c['id'] for c in db_data.get(comics_key, [])]
         checker = DuplicateChecker(existing_ids)
         
-        # 获取现有标签，用于导入时合并
         existing_tags = db_data.get('tags', [])
-        adapter = MetaDataAdapter(is_recommendation, existing_tags)
+        adapter = MetaDataAdapter(is_recommendation, existing_tags, platform)
         
         meta_json = None
         
@@ -803,8 +808,11 @@ def import_online():
             if not comic_id:
                 return error_response(400, "缺少漫画ID")
             
-            if checker.is_duplicate(comic_id):
-                return error_response(400, f"漫画 {comic_id} 已存在")
+            from core.platform import add_platform_prefix
+            full_comic_id = add_platform_prefix(platform, comic_id)
+            
+            if checker.is_duplicate(full_comic_id):
+                return error_response(400, f"漫画 {full_comic_id} 已存在")
             
             meta_json = get_album_by_id(comic_id)
             
@@ -823,7 +831,6 @@ def import_online():
             return error_response(404, "未找到相关漫画")
         
         converted_data = adapter.parse_meta_data(meta_json)
-        # 根据目标选择正确的字段名获取新漫画列表
         new_comics = converted_data.get(comics_key, [])
         
         new_comics, skipped_ids = checker.filter_duplicates(new_comics)
@@ -831,14 +838,12 @@ def import_online():
         if not new_comics:
             return error_response(400, "所有漫画已存在，无需导入")
         
-        # 如果是导入到主页，同时下载图片
         downloaded_comics = []
         failed_downloads = []
         
-        if not is_recommendation:
+        if not is_recommendation and platform == Platform.JM:
             try:
                 import sys
-                import os
                 
                 jmcomic_path = os.path.join(
                     os.path.dirname(os.path.dirname(__file__)),
@@ -848,11 +853,19 @@ def import_online():
                     sys.path.insert(0, jmcomic_path)
                 
                 from jmcomic_api import download_album
+                from core.platform import get_original_id, PLATFORM_PREFIXES
+                from core.constants import JM_PICTURES_DIR
                 
                 for comic in new_comics:
                     try:
-                        album_id = int(comic['id'])
-                        detail, success = download_album(album_id, show_progress=False, decode_images=True)
+                        original_id = get_original_id(comic['id'])
+                        album_id = int(original_id)
+                        detail, success = download_album(
+                            album_id, 
+                            show_progress=False, 
+                            decode_images=True,
+                            download_dir=JM_PICTURES_DIR
+                        )
                         
                         if success:
                             downloaded_comics.append(comic['id'])
@@ -866,7 +879,6 @@ def import_online():
             except ImportError as e:
                 error_logger.warning(f"无法导入下载模块: {e}")
         
-        # 合并数据到正确的字段
         if comics_key not in db_data:
             db_data[comics_key] = []
         db_data[comics_key].extend(new_comics)
@@ -907,17 +919,19 @@ def import_online():
             except ImportError as e:
                 error_logger.warning(f"无法导入封面生成模块: {e}")
         
-        if is_recommendation:
+        if is_recommendation and platform == Platform.JM:
             try:
                 import requests
-                from core.constants import COVER_DIR
+                from core.platform import get_original_id, PLATFORM_PREFIXES
+                from core.constants import JM_COVER_DIR
                 
-                os.makedirs(COVER_DIR, exist_ok=True)
+                os.makedirs(JM_COVER_DIR, exist_ok=True)
                 
                 for comic in new_comics:
                     comic_id = comic['id']
-                    cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{comic_id}.jpg"
-                    cover_path = os.path.join(COVER_DIR, f"{comic_id}.jpg")
+                    original_id = get_original_id(comic_id)
+                    cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg"
+                    cover_path = os.path.join(JM_COVER_DIR, f"{original_id}.jpg")
                     
                     if not os.path.exists(cover_path):
                         try:
@@ -933,7 +947,7 @@ def import_online():
             except ImportError as e:
                 error_logger.warning(f"无法导入requests模块: {e}")
         
-        app_logger.info(f"在线导入成功: 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
+        app_logger.info(f"在线导入成功: 平台={platform_name}, 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
         
         return success_response({
             "imported_count": len(new_comics),

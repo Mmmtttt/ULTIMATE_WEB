@@ -27,6 +27,7 @@
           <p class="author" v-else>未知作者</p>
 
           <div class="stats">
+            <span class="stat-item">ID: {{ recommendation.id }}</span>
             <span class="stat-item">总页数: {{ recommendation.total_page }}</span>
             <span class="stat-item">进度: {{ recommendation.current_page }}/{{ recommendation.total_page }}</span>
             <span class="stat-item">{{ progressPercent }}%</span>

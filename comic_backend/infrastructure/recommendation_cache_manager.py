@@ -9,6 +9,8 @@ import threading
 from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
+from core.platform import get_platform_from_id, get_original_id, Platform
+from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
 
 
 class RecommendationCacheManager:
@@ -52,7 +54,21 @@ class RecommendationCacheManager:
     def _ensure_dirs(self):
         """确保目录存在"""
         os.makedirs(self.cache_dir, exist_ok=True)
+        os.makedirs(JM_RECOMMENDATION_CACHE_DIR, exist_ok=True)
+        os.makedirs(PK_RECOMMENDATION_CACHE_DIR, exist_ok=True)
         os.makedirs(os.path.dirname(self.cache_index_file), exist_ok=True)
+    
+    def _get_comic_cache_dir(self, comic_id: str) -> str:
+        """获取漫画缓存目录"""
+        platform = get_platform_from_id(comic_id)
+        original_id = get_original_id(comic_id)
+        
+        if platform == Platform.JM:
+            return os.path.join(JM_RECOMMENDATION_CACHE_DIR, original_id)
+        elif platform == Platform.PK:
+            return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+        else:
+            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
     
     def _load_cache_index(self):
         """加载缓存索引"""
@@ -91,10 +107,6 @@ class RecommendationCacheManager:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             error_logger.error(f"保存缓存索引失败: {e}")
-    
-    def _get_comic_cache_dir(self, comic_id: str) -> str:
-        """获取漫画缓存目录"""
-        return os.path.join(self.cache_dir, str(comic_id))
     
     def _calculate_dir_size(self, dir_path: str) -> int:
         """计算目录大小"""

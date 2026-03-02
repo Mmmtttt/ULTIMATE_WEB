@@ -27,6 +27,7 @@
           <p class="author" v-else>未知作者</p>
           
           <div class="stats">
+            <span class="stat-item">ID: {{ comic.id }}</span>
             <span class="stat-item">总页数: {{ comic.total_page }}</span>
             <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
             <span class="stat-item">{{ progressPercent }}%</span>

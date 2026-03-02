@@ -110,6 +110,13 @@
           </div>
         </van-radio-group>
         
+        <van-radio-group v-model="importPlatform" class="import-options">
+          <div class="option-group">
+            <div class="option-title">导入平台</div>
+            <van-radio name="JM">JMComic</van-radio>
+          </div>
+        </van-radio-group>
+        
         <van-field
           v-if="importType === 'by_id'"
           v-model="importId"
@@ -207,6 +214,7 @@ const comicTitle = ref('')
 const importing = ref(false)
 const importType = ref('by_id')
 const importTarget = ref('home')
+const importPlatform = ref('JM')
 const importId = ref('')
 const importKeyword = ref('')
 const importMaxPages = ref(1)
@@ -367,6 +375,7 @@ const handleOnlineImport = async () => {
     const response = await comicApi.onlineImport({
       import_type: importType.value,
       target: importTarget.value,
+      platform: importPlatform.value,
       comic_id: importId.value.trim(),
       keyword: importKeyword.value.trim(),
       max_pages: importMaxPages.value || 1

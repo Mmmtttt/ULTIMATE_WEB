@@ -1,6 +1,7 @@
 import os
 import re
-from core.constants import PICTURES_DIR, SUPPORTED_FORMATS
+from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, SUPPORTED_FORMATS
+from core.platform import get_platform_from_id, get_original_id, Platform
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -8,9 +9,20 @@ class FileParser:
     def __init__(self):
         self.supported_formats = SUPPORTED_FORMATS
     
+    def _get_comic_dir(self, comic_id):
+        platform = get_platform_from_id(comic_id)
+        original_id = get_original_id(comic_id)
+        
+        if platform == Platform.JM:
+            return os.path.join(JM_PICTURES_DIR, original_id)
+        elif platform == Platform.PK:
+            return os.path.join(PK_PICTURES_DIR, original_id)
+        else:
+            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+    
     def parse_comic_images(self, comic_id):
         try:
-            comic_dir = os.path.join(PICTURES_DIR, comic_id)
+            comic_dir = self._get_comic_dir(comic_id)
             if not os.path.exists(comic_dir):
                 app_logger.warning(f"漫画目录不存在: {comic_dir}")
                 return []

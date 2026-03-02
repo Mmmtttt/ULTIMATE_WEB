@@ -1,7 +1,8 @@
 import os
 from io import BytesIO
 from PIL import Image
-from core.constants import COVER_DIR, COVER_WIDTH, COVER_QUALITY, BACKUP_SUFFIX
+from core.constants import COVER_WIDTH, COVER_QUALITY, BACKUP_SUFFIX, JM_COVER_DIR, PK_COVER_DIR
+from core.platform import get_platform_from_id, get_original_id, Platform, PLATFORM_PREFIXES
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -10,11 +11,23 @@ class ImageHandler:
         self.cover_width = COVER_WIDTH
         self.cover_quality = COVER_QUALITY
     
+    def _get_cover_dir(self, comic_id):
+        platform = get_platform_from_id(comic_id)
+        
+        if platform == Platform.JM:
+            return JM_COVER_DIR
+        elif platform == Platform.PK:
+            return PK_COVER_DIR
+        else:
+            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+    
     def generate_cover(self, comic_id, first_image_path):
         try:
-            os.makedirs(COVER_DIR, exist_ok=True)
+            cover_dir = self._get_cover_dir(comic_id)
+            os.makedirs(cover_dir, exist_ok=True)
             
-            cover_path = os.path.join(COVER_DIR, f"{comic_id}.jpg")
+            original_id = get_original_id(comic_id)
+            cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
             
             with Image.open(first_image_path) as img:
                 width, height = img.size
@@ -25,8 +38,11 @@ class ImageHandler:
                 
                 resized_img.save(cover_path, 'JPEG', quality=self.cover_quality)
             
+            platform = get_platform_from_id(comic_id)
+            platform_prefix = PLATFORM_PREFIXES.get(platform, "")
+            
             app_logger.info(f"封面生成成功: {cover_path}")
-            return f"/static/cover/{comic_id}.jpg"
+            return f"/static/cover/{platform_prefix}/{original_id}.jpg"
         except Exception as e:
             error_logger.error(f"生成封面失败: {e}")
             return "/static/default/default_cover.jpg"

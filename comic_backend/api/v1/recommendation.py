@@ -326,6 +326,15 @@ def download_to_cache():
         detail = result.data
         total_page = detail.get('total_page', 0)
         
+        from core.platform import get_platform_from_id, get_original_id, Platform
+        from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
+        
+        platform = get_platform_from_id(recommendation_id)
+        original_id = get_original_id(recommendation_id)
+        
+        if platform != Platform.JM:
+            return error_response(400, f"暂不支持平台 {platform} 的缓存下载")
+        
         jmcomic_path = os.path.join(
             os.path.dirname(__file__), '..', '..', 
             'third_party', 'JMComic-Crawler-Python'
@@ -336,11 +345,9 @@ def download_to_cache():
         try:
             from jmcomic_api import download_album
             
-            cache_dir = recommendation_cache_manager.cache_dir
-            
             album_detail, success = download_album(
-                recommendation_id, 
-                download_dir=cache_dir,
+                int(original_id), 
+                download_dir=JM_RECOMMENDATION_CACHE_DIR,
                 show_progress=False,
                 decode_images=True
             )

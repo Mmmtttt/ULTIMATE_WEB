@@ -1,14 +1,16 @@
 import json
 import time
 from typing import Dict, List, Any, Optional, Tuple
+from core.platform import Platform, add_platform_prefix, PLATFORM_PREFIXES
 
 
 class MetaDataAdapter:
     """元数据适配器：将第三方 API 格式转换为应用格式"""
 
-    def __init__(self, is_recommendation: bool = False, existing_tags: List[Dict] = None):
+    def __init__(self, is_recommendation: bool = False, existing_tags: List[Dict] = None, platform: Platform = Platform.JM):
         self.is_recommendation = is_recommendation
         self.existing_tags = existing_tags or []
+        self.platform = platform
 
     def parse_meta_data(self, meta_json: Dict[str, Any]) -> Dict[str, Any]:
         """解析元数据并转换为应用格式
@@ -21,7 +23,6 @@ class MetaDataAdapter:
         """
         albums = meta_json.get("albums", [])
         
-        # 根据是否为推荐页选择正确的字段名
         comics_key = "recommendations" if self.is_recommendation else "comics"
         total_key = "total_recommendations" if self.is_recommendation else "total_comics"
         
@@ -41,25 +42,20 @@ class MetaDataAdapter:
             }
         }
         
-        # 构建标签映射：名称 -> ID
-        # 首先从现有标签构建映射
         tag_name_to_id = {}
         for tag in self.existing_tags:
             tag_name_to_id[tag["name"]] = tag["id"]
         
-        # 找出所有新标签
         all_new_tags = set()
         for album in albums:
             tags = album.get("tags", [])
             all_new_tags.update(tags)
         
-        # 为新标签分配ID
         existing_ids = {tag["id"] for tag in self.existing_tags}
         new_tag_counter = 1
         
         for tag_name in sorted(all_new_tags):
             if tag_name not in tag_name_to_id:
-                # 找一个未使用的ID
                 while True:
                     new_id = f"tag_{new_tag_counter:03d}"
                     new_tag_counter += 1
@@ -74,7 +70,6 @@ class MetaDataAdapter:
                     "create_time": time.strftime("%Y-%m-%dT%H:%M:%S")
                 })
         
-        # 转换漫画数据
         for album in albums:
             comic = self._convert_album_to_comic(album, tag_name_to_id)
             result[comics_key].append(comic)
@@ -95,15 +90,18 @@ class MetaDataAdapter:
         Returns:
             漫画对象
         """
-        album_id = str(album.get("album_id", ""))
-        cover_path = f"/static/cover/{album_id}.jpg"
+        original_id = str(album.get("album_id", ""))
+        comic_id = add_platform_prefix(self.platform, original_id)
+        
+        platform_prefix = PLATFORM_PREFIXES.get(self.platform, "")
+        cover_path = f"/static/cover/{platform_prefix}/{original_id}.jpg"
         
         tag_names = album.get("tags", [])
         tag_ids = [tag_id_map.get(tag) for tag in tag_names if tag in tag_id_map]
         
         return {
-            "id": album_id,
-            "title": album.get("title", f"漫画_{album_id}"),
+            "id": comic_id,
+            "title": album.get("title", f"漫画_{original_id}"),
             "title_jp": album.get("title_jp", ""),
             "author": album.get("author", ""),
             "desc": "",
@@ -182,16 +180,17 @@ class DuplicateChecker:
         return new_comics, existing_ids
 
 
-def create_adapter(is_recommendation: bool = False) -> MetaDataAdapter:
+def create_adapter(is_recommendation: bool = False, platform: Platform = Platform.JM) -> MetaDataAdapter:
     """创建适配器实例
     
     Args:
         is_recommendation: 是否为推荐页
+        platform: 平台类型
         
     Returns:
         适配器实例
     """
-    return MetaDataAdapter(is_recommendation)
+    return MetaDataAdapter(is_recommendation, platform=platform)
 
 
 def create_duplicate_checker(existing_ids: List[str]) -> DuplicateChecker:
