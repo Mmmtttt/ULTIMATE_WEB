@@ -215,16 +215,18 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { showToast, showConfirmDialog } from 'vant'
-import { useComicStore, useTagStore } from '@/stores'
+import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
+import { useComicStore, useTagStore, useImportTaskStore } from '@/stores'
 import { useSearch } from '@/composables'
 import { ComicGrid, EmptyState, TagFilter } from '@/components'
 import { comicApi } from '@/api'
+import request from '@/api/request'
 
 const router = useRouter()
 const route = useRoute()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
+const importTaskStore = useImportTaskStore()
 
 const {
   keyword,
@@ -384,7 +386,36 @@ onMounted(async () => {
     includeTags.value = [tagId]
     await filterByTags()
   }
+  
+  const importIds = route.query.importIds
+  if (importIds) {
+    const ids = importIds.split(',').filter(id => id.trim())
+    if (ids.length > 0) {
+      await createImportFromIds(ids, 'home')
+      router.replace({ query: {} })
+    }
+  }
 })
+
+async function createImportFromIds(ids, target) {
+  try {
+    const params = {
+      import_type: ids.length === 1 ? 'by_id' : 'by_list',
+      target: target,
+      platform: 'JM',
+      comic_id: ids.length === 1 ? ids[0] : undefined,
+      comic_ids: ids.length > 1 ? ids : undefined
+    }
+    
+    const result = await importTaskStore.createImportTask(params)
+    if (result) {
+      showSuccessToast(`已创建导入任务，共 ${ids.length} 个漫画`)
+    }
+  } catch (error) {
+    console.error('创建导入任务失败:', error)
+    showFailToast('创建导入任务失败')
+  }
+}
 </script>
 
 <style scoped>

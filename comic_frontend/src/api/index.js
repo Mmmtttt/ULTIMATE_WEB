@@ -18,6 +18,9 @@ export { tagApi } from './tag'
 // 清单 API
 export { listApi } from './list'
 
+// 作者订阅 API
+export { authorApi } from './author'
+
 // 配置 API
 export { configApi } from './config'
 

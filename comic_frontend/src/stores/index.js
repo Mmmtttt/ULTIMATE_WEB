@@ -23,3 +23,6 @@ export { useRecommendationStore } from './recommendation'
 
 // 清单管理
 export { useListStore } from './list'
+
+// 导入任务管理
+export { useImportTaskStore } from './importTask'

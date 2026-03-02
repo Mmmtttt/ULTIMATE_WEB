@@ -3,3 +3,4 @@ from .tag_repository_impl import TagJsonRepository, RecommendationTagJsonReposit
 from .list_repository_impl import ListJsonRepository
 from .config_repository_impl import ConfigJsonRepository
 from .recommendation_repository_impl import RecommendationJsonRepository
+from .author_repository_impl import AuthorJsonRepository

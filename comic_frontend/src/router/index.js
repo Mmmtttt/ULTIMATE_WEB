@@ -70,6 +70,11 @@ const routes = [
     path: '/import-tasks',
     name: 'ImportTasks',
     component: () => import('../views/ImportTasks.vue')
+  },
+  {
+    path: '/authors',
+    name: 'AuthorSubscription',
+    component: () => import('../views/AuthorSubscription.vue')
   }
 ]
 

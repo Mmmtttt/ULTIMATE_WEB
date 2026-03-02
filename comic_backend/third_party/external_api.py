@@ -54,19 +54,21 @@ def get_album_by_id(album_id: str, adapter_name: Optional[str] = None) -> Dict[s
     return adapter.get_album_by_id(album_id)
 
 
-def search_albums(keyword: str, max_pages: int = 1, adapter_name: Optional[str] = None) -> Dict[str, Any]:
+def search_albums(keyword: str, max_pages: int = 1, adapter_name: Optional[str] = None,
+                  fast_mode: bool = False) -> Dict[str, Any]:
     """搜索漫画专辑
     
     Args:
         keyword: 搜索关键词
         max_pages: 最大搜索页数
         adapter_name: 适配器名称，None 表示使用默认适配器
+        fast_mode: 快速模式，不获取详情，速度更快
         
     Returns:
         元数据 JSON 格式
     """
     adapter = get_adapter(adapter_name)
-    return adapter.search_albums(keyword, max_pages)
+    return adapter.search_albums(keyword, max_pages, fast_mode)
 
 
 def get_favorites(adapter_name: Optional[str] = None) -> Dict[str, Any]:

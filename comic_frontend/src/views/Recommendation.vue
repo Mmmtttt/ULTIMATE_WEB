@@ -175,9 +175,9 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { showToast, showConfirmDialog } from 'vant'
-import { useRecommendationStore, useTagStore } from '@/stores'
+import { useRouter, useRoute } from 'vue-router'
+import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
+import { useRecommendationStore, useTagStore, useImportTaskStore } from '@/stores'
 import { SORT_TYPE } from '@/utils'
 import { recommendationApi } from '@/api'
 import ComicGrid from '@/components/comic/ComicGrid.vue'
@@ -185,8 +185,10 @@ import TagFilter from '@/components/tag/TagFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const router = useRouter()
+const route = useRoute()
 const recommendationStore = useRecommendationStore()
 const tagStore = useTagStore()
+const importTaskStore = useImportTaskStore()
 
 // ============ State ============
 const keyword = ref('')
@@ -390,7 +392,36 @@ onMounted(async () => {
   console.log('[Recommendation] 页面挂载')
   await tagStore.fetchTags()
   await fetchRecommendations()
+  
+  const importIds = route.query.importIds
+  if (importIds) {
+    const ids = importIds.split(',').filter(id => id.trim())
+    if (ids.length > 0) {
+      await createImportFromIds(ids, 'recommendation')
+      router.replace({ query: {} })
+    }
+  }
 })
+
+async function createImportFromIds(ids, target) {
+  try {
+    const params = {
+      import_type: ids.length === 1 ? 'by_id' : 'by_list',
+      target: target,
+      platform: 'JM',
+      comic_id: ids.length === 1 ? ids[0] : undefined,
+      comic_ids: ids.length > 1 ? ids : undefined
+    }
+    
+    const result = await importTaskStore.createImportTask(params)
+    if (result) {
+      showSuccessToast(`已创建导入任务，共 ${ids.length} 个漫画`)
+    }
+  } catch (error) {
+    console.error('创建导入任务失败:', error)
+    showFailToast('创建导入任务失败')
+  }
+}
 
 watch(currentSortType, async (newSort) => {
   if (newSort) {

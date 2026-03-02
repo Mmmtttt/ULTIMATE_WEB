@@ -23,8 +23,23 @@
         />
         <div class="info">
           <h1 class="title">{{ comic.title }}</h1>
-          <p class="author" v-if="comic.author">{{ comic.author }}</p>
-          <p class="author" v-else>未知作者</p>
+          <div class="author-row">
+            <p class="author" v-if="comic.author">{{ comic.author }}</p>
+            <p class="author" v-else>未知作者</p>
+            <van-button 
+              v-if="comic.author && !isSubscribed" 
+              size="mini" 
+              type="primary" 
+              plain
+              @click="subscribeAuthor"
+              :loading="subscribing"
+            >
+              订阅作者
+            </van-button>
+            <van-tag v-else-if="comic.author && isSubscribed" type="success" size="medium">
+              已订阅
+            </van-tag>
+          </div>
           
           <div class="stats">
             <span class="stat-item">ID: {{ comic.id }}</span>
@@ -266,7 +281,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { useComic } from '@/composables'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { comicApi } from '@/api/comic'
+import { comicApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
 
 const route = useRoute()
@@ -291,6 +306,8 @@ const selectedListIds = ref([])
 const scoreValue = ref(6)
 const favoriteLoading = ref(false)
 const downloadLoading = ref(false)
+const subscribing = ref(false)
+const isSubscribed = ref(false)
 
 const editForm = ref({
   title: '',
@@ -350,11 +367,47 @@ async function fetchComicDetail() {
         author: detail.author || '',
         desc: detail.desc || ''
       }
+      await checkSubscriptionStatus()
     }
   } catch (error) {
     console.error('获取漫画详情失败:', error)
   } finally {
     isLoading.value = false
+  }
+}
+
+async function checkSubscriptionStatus() {
+  if (!comic.value?.author) return
+  
+  try {
+    const response = await authorApi.getList()
+    if (response.code === 200) {
+      isSubscribed.value = response.data.some(
+        author => author.name.toLowerCase() === comic.value.author.toLowerCase()
+      )
+    }
+  } catch (error) {
+    console.error('检查订阅状态失败:', error)
+  }
+}
+
+async function subscribeAuthor() {
+  if (!comic.value?.author || subscribing.value) return
+  
+  subscribing.value = true
+  try {
+    const response = await authorApi.subscribe(comic.value.author)
+    if (response.code === 200) {
+      isSubscribed.value = true
+      showSuccessToast('订阅成功')
+    } else {
+      showFailToast(response.msg || '订阅失败')
+    }
+  } catch (error) {
+    console.error('订阅作者失败:', error)
+    showFailToast('订阅失败')
+  } finally {
+    subscribing.value = false
   }
 }
 
@@ -678,6 +731,17 @@ watch(showListPopup, async (val) => {
   font-size: 14px;
   margin: 0 0 12px 0;
   opacity: 0.9;
+}
+
+.author-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.author-row .author {
+  margin: 0;
 }
 
 .stats {

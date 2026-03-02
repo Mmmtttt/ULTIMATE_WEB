@@ -14,6 +14,13 @@
     <van-cell-group class="mine-menu">
       <van-cell title="我的清单" icon="list-switch-o" to="/lists" is-link />
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
+      <van-cell title="作者订阅" icon="user-circle-o" to="/authors" is-link>
+        <template #value>
+          <van-tag v-if="authorNewCount > 0" type="danger" round>
+            {{ authorNewCount }}
+          </van-tag>
+        </template>
+      </van-cell>
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
       <van-cell title="标签管理" icon="tag-o" to="/tags" is-link />
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
@@ -233,7 +240,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
 import { useImportTaskStore } from '@/stores/importTask'
-import { comicApi } from '@/api/comic'
+import { comicApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
@@ -256,6 +263,7 @@ const cacheExpiryMinutes = ref(30)
 const fileInput = ref(null)
 const selectedFiles = ref([])
 const uploading = ref(false)
+const authorNewCount = ref(0)
 
 const comicStore = useComicStore()
 const cacheStore = useCacheStore()
@@ -263,7 +271,6 @@ const tagStore = useTagStore()
 const listStore = useListStore()
 const importTaskStore = useImportTaskStore()
 
-// 活跃任务数
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 
 const comicCount = computed(() => comicStore.comics?.length || 0)
@@ -358,12 +365,27 @@ function goToFavorites() {
   router.push('/list/list_favorites')
 }
 
+async function fetchAuthorNewCount() {
+  try {
+    const response = await authorApi.getList()
+    if (response.code === 200) {
+      authorNewCount.value = response.data.reduce(
+        (sum, author) => sum + (author.new_work_count || 0),
+        0
+      )
+    }
+  } catch (error) {
+    console.error('获取作者新作品数量失败:', error)
+  }
+}
+
 onMounted(async () => {
   loadCacheExpiry()
   await Promise.all([
     comicStore.fetchComics(),
     tagStore.fetchTags(),
-    listStore.fetchLists()
+    listStore.fetchLists(),
+    fetchAuthorNewCount()
   ])
   // 加载导入任务状态
   await importTaskStore.fetchTasks()

@@ -123,23 +123,28 @@ class JMComicAdapter(BaseAdapter):
             else:
                 raise RuntimeError(f"获取专辑 {album_id} 失败: {e}")
     
-    def search_albums(self, keyword: str, max_pages: int = 1) -> Dict[str, Any]:
+    def search_albums(self, keyword: str, max_pages: int = 1, fast_mode: bool = False) -> Dict[str, Any]:
         """搜索漫画专辑
         
         Args:
             keyword: 搜索关键词
             max_pages: 最大搜索页数
+            fast_mode: 快速模式，不获取详情，速度更快
             
         Returns:
             元数据 JSON 格式
         """
         try:
-            from jmcomic_api import search_comics_full
+            from jmcomic_api import search_comics_full, search_comics
             
-            result = search_comics_full(keyword, max_pages=max_pages)
-            albums = result.get('results', [])
-            
-            return self._convert_to_meta_format(albums)
+            if fast_mode:
+                result = search_comics(keyword, max_pages=max_pages)
+                albums = result.get('results', [])
+                return self._convert_basic_to_meta_format(albums)
+            else:
+                result = search_comics_full(keyword, max_pages=max_pages)
+                albums = result.get('results', [])
+                return self._convert_to_meta_format(albums)
             
         except Exception as e:
             error_msg = str(e)
@@ -147,6 +152,39 @@ class JMComicAdapter(BaseAdapter):
                 raise RuntimeError(f"第三方API服务器暂时不可用（数据库错误），请稍后重试。关键词: {keyword}")
             else:
                 raise RuntimeError(f"搜索漫画失败: {e}")
+    
+    def _convert_basic_to_meta_format(self, albums: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """将基本搜索结果转换为元数据格式
+        
+        Args:
+            albums: 基本搜索结果列表
+            
+        Returns:
+            标准化的元数据格式
+        """
+        converted_albums = []
+        
+        for album in albums:
+            converted = {
+                "rank": album.get('rank', 0),
+                "album_id": album.get('album_id', 0),
+                "title": album.get('title', ''),
+                "title_jp": '',
+                "author": '',
+                "pages": 0,
+                "cover_url": '',
+                "album_url": '',
+                "tags": album.get('tags', []),
+                "category_tags": [],
+                "upload_date": '0',
+                "update_date": '0'
+            }
+            converted_albums.append(converted)
+        
+        return {
+            "total": len(converted_albums),
+            "albums": converted_albums
+        }
     
     def get_favorites(self) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画
