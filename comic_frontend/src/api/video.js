@@ -71,6 +71,10 @@ export const videoApi = {
   
   thirdPartyImport(videoId) {
     return request.post('/v1/video/third-party/import', { video_id: videoId })
+  },
+  
+  getPlayUrls(videoId) {
+    return request.get(`/v1/video/${videoId}/play-urls`)
   }
 }
 

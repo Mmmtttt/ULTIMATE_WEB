@@ -372,3 +372,143 @@ def third_party_import():
     except Exception as e:
         error_logger.error(f"第三方导入失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+# ========== 视频播放相关 API ==========
+
+@video_bp.route('/<video_id>/play-urls', methods=['GET'])
+def get_video_play_urls(video_id):
+    """获取视频播放链接（从 MissAV 和 Jable 提取）"""
+    try:
+        # 获取视频信息
+        result = video_service.get_video_detail(video_id)
+        if not result.success or not result.data:
+            return error_response(404, "视频不存在")
+        
+        video = result.data
+        code = video.get('code', '')
+        
+        if not code:
+            return error_response(400, "视频没有番号信息")
+        
+        # 从两个源提取播放链接
+        import sys
+        import os
+        _player_path = os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper')
+        if _player_path not in sys.path:
+            sys.path.insert(0, _player_path)
+        from player.av_player_server import extract_from_missav, extract_from_jable
+        
+        sources = []
+        
+        # MissAV 源
+        try:
+            missav_result, missav_error = extract_from_missav(code)
+            if missav_result:
+                sources.append({
+                    'name': 'MissAV',
+                    'source': 'missav',
+                    'streams': missav_result.get('streams', []),
+                    'page_url': missav_result.get('page_url', ''),
+                    'available': True
+                })
+            else:
+                sources.append({
+                    'name': 'MissAV',
+                    'source': 'missav',
+                    'available': False,
+                    'error': missav_error
+                })
+        except Exception as e:
+            sources.append({
+                'name': 'MissAV',
+                'source': 'missav',
+                'available': False,
+                'error': str(e)
+            })
+        
+        # Jable 源
+        try:
+            jable_result, jable_error = extract_from_jable(code)
+            if jable_result:
+                sources.append({
+                    'name': 'Jable',
+                    'source': 'jable',
+                    'streams': jable_result.get('streams', []),
+                    'page_url': jable_result.get('page_url', ''),
+                    'available': True
+                })
+            else:
+                sources.append({
+                    'name': 'Jable',
+                    'source': 'jable',
+                    'available': False,
+                    'error': jable_error
+                })
+        except Exception as e:
+            sources.append({
+                'name': 'Jable',
+                'source': 'jable',
+                'available': False,
+                'error': str(e)
+            })
+        
+        return success_response({
+            'video_id': video_id,
+            'code': code,
+            'title': video.get('title', ''),
+            'sources': sources
+        })
+        
+    except Exception as e:
+        error_logger.error(f"获取播放链接失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/proxy/<domain>/<path:path>', methods=['GET'])
+def proxy_video_request(domain, path):
+    """代理视频请求，解决跨域问题"""
+    try:
+        from flask import Response
+        from urllib.parse import unquote
+        from curl_cffi import requests as cffi_requests
+        
+        query_string = request.query_string.decode()
+        target_url = f"https://{domain}/{path}"
+        if query_string:
+            target_url += f"?{query_string}"
+        
+        HEADERS = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        }
+        
+        referer = request.headers.get('Referer', '')
+        if 'jable' in domain:
+            referer = f'https://{domain}/'
+        elif 'missav' in domain or 'surrit' in domain:
+            referer = 'https://missav.ai/'
+        
+        headers = {**HEADERS, 'Referer': referer}
+        
+        resp = cffi_requests.get(
+            target_url,
+            headers=headers,
+            stream=True,
+            timeout=30,
+            impersonate="chrome120"
+        )
+        
+        excluded = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        resp_headers = [(n, v) for (n, v) in resp.headers.items() if n.lower() not in excluded]
+        
+        def generate():
+            for chunk in resp.iter_content(chunk_size=1024):
+                yield chunk
+        
+        return Response(generate(), status=resp.status_code, headers=resp_headers)
+        
+    except Exception as e:
+        error_logger.error(f"代理请求失败: {e}")
+        return Response(f'Proxy error: {str(e)}', status=500)

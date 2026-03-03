@@ -12,10 +12,12 @@
     "test:report": "playwright show-report"
   },
   "dependencies": {
-    "axios": "^1.13.5",
+    "axios": "^1.13.6",
+    "hls.js": "^1.6.15",
     "pinia": "^3.0.4",
+    "pinia-plugin-persistedstate": "^4.7.1",
     "vant": "^4.9.22",
-    "vue": "^3.5.25",
+    "vue": "^3.5.29",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
