@@ -12,6 +12,7 @@
         :selectable="selectable"
         @click="handleCardClick"
         @toggle-select="handleToggleSelect"
+        @author-click="handleAuthorClick"
       />
     </div>
     
@@ -75,7 +76,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['card-click', 'toggle-select'])
+const emit = defineEmits(['card-click', 'toggle-select', 'author-click'])
 
 // 网格样式 - 与原 Home.vue 一致
 const gridStyle = computed(() => {
@@ -108,6 +109,11 @@ function handleCardClick(comic) {
 // 处理选择切换
 function handleToggleSelect(id) {
   emit('toggle-select', id)
+}
+
+// 处理作者点击
+function handleAuthorClick(author) {
+  emit('author-click', author)
 }
 </script>
 

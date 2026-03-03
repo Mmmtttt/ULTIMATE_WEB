@@ -32,6 +32,10 @@ export const useCacheStore = defineStore('cache', () => {
   // 推荐漫画详情缓存（按ID存储）
   const recommendationDetailCache = ref({})
   const recommendationDetailCacheTime = ref({})
+
+  // 作者列表缓存
+  const authorsCache = ref(null)
+  const authorsCacheTime = ref(0)
   
   // ============ Getters ============
   
@@ -67,6 +71,14 @@ export const useCacheStore = defineStore('cache', () => {
   const isRecommendationListCacheValid = computed(() => {
     if (!recommendationListCache.value) return false
     return Date.now() - recommendationListCacheTime.value < CACHE_EXPIRY.COMIC_LIST
+  })
+
+  /**
+   * 检查作者列表缓存是否有效
+   */
+  const isAuthorsCacheValid = computed(() => {
+    if (!authorsCache.value) return false
+    return Date.now() - authorsCacheTime.value < CACHE_EXPIRY.AUTHORS
   })
   
   // ============ Actions ============
@@ -183,6 +195,41 @@ export const useCacheStore = defineStore('cache', () => {
     tagsCache.value = data
     tagsCacheTime.value = Date.now()
     console.log('[Cache] 缓存标签列表')
+  }
+
+  // ============ 作者列表缓存操作 ============
+
+  /**
+   * 获取作者列表缓存
+   * @returns {Array|null} 缓存数据或null
+   */
+  function getAuthorsCache() {
+    if (isAuthorsCacheValid.value) {
+      console.log('[Cache] 使用缓存的作者列表', {
+        age: Math.round((Date.now() - authorsCacheTime.value) / 1000) + 's'
+      })
+      return authorsCache.value
+    }
+    return null
+  }
+
+  /**
+   * 设置作者列表缓存
+   * @param {Array} data - 作者列表数据
+   */
+  function setAuthorsCache(data) {
+    authorsCache.value = data
+    authorsCacheTime.value = Date.now()
+    console.log('[Cache] 缓存作者列表')
+  }
+
+  /**
+   * 清除作者列表缓存
+   */
+  function clearAuthorsCache() {
+    authorsCache.value = null
+    authorsCacheTime.value = 0
+    console.log('[Cache] 清除作者列表缓存')
   }
 
   // ============ 推荐漫画缓存操作 ============
@@ -336,12 +383,14 @@ export const useCacheStore = defineStore('cache', () => {
     tagsCache: computed(() => tagsCache.value),
     recommendationListCache: computed(() => recommendationListCache.value),
     recommendationDetailCache: computed(() => recommendationDetailCache.value),
+    authorsCache: computed(() => authorsCache.value),
 
     // Getters
     cacheStats,
     isListCacheValid,
     isTagsCacheValid,
     isRecommendationListCacheValid,
+    isAuthorsCacheValid,
 
     // Actions
     getListCache,
@@ -352,6 +401,9 @@ export const useCacheStore = defineStore('cache', () => {
     setImagesCache,
     getTagsCache,
     setTagsCache,
+    getAuthorsCache,
+    setAuthorsCache,
+    clearAuthorsCache,
     getRecommendationListCache,
     setRecommendationListCache,
     getRecommendationDetailCache,

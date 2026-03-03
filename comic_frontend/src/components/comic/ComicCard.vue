@@ -56,7 +56,9 @@
       </div>
       <div class="comic-meta">
         <span class="page-info">{{ comic.current_page }}/{{ comic.total_page || 0 }}</span>
-        <span class="author">{{ comic.author || '未知' }}</span>
+        <span 
+          v-if="comic.author" class="author clickable" @click.stop="handleAuthorClick">{{ comic.author }}</span>
+        <span v-else class="author">未知</span>
       </div>
     </div>
   </div>
@@ -81,7 +83,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['click', 'toggle-select'])
+const emit = defineEmits(['click', 'toggle-select', 'author-click'])
 
 // 封面URL
 const coverUrl = computed(() => {
@@ -97,6 +99,11 @@ const readProgress = computed(() => {
 // 处理点击
 function handleClick() {
   emit('click', props.comic)
+}
+
+// 处理作者点击
+function handleAuthorClick() {
+  emit('author-click', props.comic.author)
 }
 
 // 切换选择
@@ -223,6 +230,12 @@ function toggleSelect() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.author.clickable {
+  color: #1989fa;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .select-overlay {

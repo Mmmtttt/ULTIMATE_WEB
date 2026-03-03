@@ -59,6 +59,17 @@ def serve_cover(filename):
         response.headers['Content-Type'] = 'image/webp'
     return response
 
+@app.route('/static/cover/<platform>/author_cache/<filename>')
+def serve_author_cover(platform, filename):
+    """提供作者更新作品的封面图片"""
+    cache_dir = f'static/cover/{platform}/author_cache'
+    response = make_response(send_from_directory(cache_dir, filename))
+    if filename.endswith('.jpg') or filename.endswith('.jpeg'):
+        response.headers['Content-Type'] = 'image/jpeg'
+    elif filename.endswith('.png'):
+        response.headers['Content-Type'] = 'image/png'
+    return response
+
 
 def init_default_data():
     try:

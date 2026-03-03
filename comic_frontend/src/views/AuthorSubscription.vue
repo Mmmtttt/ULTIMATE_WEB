@@ -1,6 +1,6 @@
 <template>
-  <div class="author-subscription">
-    <van-nav-bar title="作者订阅" left-text="返回" left-arrow @click-left="$router.back()">
+  <div class="author-page">
+    <van-nav-bar title="作者" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
         <van-icon name="plus" @click="showAddPopup = true" />
       </template>
@@ -8,43 +8,62 @@
 
     <van-loading v-if="isLoading" type="spinner" color="#1989fa" class="loading-center" />
 
-    <div v-else-if="authors.length === 0" class="empty">
-      <van-empty description="暂无订阅作者">
-        <van-button type="primary" @click="showAddPopup = true">添加订阅</van-button>
-      </van-empty>
+    <div v-else-if="allAuthors.length === 0" class="empty">
+      <van-empty description="暂无作者" />
     </div>
 
     <div v-else class="author-list">
       <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
-        <van-swipe-cell v-for="author in authors" :key="author.id">
-          <van-cell :title="author.name" is-link @click="showAuthorDetail(author)">
+        <van-swipe-cell v-for="author in allAuthors" :key="author.name">
+          <van-cell 
+            :title="author.name" 
+            is-link 
+            @click="showAuthorDetail(author)"
+            :class="{ 'subscribed-author': author.is_subscribed }"
+          >
             <template #label>
               <div class="author-info">
-                <span v-if="author.new_work_count > 0" class="new-badge">
-                  {{ author.new_work_count }} 个新作品
+                <span v-if="author.subscription && author.subscription.new_work_count > 0" class="new-badge">
+                  {{ author.subscription.new_work_count }} 个新作品
                 </span>
-                <span v-else-if="author.last_work_title" class="last-work">
-                  最新: {{ author.last_work_title }}
+                <span v-else-if="author.subscription && author.subscription.last_work_title" class="last-work">
+                  最新: {{ author.subscription.last_work_title }}
                 </span>
                 <span v-else class="last-work">暂无作品记录</span>
+                <span v-if="author.is_subscribed" class="subscribed-tag">已订阅</span>
               </div>
             </template>
             <template #value>
-              <van-tag v-if="author.new_work_count > 0" type="danger" round>
-                {{ author.new_work_count }}
+              <van-tag v-if="author.subscription && author.subscription.new_work_count > 0" type="danger" round>
+                {{ author.subscription.new_work_count }}
               </van-tag>
             </template>
           </van-cell>
           <template #right>
-            <van-button square type="danger" text="取消订阅" class="swipe-btn" @click="confirmUnsubscribe(author)" />
+            <van-button 
+              v-if="author.is_subscribed"
+              square 
+              type="danger" 
+              text="取消订阅" 
+              class="swipe-btn" 
+              @click="confirmUnsubscribe(author.subscription)" 
+            />
+            <van-button 
+              v-else
+              square 
+              type="primary" 
+              text="订阅" 
+              class="swipe-btn" 
+              @click="subscribeAuthor(author.name)" 
+            />
           </template>
         </van-swipe-cell>
       </van-pull-refresh>
     </div>
 
-    <div class="check-all-btn" v-if="authors.length > 0">
+    <div class="check-all-btn" v-if="subscribedAuthors.length > 0">
       <van-button type="primary" block :loading="checking" @click="checkAllAuthors">
-        检查所有作者更新
+        检查所有订阅作者更新 ({{ subscribedAuthors.length }})
       </van-button>
     </div>
 
@@ -68,6 +87,15 @@
       <div class="detail-popup" v-if="selectedAuthor">
         <van-nav-bar :title="selectedAuthor.name" left-text="关闭" @click-left="closeDetailPopup">
           <template #right>
+            <van-button 
+              v-if="!selectedAuthor.is_subscribed"
+              type="success" 
+              size="small" 
+              @click="subscribeSelectedAuthor"
+              :loading="subscribing"
+            >
+              订阅
+            </van-button>
             <van-button type="primary" size="small" @click="loadWorks" :loading="loadingWorks">
               获取作品
             </van-button>
@@ -154,14 +182,17 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
+import { useCacheStore } from '@/stores'
 
 const router = useRouter()
+const cacheStore = useCacheStore()
 const active = ref(1)
 const isLoading = ref(true)
 const refreshing = ref(false)
 const checking = ref(false)
+const subscribing = ref(false)
 const loadingWorks = ref(false)
-const authors = ref([])
+const allAuthors = ref([])
 const showAddPopup = ref(false)
 const showDetailPopup = ref(false)
 const showImportOptions = ref(false)
@@ -176,6 +207,10 @@ const loadingDetailIds = ref([])
 const coverCheckTimers = ref({})
 const actualFetchedCount = ref(0)
 
+const subscribedAuthors = computed(() => {
+  return allAuthors.value.filter(a => a.is_subscribed)
+})
+
 const selectedWorks = computed(() => {
   return works.value.filter(w => selectedIds.value.includes(w.id))
 })
@@ -185,11 +220,20 @@ const selectAll = computed({
   set: () => {}
 })
 
-async function fetchAuthors() {
+async function fetchAuthors(forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = cacheStore.getAuthorsCache()
+    if (cached) {
+      allAuthors.value = cached
+      return
+    }
+  }
+  
   try {
-    const response = await authorApi.getList()
+    const response = await authorApi.getAllAuthors()
     if (response.code === 200) {
-      authors.value = response.data || []
+      allAuthors.value = response.data || []
+      cacheStore.setAuthorsCache(response.data)
     }
   } catch (error) {
     console.error('获取作者列表失败:', error)
@@ -198,7 +242,7 @@ async function fetchAuthors() {
 }
 
 async function onRefresh() {
-  await fetchAuthors()
+  await fetchAuthors(true)
   refreshing.value = false
 }
 
@@ -214,13 +258,55 @@ async function addSubscription() {
       showSuccessToast('订阅成功')
       showAddPopup.value = false
       newAuthorName.value = ''
-      await fetchAuthors()
+      cacheStore.clearAuthorsCache()
+      await fetchAuthors(true)
     } else {
       showFailToast(response.msg || '订阅失败')
     }
   } catch (error) {
     console.error('订阅作者失败:', error)
     showFailToast('订阅失败')
+  }
+}
+
+async function subscribeAuthor(name) {
+  try {
+    const response = await authorApi.subscribe(name)
+    if (response.code === 200) {
+      showSuccessToast('订阅成功')
+      cacheStore.clearAuthorsCache()
+      await fetchAuthors(true)
+    } else {
+      showFailToast(response.msg || '订阅失败')
+    }
+  } catch (error) {
+    console.error('订阅作者失败:', error)
+    showFailToast('订阅失败')
+  }
+}
+
+async function subscribeSelectedAuthor() {
+  if (!selectedAuthor.value) return
+  
+  subscribing.value = true
+  try {
+    const response = await authorApi.subscribe(selectedAuthor.value.name)
+    if (response.code === 200) {
+      showSuccessToast('订阅成功')
+      cacheStore.clearAuthorsCache()
+      await fetchAuthors(true)
+      const author = allAuthors.value.find(a => a.name === selectedAuthor.value.name)
+      if (author) {
+        selectedAuthor.value = author
+      }
+    } else {
+      showFailToast(response.msg || '订阅失败')
+    }
+  } catch (error) {
+    console.error('订阅作者失败:', error)
+    showFailToast('订阅失败')
+  } finally {
+    subscribing.value = false
   }
 }
 
@@ -232,7 +318,6 @@ async function confirmUnsubscribe(author) {
     })
     await unsubscribe(author.id)
   } catch {
-    // 用户取消
   }
 }
 
@@ -241,7 +326,8 @@ async function unsubscribe(authorId) {
     const response = await authorApi.unsubscribe(authorId)
     if (response.code === 200) {
       showSuccessToast('已取消订阅')
-      await fetchAuthors()
+      cacheStore.clearAuthorsCache()
+      await fetchAuthors(true)
     } else {
       showFailToast(response.msg || '取消订阅失败')
     }
@@ -262,7 +348,8 @@ async function checkAllAuthors() {
       } else {
         showSuccessToast('暂无新作品')
       }
-      await fetchAuthors()
+      cacheStore.clearAuthorsCache()
+      await fetchAuthors(true)
     } else {
       showFailToast(response.msg || '检查更新失败')
     }
@@ -292,15 +379,33 @@ function closeDetailPopup() {
 }
 
 function handleCoverLoad(work) {
-  if (!work.cover_url.startsWith('http')) return
+  if (!work.cover_url.startsWith('http')) return;
   
-  startCoverCheck(work)
+  checkLocalCoverFirst(work);
 }
 
 function handleCoverError(work) {
-  if (!work.cover_url.startsWith('http')) return
+  if (!work.cover_url.startsWith('http')) return;
   
-  startCoverCheck(work)
+  checkLocalCoverFirst(work);
+}
+
+function checkLocalCoverFirst(work) {
+  if (!work.original_cover_url) {
+    work.original_cover_url = work.cover_url;
+  }
+  
+  const localCoverUrl = `/static/cover/JM/author_cache/${work.id}.jpg`;
+  
+  const tempImg = new Image();
+  tempImg.onload = () => {
+    work.cover_url = localCoverUrl + '?t=' + Date.now();
+  };
+  tempImg.onerror = () => {
+    // Remote cover already showing, start background check for local cache
+    startCoverCheck(work);
+  };
+  tempImg.src = localCoverUrl + '?t=' + Date.now();
 }
 
 function startCoverCheck(work) {
@@ -311,30 +416,58 @@ function startCoverCheck(work) {
   }
   
   const localCoverUrl = `/static/cover/JM/author_cache/${work.id}.jpg`
-  let checkCount = 0
+  const MAX_RETRIES = 30;
+  let checkCount = 0;
   
   coverCheckTimers.value[work.id] = setInterval(() => {
-    checkCount++
+    checkCount++;
     
-    const tempImg = new Image()
-    tempImg.onload = () => {
-      clearInterval(coverCheckTimers.value[work.id])
-      delete coverCheckTimers.value[work.id]
+    // Stop checking if work no longer exists in the list
+    const workExists = works.value.some(w => w.id === work.id);
+    if (!workExists) {
+      clearInterval(coverCheckTimers.value[work.id]);
+      delete coverCheckTimers.value[work.id];
+      return;
+    }
+    
+    try {
+      const tempImg = new Image();
+      // Set timeout to avoid hanging image requests
+      const timeoutId = setTimeout(() => {
+        tempImg.src = '';
+        if (checkCount >= MAX_RETRIES) {
+          clearInterval(coverCheckTimers.value[work.id]);
+          delete coverCheckTimers.value[work.id];
+        }
+      }, 2000);
       
-      const index = works.value.findIndex(w => w.id === work.id)
-      if (index !== -1) {
-        works.value[index].cover_url = localCoverUrl + '?t=' + Date.now()
+      tempImg.onload = () => {
+        clearTimeout(timeoutId);
+        clearInterval(coverCheckTimers.value[work.id]);
+        delete coverCheckTimers.value[work.id];
+        
+        const index = works.value.findIndex(w => w.id === work.id);
+        if (index !== -1) {
+          works.value[index].cover_url = localCoverUrl + '?t=' + Date.now();
+        }
+      };
+      
+      tempImg.onerror = () => {
+        clearTimeout(timeoutId);
+        if (checkCount >= MAX_RETRIES) {
+          clearInterval(coverCheckTimers.value[work.id]);
+          delete coverCheckTimers.value[work.id];
+        }
+      };
+      
+      tempImg.src = localCoverUrl + '?t=' + Date.now();
+    } catch (error) {
+      console.error(`Error checking cover for work ${work.id}:`, error);
+      if (checkCount >= MAX_RETRIES) {
+        clearInterval(coverCheckTimers.value[work.id]);
+        delete coverCheckTimers.value[work.id];
       }
     }
-    
-    tempImg.onerror = () => {
-      if (checkCount > 30) {
-        clearInterval(coverCheckTimers.value[work.id])
-        delete coverCheckTimers.value[work.id]
-      }
-    }
-    
-    tempImg.src = localCoverUrl + '?t=' + Date.now()
   }, 500)
 }
 
@@ -345,17 +478,48 @@ async function loadWorks() {
 async function loadMore() {
   loadingWorks.value = true
   try {
-    const response = await authorApi.getWorks(selectedAuthor.value.id, actualFetchedCount.value, 5)
+    let response
+    
+    if (selectedAuthor.value.is_subscribed && selectedAuthor.value.subscription) {
+      response = await authorApi.getWorks(selectedAuthor.value.subscription.id, actualFetchedCount.value, 5)
+    } else {
+      response = await authorApi.searchWorksByName(selectedAuthor.value.name, actualFetchedCount.value, 5)
+    }
+    
     if (response.code === 200) {
       const data = response.data
-      const worksWithIndex = data.works.map((work, index) => ({
-        ...work,
-        backendIndex: data.offset + index + 1
-      }))
-      works.value = [...works.value, ...worksWithIndex]
+      
+      const worksWithLocalCover = data.works.map((work, index) => {
+        return {
+          ...work,
+          backendIndex: data.offset + index + 1
+        }
+      })
+      
+      const existingWorks = works.value
+      works.value = [...existingWorks, ...worksWithLocalCover]
       totalWorks.value = data.total
       actualFetchedCount.value = data.offset + data.limit
       hasMore.value = data.has_more
+      
+      worksWithLocalCover.forEach(work => {
+        if (!work.cover_url.startsWith('http')) return
+        
+        const localCoverUrl = `/static/cover/JM/author_cache/${work.id}.jpg?t=${Date.now()}`
+        
+        const checkLocalCache = () => {
+          const idx = works.value.findIndex(w => w.id === work.id)
+          if (idx !== -1) {
+            works.value[idx].cover_url = localCoverUrl
+          }
+        }
+        
+        fetch(localCoverUrl, { method: 'GET', cache: 'no-store' })
+          .then(res => {
+            if (res.ok) checkLocalCache()
+          })
+          .catch(() => {})
+      })
       
       loadDetailsAsync(data.works.map(w => w.id))
     } else {
@@ -467,7 +631,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.author-subscription {
+.author-page {
   min-height: 100vh;
   background: #f5f5f5;
   padding-bottom: 100px;
@@ -501,6 +665,20 @@ onMounted(async () => {
 .last-work {
   color: #969799;
   font-size: 12px;
+}
+
+.subscribed-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #07c160;
+  color: #fff;
+  font-size: 10px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.subscribed-author {
+  background: linear-gradient(90deg, rgba(7, 193, 96, 0.08) 0%, rgba(7, 193, 96, 0) 100%);
 }
 
 .swipe-btn {

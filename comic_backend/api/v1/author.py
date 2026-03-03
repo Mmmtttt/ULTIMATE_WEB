@@ -36,6 +36,43 @@ def get_author_list():
         return error_response(500, "服务器内部错误")
 
 
+@author_bp.route('/all', methods=['GET'])
+def get_all_authors():
+    """获取所有作者（主页+推荐页）"""
+    try:
+        result = author_service.get_all_authors()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取所有作者失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@author_bp.route('/search-works', methods=['GET'])
+def search_author_works():
+    """根据作者名搜索作品（不需要订阅）"""
+    try:
+        author_name = request.args.get('author_name')
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 5))
+        
+        if not author_name:
+            return error_response(400, "作者名称不能为空")
+        
+        result = author_service.search_author_works_by_name(author_name, offset, limit)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"搜索作者作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @author_bp.route('/subscribe', methods=['POST'])
 def subscribe_author():
     try:

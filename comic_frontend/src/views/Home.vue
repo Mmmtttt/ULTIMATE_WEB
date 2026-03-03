@@ -125,6 +125,7 @@
       v-else
       :comics="results"
       @card-click="goToDetail"
+      @author-click="handleAuthorClick"
     />
     
     <!-- 标签筛选面板 -->
@@ -337,6 +338,11 @@ function handleSearch() {
 
 function goToDetail(comic) {
   router.push(`/comic/${comic.id}`)
+}
+
+function handleAuthorClick(author) {
+  keyword.value = author
+  search()
 }
 
 function removeIncludeTag(tagId) {

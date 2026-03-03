@@ -125,6 +125,7 @@
       v-else
       :comics="results"
       @card-click="goToDetail"
+      @author-click="handleAuthorClick"
     />
 
     <!-- 标签筛选面板 -->
@@ -303,6 +304,12 @@ async function fetchRecommendations() {
 function goToDetail(comic) {
   console.log('[Recommendation] 跳转到详情页:', comic.id)
   router.push(`/recommendation/${comic.id}`)
+}
+
+async function handleAuthorClick(author) {
+  console.log('[Recommendation] 点击作者:', author)
+  keyword.value = author
+  await recommendationStore.searchRecommendations(author)
 }
 
 async function handleSearch() {

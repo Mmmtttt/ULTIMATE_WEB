@@ -89,5 +89,26 @@ export const authorApi = {
    */
   clearCoverCache: () => {
     return request.delete('/v1/author/cover-cache/clear')
+  },
+
+  /**
+   * 获取所有作者（主页+推荐页）
+   * @returns {Promise}
+   */
+  getAllAuthors: () => {
+    return request.get('/v1/author/all')
+  },
+
+  /**
+   * 根据作者名搜索作品（不需要订阅）
+   * @param {string} authorName - 作者名称
+   * @param {number} offset - 偏移量
+   * @param {number} limit - 每页数量
+   * @returns {Promise}
+   */
+  searchWorksByName: (authorName, offset = 0, limit = 5) => {
+    return request.get('/v1/author/search-works', {
+      params: { author_name: authorName, offset, limit }
+    })
   }
 }

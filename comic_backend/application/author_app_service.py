@@ -7,6 +7,8 @@ from PIL import Image
 from io import BytesIO
 from domain.author import AuthorSubscription, AuthorRepository
 from infrastructure.persistence.repositories import AuthorJsonRepository
+from infrastructure.persistence.repositories.comic_repository_impl import ComicJsonRepository
+from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
@@ -18,6 +20,41 @@ from third_party import external_api
 class AuthorAppService:
     def __init__(self, author_repo: AuthorRepository = None):
         self._author_repo = author_repo or AuthorJsonRepository()
+        self._comic_repo = ComicJsonRepository()
+        self._recommendation_repo = RecommendationJsonRepository()
+    
+    def get_all_authors(self) -> ServiceResult:
+        """获取所有作者（主页+推荐页）"""
+        try:
+            author_set = set()
+            
+            comics = self._comic_repo.get_all()
+            for comic in comics:
+                if comic.author and comic.author.strip():
+                    author_set.add(comic.author.strip())
+            
+            recommendations = self._recommendation_repo.get_all()
+            for rec in recommendations:
+                if rec.author and rec.author.strip():
+                    author_set.add(rec.author.strip())
+            
+            subscribed_authors = self._author_repo.get_all()
+            subscribed_author_names = {a.name for a in subscribed_authors}
+            
+            all_authors = []
+            for name in sorted(author_set):
+                is_subscribed = name in subscribed_author_names
+                all_authors.append({
+                    "name": name,
+                    "is_subscribed": is_subscribed,
+                    "subscription": next((a.to_dict() for a in subscribed_authors if a.name == name), None)
+                })
+            
+            app_logger.info(f"获取所有作者成功，共 {len(all_authors)} 个")
+            return ServiceResult.ok(all_authors)
+        except Exception as e:
+            error_logger.error(f"获取所有作者失败: {e}")
+            return ServiceResult.error("获取所有作者失败")
     
     def get_subscription_list(self) -> ServiceResult:
         try:
@@ -312,11 +349,15 @@ class AuthorAppService:
                 for album in albums:
                     work_id = str(album.get("album_id", ""))
                     if work_id not in existing_ids:
+                        cover_url = album.get("cover_url", "")
+                        if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
+                            cover_url = f"/static/cover/JM/author_cache/{work_id}.jpg"
+                        
                         works.append({
                             "id": work_id,
                             "title": album.get("title", ""),
                             "author": author.name,
-                            "cover_url": album.get("cover_url", ""),
+                            "cover_url": cover_url,
                             "pages": 0,
                             "has_detail": False,
                             "is_new": True
@@ -361,6 +402,74 @@ class AuthorAppService:
         except Exception as e:
             error_logger.error(f"获取作者作品失败: {e}")
             return ServiceResult.error("获取作者作品失败")
+    
+    def search_author_works_by_name(self, author_name: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+        """根据作者名搜索作品（不需要订阅）"""
+        try:
+            existing_ids = self._get_existing_comic_ids()
+            
+            works = []
+            try:
+                result = external_api.search_albums(author_name, max_pages=1, fast_mode=True)
+                albums = result.get("albums", [])
+                
+                for album in albums:
+                    work_id = str(album.get("album_id", ""))
+                    if work_id not in existing_ids:
+                        cover_url = album.get("cover_url", "")
+                        local_cover = f"/static/cover/JM/author_cache/{work_id}.jpg"
+                        if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
+                            cover_url = local_cover
+                        
+                        works.append({
+                            "id": work_id,
+                            "title": album.get("title", ""),
+                            "author": author_name,
+                            "cover_url": cover_url,
+                            "pages": 0,
+                            "has_detail": False,
+                            "is_new": True
+                        })
+                
+            except Exception as e:
+                error_logger.error(f"搜索作者 {author_name} 作品失败: {e}")
+                return ServiceResult.ok({
+                    "author_name": author_name,
+                    "works": [],
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": False
+                })
+            
+            total = len(works)
+            paginated_works = works[offset:offset + limit]
+            
+            has_more = offset + limit < total
+            
+            result = ServiceResult.ok({
+                "author_name": author_name,
+                "works": paginated_works,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more
+            })
+            
+            def download_covers_async():
+                for work in paginated_works:
+                    if work.get("cover_url"):
+                        try:
+                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                        except Exception as e:
+                            error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
+            
+            threading.Thread(target=download_covers_async, daemon=True).start()
+            
+            return result
+        except Exception as e:
+            error_logger.error(f"搜索作者作品失败: {e}")
+            return ServiceResult.error("搜索作者作品失败")
     
     def clear_author_cover_cache(self) -> ServiceResult:
         """清理作者作品封面缓存
