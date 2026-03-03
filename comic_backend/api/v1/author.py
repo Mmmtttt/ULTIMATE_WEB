@@ -207,3 +207,18 @@ def clear_author_cover_cache():
     except Exception as e:
         error_logger.error(f"清理作者封面缓存失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@author_bp.route('/works-cache/clear', methods=['DELETE'])
+def clear_author_works_cache():
+    """清理作者作品数据缓存"""
+    try:
+        result = author_service.clear_author_works_cache()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清理作者作品缓存失败: {e}")
+        return error_response(500, "服务器内部错误")

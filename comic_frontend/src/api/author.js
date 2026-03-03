@@ -92,6 +92,14 @@ export const authorApi = {
   },
 
   /**
+   * 清理作者作品数据缓存
+   * @returns {Promise}
+   */
+  clearWorksCache: () => {
+    return request.delete('/v1/author/works-cache/clear')
+  },
+
+  /**
    * 获取所有作者（主页+推荐页）
    * @returns {Promise}
    */

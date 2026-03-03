@@ -37,6 +37,10 @@ export const useCacheStore = defineStore('cache', () => {
   const authorsCache = ref(null)
   const authorsCacheTime = ref(0)
   
+  // 作者作品缓存（按作者ID存储）
+  const authorWorksCache = ref({})
+  const authorWorksCacheTime = ref({})
+  
   // ============ Getters ============
   
   /**
@@ -231,6 +235,44 @@ export const useCacheStore = defineStore('cache', () => {
     authorsCacheTime.value = 0
     console.log('[Cache] 清除作者列表缓存')
   }
+  
+  function getAuthorWorksCache(authorId) {
+    const cache = authorWorksCache.value[authorId]
+    const cacheTime = authorWorksCacheTime.value[authorId]
+    
+    if (cache && cacheTime) {
+      const age = Date.now() - cacheTime
+      if (age < CACHE_EXPIRY.AUTHOR_WORKS) {
+        console.log('[Cache] 使用缓存的作者作品', { 
+          authorId, 
+          count: cache.length,
+          age: Math.round(age / 1000) + 's' 
+        })
+        return cache
+      }
+    }
+    return null
+  }
+  
+  function setAuthorWorksCache(authorId, data) {
+    authorWorksCache.value[authorId] = data
+    authorWorksCacheTime.value[authorId] = Date.now()
+    console.log('[Cache] 缓存作者作品', { authorId, count: data.length })
+  }
+  
+  function clearAuthorWorksCache(authorId) {
+    if (authorWorksCache.value[authorId]) {
+      delete authorWorksCache.value[authorId]
+      delete authorWorksCacheTime.value[authorId]
+      console.log('[Cache] 清除作者作品缓存', { authorId })
+    }
+  }
+  
+  function clearAllAuthorWorksCache() {
+    authorWorksCache.value = {}
+    authorWorksCacheTime.value = {}
+    console.log('[Cache] 清除所有作者作品缓存')
+  }
 
   // ============ 推荐漫画缓存操作 ============
 
@@ -404,6 +446,10 @@ export const useCacheStore = defineStore('cache', () => {
     getAuthorsCache,
     setAuthorsCache,
     clearAuthorsCache,
+    getAuthorWorksCache,
+    setAuthorWorksCache,
+    clearAuthorWorksCache,
+    clearAllAuthorWorksCache,
     getRecommendationListCache,
     setRecommendationListCache,
     getRecommendationDetailCache,

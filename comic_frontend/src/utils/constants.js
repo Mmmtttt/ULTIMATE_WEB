@@ -43,7 +43,8 @@ export const CACHE_EXPIRY = {
   COMIC_DETAIL: getCacheExpiry(),  // 动态获取
   TAGS: getCacheExpiry() * 2,      // 2倍时间
   IMAGES: getCacheExpiry() * 6,    // 6倍时间
-  AUTHORS: getCacheExpiry() * 2    // 作者列表缓存
+  AUTHORS: getCacheExpiry() * 2,   // 作者列表缓存
+  AUTHOR_WORKS: getCacheExpiry()   // 作者作品缓存
 }
 
 // 获取缓存过期时间（支持用户自定义）

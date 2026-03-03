@@ -12,12 +12,15 @@ from infrastructure.persistence.repositories.recommendation_repository_impl impo
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.cache import CacheManager
 from core.utils import get_current_time, generate_id
 from core.constants import JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR
 from third_party import external_api
 
 
 class AuthorAppService:
+    _cache_manager = CacheManager()
+    
     def __init__(self, author_repo: AuthorRepository = None):
         self._author_repo = author_repo or AuthorJsonRepository()
         self._comic_repo = ComicJsonRepository()
@@ -405,6 +408,25 @@ class AuthorAppService:
     
     def search_author_works_by_name(self, author_name: str, offset: int = 0, limit: int = 5) -> ServiceResult:
         """根据作者名搜索作品（不需要订阅）"""
+        cache_key = f"author_works_{author_name}"
+        
+        cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+        if cached_all_works is not None:
+            total = len(cached_all_works)
+            paginated_works = cached_all_works[offset:offset + limit]
+            has_more = offset + limit < total
+            
+            app_logger.info(f"[Cache] 从持久化缓存读取作者 {author_name} 作品，共 {total} 个")
+            return ServiceResult.ok({
+                "author_name": author_name,
+                "works": paginated_works,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "from_cache": True
+            })
+        
         try:
             existing_ids = self._get_existing_comic_ids()
             
@@ -442,6 +464,8 @@ class AuthorAppService:
                     "has_more": False
                 })
             
+            self._cache_manager.set_persistent(cache_key, works, 'author_works')
+            
             total = len(works)
             paginated_works = works[offset:offset + limit]
             
@@ -453,7 +477,8 @@ class AuthorAppService:
                 "total": total,
                 "offset": offset,
                 "limit": limit,
-                "has_more": has_more
+                "has_more": has_more,
+                "from_cache": False
             })
             
             def download_covers_async():
@@ -505,6 +530,32 @@ class AuthorAppService:
         except Exception as e:
             error_logger.error(f"清理作者封面缓存失败: {e}")
             return ServiceResult.error("清理作者封面缓存失败")
+    
+    def clear_author_works_cache(self, author_name: str = None) -> ServiceResult:
+        """清理作者作品缓存
+        
+        Args:
+            author_name: 作者名称，如果为None则清理所有作者作品缓存
+            
+        Returns:
+            清理结果
+        """
+        try:
+            if author_name:
+                cache_key = f"author_works_{author_name}"
+                deleted = self._cache_manager.delete_persistent(cache_key, 'author_works')
+                return ServiceResult.ok({
+                    "cleared_count": 1 if deleted else 0,
+                    "author_name": author_name
+                })
+            else:
+                count = self._cache_manager.clear_persistent_category('author_works')
+                return ServiceResult.ok({
+                    "cleared_count": count
+                })
+        except Exception as e:
+            error_logger.error(f"清理作者作品缓存失败: {e}")
+            return ServiceResult.error("清理作者作品缓存失败")
     
     def get_works_batch_detail(self, ids: List[str]) -> ServiceResult:
         try:

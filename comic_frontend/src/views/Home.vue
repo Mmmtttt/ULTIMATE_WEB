@@ -401,6 +401,13 @@ onMounted(async () => {
       router.replace({ query: {} })
     }
   }
+  
+  const authorName = route.query.author
+  if (authorName) {
+    keyword.value = authorName
+    await handleSearch()
+    router.replace({ query: {} })
+  }
 })
 
 async function createImportFromIds(ids, target) {
