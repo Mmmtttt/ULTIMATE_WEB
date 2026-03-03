@@ -3,6 +3,9 @@
  * 集中管理所有 Pinia Store
  */
 
+// 模式管理
+export { useModeStore } from './mode'
+
 // 缓存管理
 export { useCacheStore } from './cache'
 
@@ -17,6 +20,12 @@ export { useTagStore } from './tag'
 
 // 漫画管理
 export { useComicStore } from './comic'
+
+// 视频管理
+export { useVideoStore } from './video'
+
+// 演员管理
+export { useActorStore } from './actor'
 
 // 推荐漫画管理
 export { useRecommendationStore } from './recommendation'

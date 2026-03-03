@@ -8,6 +8,8 @@ from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, get_current_date
 
 T = TypeVar('T', bound=BaseEntity)
+C = TypeVar('C', bound=BaseContent)
+R = TypeVar('R', bound=BaseCreator)
 
 
 class BaseJsonRepository(BaseRepository[T], Generic[T]):
@@ -63,9 +65,9 @@ class BaseJsonRepository(BaseRepository[T], Generic[T]):
             return False
 
 
-class BaseContentJsonRepository(BaseJsonRepository[BaseContent]):
+class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
     
-    def search(self, keyword: str) -> List[BaseContent]:
+    def search(self, keyword: str) -> List[C]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         keyword_lower = keyword.lower()
@@ -80,7 +82,7 @@ class BaseContentJsonRepository(BaseJsonRepository[BaseContent]):
         
         return results
     
-    def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> List[BaseContent]:
+    def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> List[C]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         
@@ -98,7 +100,7 @@ class BaseContentJsonRepository(BaseJsonRepository[BaseContent]):
         
         return results
     
-    def get_by_tag(self, tag_id: str) -> List[BaseContent]:
+    def get_by_tag(self, tag_id: str) -> List[C]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         
@@ -109,7 +111,7 @@ class BaseContentJsonRepository(BaseJsonRepository[BaseContent]):
         
         return results
     
-    def get_by_list(self, list_id: str) -> List[BaseContent]:
+    def get_by_list(self, list_id: str) -> List[C]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         
@@ -121,9 +123,9 @@ class BaseContentJsonRepository(BaseJsonRepository[BaseContent]):
         return results
 
 
-class BaseCreatorJsonRepository(BaseJsonRepository[BaseCreator]):
+class BaseCreatorJsonRepository(BaseJsonRepository[R], Generic[R]):
     
-    def get_by_name(self, name: str) -> Optional[BaseCreator]:
+    def get_by_name(self, name: str) -> Optional[R]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         entity_data = next((e for e in entities if e.get("name") == name), None)
@@ -134,7 +136,7 @@ class BaseCreatorJsonRepository(BaseJsonRepository[BaseCreator]):
         entities = data.get(self._data_key, [])
         return any(e.get("name") == name for e in entities)
     
-    def get_subscribed(self) -> List[BaseCreator]:
+    def get_subscribed(self) -> List[R]:
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         

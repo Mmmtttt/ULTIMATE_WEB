@@ -7,6 +7,11 @@ const routes = [
     component: () => import('../views/Home.vue')
   },
   {
+    path: '/video-home',
+    name: 'VideoHome',
+    component: () => import('../views/VideoHome.vue')
+  },
+  {
     path: '/recommendation',
     name: 'Recommendation',
     component: () => import('../views/Recommendation.vue')
@@ -30,6 +35,11 @@ const routes = [
     path: '/comic/:id',
     name: 'ComicDetail',
     component: () => import('../views/ComicDetail.vue')
+  },
+  {
+    path: '/video/:id',
+    name: 'VideoDetail',
+    component: () => import('../views/VideoDetail.vue')
   },
   {
     path: '/reader/:id',
@@ -75,6 +85,11 @@ const routes = [
     path: '/authors',
     name: 'AuthorSubscription',
     component: () => import('../views/AuthorSubscription.vue')
+  },
+  {
+    path: '/actors',
+    name: 'ActorSubscription',
+    component: () => import('../views/ActorSubscription.vue')
   }
 ]
 

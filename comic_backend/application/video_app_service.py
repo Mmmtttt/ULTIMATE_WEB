@@ -1,0 +1,219 @@
+"""
+视频应用服务
+"""
+
+from typing import List, Dict, Optional
+import os
+import threading
+import requests
+from io import BytesIO
+from PIL import Image
+
+from domain.video import Video, VideoRepository
+from domain.tag import Tag, TagRepository
+from domain.actor import ActorSubscription, ActorRepository
+from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
+from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
+from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
+from infrastructure.persistence.cache import CacheManager
+from infrastructure.common.result import ServiceResult
+from infrastructure.logger import app_logger, error_logger
+from core.utils import get_current_time, generate_id
+from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR
+from application.base.content_app_service import BaseContentAppService
+
+
+class VideoAppService(BaseContentAppService):
+    _entity_name = "视频"
+    _cache_manager = CacheManager()
+    
+    def __init__(
+        self,
+        video_repo: VideoRepository = None,
+        tag_repo: TagRepository = None,
+        actor_repo: ActorRepository = None
+    ):
+        self._video_repo = video_repo or VideoJsonRepository()
+        self._tag_repo = tag_repo or TagJsonRepository()
+        self._actor_repo = actor_repo or ActorJsonRepository()
+    
+    def get_video_list(
+        self,
+        sort_type: str = "create_time",
+        min_score: float = None,
+        max_score: float = None,
+        include_deleted: bool = False
+    ) -> ServiceResult:
+        return self._get_list_impl(
+            self._video_repo,
+            self._tag_repo,
+            sort_type,
+            min_score,
+            max_score,
+            include_deleted
+        )
+    
+    def get_video_detail(self, video_id: str) -> ServiceResult:
+        return self._get_by_id_impl(self._video_repo, video_id)
+    
+    def get_video_by_code(self, code: str) -> ServiceResult:
+        try:
+            video = self._video_repo.get_by_code(code)
+            if not video:
+                return ServiceResult.error("视频不存在")
+            return ServiceResult.ok(video.to_dict())
+        except Exception as e:
+            error_logger.error(f"根据番号获取视频失败: {e}")
+            return ServiceResult.error("获取视频失败")
+    
+    def search_videos(self, keyword: str) -> ServiceResult:
+        return self._search_impl(self._video_repo, keyword)
+    
+    def update_video_score(self, video_id: str, score: float) -> ServiceResult:
+        return self._update_score_impl(self._video_repo, video_id, score)
+    
+    def update_video_progress(self, video_id: str, unit: int) -> ServiceResult:
+        return self._update_progress_impl(self._video_repo, video_id, unit)
+    
+    def move_to_trash(self, video_id: str) -> ServiceResult:
+        return self._move_to_trash_impl(self._video_repo, video_id)
+    
+    def restore_from_trash(self, video_id: str) -> ServiceResult:
+        return self._restore_from_trash_impl(self._video_repo, video_id)
+    
+    def delete_permanently(self, video_id: str) -> ServiceResult:
+        try:
+            video = self._video_repo.get_by_id(video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+            
+            if video.cover_path:
+                cover_full_path = video.cover_path.lstrip("/")
+                if os.path.exists(cover_full_path):
+                    os.remove(cover_full_path)
+            
+            success = self._video_repo.delete(video_id)
+            if success:
+                return ServiceResult.ok({"message": "视频已永久删除"})
+            return ServiceResult.error("删除失败")
+        except Exception as e:
+            error_logger.error(f"永久删除视频失败: {e}")
+            return ServiceResult.error("删除失败")
+    
+    def import_video(self, video_data: Dict) -> ServiceResult:
+        try:
+            existing = self._video_repo.get_by_code(video_data.get("code", ""))
+            if existing:
+                return ServiceResult.error("该番号已存在")
+            
+            video = Video(
+                id=video_data.get("id") or generate_id("video"),
+                title=video_data.get("title", ""),
+                code=video_data.get("code", ""),
+                date=video_data.get("date", ""),
+                series=video_data.get("series", ""),
+                creator=video_data.get("creator", ""),
+                desc=video_data.get("desc", ""),
+                score=video_data.get("score"),
+                tag_ids=video_data.get("tag_ids", []),
+                magnets=video_data.get("magnets", []),
+                thumbnail_images=video_data.get("thumbnail_images", []),
+                preview_video=video_data.get("preview_video", ""),
+                create_time=get_current_time(),
+                last_access_time=get_current_time()
+            )
+            video.actors = video_data.get("actors", [])
+            
+            if not self._video_repo.save(video):
+                return ServiceResult.error("保存视频失败")
+            
+            app_logger.info(f"导入视频成功: {video.code}")
+            return ServiceResult.ok(video.to_dict(), "导入成功")
+        except Exception as e:
+            error_logger.error(f"导入视频失败: {e}")
+            return ServiceResult.error("导入失败")
+    
+    def get_trash_list(self) -> ServiceResult:
+        try:
+            videos = self._video_repo.get_all()
+            trash_list = [v.to_dict() for v in videos if v.is_deleted]
+            return ServiceResult.ok(trash_list)
+        except Exception as e:
+            error_logger.error(f"获取回收站列表失败: {e}")
+            return ServiceResult.error("获取回收站失败")
+    
+    def get_videos_by_tag(self, tag_id: str) -> ServiceResult:
+        try:
+            videos = self._video_repo.get_by_tag(tag_id)
+            videos = [v for v in videos if not v.is_deleted]
+            return ServiceResult.ok([v.to_dict() for v in videos])
+        except Exception as e:
+            error_logger.error(f"获取标签视频失败: {e}")
+            return ServiceResult.error("获取视频失败")
+    
+    def get_videos_by_actor(self, actor_name: str) -> ServiceResult:
+        try:
+            videos = self._video_repo.get_all()
+            filtered = []
+            for v in videos:
+                if v.is_deleted:
+                    continue
+                if actor_name in v.actors:
+                    filtered.append(v.to_dict())
+            return ServiceResult.ok(filtered)
+        except Exception as e:
+            error_logger.error(f"获取演员视频失败: {e}")
+            return ServiceResult.error("获取视频失败")
+    
+    def download_cover_async(self, video_id: str, cover_url: str):
+        def download():
+            try:
+                if not cover_url:
+                    return
+                
+                response = requests.get(cover_url, timeout=30)
+                if response.status_code != 200:
+                    return
+                
+                image = Image.open(BytesIO(response.content))
+                os.makedirs(VIDEO_COVER_DIR, exist_ok=True)
+                
+                cover_path = os.path.join(VIDEO_COVER_DIR, f"{video_id}.jpg")
+                image.convert("RGB").save(cover_path, "JPEG", quality=95)
+                
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.cover_path = f"/static/cover/video/{video_id}.jpg"
+                    self._video_repo.save(video)
+                
+                app_logger.info(f"下载视频封面成功: {video_id}")
+            except Exception as e:
+                error_logger.error(f"下载视频封面失败: {e}")
+        
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+    
+    def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
+        try:
+            imported = []
+            skipped = []
+            
+            for video_data in videos_data:
+                code = video_data.get("code", "")
+                if self._video_repo.get_by_code(code):
+                    skipped.append(code)
+                    continue
+                
+                result = self.import_video(video_data)
+                if result.success:
+                    imported.append(code)
+            
+            return ServiceResult.ok({
+                "imported": imported,
+                "skipped": skipped,
+                "imported_count": len(imported),
+                "skipped_count": len(skipped)
+            })
+        except Exception as e:
+            error_logger.error(f"批量导入视频失败: {e}")
+            return ServiceResult.error("批量导入失败")

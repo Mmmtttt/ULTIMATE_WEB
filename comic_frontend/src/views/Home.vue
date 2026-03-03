@@ -1,6 +1,15 @@
 <template>
   <div class="home">
     <van-nav-bar title="漫画库">
+      <template #left>
+        <van-button 
+          size="small" 
+          type="default" 
+          @click="goToVideoMode"
+        >
+          视频
+        </van-button>
+      </template>
       <template #right>
         <van-dropdown-menu direction="down">
           <van-dropdown-item v-model="menuValue" :options="menuOptions" @change="handleMenuChange" />
@@ -217,7 +226,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
-import { useComicStore, useTagStore, useImportTaskStore } from '@/stores'
+import { useComicStore, useTagStore, useImportTaskStore, useModeStore } from '@/stores'
 import { useSearch } from '@/composables'
 import { ComicGrid, EmptyState, TagFilter } from '@/components'
 import { comicApi } from '@/api'
@@ -228,6 +237,7 @@ const route = useRoute()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
+const modeStore = useModeStore()
 
 const {
   keyword,
@@ -273,6 +283,11 @@ const sortLabel = computed(() => {
   }
   return labels[currentSortType.value] || ''
 })
+
+function goToVideoMode() {
+  modeStore.setMode('video')
+  router.push('/video-home')
+}
 
 function handleMenuChange(value) {
   if (value === 1) {

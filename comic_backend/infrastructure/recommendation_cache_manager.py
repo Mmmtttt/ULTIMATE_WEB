@@ -68,7 +68,8 @@ class RecommendationCacheManager:
         elif platform == Platform.PK:
             return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
         else:
-            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+            error_logger.warning(f"未知的平台类型，漫画ID: {comic_id}，将使用JM作为默认平台")
+            return os.path.join(JM_RECOMMENDATION_CACHE_DIR, comic_id)
     
     def _load_cache_index(self):
         """加载缓存索引"""
@@ -393,7 +394,6 @@ class RecommendationCacheManager:
         with self._cache_lock:
             count = 0
             
-            # 扫描所有平台缓存目录
             cache_dirs = [JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR]
             
             for cache_dir in cache_dirs:
@@ -403,22 +403,21 @@ class RecommendationCacheManager:
                 for entry in os.scandir(cache_dir):
                     if entry.is_dir():
                         original_id = entry.name
-                        # 根据目录推断完整的漫画ID
                         if cache_dir == JM_RECOMMENDATION_CACHE_DIR:
-                            comic_id = f"JM{original_id}"
+                            comic_id_with_prefix = f"JM{original_id}"
                         elif cache_dir == PK_RECOMMENDATION_CACHE_DIR:
-                            comic_id = f"PK{original_id}"
+                            comic_id_with_prefix = f"PK{original_id}"
                         else:
                             continue
                         
-                        if comic_id not in self._cache_index:
+                        if comic_id_with_prefix not in self._cache_index and original_id not in self._cache_index:
                             try:
                                 import shutil
                                 shutil.rmtree(entry.path)
                                 count += 1
-                                app_logger.info(f"清理孤立缓存目录: {comic_id}")
+                                app_logger.info(f"清理孤立缓存目录: {comic_id_with_prefix}")
                             except Exception as e:
-                                error_logger.error(f"清理孤立目录失败 {comic_id}: {e}")
+                                error_logger.error(f"清理孤立目录失败 {comic_id_with_prefix}: {e}")
             
             return count
     
