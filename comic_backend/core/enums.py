@@ -29,3 +29,8 @@ class ImportType(Enum):
     DIRECTORY = "directory"
     ZIP = "zip"
     IMAGE_HOST = "image_host"
+
+
+class ContentType(Enum):
+    COMIC = "comic"
+    VIDEO = "video"

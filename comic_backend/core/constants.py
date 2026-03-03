@@ -7,6 +7,18 @@ STATIC_DIR = "static"
 COVER_DIR = "static/cover"
 LOGS_DIR = "logs"
 
+COMIC_PICTURES_DIR = "data/pictures/comic"
+COMIC_COVER_DIR = "static/cover/comic"
+COMIC_AUTHOR_COVER_CACHE_DIR = "static/cover/comic/author_cache"
+COMIC_RECOMMENDATION_CACHE_DIR = "data/recommendation_cache/comic"
+COMIC_CACHE_DIR = "data/cache/comic"
+
+VIDEO_PICTURES_DIR = "data/pictures/video"
+VIDEO_COVER_DIR = "static/cover/video"
+VIDEO_ACTOR_COVER_CACHE_DIR = "static/cover/video/actor_cache"
+VIDEO_RECOMMENDATION_CACHE_DIR = "data/recommendation_cache/video"
+VIDEO_CACHE_DIR = "data/cache/video"
+
 JM_PICTURES_DIR = "data/pictures/JM"
 PK_PICTURES_DIR = "data/pictures/PK"
 JM_COVER_DIR = "static/cover/JM"
@@ -41,6 +53,19 @@ def ensure_platform_dirs():
         JM_COVER_DIR, PK_COVER_DIR,
         JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR,
         JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
+    ]
+    for d in dirs:
+        os.makedirs(d, exist_ok=True)
+
+
+def ensure_content_type_dirs():
+    dirs = [
+        COMIC_PICTURES_DIR, COMIC_COVER_DIR,
+        COMIC_AUTHOR_COVER_CACHE_DIR, COMIC_RECOMMENDATION_CACHE_DIR,
+        COMIC_CACHE_DIR,
+        VIDEO_PICTURES_DIR, VIDEO_COVER_DIR,
+        VIDEO_ACTOR_COVER_CACHE_DIR, VIDEO_RECOMMENDATION_CACHE_DIR,
+        VIDEO_CACHE_DIR
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)

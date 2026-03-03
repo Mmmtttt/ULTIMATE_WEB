@@ -2,6 +2,7 @@ import os
 from typing import List, Optional
 from domain.author import AuthorSubscription, AuthorRepository
 from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories.base_repository_impl import BaseCreatorJsonRepository
 from infrastructure.logger import error_logger
 from core.utils import get_current_time, generate_id
 
@@ -81,7 +82,41 @@ class AuthorJsonRepository(AuthorRepository):
         author = AuthorSubscription(
             id=generate_id("author"),
             name=name,
-            create_time=get_current_time()
+            subscribe_time=get_current_time()
+        )
+        
+        if self.save(author):
+            return author
+        return None
+
+
+class AuthorJsonRepositoryV2(BaseCreatorJsonRepository):
+    _data_key = "authors"
+    
+    def __init__(self, storage: JsonStorage = None):
+        self._file_path = "data/meta_data/authors_database.json"
+        self._storage = storage or JsonStorage(self._file_path)
+        self._ensure_file_exists()
+    
+    def _ensure_file_exists(self):
+        if not os.path.exists(self._file_path):
+            default_data = {
+                "authors": [],
+                "last_updated": get_current_time()
+            }
+            self._storage.write(default_data)
+    
+    def _get_entity_class(self):
+        return AuthorSubscription
+    
+    def create(self, name: str) -> Optional[AuthorSubscription]:
+        if self.exists_by_name(name):
+            return None
+        
+        author = AuthorSubscription(
+            id=generate_id("author"),
+            name=name,
+            subscribe_time=get_current_time()
         )
         
         if self.save(author):

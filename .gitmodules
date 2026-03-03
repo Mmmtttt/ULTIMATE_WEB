@@ -1,3 +1,6 @@
 [submodule "comic_backend/third_party/JMComic-Crawler-Python"]
 	path = comic_backend/third_party/JMComic-Crawler-Python
 	url = https://github.com/Mmmtttt/JMComic-Crawler-Python.git
+[submodule "comic_backend/third_party/javdb-api-scraper"]
+	path = comic_backend/third_party/javdb-api-scraper
+	url = https://github.com/Mmmtttt/javdb-api-scraper.git
