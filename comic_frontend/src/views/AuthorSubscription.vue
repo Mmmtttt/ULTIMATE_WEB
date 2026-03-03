@@ -695,7 +695,7 @@ async function loadWorks() {
     : selectedAuthor.value.name
   
   try {
-    await authorApi.clearWorksCache()
+    await authorApi.clearWorksCache(selectedAuthor.value.name)
   } catch (e) {
     console.error('清除缓存失败:', e)
   }

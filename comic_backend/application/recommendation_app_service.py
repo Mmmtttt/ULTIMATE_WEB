@@ -1,4 +1,5 @@
 from typing import List, Optional
+import os
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import RecommendationJsonRepository, RecommendationTagJsonRepository
@@ -497,6 +498,8 @@ class RecommendationAppService:
             if not recommendation:
                 return ServiceResult.error("漫画不存在")
             
+            self._cleanup_recommendation_files(recommendation)
+            
             if not self._recommendation_repo.delete(recommendation_id):
                 return ServiceResult.error("永久删除失败")
             
@@ -506,11 +509,35 @@ class RecommendationAppService:
             error_logger.error(f"永久删除失败: {e}")
             return ServiceResult.error("永久删除失败")
     
+    def _cleanup_recommendation_files(self, recommendation):
+        """清理推荐漫画相关的缓存文件"""
+        import shutil
+        from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
+        
+        platform = get_platform_from_id(recommendation.id)
+        original_id = get_original_id(recommendation.id)
+        
+        cache_dir = None
+        if platform == Platform.JM:
+            cache_dir = os.path.join(JM_RECOMMENDATION_CACHE_DIR, original_id)
+        elif platform == Platform.PK:
+            cache_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+        
+        if cache_dir and os.path.exists(cache_dir):
+            try:
+                shutil.rmtree(cache_dir)
+                app_logger.info(f"已删除推荐漫画缓存目录: {cache_dir}")
+            except Exception as e:
+                error_logger.error(f"删除推荐漫画缓存目录失败: {e}")
+    
     def batch_delete_permanently(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
             deleted_count = 0
             for rec_id in recommendation_ids:
+                recommendation = self._recommendation_repo.get_by_id(rec_id)
+                if recommendation:
+                    self._cleanup_recommendation_files(recommendation)
                 if self._recommendation_repo.delete(rec_id):
                     deleted_count += 1
             

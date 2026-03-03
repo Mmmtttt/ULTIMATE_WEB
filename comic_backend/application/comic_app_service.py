@@ -1,4 +1,5 @@
 from typing import List, Optional
+import os
 from domain.comic import Comic, ComicRepository
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
@@ -400,6 +401,8 @@ class ComicAppService:
             if not comic:
                 return ServiceResult.error("漫画不存在")
             
+            self._cleanup_comic_files(comic)
+            
             if not self._comic_repo.delete(comic_id):
                 return ServiceResult.error("永久删除失败")
             
@@ -409,11 +412,45 @@ class ComicAppService:
             error_logger.error(f"永久删除失败: {e}")
             return ServiceResult.error("永久删除失败")
     
+    def _cleanup_comic_files(self, comic):
+        """清理漫画相关的所有文件"""
+        import shutil
+        from core.platform import get_platform_from_id, Platform
+        from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, COVER_DIR
+        
+        platform = get_platform_from_id(comic.id)
+        original_id = comic.id.replace(f"{platform.value}_", "")
+        
+        pictures_dir = None
+        if platform == Platform.JM:
+            pictures_dir = os.path.join(JM_PICTURES_DIR, original_id)
+        elif platform == Platform.PK:
+            pictures_dir = os.path.join(PK_PICTURES_DIR, original_id)
+        
+        if pictures_dir and os.path.exists(pictures_dir):
+            try:
+                shutil.rmtree(pictures_dir)
+                app_logger.info(f"已删除漫画图片目录: {pictures_dir}")
+            except Exception as e:
+                error_logger.error(f"删除漫画图片目录失败: {e}")
+        
+        if comic.cover_path:
+            cover_path_full = os.path.join(COVER_DIR, comic.cover_path)
+            if os.path.exists(cover_path_full):
+                try:
+                    os.remove(cover_path_full)
+                    app_logger.info(f"已删除漫画封面: {cover_path_full}")
+                except Exception as e:
+                    error_logger.error(f"删除漫画封面失败: {e}")
+    
     def batch_delete_permanently(self, comic_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
             deleted_count = 0
             for comic_id in comic_ids:
+                comic = self._comic_repo.get_by_id(comic_id)
+                if comic:
+                    self._cleanup_comic_files(comic)
                 if self._comic_repo.delete(comic_id):
                     deleted_count += 1
             

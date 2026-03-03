@@ -22,6 +22,7 @@ function loadServerConfig() {
 const serverConfig = loadServerConfig()
 const frontendConfig = serverConfig.frontend || {}
 const backendConfig = serverConfig.backend || {}
+const backendPort = backendConfig.port || 5000
 
 export default defineConfig({
   plugins: [vue()],
@@ -35,14 +36,17 @@ export default defineConfig({
     port: frontendConfig.port || 5173,
     proxy: {
       '/api': {
-        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendConfig.port || 5000}`,
+        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendPort}`,
         changeOrigin: true,
         rewrite: (path) => path
       },
       '/static': {
-        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendConfig.port || 5000}`,
+        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendPort}`,
         changeOrigin: true
       }
     }
+  },
+  define: {
+    'import.meta.env.VITE_BACKEND_PORT': JSON.stringify(backendPort)
   }
 })

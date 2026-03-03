@@ -9,11 +9,12 @@ const getBaseURL = () => {
     return import.meta.env.VITE_API_BASE_URL
   }
   
+  // 开发环境使用编译时注入的后端端口（来自 server_config.json）
+  const port = import.meta.env.VITE_BACKEND_PORT || 5000
+  
   // 否则使用当前页面的主机名（支持局域网访问）
-  // 例如：http://192.168.1.100:5001 或 http://localhost:5001
   const protocol = window.location.protocol // http: 或 https:
   const hostname = window.location.hostname // localhost 或 IP地址
-  const port = 5001 // 后端端口
   
   return `${protocol}//${hostname}:${port}`
 }

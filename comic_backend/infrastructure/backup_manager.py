@@ -5,6 +5,8 @@
 - 备份三：每天备份一次（写入备份二的内容）
 
 推荐页和主页的备份完全独立
+
+优化：支持多版本备份，每个层级最多保留指定数量的备份文件
 """
 
 import os
@@ -26,23 +28,32 @@ class TieredBackupManager:
     - Tier 1 (10分钟): 保存最近的数据库状态
     - Tier 2 (1小时): 保存Tier 1的内容，提供更长时间的历史
     - Tier 3 (1天): 保存Tier 2的内容，提供最长期的历史
+    
+    每个层级保留多个版本，防止频繁覆盖
     """
     
-    def __init__(self, json_file: str):
+    # 每个层级保留的备份文件数量
+    MAX_TIER1_BACKUPS = 3   # 10分钟级保留3个（30分钟内的历史）
+    MAX_TIER2_BACKUPS = 3   # 1小时级保留3个（3小时内的历史）
+    MAX_TIER3_BACKUPS = 3   # 1天级保留3个（3天内的历史）
+    
+    def __init__(self, json_file: str, max_tier1: int = None, max_tier2: int = None, max_tier3: int = None):
         """
         初始化备份管理器
         
         Args:
             json_file: 要备份的JSON文件路径
+            max_tier1: Tier1最大备份数（默认3）
+            max_tier2: Tier2最大备份数（默认3）
+            max_tier3: Tier3最大备份数（默认3）
         """
         self.json_file = json_file
-        self.base_name = Path(json_file).stem  # 如: comics_database 或 recommendations_database
+        self.base_name = Path(json_file).stem
         self.backup_dir = Path(json_file).parent / "backup" / self.base_name
         
-        # 三级备份路径
-        self.tier1_file = self.backup_dir / f"{self.base_name}_tier1.bkp"      # 10分钟
-        self.tier2_file = self.backup_dir / f"{self.base_name}_tier2.bkp"      # 1小时
-        self.tier3_file = self.backup_dir / f"{self.base_name}_tier3.bkp"      # 1天
+        self.MAX_TIER1_BACKUPS = max_tier1 or 3
+        self.MAX_TIER2_BACKUPS = max_tier2 or 3
+        self.MAX_TIER3_BACKUPS = max_tier3 or 3
         
         # 时间戳文件（记录上次备份时间）
         self.tier1_time_file = self.backup_dir / f"{self.base_name}_tier1.time"
@@ -62,7 +73,9 @@ class TieredBackupManager:
         self._running = False
         self._lock = threading.Lock()
         
-        app_logger.info(f"[BackupManager] 初始化完成: {self.base_name}")
+        app_logger.info(f"[BackupManager] 初始化完成: {self.base_name}, "
+                       f"备份策略: Tier1={self.MAX_TIER1_BACKUPS}, "
+                       f"Tier2={self.MAX_TIER2_BACKUPS}, Tier3={self.MAX_TIER3_BACKUPS}")
     
     def _get_last_backup_time(self, time_file: Path) -> datetime:
         """获取上次备份时间"""
@@ -99,14 +112,36 @@ class TieredBackupManager:
             error_logger.error(f"复制文件失败 {src} -> {dst}: {e}")
             return False
     
+    def _get_tier_files(self, tier: int) -> list:
+        """获取指定层级的所有备份文件"""
+        pattern = f"{self.base_name}_tier{tier}_*.bkp"
+        files = sorted(self.backup_dir.glob(pattern), key=lambda x: x.stat().st_mtime)
+        return files
+    
+    def _rotate_backups(self, tier: int, max_backups: int):
+        """轮转备份文件，保留最新N个"""
+        files = self._get_tier_files(tier)
+        while len(files) >= max_backups:
+            oldest = files.pop(0)
+            try:
+                oldest.unlink()
+                app_logger.info(f"[BackupManager] 删除过期备份: {oldest}")
+            except Exception as e:
+                error_logger.error(f"[BackupManager] 删除过期备份失败: {e}")
+    
+    def _get_next_backup_name(self, tier: int) -> Path:
+        """获取下一个备份文件名（带时间戳）"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return self.backup_dir / f"{self.base_name}_tier{tier}_{timestamp}.bkp"
+    
     def perform_backup(self):
         """
         执行三级备份
         
         备份逻辑：
-        1. Tier 1: 每10分钟从原始数据库备份
-        2. Tier 2: 每小时从Tier 1备份
-        3. Tier 3: 每天从Tier 2备份
+        1. Tier 1: 每10分钟从原始数据库备份，保留3个版本
+        2. Tier 2: 每小时从Tier 1备份，保留3个版本
+        3. Tier 3: 每天从Tier 2备份，保留3个版本
         """
         with self._lock:
             try:
@@ -117,22 +152,32 @@ class TieredBackupManager:
                 
                 # Tier 1: 10分钟备份（从原始数据库）
                 if self._should_backup(self.tier1_time_file, self.TIER1_INTERVAL):
-                    if self._copy_file(json_path, self.tier1_file):
+                    new_tier1 = self._get_next_backup_name(1)
+                    if self._copy_file(json_path, new_tier1):
                         self._set_backup_time(self.tier1_time_file)
+                        self._rotate_backups(1, self.MAX_TIER1_BACKUPS)
                         app_logger.info(f"[BackupManager] Tier 1 备份完成: {self.base_name}")
                 
-                # Tier 2: 1小时备份（从Tier 1）
+                # Tier 2: 1小时备份（从最新的Tier 1）
                 if self._should_backup(self.tier2_time_file, self.TIER2_INTERVAL):
-                    if self.tier1_file.exists():
-                        if self._copy_file(self.tier1_file, self.tier2_file):
+                    tier1_files = self._get_tier_files(1)
+                    if tier1_files:
+                        latest_tier1 = tier1_files[-1]
+                        new_tier2 = self._get_next_backup_name(2)
+                        if self._copy_file(latest_tier1, new_tier2):
                             self._set_backup_time(self.tier2_time_file)
+                            self._rotate_backups(2, self.MAX_TIER2_BACKUPS)
                             app_logger.info(f"[BackupManager] Tier 2 备份完成: {self.base_name}")
                 
-                # Tier 3: 1天备份（从Tier 2）
+                # Tier 3: 1天备份（从最新的Tier 2）
                 if self._should_backup(self.tier3_time_file, self.TIER3_INTERVAL):
-                    if self.tier2_file.exists():
-                        if self._copy_file(self.tier2_file, self.tier3_file):
+                    tier2_files = self._get_tier_files(2)
+                    if tier2_files:
+                        latest_tier2 = tier2_files[-1]
+                        new_tier3 = self._get_next_backup_name(3)
+                        if self._copy_file(latest_tier2, new_tier3):
                             self._set_backup_time(self.tier3_time_file)
+                            self._rotate_backups(3, self.MAX_TIER3_BACKUPS)
                             app_logger.info(f"[BackupManager] Tier 3 备份完成: {self.base_name}")
                 
             except Exception as e:
@@ -169,42 +214,40 @@ class TieredBackupManager:
         self._timer.daemon = True
         self._timer.start()
     
-    def restore_from_tier(self, tier: int) -> bool:
+    def restore_from_tier(self, tier: int, version_index: int = -1) -> bool:
         """
         从指定层级恢复备份
         
         Args:
             tier: 备份层级 (1, 2, 或 3)
+            version_index: 版本索引，-1表示最新版本，0表示最旧的版本
         
         Returns:
             恢复是否成功
         """
-        tier_files = {
-            1: self.tier1_file,
-            2: self.tier2_file,
-            3: self.tier3_file
-        }
+        tier_files = self._get_tier_files(tier)
         
-        if tier not in tier_files:
-            error_logger.error(f"[BackupManager] 无效的备份层级: {tier}")
+        if not tier_files:
+            error_logger.error(f"[BackupManager] Tier {tier} 没有备份文件")
             return False
         
-        backup_file = tier_files[tier]
+        if version_index < 0 or version_index >= len(tier_files):
+            backup_file = tier_files[-1]
+        else:
+            backup_file = tier_files[version_index]
         
         try:
             if not backup_file.exists():
                 app_logger.warning(f"[BackupManager] 备份文件不存在: {backup_file}")
                 return False
             
-            # 先备份当前文件
             json_path = Path(self.json_file)
             if json_path.exists():
                 current_backup = str(json_path) + ".restore_backup"
                 shutil.copy2(str(json_path), current_backup)
             
-            # 恢复备份
             shutil.copy2(str(backup_file), str(json_path))
-            app_logger.info(f"[BackupManager] 从 Tier {tier} 恢复成功: {self.base_name}")
+            app_logger.info(f"[BackupManager] 从 Tier {tier} 恢复成功: {backup_file.name}")
             return True
             
         except Exception as e:
@@ -213,21 +256,26 @@ class TieredBackupManager:
     
     def get_backup_info(self) -> dict:
         """获取备份信息"""
-        def get_file_info(file_path: Path) -> dict:
-            if not file_path.exists():
-                return {"exists": False}
-            stat = file_path.stat()
+        def get_tier_info(tier: int, max_backups: int) -> dict:
+            files = self._get_tier_files(tier)
             return {
-                "exists": True,
-                "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                "count": len(files),
+                "max_backups": max_backups,
+                "files": [
+                    {
+                        "name": f.name,
+                        "size": f.stat().st_size,
+                        "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    for f in files
+                ]
             }
         
         return {
             "database": self.base_name,
-            "tier1": get_file_info(self.tier1_file),
-            "tier2": get_file_info(self.tier2_file),
-            "tier3": get_file_info(self.tier3_file)
+            "tier1": get_tier_info(1, self.MAX_TIER1_BACKUPS),
+            "tier2": get_tier_info(2, self.MAX_TIER2_BACKUPS),
+            "tier3": get_tier_info(3, self.MAX_TIER3_BACKUPS)
         }
 
 

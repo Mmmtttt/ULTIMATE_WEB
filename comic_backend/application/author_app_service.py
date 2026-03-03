@@ -120,8 +120,8 @@ class AuthorAppService:
                     "id": str(album.get("album_id", "")),
                     "title": album.get("title", ""),
                     "author": author_name,
-                    "cover_url": "",
-                    "pages": 0
+                    "cover_url": album.get("cover_url", ""),
+                    "pages": album.get("pages", 0)
                 })
                 
         except Exception as e:
@@ -207,8 +207,8 @@ class AuthorAppService:
                         "id": str(album.get("album_id", "")),
                         "title": album.get("title", ""),
                         "author": author.name,
-                        "cover_url": "",
-                        "pages": 0
+                        "cover_url": album.get("cover_url", ""),
+                        "pages": album.get("pages", 0)
                     })
                 
             except Exception as e:
@@ -342,7 +342,36 @@ class AuthorAppService:
             if not author:
                 return ServiceResult.error("订阅不存在")
             
-            existing_ids = self._get_existing_comic_ids()
+            cache_key = f"author_works_{author.name}"
+            
+            cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+            if cached_all_works is not None:
+                existing_ids = self._get_existing_comic_ids()
+                filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
+                total = len(filtered_works)
+                paginated_works = filtered_works[offset:offset + limit]
+                has_more = offset + limit < total
+                
+                app_logger.info(f"[Cache] 从持久化缓存读取作者 {author.name} 作品，共 {total} 个")
+                
+                def download_covers_async():
+                    for work in paginated_works:
+                        if work.get("cover_url"):
+                            try:
+                                self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                            except Exception as e:
+                                error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
+                threading.Thread(target=download_covers_async, daemon=True).start()
+                
+                return ServiceResult.ok({
+                    "author": author.to_dict(),
+                    "works": paginated_works,
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": has_more,
+                    "from_cache": True
+                })
             
             works = []
             try:
@@ -351,20 +380,19 @@ class AuthorAppService:
                 
                 for album in albums:
                     work_id = str(album.get("album_id", ""))
-                    if work_id not in existing_ids:
-                        cover_url = album.get("cover_url", "")
-                        if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
-                            cover_url = f"/static/cover/JM/author_cache/{work_id}.jpg"
-                        
-                        works.append({
-                            "id": work_id,
-                            "title": album.get("title", ""),
-                            "author": author.name,
-                            "cover_url": cover_url,
-                            "pages": 0,
-                            "has_detail": False,
-                            "is_new": True
-                        })
+                    cover_url = album.get("cover_url", "")
+                    if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
+                        cover_url = f"/static/cover/JM/author_cache/{work_id}.jpg"
+                    
+                    works.append({
+                        "id": work_id,
+                        "title": album.get("title", ""),
+                        "author": author.name,
+                        "cover_url": cover_url,
+                        "pages": album.get("pages", 0),
+                        "has_detail": False,
+                        "is_new": True
+                    })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author.name} 作品失败: {e}")
@@ -377,8 +405,12 @@ class AuthorAppService:
                     "has_more": False
                 })
             
-            total = len(works)
-            paginated_works = works[offset:offset + limit]
+            self._cache_manager.set_persistent(cache_key, works, 'author_works')
+            
+            existing_ids = self._get_existing_comic_ids()
+            filtered_works = [w for w in works if w.get('id') not in existing_ids]
+            total = len(filtered_works)
+            paginated_works = filtered_works[offset:offset + limit]
             
             has_more = offset + limit < total
             
@@ -388,7 +420,8 @@ class AuthorAppService:
                 "total": total,
                 "offset": offset,
                 "limit": limit,
-                "has_more": has_more
+                "has_more": has_more,
+                "from_cache": False
             })
             
             def download_covers_async():
@@ -412,11 +445,23 @@ class AuthorAppService:
         
         cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
         if cached_all_works is not None:
-            total = len(cached_all_works)
-            paginated_works = cached_all_works[offset:offset + limit]
+            existing_ids = self._get_existing_comic_ids()
+            filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
+            total = len(filtered_works)
+            paginated_works = filtered_works[offset:offset + limit]
             has_more = offset + limit < total
             
             app_logger.info(f"[Cache] 从持久化缓存读取作者 {author_name} 作品，共 {total} 个")
+            
+            def download_covers_async():
+                for work in paginated_works:
+                    if work.get("cover_url"):
+                        try:
+                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                        except Exception as e:
+                            error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
+            threading.Thread(target=download_covers_async, daemon=True).start()
+            
             return ServiceResult.ok({
                 "author_name": author_name,
                 "works": paginated_works,
@@ -428,8 +473,6 @@ class AuthorAppService:
             })
         
         try:
-            existing_ids = self._get_existing_comic_ids()
-            
             works = []
             try:
                 result = external_api.search_albums(author_name, max_pages=1, fast_mode=True)
@@ -437,21 +480,20 @@ class AuthorAppService:
                 
                 for album in albums:
                     work_id = str(album.get("album_id", ""))
-                    if work_id not in existing_ids:
-                        cover_url = album.get("cover_url", "")
-                        local_cover = f"/static/cover/JM/author_cache/{work_id}.jpg"
-                        if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
-                            cover_url = local_cover
-                        
-                        works.append({
-                            "id": work_id,
-                            "title": album.get("title", ""),
-                            "author": author_name,
-                            "cover_url": cover_url,
-                            "pages": 0,
-                            "has_detail": False,
-                            "is_new": True
-                        })
+                    cover_url = album.get("cover_url", "")
+                    local_cover = f"/static/cover/JM/author_cache/{work_id}.jpg"
+                    if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
+                        cover_url = local_cover
+                    
+                    works.append({
+                        "id": work_id,
+                        "title": album.get("title", ""),
+                        "author": author_name,
+                        "cover_url": cover_url,
+                        "pages": album.get("pages", 0),
+                        "has_detail": False,
+                        "is_new": True
+                    })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author_name} 作品失败: {e}")
@@ -466,8 +508,10 @@ class AuthorAppService:
             
             self._cache_manager.set_persistent(cache_key, works, 'author_works')
             
-            total = len(works)
-            paginated_works = works[offset:offset + limit]
+            existing_ids = self._get_existing_comic_ids()
+            filtered_works = [w for w in works if w.get('id') not in existing_ids]
+            total = len(filtered_works)
+            paginated_works = filtered_works[offset:offset + limit]
             
             has_more = offset + limit < total
             

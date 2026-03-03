@@ -93,10 +93,12 @@ export const authorApi = {
 
   /**
    * 清理作者作品数据缓存
+   * @param {string} authorName - 作者名称（可选，不传则清理所有）
    * @returns {Promise}
    */
-  clearWorksCache: () => {
-    return request.delete('/v1/author/works-cache/clear')
+  clearWorksCache: (authorName = null) => {
+    const params = authorName ? { author_name: authorName } : {}
+    return request.delete('/v1/author/works-cache/clear', { params })
   },
 
   /**

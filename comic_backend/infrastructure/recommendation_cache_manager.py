@@ -421,6 +421,17 @@ class RecommendationCacheManager:
                                 error_logger.error(f"清理孤立目录失败 {comic_id}: {e}")
             
             return count
+    
+    def update_max_size(self, max_size_mb: int):
+        """更新最大缓存容量"""
+        with self._cache_lock:
+            old_size_mb = self.max_size_bytes / (1024 * 1024)
+            self.max_size_bytes = max_size_mb * 1024 * 1024
+            app_logger.info(f"更新缓存最大容量: {old_size_mb:.0f}MB -> {max_size_mb}MB")
+    
+    def clean_orphan_cache(self) -> int:
+        """清理孤立缓存（外部调用方法）"""
+        return self.cleanup_orphaned_files()
 
 
 recommendation_cache_manager = RecommendationCacheManager()

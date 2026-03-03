@@ -213,7 +213,9 @@ def clear_author_cover_cache():
 def clear_author_works_cache():
     """清理作者作品数据缓存"""
     try:
-        result = author_service.clear_author_works_cache()
+        author_name = request.args.get('author_name')
+        
+        result = author_service.clear_author_works_cache(author_name)
         
         if result.success:
             return success_response(result.data)
