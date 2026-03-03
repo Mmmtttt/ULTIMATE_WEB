@@ -1,5 +1,8 @@
 data
 comic_backend/__pycache__/
+*.pyc
+**/__pycache__/
+**/*.pyc
 comic_backend/data/meta_data/*
 comic_backend/data/pictures/*
 comic_backend/static/*
