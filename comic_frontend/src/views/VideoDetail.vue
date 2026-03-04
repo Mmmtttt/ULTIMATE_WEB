@@ -373,8 +373,14 @@ async function playStream(stream) {
   // 使用代理URL解决跨域问题
   let url = stream.url
   if (stream.proxy_url) {
-    // 将代理URL转换为后端API代理URL
-    url = `/api/v1/video${stream.proxy_url}`
+    // 直接使用返回的 proxy_url，已经包含正确的路径
+    if (stream.proxy_url.startsWith('http')) {
+      url = stream.proxy_url
+    } else if (stream.proxy_url.startsWith('/proxy2') || stream.proxy_url.startsWith('/proxy/')) {
+      url = `/api/v1/video${stream.proxy_url}`
+    } else {
+      url = stream.proxy_url
+    }
   }
   
   console.log('播放URL:', url)
@@ -394,11 +400,7 @@ async function playStream(stream) {
     if (Hls.isSupported()) {
       hls.value = new Hls({
         debug: false,
-        enableWorker: true,
-        xhrSetup: function(xhr, url) {
-          // 确保请求发送正确的 Referer
-          xhr.setRequestHeader('Referer', window.location.href)
-        }
+        enableWorker: true
       })
       
       hls.value.loadSource(url)

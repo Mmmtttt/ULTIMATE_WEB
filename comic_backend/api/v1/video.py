@@ -512,3 +512,115 @@ def proxy_video_request(domain, path):
     except Exception as e:
         error_logger.error(f"代理请求失败: {e}")
         return Response(f'Proxy error: {str(e)}', status=500)
+
+
+@video_bp.route('/proxy2', methods=['GET', 'POST'])
+def proxy_video_request2():
+    """代理视频请求（完整URL方式，支持重写m3u8）"""
+    try:
+        from flask import make_response
+        from urllib.parse import urlparse, unquote, urljoin
+        import base64
+        import re
+        from curl_cffi import requests as cffi_requests
+        
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            url = data.get('url', '')
+        else:
+            query_string = request.query_string.decode()
+            url = None
+            for param in query_string.split('&'):
+                if param.startswith('url='):
+                    url = param[4:]
+                    break
+            
+            if url:
+                try:
+                    url = base64.b64decode(url).decode('utf-8')
+                except:
+                    url = unquote(url)
+        
+        if not url:
+            return Response('Missing url parameter', status=400)
+        
+        if not url.startswith('http://') and not url.startswith('https://'):
+            url = f'https://{url}'
+        
+        parsed = urlparse(url)
+        
+        HEADERS = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        }
+        
+        referer = request.headers.get('Referer', '')
+        if 'jable' in parsed.netloc:
+            referer = f'https://{parsed.netloc}/'
+        elif 'missav' in parsed.netloc or 'surrit' in parsed.netloc or 'mushroom' in parsed.netloc:
+            referer = 'https://missav.ai/'
+        
+        headers = {**HEADERS, 'Referer': referer}
+        
+        resp = cffi_requests.get(
+            url,
+            headers=headers,
+            timeout=30,
+            impersonate="chrome120"
+        )
+        
+        content = resp.content
+        content_type = resp.headers.get('Content-Type', '').lower()
+        
+        if 'mpegurl' in content_type or 'm3u8' in content_type or url.endswith('.m3u8'):
+            content_text = content.decode('utf-8')
+            base_url = url.rsplit('/', 1)[0]
+            
+            def replace_key_uri(m):
+                full_match = m.group(0)
+                method = m.group(1)
+                key_uri = m.group(2)
+                
+                if not key_uri.startswith('http://') and not key_uri.startswith('https://'):
+                    full_key_url = f"{base_url}/{key_uri}"
+                    encoded_key_url = base64.b64encode(full_key_url.encode('utf-8')).decode('utf-8')
+                    proxy_key_url = f"/api/v1/video/proxy2?url={encoded_key_url}"
+                    return full_match.replace(key_uri, proxy_key_url)
+                
+                return full_match
+            
+            def replace_ts_uri(uri):
+                if not uri.startswith('http://') and not uri.startswith('https://'):
+                    full_ts_url = f"{base_url}/{uri}"
+                    encoded_ts_url = base64.b64encode(full_ts_url.encode('utf-8')).decode('utf-8')
+                    return f"/api/v1/video/proxy2?url={encoded_ts_url}"
+                return uri
+            
+            content_text = re.sub(r'#EXT-X-KEY:METHOD=([^,]+),URI="([^"]+)"', replace_key_uri, content_text)
+            
+            lines = content_text.split('\n')
+            new_lines = []
+            for line in lines:
+                if line.strip() and not line.startswith('#'):
+                    new_lines.append(replace_ts_uri(line.strip()))
+                else:
+                    new_lines.append(line)
+            
+            content_text = '\n'.join(new_lines)
+            content = content_text.encode('utf-8')
+        
+        response = make_response(content)
+        response.status_code = resp.status_code
+        
+        excluded = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        for n, v in resp.headers.items():
+            if n.lower() not in excluded:
+                response.headers[n] = v
+        
+        return response
+        
+    except Exception as e:
+        error_logger.error(f"代理请求2失败: {e}")
+        from flask import Response
+        return Response(f'Proxy error: {str(e)}', status=500)
