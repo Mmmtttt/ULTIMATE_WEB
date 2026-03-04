@@ -20,7 +20,6 @@
             ref="videoPlayer"
             controls
             class="video-element"
-            :src="currentPlayUrl"
           ></video>
         </div>
         <div class="player-controls">
@@ -174,6 +173,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoStore } from '@/stores'
 import { EmptyState } from '@/components'
@@ -196,7 +196,7 @@ const playSources = ref([])
 const currentSource = ref('')
 const currentStreams = ref([])
 const currentQuality = ref(0)
-const currentPlayUrl = ref('')
+
 const hls = ref(null)
 
 const actions = [
@@ -347,6 +347,8 @@ async function switchSource(source) {
   if (currentStreams.value.length > 0) {
     // 默认选择最高画质
     currentQuality.value = 0
+    // 等待 DOM 更新后再播放
+    await nextTick()
     await playStream(currentStreams.value[0])
   }
 }
@@ -359,7 +361,10 @@ async function changeQuality(index) {
 }
 
 async function playStream(stream) {
-  if (!videoPlayer.value) return
+  if (!videoPlayer.value) {
+    console.error('视频元素未找到')
+    return
+  }
   
   // 使用代理URL解决跨域问题
   let url = stream.url
@@ -368,31 +373,42 @@ async function playStream(stream) {
     url = `/api/v1/video${stream.proxy_url}`
   }
   
+  console.log('播放URL:', url)
+  
   // 销毁之前的 HLS 实例
   if (hls.value) {
     hls.value.destroy()
     hls.value = null
   }
   
+  // 清空视频元素的 src
+  videoPlayer.value.src = ''
+  videoPlayer.value.load()
+  
   // 判断是否是 m3u8
   if (url.includes('.m3u8') || url.includes('m3u8')) {
     if (Hls.isSupported()) {
       hls.value = new Hls({
         debug: false,
-        enableWorker: true
+        enableWorker: true,
+        xhrSetup: function(xhr, url) {
+          // 确保请求发送正确的 Referer
+          xhr.setRequestHeader('Referer', window.location.href)
+        }
       })
       
       hls.value.loadSource(url)
       hls.value.attachMedia(videoPlayer.value)
       
       hls.value.on(Hls.Events.MANIFEST_PARSED, () => {
-        videoPlayer.value.play().catch(e => console.log('自动播放被阻止'))
+        console.log('HLS manifest 解析成功')
+        videoPlayer.value.play().catch(e => console.log('自动播放被阻止:', e))
       })
       
       hls.value.on(Hls.Events.ERROR, (event, data) => {
-        console.error('HLS 错误:', data)
+        console.error('HLS 错误:', event, data)
         if (data.fatal) {
-          showFailToast('播放错误，请尝试切换源')
+          showFailToast('播放错误，请尝试切换源或清晰度')
         }
       })
     } else if (videoPlayer.value.canPlayType('application/vnd.apple.mpegurl')) {
@@ -403,7 +419,7 @@ async function playStream(stream) {
     }
   } else {
     // 普通视频格式
-    currentPlayUrl.value = url
+    videoPlayer.value.src = url
     videoPlayer.value.play()
   }
 }
