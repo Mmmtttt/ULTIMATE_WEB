@@ -1,5 +1,5 @@
 <template>
-  <div class="video-home">
+  <div class="video-home" :class="{ 'video-home-desktop': isDesktop, 'video-home-mobile': isMobile }">
     <van-nav-bar :title="isVideoMode ? '视频库' : '漫画库'">
       <template #left>
         <van-button 
@@ -32,8 +32,8 @@
         @click="showSortPanel = true"
         class="sort-btn"
       >
-        排序
-        <van-icon name="sort" />
+        <van-icon v-if="isMobile" name="sort" />
+        <template v-else>排序 <van-icon name="sort" /></template>
       </van-button>
     </div>
     
@@ -91,9 +91,9 @@
     
     <van-popup 
       v-model:show="showSortPanel" 
-      position="bottom" 
+      :position="isDesktop ? 'center' : 'bottom'" 
       round 
-      :style="{ height: '50%' }"
+      :style="isDesktop ? { width: '400px' } : { height: '50%' }"
     >
       <div class="sort-panel">
         <van-nav-bar title="排序方式" left-text="关闭" @click-left="showSortPanel = false" />
@@ -131,9 +131,9 @@
     
     <van-popup 
       v-model:show="showImportPanel" 
-      position="bottom" 
+      :position="isDesktop ? 'center' : 'bottom'" 
       round 
-      :style="{ height: '80%' }"
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '80%' }"
     >
       <div class="import-panel">
         <van-nav-bar title="导入视频" left-text="关闭" @click-left="showImportPanel = false" />
@@ -179,12 +179,33 @@
       </div>
     </van-popup>
     
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+    <!-- 底部导航 - 手机端显示 -->
+    <van-tabbar v-if="isMobile" v-model="active" route>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item v-if="!isVideoMode" icon="star-o" to="/recommendation">推荐</van-tabbar-item>
       <van-tabbar-item v-if="isVideoMode" icon="user-o" to="/actors">演员</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+    
+    <!-- 顶部导航 - 电脑端显示 -->
+    <div v-if="isDesktop" class="desktop-nav">
+      <router-link :to="homePath" class="nav-item" :class="{ active: $route.path === '/' || $route.path === '/video-home' }">
+        <van-icon name="home-o" />
+        <span>主页</span>
+      </router-link>
+      <router-link v-if="!isVideoMode" to="/recommendation" class="nav-item" :class="{ active: $route.path === '/recommendation' }">
+        <van-icon name="star-o" />
+        <span>推荐</span>
+      </router-link>
+      <router-link v-if="isVideoMode" to="/actors" class="nav-item" :class="{ active: $route.path === '/actors' }">
+        <van-icon name="user-o" />
+        <span>演员</span>
+      </router-link>
+      <router-link to="/mine" class="nav-item" :class="{ active: $route.path === '/mine' }">
+        <van-icon name="user-o" />
+        <span>我的</span>
+      </router-link>
+    </div>
   </div>
 </template>
 
@@ -193,12 +214,17 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast } from 'vant'
 import { useModeStore, useVideoStore, useComicStore } from '@/stores'
+import { useDevice } from '@/composables'
 import { EmptyState } from '@/components'
+
+const { isMobile, isDesktop } = useDevice()
 
 const router = useRouter()
 const modeStore = useModeStore()
 const videoStore = useVideoStore()
 const comicStore = useComicStore()
+
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
 const active = ref(0)
 const keyword = ref('')
@@ -334,6 +360,7 @@ async function importVideo(item) {
 }
 
 onMounted(() => {
+  modeStore.setMode('video')
   loadData()
 })
 
@@ -344,9 +371,17 @@ watch(() => modeStore.currentMode, () => {
 
 <style scoped>
 .video-home {
-  padding-bottom: 50px;
   min-height: 100vh;
   background: #f5f5f5;
+}
+
+.video-home-mobile {
+  padding-bottom: 50px;
+}
+
+.video-home-desktop {
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .search-bar {
@@ -364,7 +399,14 @@ watch(() => modeStore.currentMode, () => {
 
 .sort-btn {
   flex-shrink: 0;
+}
+
+.video-home-mobile .sort-btn {
   padding: 0 8px;
+}
+
+.video-home-desktop .sort-btn {
+  padding: 0 12px;
 }
 
 .active-filter-bar {
@@ -379,9 +421,32 @@ watch(() => modeStore.currentMode, () => {
 
 .video-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   padding: 12px;
+}
+
+.video-home-mobile .video-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.video-home-desktop .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+
+@media (min-width: 1200px) {
+  .video-home-desktop .video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+}
+
+@media (min-width: 1600px) {
+  .video-home-desktop .video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 20px;
+    padding: 20px;
+  }
 }
 
 .video-card {
@@ -389,6 +454,13 @@ watch(() => modeStore.currentMode, () => {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.video-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .video-cover {
@@ -427,6 +499,10 @@ watch(() => modeStore.currentMode, () => {
   padding: 8px;
 }
 
+.video-home-desktop .video-info {
+  padding: 12px;
+}
+
 .video-title {
   font-size: 14px;
   font-weight: 500;
@@ -434,6 +510,10 @@ watch(() => modeStore.currentMode, () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.video-home-desktop .video-title {
+  font-size: 15px;
 }
 
 .video-actors {
@@ -507,5 +587,52 @@ watch(() => modeStore.currentMode, () => {
   font-size: 12px;
   color: #999;
   margin-top: 2px;
+}
+
+@media (max-width: 767px) {
+  .video-card:hover {
+    transform: none;
+  }
+  
+  .video-card:active {
+    transform: scale(0.98);
+  }
+}
+
+.desktop-nav {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border-radius: 50px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  padding: 8px 20px;
+  gap: 30px;
+  z-index: 1000;
+}
+
+.desktop-nav .nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: #666;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.desktop-nav .nav-item:hover {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item.active {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item .van-icon {
+  font-size: 22px;
 }
 </style>

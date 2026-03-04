@@ -1,5 +1,5 @@
 <template>
-  <div class="video-detail">
+  <div class="video-detail" :class="{ 'video-detail-desktop': isDesktop, 'video-detail-mobile': isMobile }">
     <van-nav-bar
       :title="video?.title || '视频详情'"
       left-arrow
@@ -52,11 +52,13 @@
       
       <!-- 封面预览 -->
       <div v-else class="video-preview" @click="loadPlayUrls">
-        <van-image 
-          :src="getCoverUrl(video.cover_path)" 
-          fit="contain"
-          class="cover-image"
-        />
+        <div class="cover-container">
+          <van-image 
+            :src="getCoverUrl(video.cover_path)" 
+            fit="cover"
+            class="cover-image"
+          />
+        </div>
         <div class="play-overlay">
           <van-icon name="play-circle-o" class="play-icon" />
           <span class="play-text">点击播放</span>
@@ -178,11 +180,13 @@ import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImag
 import { useVideoStore } from '@/stores'
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
+import { useDevice } from '@/composables/useDevice'
 import Hls from 'hls.js'
 
 const route = useRoute()
 const router = useRouter()
 const videoStore = useVideoStore()
+const { isDesktop, isMobile } = useDevice()
 
 const video = ref(null)
 const loading = ref(true)
@@ -462,9 +466,16 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.cover-container {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
 .cover-image {
   width: 100%;
   max-height: 300px;
+  object-fit: cover;
 }
 
 .play-overlay {
@@ -621,5 +632,75 @@ onUnmounted(() => {
   aspect-ratio: 16/9;
   border-radius: 4px;
   overflow: hidden;
+}
+
+/* 电脑端样式优化 */
+.video-detail-desktop .detail-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.video-detail-desktop .video-preview {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.video-detail-desktop .cover-container {
+  max-width: 700px;
+}
+
+.video-detail-desktop .cover-image {
+  max-height: 450px;
+  border-radius: 8px;
+}
+
+.video-detail-desktop .play-icon {
+  font-size: 80px;
+}
+
+.video-detail-desktop .play-text {
+  font-size: 18px;
+}
+
+.video-detail-desktop .video-wrapper {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding-bottom: 56.25%;
+}
+
+.video-detail-desktop .player-controls {
+  max-width: 1000px;
+  margin: 0 auto;
+  border-radius: 0 0 12px 12px;
+}
+
+.video-detail-desktop .video-info {
+  border-radius: 12px;
+  margin-top: 20px;
+  padding: 24px;
+}
+
+.video-detail-desktop .video-title {
+  font-size: 22px;
+}
+
+.video-detail-desktop .info-row .label {
+  font-size: 15px;
+  width: 80px;
+}
+
+.video-detail-desktop .info-row .value {
+  font-size: 15px;
+}
+
+.video-detail-desktop .thumbnail-grid {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding: 16px;
+}
+
+.video-detail-desktop .thumbnail-item {
+  border-radius: 8px;
 }
 </style>

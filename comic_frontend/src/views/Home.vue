@@ -1,5 +1,5 @@
 <template>
-  <div class="home">
+  <div class="home" :class="{ 'home-desktop': isDesktop, 'home-mobile': isMobile }">
     <van-nav-bar title="漫画库">
       <template #left>
         <van-button 
@@ -32,8 +32,8 @@
         @click="showSortPanel = true"
         class="sort-btn"
       >
-        排序
-        <van-icon name="sort" />
+        <van-icon v-if="isMobile" name="sort" />
+        <template v-else>排序 <van-icon name="sort" /></template>
       </van-button>
       <van-button 
         size="small" 
@@ -42,8 +42,8 @@
         @click="showFilterPanel = true"
         class="filter-btn"
       >
-        筛选
-        <van-icon name="filter-o" />
+        <van-icon v-if="isMobile" name="filter-o" />
+        <template v-else>筛选 <van-icon name="filter-o" /></template>
       </van-button>
     </div>
     
@@ -140,9 +140,9 @@
     <!-- 标签筛选面板 -->
     <van-popup 
       v-model:show="showFilterPanel" 
-      position="bottom" 
+      :position="isDesktop ? 'center' : 'bottom'" 
       round 
-      :style="{ height: '70%' }"
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '70%' }"
     >
       <div class="filter-panel">
         <van-nav-bar title="标签筛选" left-text="关闭" @click-left="showFilterPanel = false">
@@ -165,9 +165,9 @@
     
     <van-popup 
       v-model:show="showSortPanel" 
-      position="bottom" 
+      :position="isDesktop ? 'center' : 'bottom'" 
       round 
-      :style="{ height: '50%' }"
+      :style="isDesktop ? { width: '400px' } : { height: '50%' }"
     >
       <div class="sort-panel">
         <van-nav-bar title="排序方式" left-text="关闭" @click-left="showSortPanel = false" />
@@ -213,12 +213,28 @@
       </div>
     </van-popup>
     
-    <!-- 底部导航 -->
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+    <!-- 底部导航 - 手机端显示 -->
+    <van-tabbar v-if="isMobile" v-model="active" route>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item icon="star-o" to="/recommendation">推荐</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+    
+    <!-- 顶部导航 - 电脑端显示 -->
+    <div v-if="isDesktop" class="desktop-nav">
+      <router-link :to="homePath" class="nav-item" :class="{ active: $route.path === '/' || $route.path === '/video-home' }">
+        <van-icon name="home-o" />
+        <span>主页</span>
+      </router-link>
+      <router-link to="/recommendation" class="nav-item" :class="{ active: $route.path === '/recommendation' }">
+        <van-icon name="star-o" />
+        <span>推荐</span>
+      </router-link>
+      <router-link to="/mine" class="nav-item" :class="{ active: $route.path === '/mine' }">
+        <van-icon name="user-o" />
+        <span>我的</span>
+      </router-link>
+    </div>
   </div>
 </template>
 
@@ -227,10 +243,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import { useComicStore, useTagStore, useImportTaskStore, useModeStore } from '@/stores'
-import { useSearch } from '@/composables'
+import { useSearch, useDevice } from '@/composables'
 import { ComicGrid, EmptyState, TagFilter } from '@/components'
 import { comicApi } from '@/api'
 import request from '@/api/request'
+
+const { isMobile, isDesktop } = useDevice()
 
 const router = useRouter()
 const route = useRoute()
@@ -238,6 +256,8 @@ const comicStore = useComicStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
 const modeStore = useModeStore()
+
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
 const {
   keyword,
@@ -263,7 +283,6 @@ const showFilterPanel = ref(false)
 const showSortPanel = ref(false)
 const currentSortType = ref('')
 
-// 管理模式相关
 const isManageMode = ref(false)
 const selectedComicIds = ref([])
 const menuValue = ref(0)
@@ -400,6 +419,7 @@ function clearSort() {
 }
 
 onMounted(async () => {
+  modeStore.setMode('comic')
   await init()
   
   const tagId = route.query.tagId
@@ -448,9 +468,17 @@ async function createImportFromIds(ids, target) {
 
 <style scoped>
 .home {
-  padding-bottom: 50px;
   min-height: 100vh;
   background: #f5f5f5;
+}
+
+.home-mobile {
+  padding-bottom: 50px;
+}
+
+.home-desktop {
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .search-bar {
@@ -469,7 +497,16 @@ async function createImportFromIds(ids, target) {
 .sort-btn,
 .filter-btn {
   flex-shrink: 0;
+}
+
+.home-mobile .sort-btn,
+.home-mobile .filter-btn {
   padding: 0 8px;
+}
+
+.home-desktop .sort-btn,
+.home-desktop .filter-btn {
+  padding: 0 12px;
 }
 
 .active-filter-bar {
@@ -523,9 +560,30 @@ async function createImportFromIds(ids, target) {
 
 .comic-select-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 8px;
+}
+
+.home-mobile .comic-select-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.home-desktop .comic-select-grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  padding: 12px;
+}
+
+@media (min-width: 1200px) {
+  .home-desktop .comic-select-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+@media (min-width: 1600px) {
+  .home-desktop .comic-select-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
 }
 
 .comic-select-item {
@@ -555,6 +613,11 @@ async function createImportFromIds(ids, target) {
   white-space: nowrap;
 }
 
+.home-desktop .comic-title-line {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
 .select-check {
   position: absolute;
   top: 4px;
@@ -568,5 +631,48 @@ async function createImportFromIds(ids, target) {
   justify-content: center;
   color: #fff;
   font-size: 12px;
+}
+
+.home-desktop .select-check {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+
+.desktop-nav {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border-radius: 50px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  padding: 8px 20px;
+  gap: 30px;
+  z-index: 1000;
+}
+
+.desktop-nav .nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: #666;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.desktop-nav .nav-item:hover {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item.active {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item .van-icon {
+  font-size: 22px;
 }
 </style>

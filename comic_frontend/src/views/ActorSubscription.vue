@@ -1,5 +1,5 @@
 <template>
-  <div class="actor-page">
+  <div class="actor-page" :class="{ 'actor-page-desktop': isDesktop, 'actor-page-mobile': isMobile }">
     <van-nav-bar title="演员" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
         <van-icon name="plus" @click="showAddPopup = true" />
@@ -131,22 +131,46 @@
       </div>
     </van-popup>
 
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+    <!-- 底部导航 - 手机端显示 -->
+    <van-tabbar v-if="isMobile" v-model="active" route>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/actors">演员</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+    
+    <!-- 顶部导航 - 电脑端显示 -->
+    <div v-if="isDesktop" class="desktop-nav">
+      <router-link :to="homePath" class="nav-item" :class="{ active: $route.path === '/' || $route.path === '/video-home' }">
+        <van-icon name="home-o" />
+        <span>主页</span>
+      </router-link>
+      <router-link to="/actors" class="nav-item" :class="{ active: $route.path === '/actors' }">
+        <van-icon name="user-o" />
+        <span>演员</span>
+      </router-link>
+      <router-link to="/mine" class="nav-item" :class="{ active: $route.path === '/mine' }">
+        <van-icon name="user-o" />
+        <span>我的</span>
+      </router-link>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { useActorStore, useVideoStore } from '@/stores'
+import { useActorStore, useVideoStore, useModeStore } from '@/stores'
+import { useDevice } from '@/composables/useDevice'
 import { videoApi, actorApi } from '@/api/video'
 
+const route = useRoute()
 const actorStore = useActorStore()
 const videoStore = useVideoStore()
+const modeStore = useModeStore()
+const { isDesktop, isMobile } = useDevice()
+
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
 const loading = ref(false)
 const actors = ref([])
@@ -289,6 +313,7 @@ async function importWork(work) {
 }
 
 onMounted(() => {
+  modeStore.setMode('video')
   loadActors()
 })
 </script>
@@ -395,5 +420,51 @@ onMounted(() => {
 
 .load-more {
   padding: 10px;
+}
+
+.actor-page-mobile {
+  padding-bottom: 50px;
+}
+
+.actor-page-desktop {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.desktop-nav {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border-radius: 50px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  padding: 8px 20px;
+  gap: 30px;
+  z-index: 1000;
+}
+
+.desktop-nav .nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: #666;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.desktop-nav .nav-item:hover {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item.active {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item .van-icon {
+  font-size: 22px;
 }
 </style>

@@ -2,7 +2,9 @@
   <div
     class="comic-card"
     :class="{
-      'card-selected': selected
+      'card-selected': selected,
+      'card-desktop': isDesktop,
+      'card-mobile': isMobile
     }"
     @click="handleClick"
   >
@@ -41,24 +43,54 @@
     <!-- 信息区域 -->
     <div class="comic-info">
       <h3 class="comic-title">{{ comic.title }}</h3>
+      
+      <!-- 标签区域 -->
       <div class="comic-tags" v-if="comic.tags && comic.tags.length > 0">
-        <van-tag 
-          v-for="(tag, index) in comic.tags.slice(0, 2)" 
-          :key="tag.id || index" 
-          size="mini" 
-          type="primary" 
-          plain
-          class="comic-tag"
-        >
-          {{ tag.name }}
-        </van-tag>
-        <span v-if="comic.tags.length > 2" class="more-tags">+{{ comic.tags.length - 2 }}</span>
+        <!-- 电脑端显示3个标签 -->
+        <template v-if="isDesktop">
+          <van-tag 
+            v-for="(tag, index) in comic.tags.slice(0, 3)" 
+            :key="tag.id || index" 
+            size="small" 
+            type="primary" 
+            plain
+            class="comic-tag"
+          >
+            {{ tag.name }}
+          </van-tag>
+          <span v-if="comic.tags.length > 3" class="more-tags">+{{ comic.tags.length - 3 }}</span>
+        </template>
+        
+        <!-- 手机端显示2个标签 -->
+        <template v-else>
+          <van-tag 
+            v-for="(tag, index) in comic.tags.slice(0, 2)" 
+            :key="tag.id || index" 
+            size="mini" 
+            type="primary" 
+            plain
+            class="comic-tag"
+          >
+            {{ tag.name }}
+          </van-tag>
+          <span v-if="comic.tags.length > 2" class="more-tags">+{{ comic.tags.length - 2 }}</span>
+        </template>
       </div>
+      
       <div class="comic-meta">
-        <span class="page-info">{{ comic.current_page }}/{{ comic.total_page || 0 }}</span>
+        <span class="page-info">
+          <van-icon v-if="isDesktop" name="eye-o" size="12" />
+          {{ comic.current_page }}/{{ comic.total_page || 0 }}
+        </span>
         <span 
-          v-if="comic.author" class="author clickable" @click.stop="handleAuthorClick">{{ comic.author }}</span>
-        <span v-else class="author">未知</span>
+          v-if="comic.author" class="author clickable" @click.stop="handleAuthorClick">
+          <van-icon v-if="isDesktop" name="user-o" size="12" />
+          {{ comic.author }}
+        </span>
+        <span v-else class="author">
+          <van-icon v-if="isDesktop" name="user-o" size="12" />
+          未知
+        </span>
       </div>
     </div>
   </div>
@@ -67,6 +99,9 @@
 <script setup>
 import { computed } from 'vue'
 import { buildCoverUrl } from '@/api/image'
+import { useDevice } from '@/composables'
+
+const { isMobile, isDesktop } = useDevice()
 
 const props = defineProps({
   comic: {
@@ -85,28 +120,23 @@ const props = defineProps({
 
 const emit = defineEmits(['click', 'toggle-select', 'author-click'])
 
-// 封面URL
 const coverUrl = computed(() => {
   return buildCoverUrl(props.comic.cover_path)
 })
 
-// 阅读进度
 const readProgress = computed(() => {
   if (!props.comic.total_page || props.comic.total_page <= 0) return 0
   return Math.round((props.comic.current_page / props.comic.total_page) * 100)
 })
 
-// 处理点击
 function handleClick() {
   emit('click', props.comic)
 }
 
-// 处理作者点击
 function handleAuthorClick() {
   emit('author-click', props.comic.author)
 }
 
-// 切换选择
 function toggleSelect() {
   emit('toggle-select', props.comic.id)
 }
@@ -210,6 +240,8 @@ function toggleSelect() {
 .more-tags {
   font-size: 10px;
   color: #999;
+  display: flex;
+  align-items: center;
 }
 
 .comic-meta {
@@ -218,15 +250,29 @@ function toggleSelect() {
   align-items: center;
   font-size: 10px;
   color: #999;
+  gap: 4px;
 }
 
 .page-info {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .author {
   flex: 1;
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.author span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -272,5 +318,60 @@ function toggleSelect() {
   color: #fff;
   font-size: 14px;
   font-weight: bold;
+}
+
+/* 电脑端样式 */
+.card-desktop .comic-info {
+  padding: 12px;
+}
+
+.card-desktop .comic-title {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.card-desktop .comic-tag {
+  font-size: 11px;
+}
+
+.card-desktop .comic-meta {
+  font-size: 12px;
+}
+
+.card-desktop .comic-badge {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.card-desktop .score-badge {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.card-desktop .favorite-badge {
+  width: 24px;
+  height: 24px;
+}
+
+.card-desktop .favorite-badge .van-icon {
+  font-size: 14px;
+}
+
+/* 手机端优化 */
+@media (max-width: 767px) {
+  .comic-card:hover {
+    transform: none;
+  }
+  
+  .comic-card:active {
+    transform: scale(0.98);
+  }
+}
+
+/* 电脑端更大的卡片 */
+@media (min-width: 1024px) {
+  .card-desktop .comic-cover-container {
+    padding-top: 135%;
+  }
 }
 </style>

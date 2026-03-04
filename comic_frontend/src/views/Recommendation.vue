@@ -1,5 +1,5 @@
 <template>
-  <div class="recommendation">
+  <div class="recommendation" :class="{ 'recommendation-desktop': isDesktop, 'recommendation-mobile': isMobile }">
     <van-nav-bar title="推荐漫画">
       <template #right>
         <van-dropdown-menu direction="down">
@@ -165,12 +165,28 @@
       />
     </van-popup>
 
-    <!-- 底部导航 -->
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+    <!-- 底部导航 - 手机端显示 -->
+    <van-tabbar v-if="isMobile" v-model="active" route>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item icon="star-o" to="/recommendation">推荐</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+    
+    <!-- 顶部导航 - 电脑端显示 -->
+    <div v-if="isDesktop" class="desktop-nav">
+      <router-link :to="homePath" class="nav-item" :class="{ active: $route.path === '/' || $route.path === '/video-home' }">
+        <van-icon name="home-o" />
+        <span>主页</span>
+      </router-link>
+      <router-link to="/recommendation" class="nav-item" :class="{ active: $route.path === '/recommendation' }">
+        <van-icon name="star-o" />
+        <span>推荐</span>
+      </router-link>
+      <router-link to="/mine" class="nav-item" :class="{ active: $route.path === '/mine' }">
+        <van-icon name="user-o" />
+        <span>我的</span>
+      </router-link>
+    </div>
   </div>
 </template>
 
@@ -178,9 +194,10 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
-import { useRecommendationStore, useTagStore, useImportTaskStore } from '@/stores'
+import { useRecommendationStore, useTagStore, useImportTaskStore, useModeStore } from '@/stores'
 import { SORT_TYPE } from '@/utils'
 import { recommendationApi } from '@/api'
+import { useDevice } from '@/composables/useDevice'
 import ComicGrid from '@/components/comic/ComicGrid.vue'
 import TagFilter from '@/components/tag/TagFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -190,6 +207,10 @@ const route = useRoute()
 const recommendationStore = useRecommendationStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
+const modeStore = useModeStore()
+const { isDesktop, isMobile } = useDevice()
+
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
 // ============ State ============
 const keyword = ref('')
@@ -560,5 +581,42 @@ watch(currentSortType, async (newSort) => {
   justify-content: center;
   color: #fff;
   font-size: 12px;
+}
+
+.desktop-nav {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border-radius: 50px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  padding: 8px 20px;
+  gap: 30px;
+  z-index: 1000;
+}
+
+.desktop-nav .nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: #666;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.desktop-nav .nav-item:hover {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item.active {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item .van-icon {
+  font-size: 22px;
 }
 </style>

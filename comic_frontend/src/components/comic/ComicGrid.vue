@@ -1,8 +1,7 @@
 <template>
-  <div class="comic-grid">
+  <div class="comic-grid" :class="{ 'grid-desktop': isDesktop, 'grid-mobile': isMobile }">
     <div
       class="grid-container"
-      :style="gridStyle"
     >
       <ComicCard
         v-for="comic in comics"
@@ -36,6 +35,9 @@ import { computed } from 'vue'
 import ComicCard from './ComicCard.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import { useDevice } from '@/composables'
+
+const { isMobile, isDesktop } = useDevice()
 
 const props = defineProps({
   comics: {
@@ -56,7 +58,7 @@ const props = defineProps({
   },
   columns: {
     type: Number,
-    default: 0 // 0 表示响应式
+    default: 0
   },
   gap: {
     type: Number,
@@ -78,40 +80,19 @@ const props = defineProps({
 
 const emit = defineEmits(['card-click', 'toggle-select', 'author-click'])
 
-// 网格样式 - 与原 Home.vue 一致
-const gridStyle = computed(() => {
-  if (props.columns > 0) {
-    return {
-      display: 'grid',
-      gridTemplateColumns: `repeat(${props.columns}, 1fr)`,
-      gap: `${props.gap}px`
-    }
-  }
-  
-  // 响应式布局 - 与原 Home.vue 一致
-  return {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-    gap: `${props.gap}px`
-  }
-})
-
 // 检查是否选中
 function isSelected(id) {
   return props.selectedIds.includes(id)
 }
 
-// 处理卡片点击
 function handleCardClick(comic) {
   emit('card-click', comic)
 }
 
-// 处理选择切换
 function handleToggleSelect(id) {
   emit('toggle-select', id)
 }
 
-// 处理作者点击
 function handleAuthorClick(author) {
   emit('author-click', author)
 }
@@ -126,6 +107,32 @@ function handleAuthorClick(author) {
 
 .grid-container {
   width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+.grid-mobile .grid-container {
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.grid-desktop .grid-container {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+@media (min-width: 1200px) {
+  .grid-desktop .grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 20px;
+  }
+}
+
+@media (min-width: 1600px) {
+  .grid-desktop .grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 24px;
+  }
 }
 
 .loading-more {

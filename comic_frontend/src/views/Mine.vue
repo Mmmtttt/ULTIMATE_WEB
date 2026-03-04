@@ -1,5 +1,5 @@
 <template>
-  <div class="mine">
+  <div class="mine" :class="{ 'mine-desktop': isDesktop, 'mine-mobile': isMobile }">
     <van-nav-bar title="我的" />
     
     <div class="stats-overview">
@@ -97,11 +97,28 @@
       <p class="copyright">© 2026 自用漫画浏览网站</p>
     </div>
     
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+    <!-- 底部导航 - 手机端显示 -->
+    <van-tabbar v-if="isMobile" v-model="active" route>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item icon="star-o" to="/recommendation">推荐</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+    
+    <!-- 顶部导航 - 电脑端显示 -->
+    <div v-if="isDesktop" class="desktop-nav">
+      <router-link :to="homePath" class="nav-item" :class="{ active: $route.path === '/' || $route.path === '/video-home' }">
+        <van-icon name="home-o" />
+        <span>主页</span>
+      </router-link>
+      <router-link to="/recommendation" class="nav-item" :class="{ active: $route.path === '/recommendation' }">
+        <van-icon name="star-o" />
+        <span>推荐</span>
+      </router-link>
+      <router-link to="/mine" class="nav-item" :class="{ active: $route.path === '/mine' }">
+        <van-icon name="user-o" />
+        <span>我的</span>
+      </router-link>
+    </div>
     
     <van-popup v-model:show="showImportDialog" round position="center">
       <div class="import-dialog">
@@ -238,13 +255,18 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useComicStore, useCacheStore, useTagStore, useListStore } from '@/stores'
+import { useComicStore, useCacheStore, useTagStore, useListStore, useModeStore } from '@/stores'
 import { useImportTaskStore } from '@/stores/importTask'
+import { useDevice } from '@/composables/useDevice'
 import { comicApi, authorApi, recommendationApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
+const { isDesktop, isMobile } = useDevice()
+const modeStore = useModeStore()
 const active = ref(1)
+
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
 const showUploadPanel = ref(false)
@@ -765,5 +787,42 @@ async function handleUpload() {
 .file-info .van-icon-cross {
   cursor: pointer;
   color: #999;
+}
+
+.desktop-nav {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border-radius: 50px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  padding: 8px 20px;
+  gap: 30px;
+  z-index: 1000;
+}
+
+.desktop-nav .nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: #666;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.desktop-nav .nav-item:hover {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item.active {
+  color: #1989fa;
+}
+
+.desktop-nav .nav-item .van-icon {
+  font-size: 22px;
 }
 </style>
