@@ -69,8 +69,8 @@ export const videoApi = {
     return request.get('/v1/video/third-party/actor/works', { params: { actor_id: actorId, page } })
   },
   
-  thirdPartyImport(videoId) {
-    return request.post('/v1/video/third-party/import', { video_id: videoId })
+  thirdPartyImport(videoId, target = 'home') {
+    return request.post('/v1/video/third-party/import', { video_id: videoId, target })
   },
   
   getPlayUrls(videoId) {
@@ -102,6 +102,30 @@ export const videoApi = {
   
   batchRemoveTags(videoIds, tagIds) {
     return request.put('/v1/video/tag/batch-remove', { video_ids: videoIds, tag_ids: tagIds })
+  },
+  
+  getVideoRecommendationList(params = {}) {
+    return request.get('/v1/video/recommendation/list', { params })
+  },
+  
+  getVideoRecommendationDetail(videoId) {
+    return request.get('/v1/video/recommendation/detail', { params: { video_id: videoId } })
+  },
+  
+  updateVideoRecommendationScore(videoId, score) {
+    return request.put('/v1/video/recommendation/score', { video_id: videoId, score })
+  },
+  
+  moveVideoRecommendationToTrash(videoId) {
+    return request.put('/v1/video/recommendation/trash/move', { video_id: videoId })
+  },
+  
+  batchMoveVideoRecommendationToTrash(videoIds) {
+    return request.put('/v1/video/recommendation/trash/batch-move', { video_ids: videoIds })
+  },
+  
+  searchVideoRecommendations(keyword) {
+    return request.get('/v1/video/recommendation/search', { params: { keyword } })
   }
 }
 

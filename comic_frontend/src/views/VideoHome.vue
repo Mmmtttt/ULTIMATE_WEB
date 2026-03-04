@@ -110,6 +110,14 @@
           />
           <div v-if="item.code" class="video-code">{{ item.code }}</div>
           <div v-if="item.score" class="video-score">{{ item.score }}</div>
+          <van-icon 
+            v-if="isVideoMode"
+            :name="isFavoritedVideo(item) ? 'star' : 'star-o'"
+            :color="isFavoritedVideo(item) ? '#ff9500' : '#fff'"
+            size="20"
+            class="video-favorite"
+            @click="toggleFavoriteVideo(item, $event)"
+          />
         </div>
         <div class="video-info">
           <div class="video-title">{{ item.title }}</div>
@@ -195,6 +203,13 @@
       <div class="import-panel">
         <van-nav-bar title="导入视频" left-text="关闭" @click-left="showImportPanel = false" />
         
+        <div class="import-target-select">
+          <van-radio-group v-model="importTarget" direction="horizontal">
+            <van-radio name="home">导入主页</van-radio>
+            <van-radio name="recommendation">导入推荐页</van-radio>
+          </van-radio-group>
+        </div>
+        
         <div class="import-search">
           <van-search
             v-model="importKeyword"
@@ -270,7 +285,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast } from 'vant'
-import { useModeStore, useVideoStore, useComicStore, useTagStore } from '@/stores'
+import { useModeStore, useVideoStore, useComicStore, useTagStore, useListStore } from '@/stores'
 import { useDevice } from '@/composables'
 import { EmptyState, TagFilter } from '@/components'
 
@@ -281,6 +296,7 @@ const modeStore = useModeStore()
 const videoStore = useVideoStore()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
+const listStore = useListStore()
 
 const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
@@ -295,6 +311,7 @@ const showImportPanel = ref(false)
 const importKeyword = ref('')
 const importLoading = ref(false)
 const importResults = ref([])
+const importTarget = ref('home')
 const menuValue = ref(0)
 const menuOptions = [
   { text: '更多操作', value: 0 },
@@ -329,6 +346,25 @@ const sortLabel = computed(() => {
   }
   return labels[currentSortType.value] || ''
 })
+
+function isFavoritedVideo(video) {
+  return listStore.isFavoritedVideo(video)
+}
+
+async function toggleFavoriteVideo(video, event) {
+  event.stopPropagation()
+  const result = await listStore.toggleFavoriteVideo(video.id)
+  if (result !== null) {
+    if (result) {
+      video.list_ids = video.list_ids || []
+      if (!video.list_ids.includes('favorites')) {
+        video.list_ids.push('favorites')
+      }
+    } else {
+      video.list_ids = (video.list_ids || []).filter(id => id !== 'favorites')
+    }
+  }
+}
 
 function toggleMode() {
   modeStore.toggleMode()
@@ -462,10 +498,12 @@ async function handleImportSearch() {
 async function importVideo(item) {
   item.importing = true
   try {
-    const res = await videoStore.thirdPartyImport(item.video_id)
+    const res = await videoStore.thirdPartyImport(item.video_id, importTarget.value)
     if (res.code === 200) {
       showSuccessToast('导入成功')
-      await videoStore.fetchList()
+      if (importTarget.value === 'home') {
+        await videoStore.fetchList()
+      }
     } else {
       showFailToast(res.msg || '导入失败')
     }
@@ -620,6 +658,14 @@ watch(() => modeStore.currentMode, () => {
   font-size: 12px;
 }
 
+.video-favorite {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
 .video-info {
   padding: 8px;
 }
@@ -660,6 +706,12 @@ watch(() => modeStore.currentMode, () => {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.import-target-select {
+  padding: 12px;
+  background: #fff;
+  border-bottom: 1px solid #f5f5f5;
 }
 
 .import-search {

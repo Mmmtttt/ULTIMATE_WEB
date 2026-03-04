@@ -27,6 +27,16 @@ const routes = [
     component: () => import('../views/RecommendationReader.vue')
   },
   {
+    path: '/video-recommendation',
+    name: 'VideoRecommendation',
+    component: () => import('../views/VideoRecommendation.vue')
+  },
+  {
+    path: '/video-recommendation/:id',
+    name: 'VideoRecommendationDetail',
+    component: () => import('../views/VideoRecommendationDetail.vue')
+  },
+  {
     path: '/mine',
     name: 'Mine',
     component: () => import('../views/Mine.vue')

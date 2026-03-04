@@ -24,9 +24,14 @@
           @click="goToDetail(list.id)"
         >
           <template #value>
-            <van-badge :content="list.comic_count" :show-zero="false">
-              <van-icon name="photo-o" size="18" />
-            </van-badge>
+            <div class="list-counts">
+              <van-badge :content="list.comic_count" :show-zero="false" class="count-badge">
+                <van-icon name="photo-o" size="16" />
+              </van-badge>
+              <van-badge :content="list.video_count" :show-zero="false" class="count-badge">
+                <van-icon name="video-o" size="16" />
+              </van-badge>
+            </div>
           </template>
           <template #icon>
             <van-icon v-if="list.is_default" name="star" color="#ffd21e" size="16" class="list-icon" />
@@ -181,6 +186,17 @@ onMounted(() => {
 
 .list-icon {
   margin-right: 8px;
+}
+
+.list-counts {
+  display: flex;
+  gap: 8px;
+}
+
+.count-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .edit-btn {

@@ -169,9 +169,9 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
-  async function thirdPartyImport(videoId) {
+  async function thirdPartyImport(videoId, target = 'home') {
     try {
-      const res = await videoApi.thirdPartyImport(videoId)
+      const res = await videoApi.thirdPartyImport(videoId, target)
       return res
     } catch (e) {
       return { code: 500, message: e.message }

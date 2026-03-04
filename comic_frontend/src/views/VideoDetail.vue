@@ -124,6 +124,26 @@
         </div>
       </div>
       
+      <!-- 操作按钮区 -->
+      <div class="action-buttons">
+        <van-button 
+          :icon="isFavoritedVideo ? 'star' : 'star-o'"
+          :type="isFavoritedVideo ? 'warning' : 'default'"
+          block
+          @click="toggleFavorite"
+        >
+          {{ isFavoritedVideo ? '已收藏' : '收藏' }}
+        </van-button>
+        <van-button 
+          icon="orders-o"
+          type="primary"
+          block
+          @click="showListPopup = true"
+        >
+          加入清单
+        </van-button>
+      </div>
+      
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
         <van-cell-group title="磁力链接">
           <van-cell 
@@ -169,6 +189,45 @@
       :actions="actions" 
       @select="handleAction"
     />
+    
+    <!-- 清单选择弹窗 -->
+    <van-popup 
+      v-model:show="showListPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '60%' }"
+    >
+      <div class="list-popup">
+        <van-nav-bar title="选择清单">
+          <template #right>
+            <van-button type="primary" size="small" @click="addToLists">保存</van-button>
+          </template>
+        </van-nav-bar>
+        
+        <van-checkbox-group v-model="selectedListIds">
+          <van-cell-group inset>
+            <van-cell 
+              v-for="list in customLists" 
+              :key="list.id"
+              clickable
+              @click="toggleListItem(list.id)"
+            >
+              <template #title>
+                <span>{{ list.name }}</span>
+                <span class="list-count">({{ list.video_count || 0 }})</span>
+              </template>
+              <template #right-icon>
+                <van-checkbox :name="list.id" />
+              </template>
+            </van-cell>
+          </van-cell-group>
+        </van-checkbox-group>
+        
+        <div class="list-action">
+          <van-button type="primary" block @click="addToLists">保存</van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -177,7 +236,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
-import { useVideoStore } from '@/stores'
+import { useVideoStore, useListStore } from '@/stores'
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
@@ -186,11 +245,14 @@ import Hls from 'hls.js'
 const route = useRoute()
 const router = useRouter()
 const videoStore = useVideoStore()
+const listStore = useListStore()
 const { isDesktop, isMobile } = useDevice()
 
 const video = ref(null)
 const loading = ref(true)
 const showActions = ref(false)
+const showListPopup = ref(false)
+const selectedListIds = ref([])
 const scoreValue = ref(0)
 
 // 播放器相关
@@ -210,6 +272,12 @@ const actions = [
 
 const videoId = computed(() => route.params.id)
 
+const isFavoritedVideo = computed(() => {
+  return listStore.isFavoritedVideo(video.value)
+})
+
+const customLists = computed(() => listStore.lists || [])
+
 function getCoverUrl(coverPath) {
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
@@ -225,7 +293,91 @@ async function loadVideo() {
   if (data?.score) {
     scoreValue.value = data.score
   }
+  if (data?.list_ids) {
+    selectedListIds.value = [...data.list_ids]
+  }
+  await listStore.fetchLists()
   loading.value = false
+}
+
+async function toggleFavorite() {
+  const result = await listStore.toggleFavoriteVideo(videoId.value)
+  if (result !== null) {
+    if (result) {
+      video.value.list_ids = video.value.list_ids || []
+      if (!video.value.list_ids.includes('list_favorites')) {
+        video.value.list_ids.push('list_favorites')
+      }
+    } else {
+      video.value.list_ids = (video.value.list_ids || []).filter(id => id !== 'list_favorites')
+    }
+  }
+}
+
+function toggleListItem(listId) {
+  const index = selectedListIds.value.indexOf(listId)
+  if (index > -1) {
+    selectedListIds.value.splice(index, 1)
+  } else {
+    selectedListIds.value.push(listId)
+  }
+}
+
+async function addToLists() {
+  console.log('[VideoDetail] addToLists called')
+  console.log('[VideoDetail] selectedListIds:', selectedListIds.value)
+  console.log('[VideoDetail] video.value:', video.value)
+  
+  if (selectedListIds.value.length === 0 && (!video.value.list_ids || video.value.list_ids.length === 0)) {
+    showFailToast('请选择清单')
+    return
+  }
+  
+  try {
+    const currentListIds = video.value.list_ids || []
+    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
+    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
+    
+    console.log('[VideoDetail] currentListIds:', currentListIds)
+    console.log('[VideoDetail] toAdd:', toAdd)
+    console.log('[VideoDetail] toRemove:', toRemove)
+    
+    let addCount = 0
+    let removeCount = 0
+    
+    for (const listId of toAdd) {
+      console.log('[VideoDetail] 绑定清单:', listId, '视频ID:', videoId.value)
+      const result = await listStore.bindVideos(listId, [videoId.value])
+      console.log('[VideoDetail] 绑定结果:', result)
+      if (result) addCount++
+    }
+    
+    for (const listId of toRemove) {
+      console.log('[VideoDetail] 移除清单:', listId, '视频ID:', videoId.value)
+      const result = await listStore.removeVideos(listId, [videoId.value])
+      console.log('[VideoDetail] 移除结果:', result)
+      if (result) removeCount++
+    }
+    
+    console.log('[VideoDetail] addCount:', addCount, 'removeCount:', removeCount)
+    
+    if (addCount > 0 || removeCount > 0) {
+      showListPopup.value = false
+      selectedListIds.value = []
+      await loadVideo()
+      await listStore.fetchLists()
+      
+      let message = ''
+      if (addCount > 0) message += `加入${addCount}个清单 `
+      if (removeCount > 0) message += `移出${removeCount}个清单`
+      showSuccessToast(message.trim())
+    } else if (toAdd.length === 0 && toRemove.length === 0) {
+      showSuccessToast('清单无变化')
+    }
+  } catch (error) {
+    console.error('[VideoDetail] addToLists error:', error)
+    showFailToast('操作失败')
+  }
 }
 
 async function updateScore(value) {
@@ -615,6 +767,12 @@ onUnmounted(() => {
   margin-bottom: 4px;
 }
 
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
 .magnets-section {
   margin-bottom: 12px;
 }
@@ -704,5 +862,21 @@ onUnmounted(() => {
 
 .video-detail-desktop .thumbnail-item {
   border-radius: 8px;
+}
+
+.list-popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-count {
+  font-size: 12px;
+  color: #999;
+  margin-left: 4px;
+}
+
+.list-action {
+  padding: 16px;
 }
 </style>

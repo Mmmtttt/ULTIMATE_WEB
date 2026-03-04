@@ -38,6 +38,25 @@ export const listApi = {
   
   checkFavorite(comicId) {
     return request.get('/v1/list/favorite/check', { params: { comic_id: comicId } })
+  },
+
+  bindVideos(listId, videoIds) {
+    return request.put('/v1/list/video/bind', { list_id: listId, video_id_list: videoIds })
+  },
+
+  removeVideos(listId, videoIds) {
+    const params = new URLSearchParams()
+    params.append('list_id', listId)
+    videoIds.forEach(id => params.append('video_id_list', id))
+    return request.delete('/v1/list/video/remove', { params })
+  },
+
+  toggleFavoriteVideo(videoId) {
+    return request.put('/v1/list/video/favorite/toggle', { video_id: videoId })
+  },
+
+  checkFavoriteVideo(videoId) {
+    return request.get('/v1/list/video/favorite/check', { params: { video_id: videoId } })
   }
 }
 

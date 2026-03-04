@@ -16,7 +16,16 @@
     <template v-else-if="listInfo">
       <div class="list-header">
         <p class="list-desc">{{ listInfo.desc || '暂无描述' }}</p>
-        <p class="list-count">共 {{ filteredComics.length }} 部漫画</p>
+        <div class="list-stats">
+          <van-tabs v-model:active="activeContentType" line-width="50px">
+            <van-tab title="漫画" name="comic">
+              <span class="tab-count">({{ (listInfo.comics || []).length }})</span>
+            </van-tab>
+            <van-tab title="视频" name="video">
+              <span class="tab-count">({{ (listInfo.videos || []).length }})</span>
+            </van-tab>
+          </van-tabs>
+        </div>
       </div>
       
       <div class="action-bar">
@@ -41,6 +50,7 @@
           <van-icon name="filter-o" />
         </van-button>
         <van-button 
+          v-if="activeContentType === 'comic'"
           size="small" 
           type="primary" 
           plain 
@@ -96,9 +106,10 @@
         <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
       </div>
       
-      <van-empty v-if="filteredComics.length === 0" description="没有匹配的漫画" />
+      <van-empty v-if="activeContentType === 'comic' && filteredComics.length === 0" description="没有匹配的漫画" />
+      <van-empty v-else-if="activeContentType === 'video' && filteredVideos.length === 0" description="没有匹配的视频" />
       
-      <div v-else class="comic-grid">
+      <div v-else-if="activeContentType === 'comic'" class="comic-grid">
         <div
           v-for="comic in filteredComics"
           :key="comic.id"
@@ -118,6 +129,30 @@
             name="cross"
             class="remove-btn"
             @click.stop="removeComic(comic.id)"
+          />
+        </div>
+      </div>
+      
+      <div v-else class="video-grid">
+        <div
+          v-for="video in filteredVideos"
+          :key="video.id"
+          class="video-card"
+          @click="goToVideo(video.id)"
+        >
+          <img :src="getCoverUrl(video.cover_path)" class="video-cover" alt="" />
+          <div class="video-info">
+            <p class="video-title">{{ video.title }}</p>
+            <div class="video-meta">
+              <span v-if="video.score" class="video-score">{{ video.score }}分</span>
+              <span v-if="video.code" class="video-code">{{ video.code }}</span>
+            </div>
+          </div>
+          <van-icon
+            v-if="!listInfo.is_default"
+            name="cross"
+            class="remove-btn"
+            @click.stop="removeVideo(video.id)"
           />
         </div>
       </div>
@@ -225,6 +260,7 @@ const tagStore = useTagStore()
 const loading = ref(false)
 const listInfo = ref(null)
 const listId = computed(() => route.params.id)
+const activeContentType = ref('comic')
 
 const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
@@ -240,6 +276,7 @@ const tempExcludeTags = ref([])
 const downloadLoading = ref(false)
 
 const comics = computed(() => listInfo.value?.comics || [])
+const videos = computed(() => listInfo.value?.videos || [])
 const allTags = computed(() => tagStore.tags)
 
 const sortLabel = computed(() => {
@@ -320,6 +357,44 @@ const filteredComics = computed(() => {
   return result
 })
 
+const filteredVideos = computed(() => {
+  let result = [...videos.value]
+  
+  if (minScore.value !== null && minScore.value > 0) {
+    result = result.filter(v => {
+      const score = v.score ?? 0
+      return score >= minScore.value
+    })
+  }
+  
+  if (includeTags.value.length > 0) {
+    result = result.filter(v => {
+      const videoTags = v.tag_ids || []
+      return includeTags.value.every(tagId => videoTags.includes(tagId))
+    })
+  }
+  
+  if (excludeTags.value.length > 0) {
+    result = result.filter(v => {
+      const videoTags = v.tag_ids || []
+      return !excludeTags.value.some(tagId => videoTags.includes(tagId))
+    })
+  }
+  
+  if (currentSortType.value) {
+    switch (currentSortType.value) {
+      case 'create_time':
+        result.sort((a, b) => (b.create_time || '').localeCompare(a.create_time || ''))
+        break
+      case 'score':
+        result.sort((a, b) => (b.score || 0) - (a.score || 0))
+        break
+    }
+  }
+  
+  return result
+})
+
 function getCoverUrl(coverPath) {
   return buildCoverUrl(coverPath)
 }
@@ -335,6 +410,10 @@ function goToComic(comicId) {
   router.push(`/comic/${comicId}`)
 }
 
+function goToVideo(videoId) {
+  router.push(`/video/${videoId}`)
+}
+
 async function removeComic(comicId) {
   showConfirmDialog({
     title: '移出漫画',
@@ -342,6 +421,20 @@ async function removeComic(comicId) {
   })
     .then(async () => {
       const result = await listStore.removeComics(listId.value, [comicId])
+      if (result) {
+        await loadDetail()
+      }
+    })
+    .catch(() => {})
+}
+
+async function removeVideo(videoId) {
+  showConfirmDialog({
+    title: '移出视频',
+    message: '确定要将该视频从清单中移出吗？',
+  })
+    .then(async () => {
+      const result = await listStore.removeVideos(listId.value, [videoId])
       if (result) {
         await loadDetail()
       }
@@ -467,6 +560,16 @@ onMounted(async () => {
   color: #999;
 }
 
+.list-stats {
+  margin-top: 8px;
+}
+
+.tab-count {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #666;
+}
+
 .action-bar {
   padding: 8px 16px;
   background: #fff;
@@ -500,7 +603,21 @@ onMounted(async () => {
   padding: 8px;
 }
 
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
 .comic-card {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.video-card {
   position: relative;
   background: #fff;
   border-radius: 8px;
@@ -513,11 +630,32 @@ onMounted(async () => {
   object-fit: cover;
 }
 
+.video-cover {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+}
+
 .comic-info {
   padding: 8px;
 }
 
+.video-info {
+  padding: 8px;
+}
+
 .comic-title {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  margin-bottom: 4px;
+}
+
+.video-title {
   font-size: 12px;
   line-height: 1.4;
   overflow: hidden;
@@ -535,8 +673,23 @@ onMounted(async () => {
   color: #999;
 }
 
+.video-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #999;
+}
+
 .comic-score {
   color: #ffd21e;
+}
+
+.video-score {
+  color: #ffd21e;
+}
+
+.video-code {
+  color: #666;
 }
 
 .remove-btn {
@@ -593,6 +746,10 @@ onMounted(async () => {
 @media (min-width: 768px) {
   .comic-grid {
     grid-template-columns: repeat(5, 1fr);
+  }
+  
+  .video-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 </style>

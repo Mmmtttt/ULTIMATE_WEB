@@ -7,6 +7,8 @@ from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from core.utils import get_current_time
+from domain.tag.entity import ContentType
 import threading
 import time
 
@@ -244,7 +246,7 @@ def get_tags():
     try:
         from application.tag_app_service import TagAppService
         tag_service = TagAppService()
-        result = tag_service.get_tag_list()
+        result = tag_service.get_tag_list(ContentType.VIDEO)
         
         if result.success:
             app_logger.info(f"获取标签列表成功，共 {len(result.data)} 个标签")
@@ -358,12 +360,16 @@ def third_party_search():
         
         from third_party.javdb_api_scraper import JavdbAdapter
         
+        app_logger.info(f"开始搜索视频，关键词: {keyword}")
         adapter = JavdbAdapter()
         videos = adapter.search_videos(keyword, max_pages=1)
+        app_logger.info(f"搜索完成，找到 {len(videos)} 个视频")
         
         return success_response(videos)
     except Exception as e:
+        import traceback
         error_logger.error(f"第三方搜索失败: {e}")
+        error_logger.error(traceback.format_exc())
         return error_response(500, "服务器内部错误")
 
 
@@ -431,14 +437,18 @@ def third_party_import():
     try:
         data = request.json
         video_id = data.get('video_id')
+        target = data.get('target', 'home')
         
         if not video_id:
             return error_response(400, "缺少视频ID")
         
-        # 获取现有标签，用于标签去重
+        if target not in ['home', 'recommendation']:
+            return error_response(400, "无效的目标目录")
+        
         from application.tag_app_service import TagAppService
         from third_party.javdb_api_scraper import JavdbAdapter
         from domain.tag.entity import ContentType
+        from core.constants import VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE, JAV_PICTURES_DIR, JAV_COVER_DIR
         
         tag_service = TagAppService()
         existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
@@ -449,68 +459,316 @@ def third_party_import():
         if not detail:
             return error_response(404, "视频不存在")
         
-        # 转换标签名称到 tag_id，创建不存在的标签
-        tag_name_to_id = {}
-        tag_id_counter = 1
+        video_id_full = f"JAVDB_{video_id}"
         
-        # 处理已有标签
-        for tag in existing_tags:
-            tag_name_to_id[tag["name"]] = tag["id"]
-            if tag["id"].startswith("tag_"):
-                try:
-                    num = int(tag["id"][4:])
-                    tag_id_counter = max(tag_id_counter, num + 1)
-                except ValueError:
-                    pass
-        
-        # 处理标签，创建不存在的标签
-        video_tag_ids = []
-        for tag_name in detail.get("tags", []):
-            if tag_name not in tag_name_to_id:
-                # 创建新标签
-                tag_id = f"tag_{tag_id_counter:03d}"
-                tag_name_to_id[tag_name] = tag_id
-                tag_id_counter += 1
-                # 创建标签
-                from domain.tag.entity import Tag, ContentType
-                from repository.tag_repository import TagRepository
-                tag_repo = TagRepository()
-                new_tag = Tag(
-                    id=tag_id,
-                    name=tag_name,
-                    content_type=ContentType.VIDEO,
-                    create_time=time.strftime("%Y-%m-%dT%H:%M:%S")
-                )
-                tag_repo.save(new_tag)
-                app_logger.info(f"创建新标签: {tag_id} - {tag_name}")
-            video_tag_ids.append(tag_name_to_id[tag_name])
-        
-        video_data = {
-            "id": f"JAVDB_{video_id}",
-            "title": detail.get("title", ""),
-            "code": detail.get("code", ""),
-            "date": detail.get("date", ""),
-            "series": detail.get("series", ""),
-            "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
-            "actors": detail.get("actors", []),
-            "magnets": detail.get("magnets", []),
-            "thumbnail_images": detail.get("thumbnail_images", []),
-            "preview_video": detail.get("preview_video", ""),
-            "tag_ids": video_tag_ids
-        }
-        
-        result = video_service.import_video(video_data)
-        if result.success:
+        if target == 'home':
+            existing = video_service.get_video_by_code(detail.get("code", ""))
+            if existing.success and existing.data:
+                return error_response(400, f"视频 {video_id_full} 已存在")
+            
+            tag_name_to_id = {}
+            tag_id_counter = 1
+            
+            for tag in existing_tags:
+                tag_name_to_id[tag["name"]] = tag["id"]
+                if tag["id"].startswith("tag_"):
+                    try:
+                        num = int(tag["id"][4:])
+                        tag_id_counter = max(tag_id_counter, num + 1)
+                    except ValueError:
+                        pass
+            
+            video_tag_ids = []
+            for tag_name in detail.get("tags", []):
+                if tag_name not in tag_name_to_id:
+                    tag_id = f"tag_{tag_id_counter:03d}"
+                    tag_name_to_id[tag_name] = tag_id
+                    tag_id_counter += 1
+                    from domain.tag.entity import Tag
+                    from repository.tag_repository import TagRepository
+                    tag_repo = TagRepository()
+                    new_tag = Tag(
+                        id=tag_id,
+                        name=tag_name,
+                        content_type=ContentType.VIDEO,
+                        create_time=time.strftime("%Y-%m-%dT%H:%M:%S")
+                    )
+                    tag_repo.save(new_tag)
+                    app_logger.info(f"创建新标签: {tag_id} - {tag_name}")
+                video_tag_ids.append(tag_name_to_id[tag_name])
+            
+            video_data = {
+                "id": video_id_full,
+                "title": detail.get("title", ""),
+                "code": detail.get("code", ""),
+                "date": detail.get("date", ""),
+                "series": detail.get("series", ""),
+                "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
+                "actors": detail.get("actors", []),
+                "magnets": detail.get("magnets", []),
+                "thumbnail_images": detail.get("thumbnail_images", []),
+                "preview_video": detail.get("preview_video", ""),
+                "tag_ids": video_tag_ids,
+                "list_ids": []
+            }
+            
+            result = video_service.import_video(video_data)
+            if result.success:
+                cover_url = detail.get("cover_url", "")
+                if cover_url:
+                    video_service.download_cover_async(video_data["id"], cover_url)
+                    video_service.download_high_quality_thumbnail_async(video_data["id"], cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR)
+                
+                app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
+                return success_response(result.data, result.message)
+            else:
+                return error_response(400, result.message)
+        else:
+            from infrastructure.persistence.json_storage import JsonStorage
+            
+            db_file = VIDEO_RECOMMENDATION_JSON_FILE
+            storage = JsonStorage(db_file)
+            db_data = storage.read()
+            videos_key = 'video_recommendations'
+            
+            existing_ids = {v['id'] for v in db_data.get(videos_key, [])}
+            if video_id_full in existing_ids:
+                return error_response(400, f"视频 {video_id_full} 已存在")
+            
+            video_data = {
+                "id": video_id_full,
+                "title": detail.get("title", ""),
+                "code": detail.get("code", ""),
+                "date": detail.get("date", ""),
+                "series": detail.get("series", ""),
+                "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
+                "actors": detail.get("actors", []),
+                "magnets": detail.get("magnets", []),
+                "thumbnail_images": detail.get("thumbnail_images", []),
+                "preview_video": detail.get("preview_video", ""),
+                "tag_ids": [],
+                "list_ids": [],
+                "create_time": get_current_time(),
+                "last_access_time": get_current_time()
+            }
+            
+            if videos_key not in db_data:
+                db_data[videos_key] = []
+            db_data[videos_key].append(video_data)
+            
+            if not storage.write(db_data):
+                return error_response(500, "数据写入失败")
+            
             cover_url = detail.get("cover_url", "")
             if cover_url:
-                video_service.download_cover_async(video_data["id"], cover_url)
+                video_service.download_cover_async_for_recommendation(video_id_full, cover_url, JAV_COVER_DIR)
             
-            app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
-            return success_response(result.data, result.message)
-        else:
-            return error_response(400, result.message)
+            app_logger.info(f"视频导入成功: {video_id_full}, 目标: {target}")
+            return success_response(video_data, "导入成功")
     except Exception as e:
         error_logger.error(f"第三方导入失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+# ========== 视频推荐页 API ==========
+
+@video_bp.route('/recommendation/list', methods=['GET'])
+def get_video_recommendation_list():
+    """获取推荐视频列表"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        sort_type = request.args.get('sort_type')
+        min_score = request.args.get('min_score', type=float)
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        filtered_videos = []
+        for video in videos:
+            if video.get('is_deleted'):
+                continue
+            if min_score is not None and (video.get('score') or 0) < min_score:
+                continue
+            filtered_videos.append(video)
+        
+        if sort_type == 'score':
+            filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=True)
+        elif sort_type == 'date':
+            filtered_videos.sort(key=lambda x: (x.get('date') or ''), reverse=True)
+        else:
+            filtered_videos.sort(key=lambda x: (x.get('create_time') or ''), reverse=True)
+        
+        return success_response(filtered_videos)
+    except Exception as e:
+        error_logger.error(f"获取推荐视频列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/detail', methods=['GET'])
+def get_video_recommendation_detail():
+    """获取推荐视频详情"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        video_id = request.args.get('video_id')
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        for video in videos:
+            if video.get('id') == video_id:
+                return success_response(video)
+        
+        return error_response(404, "视频不存在")
+    except Exception as e:
+        error_logger.error(f"获取推荐视频详情失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/score', methods=['PUT'])
+def update_video_recommendation_score():
+    """更新推荐视频评分"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        video_id = data.get('video_id')
+        score = data.get('score')
+        
+        if not video_id or score is None:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        found = False
+        for video in videos:
+            if video.get('id') == video_id:
+                video['score'] = score
+                found = True
+                break
+        
+        if not found:
+            return error_response(404, "视频不存在")
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        return success_response({"message": "评分更新成功"})
+    except Exception as e:
+        error_logger.error(f"更新推荐视频评分失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/move', methods=['PUT'])
+def move_video_recommendation_to_trash():
+    """移动推荐视频到回收站"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        video_id = data.get('video_id')
+        
+        if not video_id:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        found = False
+        for video in videos:
+            if video.get('id') == video_id:
+                video['is_deleted'] = True
+                video['deleted_time'] = get_current_time()
+                found = True
+                break
+        
+        if not found:
+            return error_response(404, "视频不存在")
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        return success_response({"message": "已移入回收站"})
+    except Exception as e:
+        error_logger.error(f"移动推荐视频到回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/batch-move', methods=['PUT'])
+def batch_move_video_recommendation_to_trash():
+    """批量移动推荐视频到回收站"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        video_ids = data.get('video_ids', [])
+        
+        if not video_ids:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        count = 0
+        for video in videos:
+            if video.get('id') in video_ids:
+                video['is_deleted'] = True
+                video['deleted_time'] = get_current_time()
+                count += 1
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        return success_response({"moved_count": count}, f"已将 {count} 个视频移入回收站")
+    except Exception as e:
+        error_logger.error(f"批量移动推荐视频到回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/search', methods=['GET'])
+def search_video_recommendations():
+    """搜索推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        keyword = request.args.get('keyword')
+        if not keyword:
+            return error_response(400, "缺少参数: keyword")
+        
+        keyword = keyword.lower()
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        results = []
+        for video in videos:
+            if video.get('is_deleted'):
+                continue
+            title = video.get('title', '').lower()
+            code = video.get('code', '').lower()
+            actors = ' '.join(video.get('actors', [])).lower()
+            if keyword in title or keyword in code or keyword in actors:
+                results.append(video)
+        
+        return success_response(results)
+    except Exception as e:
+        error_logger.error(f"搜索推荐视频失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -520,7 +778,6 @@ def third_party_import():
 def get_video_play_urls(video_id):
     """获取视频播放链接（从 MissAV 和 Jable 提取）"""
     try:
-        # 获取视频信息
         result = video_service.get_video_detail(video_id)
         if not result.success or not result.data:
             return error_response(404, "视频不存在")
@@ -531,7 +788,6 @@ def get_video_play_urls(video_id):
         if not code:
             return error_response(400, "视频没有番号信息")
         
-        # 从两个源提取播放链接
         import sys
         import os
         _player_path = os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper')
@@ -541,7 +797,6 @@ def get_video_play_urls(video_id):
         
         sources = []
         
-        # MissAV 源
         try:
             missav_result, missav_error = extract_from_missav(code)
             if missav_result:
@@ -567,7 +822,6 @@ def get_video_play_urls(video_id):
                 'error': str(e)
             })
         
-        # Jable 源
         try:
             jable_result, jable_error = extract_from_jable(code)
             if jable_result:
@@ -658,7 +912,7 @@ def proxy_video_request(domain, path):
 def proxy_video_request2():
     """代理视频请求（完整URL方式，支持重写m3u8）"""
     try:
-        from flask import make_response
+        from flask import make_response, Response
         from urllib.parse import urlparse, unquote, urljoin
         import base64
         import re
