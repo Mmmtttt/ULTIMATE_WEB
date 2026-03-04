@@ -45,6 +45,7 @@ class ListJsonRepository(ListRepository):
             data = self._storage.read()
             lists = data.get("lists", [])
             comics = data.get("comics", [])
+            videos = data.get("videos", [])
             
             lists = [l for l in lists if l["id"] != list_id]
             
@@ -52,8 +53,13 @@ class ListJsonRepository(ListRepository):
                 if list_id in comic.get("list_ids", []):
                     comic["list_ids"] = [lid for lid in comic.get("list_ids", []) if lid != list_id]
             
+            for video in videos:
+                if list_id in video.get("list_ids", []):
+                    video["list_ids"] = [lid for lid in video.get("list_ids", []) if lid != list_id]
+            
             data["lists"] = lists
             data["comics"] = comics
+            data["videos"] = videos
             data["last_updated"] = get_current_time()
             
             return self._storage.write(data)
@@ -86,6 +92,11 @@ class ListJsonRepository(ListRepository):
         data = self._storage.read()
         comics = data.get("comics", [])
         return sum(1 for c in comics if list_id in c.get("list_ids", []))
+    
+    def get_video_count(self, list_id: str) -> int:
+        data = self._storage.read()
+        videos = data.get("videos", [])
+        return sum(1 for v in videos if list_id in v.get("list_ids", []))
     
     def ensure_default_list(self) -> bool:
         data = self._storage.read()

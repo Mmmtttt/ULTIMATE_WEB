@@ -1,7 +1,9 @@
 from typing import List as ListType, Optional
 from domain.list import List, ListRepository
 from domain.comic import ComicRepository
+from domain.video import VideoRepository
 from infrastructure.persistence.repositories import ListJsonRepository, ComicJsonRepository
+from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
@@ -13,10 +15,12 @@ class ListAppService:
     def __init__(
         self,
         list_repo: ListRepository = None,
-        comic_repo: ComicRepository = None
+        comic_repo: ComicRepository = None,
+        video_repo: VideoRepository = None
     ):
         self._list_repo = list_repo or ListJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
+        self._video_repo = video_repo or VideoJsonRepository()
     
     def get_list_all(self) -> ServiceResult:
         try:
@@ -27,12 +31,14 @@ class ListAppService:
             result = []
             for lst in lists:
                 comic_count = self._list_repo.get_comic_count(lst.id)
+                video_count = self._list_repo.get_video_count(lst.id)
                 result.append({
                     "id": lst.id,
                     "name": lst.name,
                     "desc": lst.desc,
                     "is_default": lst.is_default,
                     "comic_count": comic_count,
+                    "video_count": video_count,
                     "create_time": lst.create_time
                 })
             
@@ -53,6 +59,9 @@ class ListAppService:
             comics = self._comic_repo.get_all()
             list_comics = [c for c in comics if list_id in c.list_ids]
             
+            videos = self._video_repo.get_all()
+            list_videos = [v for v in videos if list_id in v.list_ids]
+            
             comic_list = []
             for c in list_comics:
                 comic_list.append({
@@ -63,8 +72,24 @@ class ListAppService:
                     "current_page": c.current_page,
                     "score": c.score,
                     "tag_ids": c.tag_ids,
-                    "last_read_time": c.last_read_time,
-                    "create_time": c.create_time
+                    "last_read_time": c.last_access_time,
+                    "create_time": c.create_time,
+                    "content_type": "comic"
+                })
+            
+            video_list = []
+            for v in list_videos:
+                video_list.append({
+                    "id": v.id,
+                    "title": v.title,
+                    "cover_path": v.cover_path,
+                    "score": v.score,
+                    "tag_ids": v.tag_ids,
+                    "last_read_time": v.last_access_time,
+                    "create_time": v.create_time,
+                    "content_type": "video",
+                    "code": v.code,
+                    "actors": v.actors
                 })
             
             result = {
@@ -73,8 +98,10 @@ class ListAppService:
                 "desc": lst.desc,
                 "is_default": lst.is_default,
                 "comic_count": len(comic_list),
+                "video_count": len(video_list),
                 "create_time": lst.create_time,
-                "comics": comic_list
+                "comics": comic_list,
+                "videos": video_list
             }
             
             app_logger.info(f"获取清单详情成功: {list_id}")
@@ -253,3 +280,102 @@ class ListAppService:
     
     def ensure_default_list(self) -> bool:
         return self._list_repo.ensure_default_list()
+    
+    def bind_videos(self, list_id: str, video_ids: ListType[str]) -> ServiceResult:
+        try:
+            app_logger.info(f"[bind_videos] 开始绑定: list_id={list_id}, video_ids={video_ids}")
+            
+            lst = self._list_repo.get_by_id(list_id)
+            if not lst:
+                app_logger.error(f"[bind_videos] 清单不存在: {list_id}")
+                return ServiceResult.error("清单不存在")
+            
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    app_logger.info(f"[bind_videos] 找到视频: {video_id}, 当前list_ids={video.list_ids}")
+                    video.add_to_list(list_id)
+                    app_logger.info(f"[bind_videos] 添加后list_ids={video.list_ids}")
+                    save_result = self._video_repo.save(video)
+                    app_logger.info(f"[bind_videos] 保存结果: {save_result}")
+                    if save_result:
+                        updated_count += 1
+                else:
+                    app_logger.warning(f"[bind_videos] 视频不存在: {video_id}")
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量加入清单成功: 清单 {list_id}, {updated_count}个视频")
+            return ServiceResult.ok({
+                "list_id": list_id,
+                "updated_count": updated_count
+            }, f"成功将{updated_count}个视频加入清单")
+        except Exception as e:
+            error_logger.error(f"批量加入清单失败: {e}")
+            return ServiceResult.error("批量加入清单失败")
+    
+    def remove_videos(self, list_id: str, video_ids: ListType[str]) -> ServiceResult:
+        try:
+            lst = self._list_repo.get_by_id(list_id)
+            if not lst:
+                return ServiceResult.error("清单不存在")
+            
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.remove_from_list(list_id)
+                    if self._video_repo.save(video):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量移出清单成功: 清单 {list_id}, {updated_count}个视频")
+            return ServiceResult.ok({
+                "list_id": list_id,
+                "updated_count": updated_count
+            }, f"成功将{updated_count}个视频移出清单")
+        except Exception as e:
+            error_logger.error(f"批量移出清单失败: {e}")
+            return ServiceResult.error("批量移出清单失败")
+    
+    def toggle_favorite_video(self, video_id: str) -> ServiceResult:
+        try:
+            self._list_repo.ensure_default_list()
+            
+            video = self._video_repo.get_by_id(video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+            
+            is_favorited = self.DEFAULT_LIST_ID in video.list_ids
+            
+            if is_favorited:
+                video.remove_from_list(self.DEFAULT_LIST_ID)
+                action = "取消收藏"
+            else:
+                video.add_to_list(self.DEFAULT_LIST_ID)
+                action = "收藏"
+            
+            if not self._video_repo.save(video):
+                return ServiceResult.error(f"{action}失败")
+            
+            app_logger.info(f"{action}成功: {video_id}")
+            return ServiceResult.ok({
+                "video_id": video_id,
+                "is_favorited": not is_favorited
+            }, f"{action}成功")
+        except Exception as e:
+            error_logger.error(f"收藏操作失败: {e}")
+            return ServiceResult.error("收藏操作失败")
+    
+    def is_favorited_video(self, video_id: str) -> bool:
+        try:
+            video = self._video_repo.get_by_id(video_id)
+            if video:
+                return self.DEFAULT_LIST_ID in video.list_ids
+            return False
+        except:
+            return False

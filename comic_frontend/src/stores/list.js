@@ -153,15 +153,68 @@ export const useListStore = defineStore('list', () => {
       return null
     }
   }
-  
+
+  async function bindVideos(listId, videoIds) {
+    try {
+      const res = await listApi.bindVideos(listId, videoIds)
+      if (res.code === 200) {
+        showSuccessToast(`成功加入${res.data.updated_count}个视频`)
+        return true
+      } else {
+        showFailToast(res.msg || '加入失败')
+        return false
+      }
+    } catch (e) {
+      showFailToast('加入失败')
+      return false
+    }
+  }
+
+  async function removeVideos(listId, videoIds) {
+    try {
+      const res = await listApi.removeVideos(listId, videoIds)
+      if (res.code === 200) {
+        showSuccessToast(`成功移出${res.data.updated_count}个视频`)
+        return true
+      } else {
+        showFailToast(res.msg || '移出失败')
+        return false
+      }
+    } catch (e) {
+      showFailToast('移出失败')
+      return false
+    }
+  }
+
+  async function toggleFavoriteVideo(videoId) {
+    try {
+      const res = await listApi.toggleFavoriteVideo(videoId)
+      if (res.code === 200) {
+        const action = res.data.is_favorited ? '收藏成功' : '取消收藏'
+        showSuccessToast(action)
+        return res.data.is_favorited
+      } else {
+        showFailToast(res.msg || '操作失败')
+        return null
+      }
+    } catch (e) {
+      showFailToast('操作失败')
+      return null
+    }
+  }
+
   function isFavorited(comic) {
     return comic?.list_ids?.includes(FAVORITES_LIST_ID) || false
   }
-  
+
+  function isFavoritedVideo(video) {
+    return video?.list_ids?.includes(FAVORITES_LIST_ID) || false
+  }
+
   function clearCurrentList() {
     currentList.value = null
   }
-  
+
   return {
     lists,
     currentList,
@@ -177,7 +230,11 @@ export const useListStore = defineStore('list', () => {
     bindComics,
     removeComics,
     toggleFavorite,
+    bindVideos,
+    removeVideos,
+    toggleFavoriteVideo,
     isFavorited,
+    isFavoritedVideo,
     clearCurrentList
   }
 })

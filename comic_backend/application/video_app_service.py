@@ -193,6 +193,70 @@ class VideoAppService(BaseContentAppService):
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
     
+    def download_high_quality_thumbnail_async(self, video_id: str, cover_url: str, jav_pictures_dir: str, jav_cover_dir: str):
+        """下载高清缩略图到JAV目录（主页导入时使用）"""
+        def download():
+            try:
+                if not cover_url:
+                    return
+                
+                app_logger.info(f"开始下载高清缩略图: {video_id}")
+                
+                response = requests.get(cover_url, timeout=30)
+                if response.status_code != 200:
+                    app_logger.warning(f"下载高清缩略图失败: HTTP {response.status_code}")
+                    return
+                
+                image = Image.open(BytesIO(response.content))
+                
+                os.makedirs(jav_pictures_dir, exist_ok=True)
+                os.makedirs(jav_cover_dir, exist_ok=True)
+                
+                video_dir = os.path.join(jav_pictures_dir, video_id)
+                os.makedirs(video_dir, exist_ok=True)
+                
+                thumbnail_path = os.path.join(video_dir, "cover.jpg")
+                image.convert("RGB").save(thumbnail_path, "JPEG", quality=95)
+                
+                cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")
+                image.convert("RGB").save(cover_path, "JPEG", quality=95)
+                
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
+                    self._video_repo.save(video)
+                
+                app_logger.info(f"下载高清缩略图成功: {video_id}")
+            except Exception as e:
+                error_logger.error(f"下载高清缩略图失败: {e}")
+        
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+    
+    def download_cover_async_for_recommendation(self, video_id: str, cover_url: str, jav_cover_dir: str):
+        """下载推荐页封面"""
+        def download():
+            try:
+                if not cover_url:
+                    return
+                
+                response = requests.get(cover_url, timeout=30)
+                if response.status_code != 200:
+                    return
+                
+                image = Image.open(BytesIO(response.content))
+                os.makedirs(jav_cover_dir, exist_ok=True)
+                
+                cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")
+                image.convert("RGB").save(cover_path, "JPEG", quality=95)
+                
+                app_logger.info(f"下载推荐页封面成功: {video_id}")
+            except Exception as e:
+                error_logger.error(f"下载推荐页封面失败: {e}")
+        
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+    
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:
             imported = []

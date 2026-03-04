@@ -189,3 +189,79 @@ def check_favorite():
     except Exception as e:
         error_logger.error(f"检查收藏状态失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/video/bind', methods=['PUT'])
+def bind_videos():
+    try:
+        data = request.json
+        if not data or 'list_id' not in data or 'video_id_list' not in data:
+            return error_response(400, "缺少参数: list_id 或 video_id_list")
+        
+        list_id = data['list_id']
+        video_ids = data['video_id_list']
+        
+        result = list_service.bind_videos(list_id, video_ids)
+        if result.success:
+            app_logger.info(f"批量加入清单成功: 清单 {list_id}, {result.data['updated_count']}个视频")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量加入清单失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/video/remove', methods=['DELETE'])
+def remove_videos():
+    try:
+        list_id = request.args.get('list_id')
+        video_id_list = request.args.getlist('video_id_list')
+        
+        if not list_id or not video_id_list:
+            return error_response(400, "缺少参数: list_id 或 video_id_list")
+        
+        result = list_service.remove_videos(list_id, video_id_list)
+        if result.success:
+            app_logger.info(f"批量移出清单成功: 清单 {list_id}, {result.data['updated_count']}个视频")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移出清单失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/video/favorite/toggle', methods=['PUT'])
+def toggle_favorite_video():
+    try:
+        data = request.json
+        if not data or 'video_id' not in data:
+            return error_response(400, "缺少参数: video_id")
+        
+        video_id = data['video_id']
+        
+        result = list_service.toggle_favorite_video(video_id)
+        if result.success:
+            action = "收藏" if result.data['is_favorited'] else "取消收藏"
+            app_logger.info(f"{action}成功: {video_id}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"收藏操作失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/video/favorite/check', methods=['GET'])
+def check_favorite_video():
+    try:
+        video_id = request.args.get('video_id')
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+        
+        is_favorited = list_service.is_favorited_video(video_id)
+        return success_response({"video_id": video_id, "is_favorited": is_favorited})
+    except Exception as e:
+        error_logger.error(f"检查收藏状态失败: {e}")
+        return error_response(500, "服务器内部错误")
