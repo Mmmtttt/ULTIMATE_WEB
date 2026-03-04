@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.tag_app_service import TagAppService
 from infrastructure.logger import app_logger, error_logger
+from core.enums import ContentType
 
 tag_bp = Blueprint('tag', __name__)
 tag_service = TagAppService()
@@ -30,7 +31,13 @@ def add_tag():
             return error_response(400, "缺少参数: tag_name")
         
         tag_name = data['tag_name']
-        result = tag_service.create_tag(tag_name)
+        content_type_str = data.get('content_type', ContentType.COMIC.value)
+        try:
+            content_type = ContentType(content_type_str)
+        except ValueError:
+            content_type = ContentType.COMIC
+        
+        result = tag_service.create_tag(tag_name, content_type)
         
         if result.success:
             app_logger.info(f"新增标签成功: {tag_name}")
@@ -45,7 +52,13 @@ def add_tag():
 @tag_bp.route('/list', methods=['GET'])
 def list_tags():
     try:
-        result = tag_service.get_tag_list()
+        content_type_str = request.args.get('content_type', ContentType.COMIC.value)
+        try:
+            content_type = ContentType(content_type_str)
+        except ValueError:
+            content_type = ContentType.COMIC
+        
+        result = tag_service.get_tag_list(content_type)
         
         if result.success:
             return success_response(result.data)
@@ -171,4 +184,62 @@ def batch_remove_tags():
             return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"批量移除标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/all-videos', methods=['GET'])
+def get_all_videos():
+    try:
+        result = tag_service.get_all_videos()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取所有视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/batch-add-tags-to-videos', methods=['POST'])
+def batch_add_tags_to_videos():
+    try:
+        data = request.json
+        if not data or 'video_data' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: video_data 或 tag_ids")
+        
+        video_data = data['video_data']
+        tag_ids = data['tag_ids']
+        
+        result = tag_service.batch_add_tags_to_videos(video_data, tag_ids)
+        
+        if result.success:
+            app_logger.info(f"批量添加标签到视频成功")
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量添加标签到视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@tag_bp.route('/batch-remove-tags-from-videos', methods=['POST'])
+def batch_remove_tags_from_videos():
+    try:
+        data = request.json
+        if not data or 'video_data' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: video_data 或 tag_ids")
+        
+        video_data = data['video_data']
+        tag_ids = data['tag_ids']
+        
+        result = tag_service.batch_remove_tags_from_videos(video_data, tag_ids)
+        
+        if result.success:
+            app_logger.info(f"批量从视频移除标签成功")
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量从视频移除标签失败: {e}")
         return error_response(500, "服务器内部错误")

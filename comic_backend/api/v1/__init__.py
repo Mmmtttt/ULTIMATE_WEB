@@ -5,3 +5,5 @@ from .config import config_bp
 from .recommendation import recommendation_bp
 from .backup import backup_bp
 from .author import author_bp
+from .video import video_bp
+from .actor import actor_bp

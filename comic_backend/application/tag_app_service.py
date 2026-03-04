@@ -2,10 +2,12 @@ from typing import List
 from domain.tag import Tag, TagRepository
 from domain.comic import ComicRepository
 from domain.recommendation import RecommendationRepository
-from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository
+from domain.video import VideoRepository
+from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
+from core.enums import ContentType
 
 
 class TagAppService:
@@ -13,33 +15,47 @@ class TagAppService:
         self,
         tag_repo: TagRepository = None,
         comic_repo: ComicRepository = None,
-        recommendation_repo: RecommendationRepository = None
+        recommendation_repo: RecommendationRepository = None,
+        video_repo: VideoRepository = None
     ):
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
+        self._video_repo = video_repo or VideoJsonRepository()
     
-    def get_tag_list(self) -> ServiceResult:
+    def get_tag_list(self, content_type: ContentType = ContentType.COMIC) -> ServiceResult:
         try:
-            tags = self._tag_repo.get_all()
-            comics = self._comic_repo.get_all()
-            recommendations = self._recommendation_repo.get_all()
+            tags = self._tag_repo.get_all(content_type)
             
-            tag_comic_count = {}
-            for comic in comics:
-                for tag_id in comic.tag_ids:
-                    tag_comic_count[tag_id] = tag_comic_count.get(tag_id, 0) + 1
-            
-            for recommendation in recommendations:
-                for tag_id in recommendation.tag_ids:
-                    tag_comic_count[tag_id] = tag_comic_count.get(tag_id, 0) + 1
+            tag_count = {}
+            if content_type == ContentType.COMIC:
+                comics = self._comic_repo.get_all()
+                recommendations = self._recommendation_repo.get_all()
+                
+                for comic in comics:
+                    for tag_id in comic.tag_ids:
+                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+                
+                for recommendation in recommendations:
+                    for tag_id in recommendation.tag_ids:
+                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+                
+                count_key = "comic_count"
+            else:
+                videos = self._video_repo.get_all()
+                
+                for video in videos:
+                    for tag_id in video.tag_ids:
+                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+                
+                count_key = "video_count"
             
             tag_list = []
             for t in tags:
                 tag_info = {
                     "id": t.id,
                     "name": t.name,
-                    "comic_count": tag_comic_count.get(t.id, 0)
+                    count_key: tag_count.get(t.id, 0)
                 }
                 tag_list.append(tag_info)
             
@@ -49,14 +65,15 @@ class TagAppService:
             error_logger.error(f"获取标签列表失败: {e}")
             return ServiceResult.error("获取标签列表失败")
     
-    def create_tag(self, name: str) -> ServiceResult:
+    def create_tag(self, name: str, content_type: ContentType = ContentType.COMIC) -> ServiceResult:
         try:
-            if self._tag_repo.exists_by_name(name):
+            if self._tag_repo.exists_by_name(name, content_type):
                 return ServiceResult.error("标签名称已存在")
             
             tag = Tag(
                 id=generate_id("tag"),
                 name=name,
+                content_type=content_type,
                 create_time=get_current_time()
             )
             
@@ -163,7 +180,7 @@ class TagAppService:
 
     def get_all_comics(self) -> ServiceResult:
         try:
-            tags = self._tag_repo.get_all()
+            tags = self._tag_repo.get_all(ContentType.COMIC)
             tag_map = {t.id: t.name for t in tags}
             
             home_comics = []
@@ -211,6 +228,38 @@ class TagAppService:
         except Exception as e:
             error_logger.error(f"获取所有漫画失败: {e}")
             return ServiceResult.error("获取所有漫画失败")
+    
+    def get_all_videos(self) -> ServiceResult:
+        try:
+            tags = self._tag_repo.get_all(ContentType.VIDEO)
+            tag_map = {t.id: t.name for t in tags}
+            
+            videos = []
+            video_list = self._video_repo.get_all()
+            for v in video_list:
+                video_info = {
+                    "id": v.id,
+                    "title": v.title,
+                    "code": v.code,
+                    "cover_path": v.cover_path,
+                    "date": v.date,
+                    "score": v.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids],
+                    "tag_ids": v.tag_ids,
+                    "source": "home"
+                }
+                videos.append(video_info)
+            
+            result = {
+                "videos": videos,
+                "count": len(videos)
+            }
+            
+            app_logger.info(f"获取所有视频成功, 共 {len(videos)} 个")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取所有视频失败: {e}")
+            return ServiceResult.error("获取所有视频失败")
 
     def batch_add_tags(self, comic_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
@@ -286,6 +335,60 @@ class TagAppService:
                 "total_updated": total_updated,
                 "tag_ids": tag_ids
             }, f"成功从{total_updated}个漫画移除标签")
+        except Exception as e:
+            error_logger.error(f"批量移除标签失败: {e}")
+            return ServiceResult.error("批量移除标签失败")
+    
+    def batch_add_tags_to_videos(self, video_data: List[dict], tag_ids: List[str]) -> ServiceResult:
+        try:
+            for tag_id in tag_ids:
+                if not self._tag_repo.get_by_id(tag_id):
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            
+            updated = 0
+            
+            for item in video_data:
+                video_id = item.get('id')
+                
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.add_tags(tag_ids)
+                    if self._video_repo.save(video):
+                        updated += 1
+            
+            if updated == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量添加标签成功: {updated}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({
+                "updated": updated,
+                "tag_ids": tag_ids
+            }, f"成功为{updated}个视频添加标签")
+        except Exception as e:
+            error_logger.error(f"批量添加标签失败: {e}")
+            return ServiceResult.error("批量添加标签失败")
+    
+    def batch_remove_tags_from_videos(self, video_data: List[dict], tag_ids: List[str]) -> ServiceResult:
+        try:
+            updated = 0
+            
+            for item in video_data:
+                video_id = item.get('id')
+                
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.remove_tags(tag_ids)
+                    if self._video_repo.save(video):
+                        updated += 1
+            
+            if updated == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量移除标签成功: {updated}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({
+                "updated": updated,
+                "tag_ids": tag_ids
+            }, f"成功从{updated}个视频移除标签")
         except Exception as e:
             error_logger.error(f"批量移除标签失败: {e}")
             return ServiceResult.error("批量移除标签失败")

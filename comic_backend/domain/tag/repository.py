@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from .entity import Tag
+from core.enums import ContentType
 
 
 class TagRepository(ABC):
@@ -9,7 +10,7 @@ class TagRepository(ABC):
         pass
     
     @abstractmethod
-    def get_all(self) -> List[Tag]:
+    def get_all(self, content_type: ContentType = None) -> List[Tag]:
         pass
     
     @abstractmethod
@@ -21,5 +22,5 @@ class TagRepository(ABC):
         pass
     
     @abstractmethod
-    def exists_by_name(self, name: str) -> bool:
+    def exists_by_name(self, name: str, content_type: ContentType = None) -> bool:
         pass

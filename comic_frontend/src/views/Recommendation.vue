@@ -418,7 +418,7 @@ async function clearAllFilters() {
 // ============ Lifecycle ============
 onMounted(async () => {
   console.log('[Recommendation] 页面挂载')
-  await tagStore.fetchTags()
+  await tagStore.fetchTags('comic')
   await fetchRecommendations()
   
   const importIds = route.query.importIds

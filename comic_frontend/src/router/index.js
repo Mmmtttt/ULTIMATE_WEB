@@ -52,6 +52,11 @@ const routes = [
     component: () => import('../views/TagManage.vue')
   },
   {
+    path: '/video-tags',
+    name: 'VideoTagManage',
+    component: () => import('../views/VideoTagManage.vue')
+  },
+  {
     path: '/tag/:id',
     name: 'TagDetail',
     component: () => import('../views/TagDetail.vue')

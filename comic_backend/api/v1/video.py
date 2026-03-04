@@ -239,6 +239,103 @@ def get_by_tag(tag_id):
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/tags', methods=['GET'])
+def get_tags():
+    try:
+        from application.tag_app_service import TagAppService
+        tag_service = TagAppService()
+        result = tag_service.get_tag_list()
+        
+        if result.success:
+            app_logger.info(f"获取标签列表成功，共 {len(result.data)} 个标签")
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取标签列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/tag/bind', methods=['PUT'])
+def bind_tags():
+    try:
+        data = request.json
+        if not data or 'video_id' not in data or 'tag_id_list' not in data:
+            return error_response(400, "缺少参数: video_id 或 tag_id_list")
+        
+        video_id = data['video_id']
+        tag_id_list = data['tag_id_list']
+        
+        result = video_service.bind_tags(video_id, tag_id_list)
+        if result.success:
+            app_logger.info(f"绑定标签成功: {video_id}, 标签: {tag_id_list}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"绑定标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/filter', methods=['GET'])
+def filter_videos():
+    try:
+        include_tag_ids = request.args.getlist('include_tag_ids')
+        exclude_tag_ids = request.args.getlist('exclude_tag_ids')
+        
+        result = video_service.filter_by_tags(include_tag_ids, exclude_tag_ids)
+        if result.success:
+            app_logger.info(f"筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(result.data)}")
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"筛选失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/tag/batch-add', methods=['PUT'])
+def batch_add_tags():
+    try:
+        data = request.json
+        if not data or 'video_ids' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: video_ids 或 tag_ids")
+        
+        video_ids = data['video_ids']
+        tag_ids = data['tag_ids']
+        
+        result = video_service.batch_add_tags(video_ids, tag_ids)
+        if result.success:
+            app_logger.info(f"批量添加标签成功: {len(video_ids)}个视频, 标签: {tag_ids}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量添加标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/tag/batch-remove', methods=['PUT'])
+def batch_remove_tags():
+    try:
+        data = request.json
+        if not data or 'video_ids' not in data or 'tag_ids' not in data:
+            return error_response(400, "缺少参数: video_ids 或 tag_ids")
+        
+        video_ids = data['video_ids']
+        tag_ids = data['tag_ids']
+        
+        result = video_service.batch_remove_tags(video_ids, tag_ids)
+        if result.success:
+            app_logger.info(f"批量移除标签成功: {len(video_ids)}个视频, 标签: {tag_ids}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移除标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @video_bp.route('/actor/<actor_name>', methods=['GET'])
 def get_by_actor(actor_name):
     try:
@@ -338,13 +435,55 @@ def third_party_import():
         if not video_id:
             return error_response(400, "缺少视频ID")
         
+        # 获取现有标签，用于标签去重
+        from application.tag_app_service import TagAppService
         from third_party.javdb_api_scraper import JavdbAdapter
+        from domain.tag.entity import ContentType
         
-        adapter = JavdbAdapter()
+        tag_service = TagAppService()
+        existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        
+        adapter = JavdbAdapter(existing_tags)
         detail = adapter.get_video_detail(video_id)
         
         if not detail:
             return error_response(404, "视频不存在")
+        
+        # 转换标签名称到 tag_id，创建不存在的标签
+        tag_name_to_id = {}
+        tag_id_counter = 1
+        
+        # 处理已有标签
+        for tag in existing_tags:
+            tag_name_to_id[tag["name"]] = tag["id"]
+            if tag["id"].startswith("tag_"):
+                try:
+                    num = int(tag["id"][4:])
+                    tag_id_counter = max(tag_id_counter, num + 1)
+                except ValueError:
+                    pass
+        
+        # 处理标签，创建不存在的标签
+        video_tag_ids = []
+        for tag_name in detail.get("tags", []):
+            if tag_name not in tag_name_to_id:
+                # 创建新标签
+                tag_id = f"tag_{tag_id_counter:03d}"
+                tag_name_to_id[tag_name] = tag_id
+                tag_id_counter += 1
+                # 创建标签
+                from domain.tag.entity import Tag, ContentType
+                from repository.tag_repository import TagRepository
+                tag_repo = TagRepository()
+                new_tag = Tag(
+                    id=tag_id,
+                    name=tag_name,
+                    content_type=ContentType.VIDEO,
+                    create_time=time.strftime("%Y-%m-%dT%H:%M:%S")
+                )
+                tag_repo.save(new_tag)
+                app_logger.info(f"创建新标签: {tag_id} - {tag_name}")
+            video_tag_ids.append(tag_name_to_id[tag_name])
         
         video_data = {
             "id": f"JAVDB_{video_id}",
@@ -357,7 +496,7 @@ def third_party_import():
             "magnets": detail.get("magnets", []),
             "thumbnail_images": detail.get("thumbnail_images", []),
             "preview_video": detail.get("preview_video", ""),
-            "tag_ids": []
+            "tag_ids": video_tag_ids
         }
         
         result = video_service.import_video(video_data)
@@ -366,6 +505,7 @@ def third_party_import():
             if cover_url:
                 video_service.download_cover_async(video_data["id"], cover_url)
             
+            app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
             return success_response(result.data, result.message)
         else:
             return error_response(400, result.message)

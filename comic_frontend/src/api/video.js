@@ -75,6 +75,33 @@ export const videoApi = {
   
   getPlayUrls(videoId) {
     return request.get(`/v1/video/${videoId}/play-urls`)
+  },
+  
+  getTags() {
+    return request.get('/v1/video/tags')
+  },
+  
+  bindTags(videoId, tagIdList) {
+    return request.put('/v1/video/tag/bind', { video_id: videoId, tag_id_list: tagIdList })
+  },
+  
+  filter(includeTags = [], excludeTags = []) {
+    const params = {}
+    if (includeTags.length > 0) {
+      params.include_tag_ids = includeTags
+    }
+    if (excludeTags.length > 0) {
+      params.exclude_tag_ids = excludeTags
+    }
+    return request.get('/v1/video/filter', { params })
+  },
+  
+  batchAddTags(videoIds, tagIds) {
+    return request.put('/v1/video/tag/batch-add', { video_ids: videoIds, tag_ids: tagIds })
+  },
+  
+  batchRemoveTags(videoIds, tagIds) {
+    return request.put('/v1/video/tag/batch-remove', { video_ids: videoIds, tag_ids: tagIds })
   }
 }
 

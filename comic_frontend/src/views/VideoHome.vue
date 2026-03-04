@@ -35,10 +35,21 @@
         <van-icon v-if="isMobile" name="sort" />
         <template v-else>排序 <van-icon name="sort" /></template>
       </van-button>
+      <van-button 
+        size="small" 
+        type="primary" 
+        plain 
+        @click="showFilterPanel = true"
+        class="filter-btn"
+      >
+        <van-icon v-if="isMobile" name="filter-o" />
+        <template v-else>筛选 <van-icon name="filter-o" /></template>
+      </van-button>
     </div>
     
-    <div v-if="currentSortType" class="active-filter-bar">
+    <div v-if="isFiltering || currentSortType" class="active-filter-bar">
       <van-tag 
+        v-if="currentSortType" 
         type="primary" 
         closeable 
         @close="clearSort"
@@ -46,6 +57,27 @@
       >
         {{ sortLabel }}
       </van-tag>
+      <van-tag 
+        v-for="tag in selectedIncludeTags" 
+        :key="tag.id" 
+        type="primary" 
+        closeable 
+        @close="removeIncludeTag(tag.id)"
+        class="filter-tag"
+      >
+        包含: {{ tag.name }}
+      </van-tag>
+      <van-tag 
+        v-for="tag in selectedExcludeTags" 
+        :key="tag.id" 
+        type="danger" 
+        closeable 
+        @close="removeExcludeTag(tag.id)"
+        class="filter-tag"
+      >
+        排除: {{ tag.name }}
+      </van-tag>
+      <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
     </div>
     
     <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
@@ -126,6 +158,31 @@
             </template>
           </van-cell>
         </van-cell-group>
+      </div>
+    </van-popup>
+    
+    <van-popup 
+      v-model:show="showFilterPanel" 
+      :position="isDesktop ? 'center' : 'bottom'" 
+      round 
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '70%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="标签筛选" left-text="关闭" @click-left="showFilterPanel = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="applyFilterAndClose">
+              确定
+            </van-button>
+          </template>
+        </van-nav-bar>
+        
+        <TagFilter
+          v-model:include-tags="includeTags"
+          v-model:exclude-tags="excludeTags"
+          :tags="tags"
+          show-count
+          @change="handleFilterChange"
+        />
       </div>
     </van-popup>
     
@@ -213,9 +270,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast } from 'vant'
-import { useModeStore, useVideoStore, useComicStore } from '@/stores'
+import { useModeStore, useVideoStore, useComicStore, useTagStore } from '@/stores'
 import { useDevice } from '@/composables'
-import { EmptyState } from '@/components'
+import { EmptyState, TagFilter } from '@/components'
 
 const { isMobile, isDesktop } = useDevice()
 
@@ -223,13 +280,17 @@ const router = useRouter()
 const modeStore = useModeStore()
 const videoStore = useVideoStore()
 const comicStore = useComicStore()
+const tagStore = useTagStore()
 
 const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
 
 const active = ref(0)
 const keyword = ref('')
+const includeTags = ref([])
+const excludeTags = ref([])
 const currentSortType = ref('')
 const showSortPanel = ref(false)
+const showFilterPanel = ref(false)
 const showImportPanel = ref(false)
 const importKeyword = ref('')
 const importLoading = ref(false)
@@ -242,8 +303,23 @@ const menuOptions = [
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const isLoading = computed(() => isVideoMode.value ? videoStore.loading : comicStore.loading)
-const results = computed(() => isVideoMode.value ? videoStore.videos : comicStore.comics)
+const results = computed(() => isVideoMode.value ? videoStore.videoList : comicStore.comics)
 const hasResults = computed(() => results.value.length > 0)
+const isFiltering = computed(() => 
+  keyword.value || 
+  includeTags.value.length > 0 || 
+  excludeTags.value.length > 0
+)
+
+const tags = computed(() => tagStore.videoTags)
+
+const selectedIncludeTags = computed(() => {
+  return includeTags.value.map(id => tagStore.getVideoTagById(id)).filter(Boolean)
+})
+
+const selectedExcludeTags = computed(() => {
+  return excludeTags.value.map(id => tagStore.getVideoTagById(id)).filter(Boolean)
+})
 
 const sortLabel = computed(() => {
   const labels = {
@@ -319,6 +395,47 @@ function clearSort() {
   loadData()
 }
 
+function removeIncludeTag(tagId) {
+  const index = includeTags.value.indexOf(tagId)
+  if (index > -1) {
+    includeTags.value.splice(index, 1)
+  }
+}
+
+function removeExcludeTag(tagId) {
+  const index = excludeTags.value.indexOf(tagId)
+  if (index > -1) {
+    excludeTags.value.splice(index, 1)
+  }
+}
+
+function handleFilterChange() {
+  if (includeTags.value.length > 0 || excludeTags.value.length > 0) {
+    filterByTags()
+  } else {
+    videoStore.clearFilter()
+  }
+}
+
+function applyFilterAndClose() {
+  showFilterPanel.value = false
+}
+
+async function filterByTags() {
+  if (isVideoMode.value) {
+    await videoStore.filterByTags(includeTags.value, excludeTags.value)
+  }
+}
+
+function clearAllFilters() {
+  keyword.value = ''
+  includeTags.value = []
+  excludeTags.value = []
+  currentSortType.value = ''
+  videoStore.clearFilter()
+  loadData()
+}
+
 function handleMenuChange(value) {
   if (value === 1 && isVideoMode.value) {
     showImportPanel.value = true
@@ -359,8 +476,13 @@ async function importVideo(item) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   modeStore.setMode('video')
+  
+  if (tagStore.videoTags.length === 0) {
+    await tagStore.fetchTags('video')
+  }
+  
   loadData()
 })
 
@@ -397,15 +519,18 @@ watch(() => modeStore.currentMode, () => {
   padding: 0;
 }
 
-.sort-btn {
+.sort-btn,
+.filter-btn {
   flex-shrink: 0;
 }
 
-.video-home-mobile .sort-btn {
+.video-home-mobile .sort-btn,
+.video-home-mobile .filter-btn {
   padding: 0 8px;
 }
 
-.video-home-desktop .sort-btn {
+.video-home-desktop .sort-btn,
+.video-home-desktop .filter-btn {
   padding: 0 12px;
 }
 

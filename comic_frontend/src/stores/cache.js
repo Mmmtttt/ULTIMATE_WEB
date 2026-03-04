@@ -21,9 +21,13 @@ export const useCacheStore = defineStore('cache', () => {
   const imagesCache = ref({})
   const imagesCacheTime = ref({})
 
-  // 标签列表缓存
+  // 漫画标签列表缓存
   const tagsCache = ref(null)
   const tagsCacheTime = ref(0)
+  
+  // 视频标签列表缓存
+  const videoTagsCache = ref(null)
+  const videoTagsCacheTime = ref(0)
 
   // 推荐漫画列表缓存
   const recommendationListCache = ref(null)
@@ -62,11 +66,19 @@ export const useCacheStore = defineStore('cache', () => {
   })
   
   /**
-   * 检查标签缓存是否有效
+   * 检查漫画标签缓存是否有效
    */
   const isTagsCacheValid = computed(() => {
     if (!tagsCache.value) return false
     return Date.now() - tagsCacheTime.value < CACHE_EXPIRY.TAGS
+  })
+  
+  /**
+   * 检查视频标签缓存是否有效
+   */
+  const isVideoTagsCacheValid = computed(() => {
+    if (!videoTagsCache.value) return false
+    return Date.now() - videoTagsCacheTime.value < CACHE_EXPIRY.TAGS
   })
 
   /**
@@ -192,13 +204,37 @@ export const useCacheStore = defineStore('cache', () => {
   }
   
   /**
-   * 设置标签缓存
+   * 设置漫画标签缓存
    * @param {Array} data - 标签列表数据
    */
   function setTagsCache(data) {
     tagsCache.value = data
     tagsCacheTime.value = Date.now()
-    console.log('[Cache] 缓存标签列表')
+    console.log('[Cache] 缓存漫画标签列表')
+  }
+  
+  /**
+   * 获取视频标签缓存
+   * @returns {Array|null} 缓存数据或null
+   */
+  function getVideoTagsCache() {
+    if (isVideoTagsCacheValid.value) {
+      console.log('[Cache] 使用缓存的视频标签列表', { 
+        age: Math.round((Date.now() - videoTagsCacheTime.value) / 1000) + 's' 
+      })
+      return videoTagsCache.value
+    }
+    return null
+  }
+  
+  /**
+   * 设置视频标签缓存
+   * @param {Array} data - 标签列表数据
+   */
+  function setVideoTagsCache(data) {
+    videoTagsCache.value = data
+    videoTagsCacheTime.value = Date.now()
+    console.log('[Cache] 缓存视频标签列表')
   }
 
   // ============ 作者列表缓存操作 ============
@@ -345,7 +381,7 @@ export const useCacheStore = defineStore('cache', () => {
   
   /**
    * 清除缓存
-   * @param {string} type - 缓存类型（all/list/detail/images/tags）
+   * @param {string} type - 缓存类型（all/list/detail/images/tags/video-tags）
    * @param {string} id - 特定ID（用于detail/images）
    */
   function clearCache(type = 'all', id = null) {
@@ -379,6 +415,11 @@ export const useCacheStore = defineStore('cache', () => {
     if (type === 'all' || type === 'tags') {
       tagsCache.value = null
       tagsCacheTime.value = 0
+    }
+    
+    if (type === 'all' || type === 'video-tags') {
+      videoTagsCache.value = null
+      videoTagsCacheTime.value = 0
     }
   }
   
@@ -423,6 +464,7 @@ export const useCacheStore = defineStore('cache', () => {
     detailCache: computed(() => detailCache.value),
     imagesCache: computed(() => imagesCache.value),
     tagsCache: computed(() => tagsCache.value),
+    videoTagsCache: computed(() => videoTagsCache.value),
     recommendationListCache: computed(() => recommendationListCache.value),
     recommendationDetailCache: computed(() => recommendationDetailCache.value),
     authorsCache: computed(() => authorsCache.value),
@@ -431,6 +473,7 @@ export const useCacheStore = defineStore('cache', () => {
     cacheStats,
     isListCacheValid,
     isTagsCacheValid,
+    isVideoTagsCacheValid,
     isRecommendationListCacheValid,
     isAuthorsCacheValid,
 
@@ -443,6 +486,8 @@ export const useCacheStore = defineStore('cache', () => {
     setImagesCache,
     getTagsCache,
     setTagsCache,
+    getVideoTagsCache,
+    setVideoTagsCache,
     getAuthorsCache,
     setAuthorsCache,
     clearAuthorsCache,

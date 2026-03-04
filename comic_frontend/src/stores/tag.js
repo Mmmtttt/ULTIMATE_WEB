@@ -14,8 +14,11 @@ export const useTagStore = defineStore('tag', () => {
   
   // ============ State ============
   
-  // 标签列表
+  // 漫画标签列表
   const tags = ref([])
+  
+  // 视频标签列表
+  const videoTags = ref([])
   
   // 当前选中的标签
   const selectedTags = ref([])
@@ -52,10 +55,17 @@ export const useTagStore = defineStore('tag', () => {
   })
   
   /**
-   * 根据ID获取标签
+   * 根据ID获取标签（漫画标签）
    */
   const getTagById = computed(() => (id) => {
     return tags.value.find(tag => tag.id === id) || null
+  })
+  
+  /**
+   * 根据ID获取视频标签
+   */
+  const getVideoTagById = computed(() => (id) => {
+    return videoTags.value.find(tag => tag.id === id) || null
   })
   
   /**
@@ -69,15 +79,22 @@ export const useTagStore = defineStore('tag', () => {
   
   /**
    * 获取标签列表
+   * @param {string} contentType - 内容类型 'comic' 或 'video'
    * @param {boolean} forceRefresh - 是否强制刷新
    * @returns {Array} 标签列表
    */
-  async function fetchTags(forceRefresh = false) {
+  async function fetchTags(contentType = 'comic', forceRefresh = false) {
     // 检查缓存
     if (!forceRefresh) {
-      const cached = cacheStore.getTagsCache()
+      const cached = contentType === 'video' 
+        ? cacheStore.getVideoTagsCache() 
+        : cacheStore.getTagsCache()
       if (cached) {
-        tags.value = cached
+        if (contentType === 'video') {
+          videoTags.value = cached
+        } else {
+          tags.value = cached
+        }
         return cached
       }
     }
@@ -86,14 +103,19 @@ export const useTagStore = defineStore('tag', () => {
     error.value = null
     
     try {
-      console.log('[Tag] 获取标签列表')
-      const response = await tagApi.list()
-      tags.value = response.data || []
+      console.log('[Tag] 获取标签列表', { contentType })
+      const response = await tagApi.list(contentType)
+      const resultTags = response.data || []
       
-      // 更新缓存
-      cacheStore.setTagsCache(tags.value)
+      if (contentType === 'video') {
+        videoTags.value = resultTags
+        cacheStore.setVideoTagsCache(resultTags)
+      } else {
+        tags.value = resultTags
+        cacheStore.setTagsCache(resultTags)
+      }
       
-      return tags.value
+      return resultTags
     } catch (err) {
       error.value = err.message
       console.error('[Tag] 获取标签列表失败:', err)
@@ -106,9 +128,10 @@ export const useTagStore = defineStore('tag', () => {
   /**
    * 添加标签
    * @param {string} tagName - 标签名称
+   * @param {string} contentType - 内容类型 'comic' 或 'video'
    * @returns {Object} 结果
    */
-  async function addTag(tagName) {
+  async function addTag(tagName, contentType = 'comic') {
     // 校验
     const validation = validateTagName(tagName)
     if (!validation.valid) {
@@ -116,7 +139,8 @@ export const useTagStore = defineStore('tag', () => {
     }
     
     // 检查是否已存在
-    const exists = tags.value.some(tag => tag.name === tagName.trim())
+    const currentTags = contentType === 'video' ? videoTags.value : tags.value
+    const exists = currentTags.some(tag => tag.name === tagName.trim())
     if (exists) {
       return { success: false, message: '标签已存在' }
     }
@@ -124,14 +148,14 @@ export const useTagStore = defineStore('tag', () => {
     loading.value = true
     
     try {
-      console.log('[Tag] 添加标签:', tagName)
-      const response = await tagApi.add(tagName.trim())
+      console.log('[Tag] 添加标签:', tagName, contentType)
+      const response = await tagApi.add(tagName.trim(), contentType)
       
       // 刷新标签列表
-      await fetchTags(true)
+      await fetchTags(contentType, true)
       
       // 清除标签缓存
-      cacheStore.clearCache('tags')
+      cacheStore.clearCache(contentType === 'video' ? 'video-tags' : 'tags')
       
       return { success: true, data: response.data }
     } catch (err) {
@@ -324,6 +348,7 @@ export const useTagStore = defineStore('tag', () => {
   return {
     // State
     tags,
+    videoTags,
     selectedTags,
     loading,
     error,
@@ -333,6 +358,7 @@ export const useTagStore = defineStore('tag', () => {
     tagCount,
     tagNameMap,
     getTagById,
+    getVideoTagById,
     selectedTagObjects,
     
     // Actions

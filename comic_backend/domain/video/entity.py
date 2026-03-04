@@ -68,3 +68,16 @@ class Video(BaseContent):
             "actors": self._actors
         })
         return base_dict
+    
+    def bind_tags(self, tag_ids: List[str]):
+        self.tag_ids = tag_ids
+    
+    def add_tags(self, tag_ids: List[str]):
+        current = set(self.tag_ids)
+        current.update(tag_ids)
+        self.tag_ids = list(current)
+    
+    def remove_tags(self, tag_ids: List[str]):
+        current = set(self.tag_ids)
+        current.difference_update(tag_ids)
+        self.tag_ids = list(current)

@@ -1,7 +1,5 @@
 from flask import Blueprint
-from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp, backup_bp, author_bp
-from .v1.video import video_bp
-from .v1.actor import actor_bp
+from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp, backup_bp, author_bp, video_bp, actor_bp
 
 
 def register_blueprints(app):

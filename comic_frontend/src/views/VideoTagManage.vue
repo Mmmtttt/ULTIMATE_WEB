@@ -1,5 +1,5 @@
 <template>
-  <div class="tag-manage">
+  <div class="video-tag-manage">
     <van-nav-bar title="标签管理" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
         <van-icon name="plus" @click="showAddPopup = true" />
@@ -19,9 +19,9 @@
           <van-swipe-cell v-for="tag in tagList" :key="tag.id">
             <van-cell 
               :title="tag.name" 
-              :label="`${tag.comic_count || 0} 个漫画`"
+              :label="`${tag.video_count || 0} 个视频`"
               is-link
-              @click="goToTagComics(tag.id)"
+              @click="goToTagVideos(tag.id)"
             >
               <template #icon>
                 <van-icon name="label-o" class="tag-icon" />
@@ -38,27 +38,28 @@
       <van-tab title="批量操作">
         <div class="batch-section">
           <div class="section-header">
-            <span class="section-title">选择漫画</span>
-            <span class="selected-count" v-if="selectedComicIds.length > 0">
-              已选 {{ selectedComicIds.length }} 个
+            <span class="section-title">选择视频</span>
+            <span class="selected-count" v-if="selectedVideoIds.length > 0">
+              已选 {{ selectedVideoIds.length }} 个
             </span>
           </div>
           
-          <div class="comic-select-grid">
+          <div class="video-select-grid">
             <div 
-              v-for="comic in comicList" 
-              :key="comic.id" 
-              class="comic-select-item"
-              :class="{ selected: selectedComicIds.includes(comic.id) }"
-              @click="toggleComicSelection(comic.id)"
+              v-for="video in videoList" 
+              :key="video.id" 
+              class="video-select-item"
+              :class="{ selected: selectedVideoIds.includes(video.id) }"
+              @click="toggleVideoSelection(video.id)"
             >
               <van-image 
-                :src="getCoverUrl(comic.cover_path)" 
+                :src="getCoverUrl(video.cover_path)" 
                 fit="contain" 
-                class="comic-thumb"
+                class="video-thumb"
               />
-              <div class="comic-title-line">{{ comic.title }}</div>
-              <div class="select-check" v-if="selectedComicIds.includes(comic.id)">
+              <div class="video-title-line">{{ video.title }}</div>
+              <div class="video-code-line">{{ video.code }}</div>
+              <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
                 <van-icon name="success" />
               </div>
             </div>
@@ -150,7 +151,7 @@
     </van-popup>
     
     <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" to="/">主页</van-tabbar-item>
+      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
   </div>
@@ -159,35 +160,38 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useComicStore, useTagStore } from '@/stores'
+import { useVideoStore, useTagStore, useModeStore } from '@/stores'
 import { tagApi } from '@/api'
 import { buildCoverUrl } from '@/api/image'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const router = useRouter()
-const comicStore = useComicStore()
+const videoStore = useVideoStore()
 const tagStore = useTagStore()
+const modeStore = useModeStore()
 
 const active = ref(1)
 const activeTab = ref(0)
 const isLoading = ref(true)
 const tagList = ref([])
-const comicList = ref([])
+const videoList = ref([])
 const showAddPopup = ref(false)
 const showEditPopup = ref(false)
 const newTagName = ref('')
 const editTagName = ref('')
 const editingTag = ref(null)
 
-const selectedComicIds = ref([])
+const selectedVideoIds = ref([])
 const selectedTagIds = ref([])
 
+const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
+
 const canBatchAdd = computed(() => {
-  return selectedComicIds.value.length > 0 && selectedTagIds.value.length > 0
+  return selectedVideoIds.value.length > 0 && selectedTagIds.value.length > 0
 })
 
 const canBatchRemove = computed(() => {
-  return selectedComicIds.value.length > 0 && selectedTagIds.value.length > 0
+  return selectedVideoIds.value.length > 0 && selectedTagIds.value.length > 0
 })
 
 const getCoverUrl = (coverPath) => {
@@ -197,7 +201,7 @@ const getCoverUrl = (coverPath) => {
 const fetchTagList = async () => {
   isLoading.value = true
   try {
-    const response = await tagStore.fetchTags('comic')
+    const response = await tagStore.fetchTags('video')
     if (response) {
       tagList.value = response
     }
@@ -209,16 +213,14 @@ const fetchTagList = async () => {
   }
 }
 
-const fetchComicList = async () => {
+const fetchVideoList = async () => {
   try {
-    const response = await tagApi.getAllComics()
+    const response = await tagApi.getAllVideos()
     if (response.code === 200) {
-      const homeComics = response.data.home_comics || []
-      const recommendationComics = response.data.recommendation_comics || []
-      comicList.value = [...homeComics, ...recommendationComics]
+      videoList.value = response.data.videos || []
     }
   } catch (error) {
-    console.error('获取漫画列表失败:', error)
+    console.error('获取视频列表失败:', error)
   }
 }
 
@@ -229,7 +231,7 @@ const addTag = async () => {
   }
   
   try {
-    const response = await tagStore.addTag(newTagName.value.trim(), 'comic')
+    const response = await tagStore.addTag(newTagName.value.trim(), 'video')
     if (response.success) {
       showAddPopup.value = false
       newTagName.value = ''
@@ -257,13 +259,13 @@ const editTag = async () => {
   }
   
   try {
-    const response = await tagStore.editTag(editingTag.value.id, editTagName.value.trim())
-    if (response.success) {
+    const response = await tagApi.edit(editingTag.value.id, editTagName.value.trim())
+    if (response.code === 200) {
       showEditPopup.value = false
       showSuccessToast('修改成功')
       await fetchTagList()
     } else {
-      showFailToast(response.message || '修改失败')
+      showFailToast(response.msg || '修改失败')
     }
   } catch (error) {
     console.error('修改标签失败:', error)
@@ -275,7 +277,7 @@ const confirmDelete = async (tag) => {
   try {
     await showConfirmDialog({
       title: '确认删除',
-      message: `确定要删除标签"${tag.name}"吗？删除后该标签将从所有漫画中移除。`,
+      message: `确定要删除标签"${tag.name}"吗？删除后该标签将从所有视频中移除。`,
     })
     
     await deleteTag(tag.id)
@@ -285,12 +287,12 @@ const confirmDelete = async (tag) => {
 
 const deleteTag = async (tagId) => {
   try {
-    const response = await tagStore.deleteTag(tagId)
-    if (response.success) {
+    const response = await tagApi.delete(tagId)
+    if (response.code === 200) {
       showSuccessToast('删除成功')
       await fetchTagList()
     } else {
-      showFailToast(response.message || '删除失败')
+      showFailToast(response.msg || '删除失败')
     }
   } catch (error) {
     console.error('删除标签失败:', error)
@@ -298,16 +300,16 @@ const deleteTag = async (tagId) => {
   }
 }
 
-const goToTagComics = (tagId) => {
-  router.push(`/tag/${tagId}`)
+const goToTagVideos = (tagId) => {
+  router.push(`/video-tag/${tagId}`)
 }
 
-const toggleComicSelection = (comicId) => {
-  const index = selectedComicIds.value.indexOf(comicId)
+const toggleVideoSelection = (videoId) => {
+  const index = selectedVideoIds.value.indexOf(videoId)
   if (index > -1) {
-    selectedComicIds.value.splice(index, 1)
+    selectedVideoIds.value.splice(index, 1)
   } else {
-    selectedComicIds.value.push(comicId)
+    selectedVideoIds.value.push(videoId)
   }
 }
 
@@ -324,20 +326,20 @@ const batchAddTags = async () => {
   try {
     await showConfirmDialog({
       title: '确认操作',
-      message: `确定为 ${selectedComicIds.value.length} 个漫画添加 ${selectedTagIds.value.length} 个标签？`,
+      message: `确定为 ${selectedVideoIds.value.length} 个视频添加 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const comicData = comicList.value
-      .filter(c => selectedComicIds.value.includes(c.id))
-      .map(c => ({ id: c.id, source: c.source }))
+    const videoData = videoList.value
+      .filter(v => selectedVideoIds.value.includes(v.id))
+      .map(v => ({ id: v.id }))
     
-    const response = await tagApi.batchAddTags(comicData, selectedTagIds.value)
+    const response = await tagApi.batchAddTagsToVideos(videoData, selectedTagIds.value)
     if (response.code === 200) {
       showSuccessToast(response.msg || '操作成功')
-      selectedComicIds.value = []
+      selectedVideoIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
-      await fetchComicList()
+      await fetchVideoList()
     } else {
       showFailToast(response.msg || '操作失败')
     }
@@ -349,20 +351,20 @@ const batchRemoveTags = async () => {
   try {
     await showConfirmDialog({
       title: '确认操作',
-      message: `确定从 ${selectedComicIds.value.length} 个漫画移除 ${selectedTagIds.value.length} 个标签？`,
+      message: `确定从 ${selectedVideoIds.value.length} 个视频移除 ${selectedTagIds.value.length} 个标签？`,
     })
     
-    const comicData = comicList.value
-      .filter(c => selectedComicIds.value.includes(c.id))
-      .map(c => ({ id: c.id, source: c.source }))
+    const videoData = videoList.value
+      .filter(v => selectedVideoIds.value.includes(v.id))
+      .map(v => ({ id: v.id }))
     
-    const response = await tagApi.batchRemoveTags(comicData, selectedTagIds.value)
+    const response = await tagApi.batchRemoveTagsFromVideos(videoData, selectedTagIds.value)
     if (response.code === 200) {
       showSuccessToast(response.msg || '操作成功')
-      selectedComicIds.value = []
+      selectedVideoIds.value = []
       selectedTagIds.value = []
       await fetchTagList()
-      await fetchComicList()
+      await fetchVideoList()
     } else {
       showFailToast(response.msg || '操作失败')
     }
@@ -371,13 +373,14 @@ const batchRemoveTags = async () => {
 }
 
 onMounted(async () => {
+  modeStore.setMode('video')
   await fetchTagList()
-  await fetchComicList()
+  await fetchVideoList()
 })
 </script>
 
 <style scoped>
-.tag-manage {
+.video-tag-manage {
   padding-bottom: 50px;
   min-height: 100vh;
   background: #f5f5f5;
@@ -437,14 +440,14 @@ onMounted(async () => {
   color: #1989fa;
 }
 
-.comic-select-grid {
+.video-select-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin-bottom: 20px;
 }
 
-.comic-select-item {
+.video-select-item {
   position: relative;
   background: #fff;
   border-radius: 8px;
@@ -453,25 +456,35 @@ onMounted(async () => {
   transition: all 0.2s;
 }
 
-.comic-select-item.selected {
+.video-select-item.selected {
   border-color: #1989fa;
 }
 
-.comic-thumb {
+.video-thumb {
   width: 100%;
   height: auto;
   display: block;
+  aspect-ratio: 16/9;
 }
 
-.comic-thumb :deep(.van-image__img) {
+.video-thumb :deep(.van-image__img) {
   width: 100%;
-  height: auto;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
 }
 
-.comic-title-line {
+.video-title-line {
   padding: 4px 6px;
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-code-line {
+  padding: 0 6px 4px;
+  font-size: 10px;
+  color: #999;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

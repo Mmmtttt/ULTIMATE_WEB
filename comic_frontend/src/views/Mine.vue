@@ -22,7 +22,7 @@
         </template>
       </van-cell>
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
-      <van-cell title="标签管理" icon="tag-o" to="/tags" is-link />
+      <van-cell title="标签管理" icon="tag-o" :to="tagManagePath" is-link />
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />
       <van-cell title="导入漫画" icon="add-o" @click="showImportDialog = true" is-link />
@@ -267,6 +267,7 @@ const modeStore = useModeStore()
 const active = ref(1)
 
 const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
+const tagManagePath = computed(() => modeStore.isVideoMode ? '/video-tags' : '/tags')
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
 const showUploadPanel = ref(false)

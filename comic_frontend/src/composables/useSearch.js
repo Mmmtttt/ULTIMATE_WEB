@@ -266,7 +266,7 @@ export function useSearch() {
   async function init() {
     // 获取标签列表
     if (tagStore.tags.length === 0) {
-      await tagStore.fetchTags()
+      await tagStore.fetchTags('comic')
     }
     
     // 获取漫画列表

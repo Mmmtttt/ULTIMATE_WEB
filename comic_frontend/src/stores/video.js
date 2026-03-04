@@ -8,9 +8,12 @@ export const useVideoStore = defineStore('video', () => {
   const trashList = ref([])
   const loading = ref(false)
   const error = ref(null)
+  const filteredVideos = ref([])
+  const isFiltering = ref(false)
   
   const videoCount = computed(() => videos.value.length)
   const trashCount = computed(() => trashList.value.length)
+  const videoList = computed(() => isFiltering.value ? filteredVideos.value : videos.value)
   
   async function fetchList(params = {}) {
     loading.value = true
@@ -175,6 +178,35 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
+  async function filterByTags(includeTags = [], excludeTags = []) {
+    if (includeTags.length === 0 && excludeTags.length === 0) {
+      isFiltering.value = false
+      return videos.value
+    }
+    
+    loading.value = true
+    
+    try {
+      const response = await videoApi.filter(includeTags, excludeTags)
+      if (response.code === 200) {
+        filteredVideos.value = response.data || []
+        isFiltering.value = true
+        return filteredVideos.value
+      }
+      return []
+    } catch (err) {
+      console.error('[Video] 筛选视频失败:', err)
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+  
+  function clearFilter() {
+    isFiltering.value = false
+    filteredVideos.value = []
+  }
+  
   function clearCurrentVideo() {
     currentVideo.value = null
   }
@@ -185,8 +217,11 @@ export const useVideoStore = defineStore('video', () => {
     trashList,
     loading,
     error,
+    filteredVideos,
+    isFiltering,
     videoCount,
     trashCount,
+    videoList,
     fetchList,
     fetchDetail,
     search,
@@ -200,6 +235,8 @@ export const useVideoStore = defineStore('video', () => {
     thirdPartySearch,
     thirdPartyDetail,
     thirdPartyImport,
+    filterByTags,
+    clearFilter,
     clearCurrentVideo
   }
 })

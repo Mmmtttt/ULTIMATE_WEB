@@ -193,6 +193,87 @@ class VideoAppService(BaseContentAppService):
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
     
+    def bind_tags(self, video_id: str, tag_ids: List[str]) -> ServiceResult:
+        try:
+            for tag_id in tag_ids:
+                if not self._tag_repo.get_by_id(tag_id):
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            
+            video = self._video_repo.get_by_id(video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+            
+            video.bind_tags(tag_ids)
+            
+            if not self._video_repo.save(video):
+                return ServiceResult.error("绑定标签失败")
+            
+            app_logger.info(f"绑定视频标签成功: {video_id}, 标签: {tag_ids}")
+            return ServiceResult.ok({"video_id": video_id, "tag_ids": tag_ids}, "标签绑定成功")
+        except Exception as e:
+            error_logger.error(f"绑定视频标签失败: {e}")
+            return ServiceResult.error("绑定标签失败")
+    
+    def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
+        try:
+            videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            results = []
+            for v in videos:
+                video_info = v.to_dict()
+                video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
+                results.append(video_info)
+            
+            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
+            return ServiceResult.ok(results)
+        except Exception as e:
+            error_logger.error(f"筛选失败: {e}")
+            return ServiceResult.error("筛选失败")
+    
+    def batch_add_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
+        try:
+            for tag_id in tag_ids:
+                if not self._tag_repo.get_by_id(tag_id):
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.add_tags(tag_ids)
+                    if self._video_repo.save(video):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量添加标签成功: {updated_count}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为{updated_count}个视频添加标签")
+        except Exception as e:
+            error_logger.error(f"批量添加标签失败: {e}")
+            return ServiceResult.error("批量添加标签失败")
+    
+    def batch_remove_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
+        try:
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.remove_tags(tag_ids)
+                    if self._video_repo.save(video):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量移除标签成功: {updated_count}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功从{updated_count}个视频移除标签")
+        except Exception as e:
+            error_logger.error(f"批量移除标签失败: {e}")
+            return ServiceResult.error("批量移除标签失败")
+    
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:
             imported = []
