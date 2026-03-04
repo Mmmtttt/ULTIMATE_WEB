@@ -467,35 +467,19 @@ def third_party_import():
                 return error_response(400, f"视频 {video_id_full} 已存在")
             
             tag_name_to_id = {}
-            tag_id_counter = 1
             
             for tag in existing_tags:
                 tag_name_to_id[tag["name"]] = tag["id"]
-                if tag["id"].startswith("tag_"):
-                    try:
-                        num = int(tag["id"][4:])
-                        tag_id_counter = max(tag_id_counter, num + 1)
-                    except ValueError:
-                        pass
             
             video_tag_ids = []
             for tag_name in detail.get("tags", []):
                 if tag_name not in tag_name_to_id:
-                    tag_id = f"tag_{tag_id_counter:03d}"
-                    tag_name_to_id[tag_name] = tag_id
-                    tag_id_counter += 1
-                    from domain.tag.entity import Tag
-                    from repository.tag_repository import TagRepository
-                    tag_repo = TagRepository()
-                    new_tag = Tag(
-                        id=tag_id,
-                        name=tag_name,
-                        content_type=ContentType.VIDEO,
-                        create_time=time.strftime("%Y-%m-%dT%H:%M:%S")
-                    )
-                    tag_repo.save(new_tag)
-                    app_logger.info(f"创建新标签: {tag_id} - {tag_name}")
-                video_tag_ids.append(tag_name_to_id[tag_name])
+                    result = tag_service.create_tag(tag_name, ContentType.VIDEO)
+                    if result.success:
+                        tag_name_to_id[tag_name] = result.data["id"]
+                        app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
+                if tag_name in tag_name_to_id:
+                    video_tag_ids.append(tag_name_to_id[tag_name])
             
             video_data = {
                 "id": video_id_full,
@@ -525,6 +509,26 @@ def third_party_import():
                 return error_response(400, result.message)
         else:
             from infrastructure.persistence.json_storage import JsonStorage
+            from application.tag_app_service import TagAppService
+            from domain.tag.entity import ContentType
+            
+            tag_service = TagAppService()
+            existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+            
+            tag_name_to_id = {}
+            
+            for tag in existing_tags:
+                tag_name_to_id[tag["name"]] = tag["id"]
+            
+            video_tag_ids = []
+            for tag_name in detail.get("tags", []):
+                if tag_name not in tag_name_to_id:
+                    result = tag_service.create_tag(tag_name, ContentType.VIDEO)
+                    if result.success:
+                        tag_name_to_id[tag_name] = result.data["id"]
+                        app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
+                if tag_name in tag_name_to_id:
+                    video_tag_ids.append(tag_name_to_id[tag_name])
             
             db_file = VIDEO_RECOMMENDATION_JSON_FILE
             storage = JsonStorage(db_file)
@@ -546,7 +550,7 @@ def third_party_import():
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": detail.get("preview_video", ""),
-                "tag_ids": [],
+                "tag_ids": video_tag_ids,
                 "list_ids": [],
                 "create_time": get_current_time(),
                 "last_access_time": get_current_time()

@@ -86,14 +86,10 @@ export const videoApi = {
   },
   
   filter(includeTags = [], excludeTags = []) {
-    const params = {}
-    if (includeTags.length > 0) {
-      params.include_tag_ids = includeTags
-    }
-    if (excludeTags.length > 0) {
-      params.exclude_tag_ids = excludeTags
-    }
-    return request.get('/v1/video/filter', { params })
+    const params = new URLSearchParams()
+    includeTags.forEach(id => params.append('include_tag_ids', id))
+    excludeTags.forEach(id => params.append('exclude_tag_ids', id))
+    return request.get(`/v1/video/filter?${params.toString()}`)
   },
   
   batchAddTags(videoIds, tagIds) {

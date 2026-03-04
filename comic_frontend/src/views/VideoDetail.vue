@@ -117,6 +117,7 @@
               :key="tag.id" 
               plain 
               class="tag-item"
+              @click="filterByTag(tag.id)"
             >
               {{ tag.name }}
             </van-tag>
@@ -391,6 +392,10 @@ async function updateScore(value) {
 
 function goToActor(actorName) {
   router.push(`/actors?name=${encodeURIComponent(actorName)}`)
+}
+
+function filterByTag(tagId) {
+  router.push(`/video-home?tagId=${tagId}`)
 }
 
 function copyMagnet(magnet) {

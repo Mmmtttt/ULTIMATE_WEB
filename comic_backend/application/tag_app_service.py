@@ -178,6 +178,43 @@ class TagAppService:
             error_logger.error(f"获取标签下漫画失败: {e}")
             return ServiceResult.error("获取标签下漫画失败")
 
+    def get_videos_by_tag(self, tag_id: str) -> ServiceResult:
+        try:
+            tag = self._tag_repo.get_by_id(tag_id)
+            if not tag:
+                return ServiceResult.error("标签不存在")
+            
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            home_videos = []
+            videos = self._video_repo.filter_by_tags([tag_id], [])
+            for v in videos:
+                video_info = {
+                    "id": v.id,
+                    "title": v.title,
+                    "code": v.code,
+                    "cover_path": v.cover_path,
+                    "date": v.date,
+                    "score": v.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids],
+                    "source": "home"
+                }
+                home_videos.append(video_info)
+            
+            result = {
+                "tag": {"id": tag.id, "name": tag.name},
+                "home_videos": home_videos,
+                "home_count": len(home_videos),
+                "total_count": len(home_videos)
+            }
+            
+            app_logger.info(f"获取标签下视频成功: {tag_id}, 主页: {len(home_videos)}")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取标签下视频失败: {e}")
+            return ServiceResult.error("获取标签下视频失败")
+
     def get_all_comics(self) -> ServiceResult:
         try:
             tags = self._tag_repo.get_all(ContentType.COMIC)

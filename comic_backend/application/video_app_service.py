@@ -44,17 +44,55 @@ class VideoAppService(BaseContentAppService):
         max_score: float = None,
         include_deleted: bool = False
     ) -> ServiceResult:
-        return self._get_list_impl(
-            self._video_repo,
-            self._tag_repo,
-            sort_type,
-            min_score,
-            max_score,
-            include_deleted
-        )
+        try:
+            videos = self._video_repo.get_all()
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            if not include_deleted:
+                videos = [v for v in videos if not v.is_deleted]
+            
+            if min_score is not None:
+                videos = [v for v in videos if v.score is not None and v.score >= min_score]
+            if max_score is not None:
+                videos = [v for v in videos if v.score is not None and v.score <= max_score]
+            
+            if sort_type == "create_time":
+                videos = sorted(videos, key=lambda v: v.create_time or "", reverse=True)
+            elif sort_type == "score":
+                videos = sorted(videos, key=lambda v: v.score or 0, reverse=True)
+            elif sort_type == "access_time":
+                videos = sorted(videos, key=lambda v: v.last_access_time or "", reverse=True)
+            
+            video_list = []
+            for v in videos:
+                video_info = v.to_dict()
+                video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
+                video_list.append(video_info)
+            
+            app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
+            return ServiceResult.ok(video_list)
+        except Exception as e:
+            error_logger.error(f"获取视频列表失败: {e}")
+            return ServiceResult.error("获取视频列表失败")
     
     def get_video_detail(self, video_id: str) -> ServiceResult:
-        return self._get_by_id_impl(self._video_repo, video_id)
+        try:
+            video = self._video_repo.get_by_id(video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+            
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            detail = video.to_dict()
+            detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids]
+            
+            app_logger.info(f"获取视频详情成功: {video_id}")
+            return ServiceResult.ok(detail)
+        except Exception as e:
+            error_logger.error(f"获取视频详情失败: {e}")
+            return ServiceResult.error("获取视频详情失败")
     
     def get_video_by_code(self, code: str) -> ServiceResult:
         try:
@@ -67,7 +105,24 @@ class VideoAppService(BaseContentAppService):
             return ServiceResult.error("获取视频失败")
     
     def search_videos(self, keyword: str) -> ServiceResult:
-        return self._search_impl(self._video_repo, keyword)
+        try:
+            videos = self._video_repo.search(keyword)
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            videos = [v for v in videos if not v.is_deleted]
+            
+            results = []
+            for v in videos:
+                video_info = v.to_dict()
+                video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
+                results.append(video_info)
+            
+            app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(results)}")
+            return ServiceResult.ok(results)
+        except Exception as e:
+            error_logger.error(f"搜索失败: {e}")
+            return ServiceResult.error("搜索失败")
     
     def update_video_score(self, video_id: str, score: float) -> ServiceResult:
         return self._update_score_impl(self._video_repo, video_id, score)

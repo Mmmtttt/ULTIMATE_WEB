@@ -192,7 +192,7 @@ export const useTagStore = defineStore('tag', () => {
       await tagApi.edit(tagId, newName.trim())
       
       // 刷新标签列表
-      await fetchTags(true)
+      await fetchTags('comic', true)
       
       // 清除相关缓存
       cacheStore.clearCache('tags')
@@ -201,6 +201,47 @@ export const useTagStore = defineStore('tag', () => {
       return { success: true }
     } catch (err) {
       console.error('[Tag] 编辑标签失败:', err)
+      return { success: false, message: err.message }
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 编辑视频标签
+   * @param {string} tagId - 标签ID
+   * @param {string} newName - 新名称
+   * @returns {Object} 结果
+   */
+  async function editVideoTag(tagId, newName) {
+    // 校验
+    const validation = validateTagName(newName)
+    if (!validation.valid) {
+      return { success: false, message: validation.message }
+    }
+    
+    // 检查是否已存在
+    const exists = videoTags.value.some(tag => tag.name === newName.trim() && tag.id !== tagId)
+    if (exists) {
+      return { success: false, message: '标签名称已存在' }
+    }
+    
+    loading.value = true
+    
+    try {
+      console.log('[Tag] 编辑视频标签:', tagId, newName)
+      await tagApi.edit(tagId, newName.trim())
+      
+      // 刷新标签列表
+      await fetchTags('video', true)
+      
+      // 清除相关缓存
+      cacheStore.clearCache('video-tags')
+      cacheStore.clearCache('video-detail')
+      
+      return { success: true }
+    } catch (err) {
+      console.error('[Tag] 编辑视频标签失败:', err)
       return { success: false, message: err.message }
     } finally {
       loading.value = false
@@ -365,6 +406,7 @@ export const useTagStore = defineStore('tag', () => {
     fetchTags,
     addTag,
     editTag,
+    editVideoTag,
     deleteTag,
     selectTag,
     deselectTag,

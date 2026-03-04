@@ -129,6 +129,24 @@ def get_tag_comics():
         return error_response(500, "服务器内部错误")
 
 
+@tag_bp.route('/videos', methods=['GET'])
+def get_tag_videos():
+    try:
+        tag_id = request.args.get('tag_id')
+        if not tag_id:
+            return error_response(400, "缺少参数: tag_id")
+        
+        result = tag_service.get_videos_by_tag(tag_id)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取标签下视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @tag_bp.route('/all-comics', methods=['GET'])
 def get_all_comics():
     try:

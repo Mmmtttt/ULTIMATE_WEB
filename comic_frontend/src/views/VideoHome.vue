@@ -283,7 +283,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast } from 'vant'
 import { useModeStore, useVideoStore, useComicStore, useTagStore, useListStore } from '@/stores'
 import { useDevice } from '@/composables'
@@ -292,6 +292,7 @@ import { EmptyState, TagFilter } from '@/components'
 const { isMobile, isDesktop } = useDevice()
 
 const router = useRouter()
+const route = useRoute()
 const modeStore = useModeStore()
 const videoStore = useVideoStore()
 const comicStore = useComicStore()
@@ -522,6 +523,12 @@ onMounted(async () => {
   }
   
   loadData()
+  
+  const tagId = route.query.tagId
+  if (tagId && !includeTags.value.includes(tagId)) {
+    includeTags.value = [tagId]
+    await filterByTags()
+  }
 })
 
 watch(() => modeStore.currentMode, () => {

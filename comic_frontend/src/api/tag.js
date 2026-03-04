@@ -61,6 +61,17 @@ export const tagApi = {
   },
 
   /**
+   * 获取标签下的视频
+   * @param {string} tagId - 标签ID
+   * @returns {Promise}
+   */
+  getVideos: (tagId) => {
+    return request.get('/v1/tag/videos', {
+      params: { tag_id: tagId }
+    })
+  },
+
+  /**
    * 获取所有漫画（主页+推荐页）
    * @returns {Promise}
    */
