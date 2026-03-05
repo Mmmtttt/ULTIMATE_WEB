@@ -213,6 +213,75 @@
       </div>
     </van-popup>
     
+    <!-- 导入漫画面板 -->
+    <van-popup 
+      v-model:show="showImportPanel" 
+      :position="isDesktop ? 'center' : 'bottom'" 
+      round 
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '80%' }"
+    >
+      <div class="import-panel">
+        <van-nav-bar title="导入漫画" left-text="关闭" @click-left="showImportPanel = false" />
+        
+        <div class="import-target-select">
+          <van-radio-group v-model="importTarget" direction="horizontal">
+            <van-radio name="home">导入主页</van-radio>
+            <van-radio name="recommendation">导入推荐页</van-radio>
+          </van-radio-group>
+        </div>
+        
+        <div class="import-platform-select">
+          <van-radio-group v-model="importPlatform" direction="horizontal">
+            <van-radio name="all">全部平台</van-radio>
+            <van-radio name="JM">JM平台</van-radio>
+            <van-radio name="PK">PK平台</van-radio>
+          </van-radio-group>
+        </div>
+        
+        <div class="import-search">
+          <van-search
+            v-model="importKeyword"
+            placeholder="输入关键词搜索漫画"
+            @search="handleImportSearch"
+          />
+        </div>
+        
+        <van-loading v-if="importLoading" type="spinner" color="#1989fa" class="import-loading" />
+        
+        <div v-else-if="importResults.length > 0" class="import-results">
+          <div 
+            v-for="item in importResults" 
+            :key="item.album_id || item.id" 
+            class="import-item"
+          >
+            <div v-if="item.cover_url" class="import-item-cover">
+              <img :src="item.cover_url" :alt="item.title" @error="handleImportCoverError(item)" />
+            </div>
+            <div class="import-item-info">
+              <div class="import-item-platform">{{ item.platform }}平台</div>
+              <div class="import-item-title">{{ item.title }}</div>
+              <div class="import-item-author">{{ item.author || '' }}</div>
+            </div>
+            <van-button 
+              size="small" 
+              type="primary" 
+              :loading="item.importing"
+              @click="importComic(item)"
+            >
+              导入
+            </van-button>
+          </div>
+        </div>
+        
+        <EmptyState
+          v-else-if="importKeyword && !importLoading"
+          icon="🔍"
+          title="未找到结果"
+          description="请尝试其他关键词"
+        />
+      </div>
+    </van-popup>
+    
     <!-- 底部导航 - 手机端显示 -->
     <van-tabbar v-if="isMobile" v-model="active" route>
       <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
@@ -288,7 +357,8 @@ const selectedComicIds = ref([])
 const menuValue = ref(0)
 const menuOptions = [
   { text: '更多操作', value: 0 },
-  { text: '管理漫画', value: 1 }
+  { text: '导入漫画', value: 1 },
+  { text: '管理漫画', value: 2 }
 ]
 
 const isLoading = computed(() => loading.value || comicStore.loading)
@@ -308,17 +378,66 @@ function goToVideoMode() {
   router.push('/video-home')
 }
 
+const showImportPanel = ref(false)
+const importKeyword = ref('')
+const importLoading = ref(false)
+const importResults = ref([])
+const importPlatform = ref('all')
+const importTarget = ref('home')
+
 function handleMenuChange(value) {
   if (value === 1) {
+    showImportPanel.value = true
+    menuValue.value = 0
+  } else if (value === 2) {
     isManageMode.value = true
     selectedComicIds.value = []
     menuValue.value = 0
   }
 }
 
+async function handleImportSearch() {
+  if (!importKeyword.value.trim()) {
+    return
+  }
+  
+  importLoading.value = true
+  try {
+    const results = await comicStore.thirdPartySearch(importKeyword.value, importPlatform.value)
+    importResults.value = results.map(r => ({ ...r, importing: false }))
+  } catch (e) {
+    showFailToast('搜索失败')
+  } finally {
+    importLoading.value = false
+  }
+}
+
+async function importComic(item) {
+  item.importing = true
+  try {
+    const res = await comicStore.thirdPartyImport(item.album_id || item.id, importTarget.value, item.platform)
+    if (res.code === 200) {
+      showSuccessToast('导入成功')
+      if (importTarget.value === 'home') {
+        await comicStore.fetchComics(true)
+      }
+    } else {
+      showFailToast(res.msg || '导入失败')
+    }
+  } catch (e) {
+    showFailToast('导入失败')
+  } finally {
+    item.importing = false
+  }
+}
+
 function cancelManageMode() {
   isManageMode.value = false
   selectedComicIds.value = []
+}
+
+function handleImportCoverError(item) {
+  item.cover_url = null
 }
 
 function toggleComicSelection(comicId) {
@@ -616,6 +735,92 @@ async function createImportFromIds(ids, target) {
 .home-desktop .comic-title-line {
   padding: 6px 8px;
   font-size: 13px;
+}
+
+.import-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.import-target-select {
+  padding: 12px;
+  background: #fff;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.import-platform-select {
+  padding: 12px;
+  background: #fff;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.import-search {
+  padding: 10px;
+  background: #fff;
+}
+
+.import-loading {
+  padding: 40px;
+  text-align: center;
+}
+
+.import-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.import-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: #fff;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.import-item-cover {
+  width: 60px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f5f5f5;
+  margin-right: 12px;
+}
+
+.import-item-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.import-item-info {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.import-item-platform {
+  font-size: 12px;
+  color: #1989fa;
+}
+
+.import-item-title {
+  font-size: 14px;
+  color: #333;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-item-author {
+  font-size: 12px;
+  color: #666;
+  margin-top: 2px;
 }
 
 .select-check {

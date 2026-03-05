@@ -121,7 +121,7 @@ class PicacomicAdapter(BaseAdapter):
                 "title_jp": '',
                 "author": album.get('author', ''),
                 "pages": 0,
-                "cover_url": '',
+                "cover_url": album.get('cover_url', ''),
                 "album_url": '',
                 "tags": album.get('tags', []) + album.get('categories', []),
                 "category_tags": [],

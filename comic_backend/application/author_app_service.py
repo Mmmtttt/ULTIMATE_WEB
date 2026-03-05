@@ -82,7 +82,7 @@ class AuthorAppService:
             author = AuthorSubscription(
                 id=generate_id("author"),
                 name=name,
-                create_time=get_current_time()
+                subscribe_time=get_current_time()
             )
             
             if not self._author_repo.save(author):

@@ -148,6 +148,18 @@ export const comicApi = {
   },
   
   /**
+   * 第三方平台搜索漫画
+   * @param {string} keyword - 搜索关键词
+   * @param {string} platform - 平台（JM/PK/all）
+   * @returns {Promise}
+   */
+  searchThirdParty: (keyword, platform = 'all') => {
+    return request.get('/v1/comic/search-third-party', {
+      params: { keyword, platform }
+    })
+  },
+  
+  /**
    * 按标签筛选漫画
    * @param {string[]} includeTagIds - 包含标签ID数组
    * @param {string[]} excludeTagIds - 排除标签ID数组

@@ -372,6 +372,57 @@ export const useComicStore = defineStore('comic', () => {
     cacheStore.clearCache(type, id)
   }
   
+  /**
+   * 第三方平台搜索漫画
+   * @param {string} keyword - 搜索关键词
+   * @param {string} platform - 平台（JM/PK/all）
+   * @returns {Array} 搜索结果
+   */
+  async function thirdPartySearch(keyword, platform = 'all') {
+    if (!keyword || keyword.trim() === '') {
+      return []
+    }
+    
+    loading.value = true
+    
+    try {
+      console.log('[Comic] 第三方搜索:', keyword, platform)
+      const response = await comicApi.searchThirdParty(keyword.trim(), platform)
+      if (response.code === 200) {
+        return response.data || []
+      }
+      return []
+    } catch (err) {
+      console.error('[Comic] 第三方搜索失败:', err)
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+  
+  /**
+   * 第三方导入漫画
+   * @param {string} comicId - 漫画ID
+   * @param {string} target - 目标位置（home/recommendation）
+   * @param {string} platform - 平台
+   * @returns {Object} 结果
+   */
+  async function thirdPartyImport(comicId, target, platform) {
+    try {
+      console.log('[Comic] 第三方导入:', comicId, target, platform)
+      const response = await comicApi.onlineImport({
+        import_type: 'by_id',
+        target: target,
+        platform: platform,
+        comic_id: comicId
+      })
+      return response
+    } catch (err) {
+      console.error('[Comic] 第三方导入失败:', err)
+      throw err
+    }
+  }
+
   return {
     // State
     comics,
@@ -403,6 +454,8 @@ export const useComicStore = defineStore('comic', () => {
     clearFilter,
     setCurrentComic,
     clearCurrentComic,
-    clearCache
+    clearCache,
+    thirdPartySearch,
+    thirdPartyImport
   }
 })

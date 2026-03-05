@@ -165,6 +165,68 @@
       />
     </van-popup>
 
+    <!-- 导入漫画面板 -->
+    <van-popup 
+      v-model:show="showImportPanel" 
+      :position="isDesktop ? 'center' : 'bottom'" 
+      round 
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '80%' }"
+    >
+      <div class="import-panel">
+        <van-nav-bar title="导入漫画" left-text="关闭" @click-left="showImportPanel = false" />
+        
+        <div class="import-platform-select">
+          <van-radio-group v-model="importPlatform" direction="horizontal">
+            <van-radio name="all">全部平台</van-radio>
+            <van-radio name="JM">JM平台</van-radio>
+            <van-radio name="PK">PK平台</van-radio>
+          </van-radio-group>
+        </div>
+        
+        <div class="import-search">
+          <van-search
+            v-model="importKeyword"
+            placeholder="输入关键词搜索漫画"
+            @search="handleImportSearch"
+          />
+        </div>
+        
+        <van-loading v-if="importLoading" type="spinner" color="#1989fa" class="import-loading" />
+        
+        <div v-else-if="importResults.length > 0" class="import-results">
+          <div 
+            v-for="item in importResults" 
+            :key="item.album_id || item.id" 
+            class="import-item"
+          >
+            <div v-if="item.cover_url" class="import-item-cover">
+              <img :src="item.cover_url" :alt="item.title" @error="handleImportCoverError(item)" />
+            </div>
+            <div class="import-item-info">
+              <div class="import-item-platform">{{ item.platform }}平台</div>
+              <div class="import-item-title">{{ item.title }}</div>
+              <div class="import-item-author">{{ item.author || '' }}</div>
+            </div>
+            <van-button 
+              size="small" 
+              type="primary" 
+              :loading="item.importing"
+              @click="importComic(item)"
+            >
+              导入
+            </van-button>
+          </div>
+        </div>
+        
+        <EmptyState
+          v-else-if="importKeyword && !importLoading"
+          icon="🔍"
+          title="未找到结果"
+          description="请尝试其他关键词"
+        />
+      </div>
+    </van-popup>
+
     <!-- 底部导航 - 手机端显示 -->
     <van-tabbar v-if="isMobile" v-model="active" route>
       <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
@@ -194,7 +256,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
-import { useRecommendationStore, useTagStore, useImportTaskStore, useModeStore } from '@/stores'
+import { useRecommendationStore, useTagStore, useImportTaskStore, useModeStore, useComicStore } from '@/stores'
 import { SORT_TYPE } from '@/utils'
 import { recommendationApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
@@ -208,6 +270,7 @@ const recommendationStore = useRecommendationStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
 const modeStore = useModeStore()
+const comicStore = useComicStore()
 const { isDesktop, isMobile } = useDevice()
 
 const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
@@ -226,9 +289,17 @@ const active = ref(1)
 const isManageMode = ref(false)
 const selectedComicIds = ref([])
 const menuValue = ref(0)
+
+// 导入相关
+const showImportPanel = ref(false)
+const importKeyword = ref('')
+const importLoading = ref(false)
+const importResults = ref([])
+const importPlatform = ref('all')
 const menuOptions = [
   { text: '更多操作', value: 0 },
-  { text: '管理漫画', value: 1 }
+  { text: '导入漫画', value: 1 },
+  { text: '管理漫画', value: 2 }
 ]
 
 // ============ Computed ============
@@ -261,6 +332,9 @@ const sortColumns = [
 
 function handleMenuChange(value) {
   if (value === 1) {
+    showImportPanel.value = true
+    menuValue.value = 0
+  } else if (value === 2) {
     isManageMode.value = true
     selectedComicIds.value = []
     menuValue.value = 0
@@ -458,6 +532,44 @@ async function createImportFromIds(ids, target) {
   }
 }
 
+// ============ 导入相关函数 ============
+async function handleImportSearch() {
+  if (!importKeyword.value.trim()) {
+    return
+  }
+  
+  importLoading.value = true
+  try {
+    const results = await comicStore.thirdPartySearch(importKeyword.value, importPlatform.value)
+    importResults.value = results.map(r => ({ ...r, importing: false }))
+  } catch (e) {
+    showFailToast('搜索失败')
+  } finally {
+    importLoading.value = false
+  }
+}
+
+async function importComic(item) {
+  item.importing = true
+  try {
+    const res = await comicStore.thirdPartyImport(item.album_id || item.id, 'recommendation', item.platform)
+    if (res.code === 200) {
+      showSuccessToast('导入成功')
+      await recommendationStore.fetchRecommendations(true)
+    } else {
+      showFailToast(res.msg || '导入失败')
+    }
+  } catch (e) {
+    showFailToast('导入失败')
+  } finally {
+    item.importing = false
+  }
+}
+
+function handleImportCoverError(item) {
+  item.cover_url = null
+}
+
 watch(currentSortType, async (newSort) => {
   if (newSort) {
     await recommendationStore.fetchRecommendations(true, { sortType: newSort })
@@ -618,5 +730,85 @@ watch(currentSortType, async (newSort) => {
 
 .desktop-nav .nav-item .van-icon {
   font-size: 22px;
+}
+
+.import-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.import-platform-select {
+  padding: 12px;
+  background: #fff;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.import-search {
+  padding: 10px;
+  background: #fff;
+}
+
+.import-loading {
+  padding: 40px;
+  text-align: center;
+}
+
+.import-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.import-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: #fff;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.import-item-cover {
+  width: 60px;
+  height: 80px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f5f5f5;
+  margin-right: 12px;
+}
+
+.import-item-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.import-item-info {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.import-item-platform {
+  font-size: 12px;
+  color: #1989fa;
+}
+
+.import-item-title {
+  font-size: 14px;
+  color: #333;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-item-author {
+  font-size: 12px;
+  color: #666;
+  margin-top: 2px;
 }
 </style>

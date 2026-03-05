@@ -733,7 +733,30 @@ function loadDetailsAsync(ids) {
             works.value[index].cover_url = existingCoverUrl
             
             if (selectedAuthor.value && detailWork.author) {
-              if (detailWork.author.trim().toLowerCase() !== selectedAuthor.value.name.trim().toLowerCase()) {
+              let shouldKeep = false
+              const selectedAuthorName = selectedAuthor.value.name.trim().toLowerCase()
+              
+              const authorStr = String(detailWork.author).trim()
+              if (!authorStr) {
+                shouldKeep = true
+              } else {
+                let authors = []
+                if (Array.isArray(detailWork.author)) {
+                  authors = detailWork.author
+                } else {
+                  authors = [authorStr]
+                }
+                
+                for (const author of authors) {
+                  const a = String(author).trim().toLowerCase()
+                  if (a.includes(selectedAuthorName) || selectedAuthorName.includes(a)) {
+                    shouldKeep = true
+                    break
+                  }
+                }
+              }
+              
+              if (!shouldKeep) {
                 worksToRemove.push(detailWork.id)
               }
             }

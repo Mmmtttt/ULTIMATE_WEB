@@ -386,6 +386,51 @@ def search_comics():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/search-third-party', methods=['GET'])
+def search_third_party_comics():
+    try:
+        keyword = request.args.get('keyword')
+        platform = request.args.get('platform', 'all')
+        
+        if not keyword:
+            return error_response(400, "缺少参数: keyword")
+        
+        from third_party.external_api import search_albums
+        from core.platform import Platform, is_platform_supported, get_supported_platforms
+        
+        all_results = []
+        
+        platforms_to_search = []
+        if platform == 'all':
+            platforms_to_search = get_supported_platforms()
+        else:
+            platform_name = platform.upper()
+            if is_platform_supported(platform_name):
+                platforms_to_search = [platform_name]
+            else:
+                return error_response(400, f"不支持的平台: {platform}，支持的平台: {get_supported_platforms()}")
+        
+        for plat in platforms_to_search:
+            try:
+                adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                meta_json = search_albums(keyword, 1, adapter_name, fast_mode=True)
+                
+                if meta_json and meta_json.get('albums'):
+                    for album in meta_json['albums']:
+                        album['platform'] = plat
+                        all_results.append(album)
+            except Exception as e:
+                error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                continue
+        
+        app_logger.info(f"第三方搜索成功: 关键词 '{keyword}', 平台 {platform}, 结果数量: {len(all_results)}")
+        return success_response(all_results)
+        
+    except Exception as e:
+        error_logger.error(f"第三方搜索失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/filter', methods=['GET'])
 def filter_comics():
     try:
