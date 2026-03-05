@@ -356,10 +356,23 @@ class TaskManager:
                             
                             import picacomic_api as pica_api
                             
+                            # 加载配置
+                            from third_party.adapter_factory import AdapterConfig
+                            config_manager = AdapterConfig()
+                            pica_config = config_manager.get_adapter_config('picacomic')
+                            
+                            # 创建 option
+                            from picacomic import PicaOption
+                            option = PicaOption()
+                            option.client['account'] = pica_config.get('account', '')
+                            option.client['password'] = pica_config.get('password', '')
+                            option.dir_rule.base_dir = os.path.abspath(PK_PICTURES_DIR)
+                            
                             detail, success = pica_api.download_album(
                                 original_id,
                                 download_dir=PK_PICTURES_DIR,
-                                show_progress=False
+                                show_progress=False,
+                                option=option
                             )
                             
                             if success:

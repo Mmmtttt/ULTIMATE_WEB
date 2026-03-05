@@ -915,13 +915,26 @@ def import_online():
                 from core.platform import get_original_id
                 from core.constants import PK_PICTURES_DIR
                 
+                # 加载配置
+                from third_party.adapter_factory import AdapterFactory, AdapterConfig
+                config_manager = AdapterConfig()
+                pica_config = config_manager.get_adapter_config('picacomic')
+                
+                # 创建 option
+                from picacomic import PicaOption
+                option = PicaOption()
+                option.client['account'] = pica_config.get('account', '')
+                option.client['password'] = pica_config.get('password', '')
+                option.dir_rule.base_dir = os.path.abspath(PK_PICTURES_DIR)
+                
                 for comic in new_comics:
                     try:
                         original_id = get_original_id(comic['id'])
                         detail, success = pica_api.download_album(
                             original_id, 
                             show_progress=False,
-                            download_dir=PK_PICTURES_DIR
+                            download_dir=PK_PICTURES_DIR,
+                            option=option
                         )
                         
                         if success:

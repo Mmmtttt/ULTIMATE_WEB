@@ -25,6 +25,7 @@ class PicacomicAdapter(BaseAdapter):
         """
         super().__init__(config)
         self._picacomic_api_module = None
+        self._option = None
         self._load_picacomic_api()
     
     def _load_picacomic_api(self):
@@ -42,16 +43,17 @@ class PicacomicAdapter(BaseAdapter):
             import picacomic_api as pica_api
             self._picacomic_api_module = pica_api
             
-            # 设置配置
+            # 设置配置并创建 option
             account = self.get_config('account')
             password = self.get_config('password')
             base_dir = self.get_config('base_dir', '../../data/pictures/PK')
             
-            # 更新 picacomic_api 的配置
-            config = pica_api.load_config()
-            config['account'] = account or ''
-            config['password'] = password or ''
-            config['download_dir'] = base_dir
+            # 直接创建 option 而不是修改配置
+            from picacomic import PicaOption
+            self._option = PicaOption()
+            self._option.client['account'] = account or ''
+            self._option.client['password'] = password or ''
+            self._option.dir_rule.base_dir = os.path.abspath(base_dir)
                 
         except ImportError as e:
             raise ImportError(f"Picacomic API 模块未找到: {e}")
@@ -68,7 +70,7 @@ class PicacomicAdapter(BaseAdapter):
             元数据 JSON 格式
         """
         try:
-            detail = self._picacomic_api_module.get_comic_detail(album_id)
+            detail = self._picacomic_api_module.get_comic_detail(album_id, option=self._option)
             
             return self._convert_to_meta_format([detail])
             
@@ -88,11 +90,11 @@ class PicacomicAdapter(BaseAdapter):
         """
         try:
             if fast_mode:
-                result = self._picacomic_api_module.search_comics(keyword, max_pages=max_pages)
+                result = self._picacomic_api_module.search_comics(keyword, max_pages=max_pages, option=self._option)
                 albums = result.get('results', [])
                 return self._convert_basic_to_meta_format(albums)
             else:
-                result = self._picacomic_api_module.search_comics_full(keyword, max_pages=max_pages)
+                result = self._picacomic_api_module.search_comics_full(keyword, max_pages=max_pages, option=self._option)
                 albums = result.get('results', [])
                 return self._convert_to_meta_format(albums)
             
@@ -140,7 +142,7 @@ class PicacomicAdapter(BaseAdapter):
             元数据 JSON 格式
         """
         try:
-            result = self._picacomic_api_module.get_favorite_comics_full()
+            result = self._picacomic_api_module.get_favorite_comics_full(option=self._option)
             albums = result.get('comics', [])
             
             return self._convert_to_meta_format(albums)

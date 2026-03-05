@@ -12,6 +12,12 @@
       "favorite_list_file": "favorite_comics.txt",
       "consecutive_hit_threshold": 10,
       "collection_name": "我的最爱"
+    },
+    "picacomic": {
+      "enabled": true,
+      "account": "REDACTED_USERNAME",
+      "password": "REDACTED_PASSWORD",
+      "base_dir": "data/pictures/PK"
     }
   }
 }
