@@ -255,8 +255,8 @@ class TaskManager:
             existing_tags = db_data.get('tags', [])
             
             # 将Platform对象转换为适配器名称
-            adapter_name = 'jmcomic' if platform == Platform.JM else 'jmcomic'  # 暂时只支持JM
-            # 传递空配置字典，因为JMComicAdapter不需要标签作为配置
+            adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
+            # 传递空配置字典
             adapter = AdapterFactory.get_adapter(adapter_name, {})
             
             # 搜索或获取详情
@@ -309,13 +309,13 @@ class TaskManager:
             # 如果是主页导入，需要下载图片
             if task.target == 'home':
                 from core.platform import get_original_id
-                from core.constants import JM_PICTURES_DIR
+                from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
+                from core.platform import Platform
                 
                 total_comics = len(converted_data.get('comics', []))
                 for idx, comic in enumerate(converted_data.get('comics', [])):
                     try:
                         original_id = get_original_id(comic['id'])
-                        album_id = int(original_id)
                         
                         # 如果是批量导入，更新进度 - 显示漫画进度
                         if task.import_type == 'by_list':
@@ -325,25 +325,45 @@ class TaskManager:
                             task.total_pages = total_comics
                             self._save_tasks()
                         
-                        # 下载漫画
-                        jmcomic_path = os.path.join(
-                            os.path.dirname(__file__), '..', 
-                            'third_party', 'JMComic-Crawler-Python'
-                        )
-                        if jmcomic_path not in sys.path:
-                            sys.path.insert(0, jmcomic_path)
-                        
-                        from jmcomic_api import download_album
-                        
-                        detail, success = download_album(
-                            album_id,
-                            download_dir=JM_PICTURES_DIR,
-                            show_progress=False,
-                            decode_images=True
-                        )
-                        
-                        if success:
-                            comic['total_page'] = detail.get('local_pages', comic['total_page'])
+                        # 根据平台下载漫画
+                        if platform == Platform.JM:
+                            album_id = int(original_id)
+                            jmcomic_path = os.path.join(
+                                os.path.dirname(__file__), '..', 
+                                'third_party', 'JMComic-Crawler-Python'
+                            )
+                            if jmcomic_path not in sys.path:
+                                sys.path.insert(0, jmcomic_path)
+                            
+                            from jmcomic_api import download_album
+                            
+                            detail, success = download_album(
+                                album_id,
+                                download_dir=JM_PICTURES_DIR,
+                                show_progress=False,
+                                decode_images=True
+                            )
+                            
+                            if success:
+                                comic['total_page'] = detail.get('local_pages', comic['total_page'])
+                        elif platform == Platform.PK:
+                            picacomic_path = os.path.join(
+                                os.path.dirname(__file__), '..', 
+                                'third_party', 'Picacomic-Crawler'
+                            )
+                            if picacomic_path not in sys.path:
+                                sys.path.insert(0, picacomic_path)
+                            
+                            import picacomic_api as pica_api
+                            
+                            detail, success = pica_api.download_album(
+                                original_id,
+                                download_dir=PK_PICTURES_DIR,
+                                show_progress=False
+                            )
+                            
+                            if success:
+                                comic['total_page'] = detail.get('pages_count', comic['total_page'])
                         
                     except Exception as e:
                         error_logger.error(f"下载漫画失败: {e}")

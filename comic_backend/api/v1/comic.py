@@ -91,17 +91,23 @@ def get_third_party_config():
         config_manager = AdapterConfig()
         
         jmcomic_config = config_manager.get_adapter_config('jmcomic')
+        picacomic_config = config_manager.get_adapter_config('picacomic')
         
         return success_response({
             "jmcomic": {
                 "username": jmcomic_config.get('username', ''),
                 "password": jmcomic_config.get('password', ''),
-                "download_dir": jmcomic_config.get('download_dir', '../../data/pictures'),
+                "download_dir": jmcomic_config.get('download_dir', '../../data/pictures/JM'),
                 "output_json": jmcomic_config.get('output_json', 'comics_database.json'),
                 "progress_file": jmcomic_config.get('progress_file', 'download_progress.json'),
                 "favorite_list_file": jmcomic_config.get('favorite_list_file', 'favorite_comics.txt'),
                 "consecutive_hit_threshold": jmcomic_config.get('consecutive_hit_threshold', 10),
                 "collection_name": jmcomic_config.get('collection_name', '我的最爱')
+            },
+            "picacomic": {
+                "account": picacomic_config.get('account', ''),
+                "password": picacomic_config.get('password', ''),
+                "base_dir": picacomic_config.get('base_dir', '../../data/pictures/PK')
             }
         })
         
@@ -118,33 +124,46 @@ def save_third_party_config():
             return error_response(400, "缺少参数")
         
         adapter = data.get('adapter')
-        username = data.get('username', '')
-        password = data.get('password', '')
-        download_dir = data.get('download_dir', '../../data/pictures')
-        output_json = data.get('output_json', 'comics_database.json')
-        progress_file = data.get('progress_file', 'download_progress.json')
-        favorite_list_file = data.get('favorite_list_file', 'favorite_comics.txt')
-        consecutive_hit_threshold = data.get('consecutive_hit_threshold', 10)
-        collection_name = data.get('collection_name', '我的最爱')
-        
-        if adapter != 'jmcomic':
-            return error_response(400, "不支持的适配器")
         
         from third_party.adapter_factory import AdapterConfig
         
         config_manager = AdapterConfig()
         
-        config_manager.set_adapter_config(adapter, {
-            "enabled": True,
-            "username": username,
-            "password": password,
-            "download_dir": download_dir,
-            "output_json": output_json,
-            "progress_file": progress_file,
-            "favorite_list_file": favorite_list_file,
-            "consecutive_hit_threshold": consecutive_hit_threshold,
-            "collection_name": collection_name
-        })
+        if adapter == 'jmcomic':
+            username = data.get('username', '')
+            password = data.get('password', '')
+            download_dir = data.get('download_dir', '../../data/pictures/JM')
+            output_json = data.get('output_json', 'comics_database.json')
+            progress_file = data.get('progress_file', 'download_progress.json')
+            favorite_list_file = data.get('favorite_list_file', 'favorite_comics.txt')
+            consecutive_hit_threshold = data.get('consecutive_hit_threshold', 10)
+            collection_name = data.get('collection_name', '我的最爱')
+            
+            config_manager.set_adapter_config(adapter, {
+                "enabled": True,
+                "config_path": "JMComic-Crawler-Python/config.json",
+                "username": username,
+                "password": password,
+                "download_dir": download_dir,
+                "output_json": output_json,
+                "progress_file": progress_file,
+                "favorite_list_file": favorite_list_file,
+                "consecutive_hit_threshold": consecutive_hit_threshold,
+                "collection_name": collection_name
+            })
+        elif adapter == 'picacomic':
+            account = data.get('account', '')
+            password = data.get('password', '')
+            base_dir = data.get('base_dir', '../../data/pictures/PK')
+            
+            config_manager.set_adapter_config(adapter, {
+                "enabled": True,
+                "account": account,
+                "password": password,
+                "base_dir": base_dir
+            })
+        else:
+            return error_response(400, "不支持的适配器")
         
         from third_party.adapter_factory import AdapterFactory
         AdapterFactory.reset_instance(adapter)
@@ -803,6 +822,9 @@ def import_online():
         
         meta_json = None
         
+        # 根据平台选择适配器
+        adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
+        
         if import_type == 'by_id':
             comic_id = data.get('comic_id')
             if not comic_id:
@@ -814,7 +836,7 @@ def import_online():
             if checker.is_duplicate(full_comic_id):
                 return error_response(400, f"漫画 {full_comic_id} 已存在")
             
-            meta_json = get_album_by_id(comic_id)
+            meta_json = get_album_by_id(comic_id, adapter_name)
             
         elif import_type == 'by_search':
             keyword = data.get('keyword')
@@ -822,10 +844,10 @@ def import_online():
                 return error_response(400, "缺少搜索关键词")
             
             max_pages = data.get('max_pages', 1)
-            meta_json = search_albums(keyword, max_pages)
+            meta_json = search_albums(keyword, max_pages, adapter_name)
             
         elif import_type == 'by_favorite':
-            meta_json = get_favorites()
+            meta_json = get_favorites(adapter_name)
         
         if not meta_json or not meta_json.get('albums'):
             return error_response(404, "未找到相关漫画")
@@ -878,6 +900,41 @@ def import_online():
                         
             except ImportError as e:
                 error_logger.warning(f"无法导入下载模块: {e}")
+        elif not is_recommendation and platform == Platform.PK:
+            try:
+                import sys
+                
+                picacomic_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    'third_party', 'Picacomic-Crawler'
+                )
+                if picacomic_path not in sys.path:
+                    sys.path.insert(0, picacomic_path)
+                
+                import picacomic_api as pica_api
+                from core.platform import get_original_id
+                from core.constants import PK_PICTURES_DIR
+                
+                for comic in new_comics:
+                    try:
+                        original_id = get_original_id(comic['id'])
+                        detail, success = pica_api.download_album(
+                            original_id, 
+                            show_progress=False,
+                            download_dir=PK_PICTURES_DIR
+                        )
+                        
+                        if success:
+                            downloaded_comics.append(comic['id'])
+                            comic['total_page'] = detail.get('pages_count', comic['total_page'])
+                        else:
+                            failed_downloads.append(comic['id'])
+                    except Exception as e:
+                        error_logger.error(f"下载漫画 {comic['id']} 失败: {e}")
+                        failed_downloads.append(comic['id'])
+                        
+            except ImportError as e:
+                error_logger.warning(f"无法导入 Picacomic 下载模块: {e}")
         
         if comics_key not in db_data:
             db_data[comics_key] = []

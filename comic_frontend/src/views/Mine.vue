@@ -146,6 +146,7 @@
           <div class="option-group">
             <div class="option-title">导入平台</div>
             <van-radio name="JM">JMComic</van-radio>
+            <van-radio name="PK">Picacomic</van-radio>
           </div>
         </van-radio-group>
         

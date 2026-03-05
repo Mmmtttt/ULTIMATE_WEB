@@ -5,6 +5,7 @@
 from typing import Dict, Any, Optional, Type
 from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
+from .picacomic_adapter import PicacomicAdapter
 
 
 class AdapterFactory:
@@ -15,6 +16,7 @@ class AdapterFactory:
     
     _adapters: Dict[str, Type[BaseAdapter]] = {
         'jmcomic': JMComicAdapter,
+        'picacomic': PicacomicAdapter,
     }
     
     _instances: Dict[str, BaseAdapter] = {}
@@ -123,12 +125,18 @@ class AdapterConfig:
                     "config_path": "JMComic-Crawler-Python/config.json",
                     "username": "",
                     "password": "",
-                    "download_dir": "../../data/pictures",
+                    "download_dir": "../../data/pictures/JM",
                     "output_json": "comics_database.json",
                     "progress_file": "download_progress.json",
                     "favorite_list_file": "favorite_comics.txt",
                     "consecutive_hit_threshold": 10,
                     "collection_name": "我的最爱"
+                },
+                "picacomic": {
+                    "enabled": True,
+                    "account": "",
+                    "password": "",
+                    "base_dir": "../../data/pictures/PK"
                 }
             }
         }
