@@ -6,11 +6,13 @@ import os
 import json
 import time
 import threading
+import re
 from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
 from core.platform import get_platform_from_id, get_original_id, Platform
-from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
+from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR, RECOMMENDATION_JSON_FILE
+from infrastructure.persistence.json_storage import JsonStorage
 
 
 class RecommendationCacheManager:
@@ -66,10 +68,39 @@ class RecommendationCacheManager:
         if platform == Platform.JM:
             return os.path.join(JM_RECOMMENDATION_CACHE_DIR, original_id)
         elif platform == Platform.PK:
-            return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+            return self._get_pk_comic_dir(comic_id)
         else:
             error_logger.warning(f"未知的平台类型，漫画ID: {comic_id}，将使用JM作为默认平台")
             return os.path.join(JM_RECOMMENDATION_CACHE_DIR, comic_id)
+    
+    def _get_pk_comic_dir(self, comic_id: str) -> str:
+        """获取PK平台漫画的实际目录"""
+        original_id = get_original_id(comic_id)
+        
+        try:
+            storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+            db_data = storage.read()
+            recommendations = db_data.get("recommendations", [])
+            
+            author = "unknown"
+            title = "unknown"
+            
+            for rec in recommendations:
+                if rec.get("id") == comic_id:
+                    author = rec.get("author") or "unknown"
+                    title = rec.get("title") or f"漫画_{original_id}"
+                    break
+            
+            comic_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, "comics", str(author), str(title))
+            
+            if os.path.exists(comic_dir):
+                return comic_dir
+            
+            fallback_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+            return fallback_dir
+        except Exception as e:
+            error_logger.error(f"解析 PK 推荐页漫画目录失败，使用默认目录结构: {e}")
+            return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
     
     def _load_cache_index(self):
         """加载缓存索引"""
@@ -110,14 +141,15 @@ class RecommendationCacheManager:
             error_logger.error(f"保存缓存索引失败: {e}")
     
     def _calculate_dir_size(self, dir_path: str) -> int:
-        """计算目录大小"""
+        """计算目录大小（递归）"""
         if not os.path.exists(dir_path):
             return 0
         total_size = 0
         try:
-            for entry in os.scandir(dir_path):
-                if entry.is_file():
-                    total_size += entry.stat().st_size
+            for root, _, files in os.walk(dir_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    total_size += os.path.getsize(file_path)
         except Exception as e:
             error_logger.error(f"计算目录大小失败: {e}")
         return total_size
@@ -161,7 +193,10 @@ class RecommendationCacheManager:
         with self._cache_lock:
             if comic_id in self._cache_index:
                 comic_dir = self._get_comic_cache_dir(comic_id)
-                return os.path.exists(comic_dir) and len(os.listdir(comic_dir)) > 0
+                if not os.path.exists(comic_dir):
+                    return False
+                image_paths = self._get_all_image_paths(comic_dir)
+                return len(image_paths) > 0
             return False
     
     def get_cache_info(self, comic_id: str) -> Optional[Dict]:
@@ -274,6 +309,36 @@ class RecommendationCacheManager:
                 error_logger.error(f"移除缓存失败 {comic_id}: {e}")
                 return False
     
+    def _natural_sort_paths(self, paths: List[str], base_dir: str) -> List[str]:
+        """
+        对图片路径进行自然排序：
+        - 优先按照相对路径排序，保证章节顺序
+        - 再在每一层中使用数字感知的自然排序
+        """
+        def alphanum_key(s):
+            return [int(c) if c.isdigit() else c for c in re.split(r'([0-9]+)', s)]
+        
+        def sort_key(path):
+            rel = os.path.relpath(path, base_dir)
+            return alphanum_key(rel)
+        
+        return sorted(paths, key=sort_key)
+    
+    def _get_all_image_paths(self, comic_dir: str) -> List[str]:
+        """获取漫画目录下所有图片路径（递归查找）"""
+        if not os.path.exists(comic_dir):
+            return []
+        
+        image_paths = []
+        
+        for root, _, files in os.walk(comic_dir):
+            for file in files:
+                ext = os.path.splitext(file)[1].lower()
+                if ext in ['.jpg', '.webp', '.png']:
+                    image_paths.append(os.path.join(root, file))
+        
+        return self._natural_sort_paths(image_paths, comic_dir)
+    
     def get_cached_page_path(self, comic_id: str, page_num: int) -> Optional[str]:
         """获取缓存中指定页的路径
         
@@ -285,31 +350,11 @@ class RecommendationCacheManager:
             图片路径或None
         """
         comic_dir = self._get_comic_cache_dir(comic_id)
+        image_paths = self._get_all_image_paths(comic_dir)
         
-        if not os.path.exists(comic_dir):
-            return None
-        
-        for ext in ['.jpg', '.webp', '.png']:
-            for filename in os.listdir(comic_dir):
-                name, file_ext = os.path.splitext(filename)
-                if file_ext.lower() == ext:
-                    try:
-                        if int(name) == page_num:
-                            self.update_access_time(comic_id)
-                            return os.path.join(comic_dir, filename)
-                    except ValueError:
-                        continue
-        
-        for filename in os.listdir(comic_dir):
-            name, file_ext = os.path.splitext(filename)
-            if file_ext.lower() in ['.jpg', '.webp', '.png']:
-                try:
-                    file_page = int(name)
-                    if file_page == page_num:
-                        self.update_access_time(comic_id)
-                        return os.path.join(comic_dir, filename)
-                except ValueError:
-                    continue
+        if 1 <= page_num <= len(image_paths):
+            self.update_access_time(comic_id)
+            return image_paths[page_num - 1]
         
         return None
     
@@ -323,20 +368,9 @@ class RecommendationCacheManager:
             页码列表
         """
         comic_dir = self._get_comic_cache_dir(comic_id)
+        image_paths = self._get_all_image_paths(comic_dir)
         
-        if not os.path.exists(comic_dir):
-            return []
-        
-        pages = []
-        for filename in os.listdir(comic_dir):
-            name, ext = os.path.splitext(filename)
-            if ext.lower() in ['.jpg', '.webp', '.png']:
-                try:
-                    pages.append(int(name))
-                except ValueError:
-                    continue
-        
-        return sorted(pages)
+        return list(range(1, len(image_paths) + 1))
     
     def get_cache_stats(self) -> Dict:
         """获取缓存统计信息

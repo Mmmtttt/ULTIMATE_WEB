@@ -332,46 +332,101 @@ def download_to_cache():
         platform = get_platform_from_id(recommendation_id)
         original_id = get_original_id(recommendation_id)
         
-        if platform != Platform.JM:
-            return error_response(400, f"暂不支持平台 {platform} 的缓存下载")
-        
-        jmcomic_path = os.path.join(
-            os.path.dirname(__file__), '..', '..', 
-            'third_party', 'JMComic-Crawler-Python'
-        )
-        if jmcomic_path not in sys.path:
-            sys.path.insert(0, jmcomic_path)
-        
-        try:
-            from jmcomic_api import download_album
-            
-            album_detail, success = download_album(
-                int(original_id), 
-                download_dir=JM_RECOMMENDATION_CACHE_DIR,
-                show_progress=False,
-                decode_images=True
+        if platform == Platform.JM:
+            jmcomic_path = os.path.join(
+                os.path.dirname(__file__), '..', '..', 
+                'third_party', 'JMComic-Crawler-Python'
             )
+            if jmcomic_path not in sys.path:
+                sys.path.insert(0, jmcomic_path)
             
-            if success:
-                local_pages = album_detail.get('local_pages', 0)
-                recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+            try:
+                from jmcomic_api import download_album
                 
-                app_logger.info(f"下载漫画到缓存成功: {recommendation_id}, 页数: {local_pages}")
-                return success_response({
-                    "status": "downloaded",
-                    "message": "下载成功",
-                    "total_pages": total_page,
-                    "cached_pages": local_pages
-                })
-            else:
-                return error_response(500, "下载失败")
+                album_detail, success = download_album(
+                    int(original_id), 
+                    download_dir=JM_RECOMMENDATION_CACHE_DIR,
+                    show_progress=False,
+                    decode_images=True
+                )
                 
-        except ImportError as e:
-            error_logger.error(f"无法导入下载模块: {e}")
-            return error_response(500, "下载模块不可用")
-        except Exception as e:
-            error_logger.error(f"下载漫画失败: {e}")
-            return error_response(500, f"下载失败: {str(e)}")
+                if success:
+                    local_pages = album_detail.get('local_pages', 0)
+                    recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+                    
+                    cached_pages_list = list(range(1, local_pages + 1))
+                    
+                    app_logger.info(f"下载漫画到缓存成功: {recommendation_id}, 页数: {local_pages}")
+                    return success_response({
+                        "status": "downloaded",
+                        "message": "下载成功",
+                        "total_pages": total_page,
+                        "cached_pages": cached_pages_list
+                    })
+                else:
+                    return error_response(500, "下载失败")
+                    
+            except ImportError as e:
+                error_logger.error(f"无法导入下载模块: {e}")
+                return error_response(500, "下载模块不可用")
+            except Exception as e:
+                error_logger.error(f"下载漫画失败: {e}")
+                return error_response(500, f"下载失败: {str(e)}")
+        elif platform == Platform.PK:
+            picacomic_path = os.path.join(
+                os.path.dirname(__file__), '..', '..', 
+                'third_party', 'Picacomic-Crawler'
+            )
+            if picacomic_path not in sys.path:
+                sys.path.insert(0, picacomic_path)
+            
+            try:
+                import picacomic_api as pica_api
+                from third_party.adapter_factory import AdapterConfig
+                from picacomic import PicaOption
+                
+                # 加载配置
+                config_manager = AdapterConfig()
+                pica_config = config_manager.get_adapter_config('picacomic')
+                
+                # 创建 option
+                option = PicaOption()
+                option.client['account'] = pica_config.get('account', '')
+                option.client['password'] = pica_config.get('password', '')
+                option.dir_rule.base_dir = os.path.abspath(PK_RECOMMENDATION_CACHE_DIR)
+                
+                # 下载漫画
+                album_detail, success = pica_api.download_album(
+                    original_id,
+                    download_dir=PK_RECOMMENDATION_CACHE_DIR,
+                    show_progress=False,
+                    option=option
+                )
+                
+                if success:
+                    local_pages = album_detail.get('pages_count', 0)
+                    recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+                    
+                    cached_pages_list = list(range(1, local_pages + 1))
+                    
+                    app_logger.info(f"下载 PK 漫画到缓存成功: {recommendation_id}, 页数: {local_pages}")
+                    return success_response({
+                        "status": "downloaded",
+                        "message": "下载成功",
+                        "total_pages": total_page,
+                        "cached_pages": cached_pages_list
+                    })
+                else:
+                    return error_response(500, "下载失败")
+                    
+            except ImportError as e:
+                error_logger.error(f"无法导入 Picacomic 下载模块: {e}")
+                return error_response(500, "下载模块不可用")
+            except Exception as e:
+                error_logger.error(f"下载 PK 漫画失败: {e}")
+                return error_response(500, f"下载失败: {str(e)}")
+        else:
+            return error_response(400, f"暂不支持平台 {platform} 的缓存下载")
             
     except Exception as e:
         error_logger.error(f"下载到缓存失败: {e}")
