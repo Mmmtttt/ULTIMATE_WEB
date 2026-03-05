@@ -102,7 +102,15 @@ class MetaDataAdapter:
         comic_id = add_platform_prefix(self.platform, original_id)
         
         platform_prefix = PLATFORM_PREFIXES.get(self.platform, "")
-        cover_path = f"/static/cover/{platform_prefix}/{original_id}.jpg"
+        
+        # 封面路径策略：
+        # - JM：始终指向本地封面路径，由后续流程负责下载或生成
+        # - PK：优先使用第三方返回的远程封面 URL；后续如果本地生成了封面，再覆盖为本地路径
+        cover_path: str
+        if self.platform == Platform.PK:
+            cover_path = album.get("cover_url") or f"/static/cover/{platform_prefix}/{original_id}.jpg"
+        else:
+            cover_path = f"/static/cover/{platform_prefix}/{original_id}.jpg"
         
         tag_names = album.get("tags", [])
         tag_ids = []
