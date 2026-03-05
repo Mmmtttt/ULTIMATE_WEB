@@ -20,6 +20,11 @@ def get_config_manager() -> AdapterConfig:
         _config_manager = AdapterConfig()
     return _config_manager
 
+def reset_config_manager():
+    """Reset cached AdapterConfig instance."""
+    global _config_manager
+    _config_manager = None
+
 
 def get_adapter(adapter_name: Optional[str] = None):
     """获取 API 适配器实例
@@ -144,3 +149,4 @@ def reset_adapter(adapter_name: str):
         adapter_name: 适配器名称
     """
     AdapterFactory.reset_instance(adapter_name)
+    reset_config_manager()

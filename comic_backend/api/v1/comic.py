@@ -166,7 +166,9 @@ def save_third_party_config():
             return error_response(400, "不支持的适配器")
         
         from third_party.adapter_factory import AdapterFactory
+        from third_party.external_api import reset_config_manager
         AdapterFactory.reset_instance(adapter)
+        reset_config_manager()
         
         app_logger.info(f"保存第三方库配置成功: 适配器={adapter}")
         

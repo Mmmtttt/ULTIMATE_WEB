@@ -241,7 +241,7 @@ class TaskManager:
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
         
-        from third_party.adapter_factory import AdapterFactory
+        from third_party.adapter_factory import AdapterFactory, AdapterConfig
         from core.platform import Platform
         from infrastructure.persistence.json_storage import JsonStorage
         
@@ -257,7 +257,10 @@ class TaskManager:
             # 将Platform对象转换为适配器名称
             adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
             # 传递空配置字典
-            adapter = AdapterFactory.get_adapter(adapter_name, {})
+            config_manager = AdapterConfig()
+            adapter_config = config_manager.get_adapter_config(adapter_name)
+            AdapterFactory.reset_instance(adapter_name)
+            adapter = AdapterFactory.get_adapter(adapter_name, adapter_config)
             
             # 搜索或获取详情
             if task.import_type == 'by_id':
