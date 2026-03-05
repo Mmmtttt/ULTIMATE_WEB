@@ -865,91 +865,36 @@ def import_online():
         downloaded_comics = []
         failed_downloads = []
         
-        if not is_recommendation and platform == Platform.JM:
+        if not is_recommendation:
             try:
-                import sys
-                
-                jmcomic_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    'third_party', 'JMComic-Crawler-Python'
-                )
-                if jmcomic_path not in sys.path:
-                    sys.path.insert(0, jmcomic_path)
-                
-                from jmcomic_api import download_album
-                from core.platform import get_original_id, PLATFORM_PREFIXES
-                from core.constants import JM_PICTURES_DIR
-                
-                for comic in new_comics:
-                    try:
-                        original_id = get_original_id(comic['id'])
-                        album_id = int(original_id)
-                        detail, success = download_album(
-                            album_id, 
-                            show_progress=False, 
-                            decode_images=True,
-                            download_dir=JM_PICTURES_DIR
-                        )
-                        
-                        if success:
-                            downloaded_comics.append(comic['id'])
-                            comic['total_page'] = detail.get('local_pages', comic['total_page'])
-                        else:
-                            failed_downloads.append(comic['id'])
-                    except Exception as e:
-                        error_logger.error(f"下载漫画 {comic['id']} 失败: {e}")
-                        failed_downloads.append(comic['id'])
-                        
-            except ImportError as e:
-                error_logger.warning(f"无法导入下载模块: {e}")
-        elif not is_recommendation and platform == Platform.PK:
-            try:
-                import sys
-                
-                picacomic_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    'third_party', 'Picacomic-Crawler'
-                )
-                if picacomic_path not in sys.path:
-                    sys.path.insert(0, picacomic_path)
-                
-                import picacomic_api as pica_api
+                from third_party.platform_service import get_platform_service
                 from core.platform import get_original_id
-                from core.constants import PK_PICTURES_DIR
+                from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
                 
-                # 加载配置
-                from third_party.adapter_factory import AdapterFactory, AdapterConfig
-                config_manager = AdapterConfig()
-                pica_config = config_manager.get_adapter_config('picacomic')
-                
-                # 创建 option
-                from picacomic import PicaOption
-                option = PicaOption()
-                option.client['account'] = pica_config.get('account', '')
-                option.client['password'] = pica_config.get('password', '')
-                option.dir_rule.base_dir = os.path.abspath(PK_PICTURES_DIR)
+                platform_service = get_platform_service()
+                download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
                 
                 for comic in new_comics:
                     try:
                         original_id = get_original_id(comic['id'])
-                        detail, success = pica_api.download_album(
-                            original_id, 
-                            show_progress=False,
-                            download_dir=PK_PICTURES_DIR,
-                            option=option
+                        detail, success = platform_service.download_album(
+                            platform,
+                            original_id,
+                            download_dir=download_dir,
+                            show_progress=False
                         )
                         
                         if success:
                             downloaded_comics.append(comic['id'])
-                            comic['total_page'] = detail.get('pages_count', comic['total_page'])
+                            comic['total_page'] = detail.get('local_pages', detail.get('pages_count', comic['total_page']))
                         else:
                             failed_downloads.append(comic['id'])
                     except Exception as e:
                         error_logger.error(f"下载漫画 {comic['id']} 失败: {e}")
                         failed_downloads.append(comic['id'])
                         
-            except ImportError as e:
-                error_logger.warning(f"无法导入 Picacomic 下载模块: {e}")
+            except Exception as e:
+                error_logger.warning(f"无法导入下载模块: {e}")
         
         if comics_key not in db_data:
             db_data[comics_key] = []
@@ -991,112 +936,65 @@ def import_online():
             except ImportError as e:
                 error_logger.warning(f"无法导入封面生成模块: {e}")
         
-        if is_recommendation and platform == Platform.JM:
+        if is_recommendation:
             try:
-                import requests
-                from core.platform import get_original_id, PLATFORM_PREFIXES
-                from core.constants import JM_COVER_DIR
-                
-                os.makedirs(JM_COVER_DIR, exist_ok=True)
-                
-                for comic in new_comics:
-                    comic_id = comic['id']
-                    original_id = get_original_id(comic_id)
-                    cover_url = f"https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg"
-                    cover_path = os.path.join(JM_COVER_DIR, f"{original_id}.jpg")
-                    
-                    if not os.path.exists(cover_path):
-                        try:
-                            resp = requests.get(cover_url, timeout=10)
-                            if resp.status_code == 200:
-                                with open(cover_path, 'wb') as f:
-                                    f.write(resp.content)
-                                app_logger.info(f"下载推荐页封面成功: {comic_id}")
-                            else:
-                                error_logger.warning(f"下载推荐页封面失败 {comic_id}: HTTP {resp.status_code}")
-                        except Exception as e:
-                            error_logger.error(f"下载推荐页封面失败 {comic_id}: {e}")
-            except ImportError as e:
-                error_logger.warning(f"无法导入requests模块: {e}")
-        elif is_recommendation and platform == Platform.PK:
-            # PK 平台：只下载封面，不下载整本漫画，节省磁盘空间
-            try:
-                import sys
-                
-                picacomic_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    'third_party', 'Picacomic-Crawler'
-                )
-                if picacomic_path not in sys.path:
-                    sys.path.insert(0, picacomic_path)
-                
-                import picacomic_api as pica_api
+                from third_party.platform_service import get_platform_service
                 from core.platform import get_original_id
-                from core.constants import PK_COVER_DIR
-                from third_party.adapter_factory import AdapterConfig
-                from picacomic import PicaOption
-                
-                # 读取账号配置，构造 Option（避免依赖 picacomic_api 自己的 config.json）
-                config_manager = AdapterConfig()
-                pica_config = config_manager.get_adapter_config('picacomic')
-                
-                option = PicaOption()
-                option.client['account'] = pica_config.get('account', '')
-                option.client['password'] = pica_config.get('password', '')
-                
-                # 确保封面目录存在
-                os.makedirs(PK_COVER_DIR, exist_ok=True)
-                
-                # 获取 PicacomicAdapter 实例
-                from third_party.picacomic_adapter import PicacomicAdapter
+                from core.constants import JM_COVER_DIR, PK_COVER_DIR
                 from core.utils import get_preview_pages
-                pk_adapter = PicacomicAdapter(pica_config)
+                
+                platform_service = get_platform_service()
+                cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
+                cover_url_prefix = "JM" if platform == Platform.JM else "PK"
+                
+                os.makedirs(cover_dir, exist_ok=True)
                 
                 for comic in new_comics:
                     comic_id = comic['id']
                     original_id = get_original_id(comic_id)
-                    cover_path = os.path.join(PK_COVER_DIR, f"{original_id}.jpg")
+                    cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
                     
                     # 已有本地封面则跳过
                     if os.path.exists(cover_path):
-                        comic['cover_path'] = f"/static/cover/PK/{original_id}.jpg"
+                        comic['cover_path'] = f"/static/cover/{cover_url_prefix}/{original_id}.jpg"
                     else:
                         try:
-                            # 通过 Picacomic-Crawler 下载封面到指定路径
-                            detail, success = pica_api.download_cover(
-                                comic_id=original_id,
-                                save_path=cover_path,
-                                option=option,
+                            # 通过 PlatformService 下载封面
+                            detail, success = platform_service.download_cover(
+                                platform,
+                                original_id,
+                                cover_path,
                                 show_progress=False
                             )
                             if success and os.path.exists(cover_path):
-                                comic['cover_path'] = f"/static/cover/PK/{original_id}.jpg"
-                                app_logger.info(f"下载 PK 推荐页封面成功: {comic_id}")
+                                comic['cover_path'] = f"/static/cover/{cover_url_prefix}/{original_id}.jpg"
+                                app_logger.info(f"下载推荐页封面成功: {comic_id}")
                             else:
-                                error_logger.warning(f"下载 PK 推荐页封面失败: {comic_id}")
+                                error_logger.warning(f"下载推荐页封面失败: {comic_id}")
                         except Exception as e:
-                            error_logger.error(f"下载 PK 推荐页封面异常 {comic_id}: {e}")
+                            error_logger.error(f"下载推荐页封面异常 {comic_id}: {e}")
                     
                     # 获取预览图片 URL
                     try:
-                        # 获取预览页码（默认取前5页，间隔获取）
                         total_page = comic.get('total_page', 0)
                         preview_pages = get_preview_pages(total_page)
                         
-                        # 获取预览图片 URL
-                        preview_urls = pk_adapter.get_preview_image_urls(original_id, preview_pages)
+                        preview_urls = platform_service.get_preview_image_urls(
+                            platform,
+                            original_id,
+                            preview_pages
+                        )
                         
-                        # 存储预览图片 URL 和页码
                         comic['preview_image_urls'] = preview_urls
                         comic['preview_pages'] = preview_pages
                         
-                        app_logger.info(f"获取 PK 推荐页预览图片成功: {comic_id}, 共 {len(preview_urls)} 张")
+                        app_logger.info(f"获取推荐页预览图片成功: {comic_id}, 共 {len(preview_urls)} 张")
                     except Exception as e:
-                        error_logger.error(f"获取 PK 推荐页预览图片失败 {comic_id}: {e}")
+                        error_logger.error(f"获取推荐页预览图片失败 {comic_id}: {e}")
                         comic['preview_image_urls'] = []
                         comic['preview_pages'] = []
-            except ImportError as e:
-                error_logger.warning(f"无法导入 Picacomic 封面下载模块: {e}")
+            except Exception as e:
+                error_logger.warning(f"无法处理推荐页导入: {e}")
 
         # 对推荐页导入，持久化可能更新过的 cover_path
         if is_recommendation:

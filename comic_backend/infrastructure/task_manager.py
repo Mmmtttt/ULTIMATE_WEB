@@ -313,8 +313,9 @@ class TaskManager:
             if task.target == 'home':
                 from core.platform import get_original_id
                 from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
-                from core.platform import Platform
+                from third_party.platform_service import get_platform_service
                 
+                platform_service = get_platform_service()
                 total_comics = len(converted_data.get('comics', []))
                 for idx, comic in enumerate(converted_data.get('comics', [])):
                     try:
@@ -328,58 +329,17 @@ class TaskManager:
                             task.total_pages = total_comics
                             self._save_tasks()
                         
-                        # 根据平台下载漫画
-                        if platform == Platform.JM:
-                            album_id = int(original_id)
-                            jmcomic_path = os.path.join(
-                                os.path.dirname(__file__), '..', 
-                                'third_party', 'JMComic-Crawler-Python'
-                            )
-                            if jmcomic_path not in sys.path:
-                                sys.path.insert(0, jmcomic_path)
-                            
-                            from jmcomic_api import download_album
-                            
-                            detail, success = download_album(
-                                album_id,
-                                download_dir=JM_PICTURES_DIR,
-                                show_progress=False,
-                                decode_images=True
-                            )
-                            
-                            if success:
-                                comic['total_page'] = detail.get('local_pages', comic['total_page'])
-                        elif platform == Platform.PK:
-                            picacomic_path = os.path.join(
-                                os.path.dirname(__file__), '..', 
-                                'third_party', 'Picacomic-Crawler'
-                            )
-                            if picacomic_path not in sys.path:
-                                sys.path.insert(0, picacomic_path)
-                            
-                            import picacomic_api as pica_api
-                            
-                            # 加载配置
-                            from third_party.adapter_factory import AdapterConfig
-                            config_manager = AdapterConfig()
-                            pica_config = config_manager.get_adapter_config('picacomic')
-                            
-                            # 创建 option
-                            from picacomic import PicaOption
-                            option = PicaOption()
-                            option.client['account'] = pica_config.get('account', '')
-                            option.client['password'] = pica_config.get('password', '')
-                            option.dir_rule.base_dir = os.path.abspath(PK_PICTURES_DIR)
-                            
-                            detail, success = pica_api.download_album(
-                                original_id,
-                                download_dir=PK_PICTURES_DIR,
-                                show_progress=False,
-                                option=option
-                            )
-                            
-                            if success:
-                                comic['total_page'] = detail.get('pages_count', comic['total_page'])
+                        # 使用 PlatformService 下载漫画
+                        download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
+                        detail, success = platform_service.download_album(
+                            platform,
+                            original_id,
+                            download_dir=download_dir,
+                            show_progress=False
+                        )
+                        
+                        if success:
+                            comic['total_page'] = detail.get('local_pages', detail.get('pages_count', comic['total_page']))
                         
                     except Exception as e:
                         error_logger.error(f"下载漫画失败: {e}")
@@ -425,18 +385,9 @@ class TaskManager:
         new_tags = []
         comics = []
         
-        # 如果是 PK 平台，预先获取 PicacomicAdapter 实例
-        pk_adapter = None
-        if platform == Platform.PK:
-            try:
-                from third_party.picacomic_adapter import PicacomicAdapter
-                from third_party.adapter_factory import AdapterConfig
-                config_manager = AdapterConfig()
-                pica_config = config_manager.get_adapter_config('picacomic')
-                pk_adapter = PicacomicAdapter(pica_config)
-            except Exception as e:
-                from infrastructure.logger import error_logger
-                error_logger.error(f"初始化 PicacomicAdapter 失败: {e}")
+        # 使用 PlatformService 获取预览图片 URL
+        from third_party.platform_service import get_platform_service
+        platform_service = get_platform_service()
         
         for album in albums:
             comic_tag_ids = []
@@ -488,26 +439,25 @@ class TaskManager:
                 "preview_pages": []
             }
             
-            # 如果是 PK 平台，获取预览图片 URL
-            if platform == Platform.PK and pk_adapter:
-                try:
-                    total_page = comic.get('total_page', 0)
-                    preview_pages = get_preview_pages(total_page)
-                    
-                    # 获取预览图片 URL
-                    preview_urls = pk_adapter.get_preview_image_urls(album_id, preview_pages)
-                    
-                    # 存储预览图片 URL 和页码
-                    comic['preview_image_urls'] = preview_urls
-                    comic['preview_pages'] = preview_pages
-                    
-                    from infrastructure.logger import app_logger
-                    app_logger.info(f"获取 PK 推荐页预览图片成功: {album_id}, 共 {len(preview_urls)} 张")
-                except Exception as e:
-                    from infrastructure.logger import error_logger
-                    error_logger.error(f"获取 PK 推荐页预览图片失败 {album_id}: {e}")
-                    comic['preview_image_urls'] = []
-                    comic['preview_pages'] = []
+            # 使用 PlatformService 获取预览图片 URL
+            try:
+                total_page = comic.get('total_page', 0)
+                preview_pages = get_preview_pages(total_page)
+                
+                # 获取预览图片 URL
+                preview_urls = platform_service.get_preview_image_urls(platform, album_id, preview_pages)
+                
+                # 存储预览图片 URL 和页码
+                comic['preview_image_urls'] = preview_urls
+                comic['preview_pages'] = preview_pages
+                
+                from infrastructure.logger import app_logger
+                app_logger.info(f"获取推荐页预览图片成功: {album_id}, 共 {len(preview_urls)} 张")
+            except Exception as e:
+                from infrastructure.logger import error_logger
+                error_logger.error(f"获取推荐页预览图片失败 {album_id}: {e}")
+                comic['preview_image_urls'] = []
+                comic['preview_pages'] = []
             
             comics.append(comic)
         
@@ -519,28 +469,18 @@ class TaskManager:
     def _download_cover(self, album_id: str, cover_url: str, platform) -> str:
         """下载封面图片并保存到本地
         
-        JM: 直接从公开 CDN 下载
-        PK: 通过 Picacomic-Crawler (带账号登录) 下载，避免浏览器访问受限
+        使用 PlatformService 统一处理不同平台的封面下载
         """
         import os
-        import requests
-        from PIL import Image
-        from io import BytesIO
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR, COVER_WIDTH, COVER_QUALITY
+        from core.constants import JM_COVER_DIR, PK_COVER_DIR
         from core.platform import Platform, PLATFORM_PREFIXES
+        from third_party.platform_service import get_platform_service
         
-        # JM 和 PK 都需要 album_id
         if not album_id:
             return ""
         
         try:
-            if platform == Platform.JM:
-                cover_dir = JM_COVER_DIR
-            elif platform == Platform.PK:
-                cover_dir = PK_COVER_DIR
-            else:
-                return ""
-            
+            cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
             os.makedirs(cover_dir, exist_ok=True)
             cover_path = os.path.join(cover_dir, f"{album_id}.jpg")
             
@@ -549,71 +489,23 @@ class TaskManager:
                 platform_prefix = PLATFORM_PREFIXES.get(platform, "")
                 return f"/static/cover/{platform_prefix}/{album_id}.jpg" if platform_prefix else f"/static/cover/{album_id}.jpg"
             
-            if platform == Platform.PK:
-                # PK：通过 Picacomic-Crawler 下载封面（需要账号登录）
-                try:
-                    import sys
-                    picacomic_path = os.path.join(
-                        os.path.dirname(__file__), '..',
-                        'third_party', 'Picacomic-Crawler'
-                    )
-                    if picacomic_path not in sys.path:
-                        sys.path.insert(0, picacomic_path)
-                    
-                    import picacomic_api as pica_api
-                    from third_party.adapter_factory import AdapterConfig
-                    from picacomic import PicaOption
-                    
-                    config_manager = AdapterConfig()
-                    pica_config = config_manager.get_adapter_config('picacomic')
-                    
-                    option = PicaOption()
-                    option.client['account'] = pica_config.get('account', '')
-                    option.client['password'] = pica_config.get('password', '')
-                    
-                    detail, success = pica_api.download_cover(
-                        comic_id=album_id,
-                        save_path=cover_path,
-                        option=option,
-                        show_progress=False
-                    )
-                    
-                    if success and os.path.exists(cover_path):
-                        local_path = f"/static/cover/PK/{album_id}.jpg"
-                        app_logger.info(f"PK 封面下载成功: {album_id} -> {local_path}")
-                        return local_path
-                    else:
-                        error_logger.warning(f"PK 封面下载失败: {album_id}")
-                        return ""
-                except Exception as e:
-                    error_logger.error(f"PK 封面下载异常 {album_id}: {e}")
-                    return ""
+            # 使用 PlatformService 下载封面
+            platform_service = get_platform_service()
+            detail, success = platform_service.download_cover(
+                platform,
+                album_id,
+                save_path=cover_path,
+                show_progress=False
+            )
             
-            # JM: 走原来的 HTTP 下载 + 缩放逻辑
-            if not cover_url:
+            if success and os.path.exists(cover_path):
+                platform_prefix = PLATFORM_PREFIXES.get(platform, "")
+                local_path = f"/static/cover/{platform_prefix}/{album_id}.jpg" if platform_prefix else f"/static/cover/{album_id}.jpg"
+                app_logger.info(f"封面下载成功: {album_id} -> {local_path}")
+                return local_path
+            else:
+                error_logger.warning(f"封面下载失败: {album_id}")
                 return ""
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.get(cover_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            with Image.open(BytesIO(response.content)) as img:
-                if img.mode in ('RGBA', 'P'):
-                    img = img.convert('RGB')
-                
-                width, height = img.size
-                ratio = COVER_WIDTH / width
-                new_height = int(height * ratio)
-                
-                resized_img = img.resize((COVER_WIDTH, new_height), Image.LANCZOS)
-                resized_img.save(cover_path, 'JPEG', quality=COVER_QUALITY)
-            
-            platform_prefix = PLATFORM_PREFIXES.get(platform, "")
-            local_path = f"/static/cover/{platform_prefix}/{album_id}.jpg" if platform_prefix else f"/static/cover/{album_id}.jpg"
-            app_logger.info(f"封面下载成功: {album_id} -> {local_path}")
-            return local_path
             
         except Exception as e:
             error_logger.error(f"下载封面失败 {album_id}: {e}")

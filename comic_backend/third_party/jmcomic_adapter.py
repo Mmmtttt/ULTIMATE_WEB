@@ -4,8 +4,9 @@ JMComic API 适配器实现
 """
 import sys
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
+from core.platform import Platform
 
 
 class JMComicAdapter(BaseAdapter):
@@ -26,6 +27,14 @@ class JMComicAdapter(BaseAdapter):
         super().__init__(config)
         self._jmcomic_api = None
         self._load_jmcomic_api()
+    
+    @property
+    def platform_name(self) -> str:
+        return "JMComic"
+    
+    @property
+    def platform_prefix(self) -> str:
+        return "JM"
     
     def _load_jmcomic_api(self):
         """动态加载 JMComic API 模块并写入配置"""
@@ -243,3 +252,78 @@ class JMComicAdapter(BaseAdapter):
             "last_updated": "",
             "albums": converted_albums
         }
+    
+    def download_album(
+        self, 
+        album_id: str, 
+        download_dir: str, 
+        show_progress: bool = False,
+        **kwargs
+    ) -> Tuple[Dict[str, Any], bool]:
+        """下载漫画专辑"""
+        try:
+            from jmcomic_api import download_album
+            
+            decode_images = kwargs.get('decode_images', True)
+            
+            detail, success = download_album(
+                int(album_id),
+                download_dir=download_dir,
+                show_progress=show_progress,
+                decode_images=decode_images
+            )
+            
+            return detail, success
+            
+        except Exception as e:
+            from infrastructure.logger import error_logger
+            error_logger.error(f"下载 JM 漫画失败: {album_id}, {e}")
+            return {}, False
+    
+    def download_cover(
+        self,
+        album_id: str,
+        save_path: str,
+        show_progress: bool = False
+    ) -> Tuple[Dict[str, Any], bool]:
+        """下载漫画封面"""
+        try:
+            import requests
+            from PIL import Image
+            from io import BytesIO
+            
+            cover_url = self.get_cover_url(album_id)
+            if not cover_url:
+                return {}, False
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(cover_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            with Image.open(BytesIO(response.content)) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                img.save(save_path, 'JPEG', quality=95)
+            
+            return {'cover_url': cover_url, 'save_path': save_path}, True
+            
+        except Exception as e:
+            from infrastructure.logger import error_logger
+            error_logger.error(f"下载 JM 封面失败: {album_id}, {e}")
+            return {}, False
+    
+    def get_comic_dir(self, album_id: str, author: str = None, title: str = None, base_dir: str = None) -> str:
+        """获取漫画目录路径"""
+        if base_dir:
+            return os.path.join(base_dir, album_id)
+        return album_id
+    
+    def get_cover_url(self, album_id: str) -> Optional[str]:
+        """获取封面URL"""
+        return f"https://cdn-msp3.18comic.vip/media/albums/{album_id}.jpg"
+    
+    def get_image_url(self, album_id: str, page: int) -> Optional[str]:
+        """获取单张图片URL"""
+        return f"https://cdn-msp.jmapinodeudzn.net/media/photos/{album_id}/{page:05d}.webp"

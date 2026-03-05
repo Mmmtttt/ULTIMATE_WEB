@@ -4,7 +4,7 @@ Picacomic API 适配器实现
 """
 import sys
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
 
 
@@ -246,3 +246,80 @@ class PicacomicAdapter(BaseAdapter):
             "last_updated": "",
             "albums": converted_albums
         }
+    
+    @property
+    def platform_name(self) -> str:
+        return "Picacomic"
+    
+    @property
+    def platform_prefix(self) -> str:
+        return "PK"
+    
+    def download_album(
+        self, 
+        album_id: str, 
+        download_dir: str, 
+        show_progress: bool = False,
+        **kwargs
+    ) -> Tuple[Dict[str, Any], bool]:
+        """下载漫画专辑"""
+        try:
+            # 创建临时的option，使用指定的下载目录
+            from picacomic import PicaOption
+            
+            temp_option = PicaOption()
+            temp_option.client['account'] = self._option.client['account']
+            temp_option.client['password'] = self._option.client['password']
+            temp_option.dir_rule.base_dir = os.path.abspath(download_dir)
+            
+            detail, success = self._picacomic_api_module.download_album(
+                album_id,
+                download_dir=download_dir,
+                show_progress=show_progress,
+                option=temp_option
+            )
+            
+            return detail, success
+            
+        except Exception as e:
+            from infrastructure.logger import error_logger
+            error_logger.error(f"下载 PK 漫画失败: {album_id}, {e}")
+            return {}, False
+    
+    def download_cover(
+        self,
+        album_id: str,
+        save_path: str,
+        show_progress: bool = False
+    ) -> Tuple[Dict[str, Any], bool]:
+        """下载漫画封面"""
+        try:
+            detail, success = self._picacomic_api_module.download_cover(
+                comic_id=album_id,
+                save_path=save_path,
+                option=self._option,
+                show_progress=show_progress
+            )
+            
+            return detail, success
+            
+        except Exception as e:
+            from infrastructure.logger import error_logger
+            error_logger.error(f"下载 PK 封面失败: {album_id}, {e}")
+            return {}, False
+    
+    def get_comic_dir(self, album_id: str, author: str = None, title: str = None, base_dir: str = None) -> str:
+        """获取漫画目录路径"""
+        if base_dir and author and title:
+            return os.path.join(base_dir, 'comics', author, title)
+        elif base_dir:
+            return os.path.join(base_dir, album_id)
+        return album_id
+    
+    def get_cover_url(self, album_id: str) -> Optional[str]:
+        """获取封面URL - PK平台需要登录，返回None"""
+        return None
+    
+    def get_image_url(self, album_id: str, page: int) -> Optional[str]:
+        """获取单张图片URL - PK平台需要登录，返回None"""
+        return None
