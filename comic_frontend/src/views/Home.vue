@@ -271,6 +271,12 @@
               导入
             </van-button>
           </div>
+          
+          <div v-if="hasMore" class="load-more">
+            <van-button block :loading="importLoading" @click="loadMore">
+              加载更多 ({{ actualFetchedCount }}/{{ importTotal }})
+            </van-button>
+          </div>
         </div>
         
         <EmptyState
@@ -308,7 +314,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { showToast, showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import { useComicStore, useTagStore, useImportTaskStore, useModeStore } from '@/stores'
@@ -384,6 +390,9 @@ const importLoading = ref(false)
 const importResults = ref([])
 const importPlatform = ref('all')
 const importTarget = ref('home')
+const importTotal = ref(0)
+const actualFetchedCount = ref(0)
+const hasMore = ref(false)
 
 function handleMenuChange(value) {
   if (value === 1) {
@@ -396,21 +405,62 @@ function handleMenuChange(value) {
   }
 }
 
+function resetImportSearch() {
+  importResults.value = []
+  importTotal.value = 0
+  actualFetchedCount.value = 0
+  hasMore.value = false
+}
+
 async function handleImportSearch() {
+  if (!importKeyword.value.trim()) {
+    return
+  }
+  
+  resetImportSearch()
+  await loadMoreFromServer()
+}
+
+async function loadMoreFromServer() {
   if (!importKeyword.value.trim()) {
     return
   }
   
   importLoading.value = true
   try {
-    const results = await comicStore.thirdPartySearch(importKeyword.value, importPlatform.value)
-    importResults.value = results.map(r => ({ ...r, importing: false }))
+    const result = await comicStore.thirdPartySearch(importKeyword.value, importPlatform.value, actualFetchedCount.value, 20)
+    
+    if (result.results && result.results.length > 0) {
+      const newResults = result.results.map(r => ({ ...r, importing: false }))
+      
+      if (actualFetchedCount.value === 0) {
+        importResults.value = newResults
+      } else {
+        importResults.value = [...importResults.value, ...newResults]
+      }
+      
+      importTotal.value = result.total || 0
+      actualFetchedCount.value = result.offset + result.limit
+      hasMore.value = result.has_more || false
+    } else {
+      hasMore.value = false
+    }
   } catch (e) {
     showFailToast('搜索失败')
   } finally {
     importLoading.value = false
   }
 }
+
+async function loadMore() {
+  await loadMoreFromServer()
+}
+
+watch(showImportPanel, (newVal) => {
+  if (!newVal) {
+    resetImportSearch()
+  }
+})
 
 async function importComic(item) {
   item.importing = true
@@ -821,6 +871,11 @@ async function createImportFromIds(ids, target) {
   font-size: 12px;
   color: #666;
   margin-top: 2px;
+}
+
+.load-more {
+  padding: 12px 16px;
+  border-top: 1px solid #ebedf0;
 }
 
 .select-check {

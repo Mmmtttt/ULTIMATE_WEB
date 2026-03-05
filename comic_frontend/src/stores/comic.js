@@ -378,23 +378,23 @@ export const useComicStore = defineStore('comic', () => {
    * @param {string} platform - 平台（JM/PK/all）
    * @returns {Array} 搜索结果
    */
-  async function thirdPartySearch(keyword, platform = 'all') {
+  async function thirdPartySearch(keyword, platform = 'all', offset = 0, limit = 20) {
     if (!keyword || keyword.trim() === '') {
-      return []
+      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
     }
     
     loading.value = true
     
     try {
-      console.log('[Comic] 第三方搜索:', keyword, platform)
-      const response = await comicApi.searchThirdParty(keyword.trim(), platform)
+      console.log('[Comic] 第三方搜索:', keyword, platform, offset, limit)
+      const response = await comicApi.searchThirdParty(keyword.trim(), platform, offset, limit)
       if (response.code === 200) {
-        return response.data || []
+        return response.data || { results: [], total: 0, offset: 0, limit: 20, has_more: false }
       }
-      return []
+      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
     } catch (err) {
       console.error('[Comic] 第三方搜索失败:', err)
-      return []
+      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
     } finally {
       loading.value = false
     }

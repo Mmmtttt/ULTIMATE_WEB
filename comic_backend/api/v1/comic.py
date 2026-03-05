@@ -391,6 +391,8 @@ def search_third_party_comics():
     try:
         keyword = request.args.get('keyword')
         platform = request.args.get('platform', 'all')
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 20))
         
         if not keyword:
             return error_response(400, "缺少参数: keyword")
@@ -413,7 +415,7 @@ def search_third_party_comics():
         for plat in platforms_to_search:
             try:
                 adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
-                meta_json = search_albums(keyword, 1, adapter_name, fast_mode=True)
+                meta_json = search_albums(keyword, max_pages=1, adapter_name=adapter_name, fast_mode=True)
                 
                 if meta_json and meta_json.get('albums'):
                     for album in meta_json['albums']:
@@ -423,8 +425,18 @@ def search_third_party_comics():
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
                 continue
         
-        app_logger.info(f"第三方搜索成功: 关键词 '{keyword}', 平台 {platform}, 结果数量: {len(all_results)}")
-        return success_response(all_results)
+        total = len(all_results)
+        paginated_results = all_results[offset:offset + limit]
+        has_more = offset + limit < total
+        
+        app_logger.info(f"第三方搜索成功: 关键词 '{keyword}', 平台 {platform}, offset {offset}, limit {limit}, 结果数量: {len(paginated_results)}/{total}")
+        return success_response({
+            'results': paginated_results,
+            'total': total,
+            'offset': offset,
+            'limit': limit,
+            'has_more': has_more
+        })
         
     except Exception as e:
         error_logger.error(f"第三方搜索失败: {e}")
