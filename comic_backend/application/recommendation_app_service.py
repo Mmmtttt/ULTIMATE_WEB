@@ -8,6 +8,7 @@ from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import get_current_time, get_preview_pages
 from core.platform import get_platform_from_id, get_original_id, Platform, get_platform_image_url
+from third_party.adapter_factory import AdapterFactory, AdapterConfig
 
 FAVORITES_LIST_ID = "list_favorites"
 
@@ -109,14 +110,23 @@ class RecommendationAppService:
             original_id = get_original_id(recommendation_id)
             
             preview_image_urls = []
-            for page in preview_pages:
-                if is_cached:
+            if is_cached:
+                for page in preview_pages:
                     image_url = f"/api/v1/recommendation/cache/image?recommendation_id={recommendation_id}&page_num={page}"
+                    preview_image_urls.append(image_url)
+            else:
+                if platform == Platform.PK:
+                    # 对于 PK 平台，使用预存的预览图片 URL
+                    preview_image_urls = recommendation.preview_image_urls
+                    preview_pages = recommendation.preview_pages
                 else:
-                    image_url = get_platform_image_url(platform, original_id, page)
-                    if not image_url:
-                        image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp"
-                preview_image_urls.append(image_url)
+                    # 对于 JM 平台，使用原有的逻辑
+                    for page in preview_pages:
+                        image_url = get_platform_image_url(platform, original_id, page)
+                        if not image_url:
+                            image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp"
+                        if image_url:
+                            preview_image_urls.append(image_url)
             
             detail = {
                 "id": recommendation.id,
@@ -358,7 +368,9 @@ class RecommendationAppService:
                 tag_ids=data.get("tag_ids", []),
                 list_ids=data.get("list_ids", []),
                 create_time=get_current_time(),
-                last_read_time=get_current_time()
+                last_read_time=get_current_time(),
+                preview_image_urls=data.get("preview_image_urls", []),
+                preview_pages=data.get("preview_pages", [])
             )
             
             if self._recommendation_repo.save(recommendation):

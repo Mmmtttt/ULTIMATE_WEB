@@ -85,7 +85,7 @@
         <p class="desc">{{ recommendation.desc }}</p>
       </div>
 
-      <div class="preview-section">
+      <div class="preview-section" v-if="recommendation.preview_image_urls && recommendation.preview_image_urls.length > 0">
         <h2 class="section-title">内容预览</h2>
         <div class="preview-grid">
           <div

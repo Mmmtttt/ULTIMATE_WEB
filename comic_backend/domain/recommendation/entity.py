@@ -19,6 +19,8 @@ class Recommendation:
     create_time: str = ""
     last_read_time: str = ""
     is_deleted: bool = False
+    preview_image_urls: List[str] = field(default_factory=list)  # 预览图片 URL 列表
+    preview_pages: List[int] = field(default_factory=list)        # 预览页码列表
     
     @classmethod
     def from_dict(cls, data: dict) -> "Recommendation":
@@ -36,7 +38,9 @@ class Recommendation:
             list_ids=data.get("list_ids") or [],
             create_time=data.get("create_time", ""),
             last_read_time=data.get("last_read_time", ""),
-            is_deleted=data.get("is_deleted", False)
+            is_deleted=data.get("is_deleted", False),
+            preview_image_urls=data.get("preview_image_urls") or [],
+            preview_pages=data.get("preview_pages") or []
         )
     
     def to_dict(self) -> dict:
@@ -54,7 +58,9 @@ class Recommendation:
             "list_ids": self.list_ids,
             "create_time": self.create_time,
             "last_read_time": self.last_read_time,
-            "is_deleted": self.is_deleted
+            "is_deleted": self.is_deleted,
+            "preview_image_urls": self.preview_image_urls,
+            "preview_pages": self.preview_pages
         }
     
     def update_progress(self, page: int):

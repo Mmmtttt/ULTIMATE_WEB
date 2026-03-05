@@ -150,6 +150,64 @@ class PicacomicAdapter(BaseAdapter):
         except Exception as e:
             raise RuntimeError(f"获取收藏夹失败: {e}")
     
+    def get_preview_image_urls(self, album_id: str, preview_pages: List[int]) -> List[str]:
+        """获取 PK 平台漫画的预览图片 URL
+        
+        Args:
+            album_id: 漫画专辑 ID（不带平台前缀）
+            preview_pages: 需要获取的页码列表（从 1 开始）
+            
+        Returns:
+            预览图片 URL 列表
+        """
+        try:
+            from picacomic import new_downloader
+            
+            preview_urls = []
+            
+            with new_downloader(self._option) as dler:
+                # 获取章节列表
+                episodes = dler.client.episodes_all(album_id, "")
+                
+                if not episodes:
+                    return []
+                
+                # 使用第一个章节
+                first_episode = episodes[0]
+                episode_order = first_episode.get('order', 1)
+                
+                # 获取该章节的所有图片
+                current_page = 1
+                all_image_urls = []
+                
+                while True:
+                    page_data = dler.client.picture(album_id, episode_order, current_page).json()
+                    
+                    if 'data' not in page_data or 'pages' not in page_data['data']:
+                        break
+                    
+                    docs = page_data['data']['pages']['docs']
+                    if not docs:
+                        break
+                    
+                    for doc in docs:
+                        url = doc['media']['fileServer'] + '/static/' + doc['media']['path']
+                        all_image_urls.append(url)
+                    
+                    current_page += 1
+                
+                # 根据预览页码获取对应的 URL（注意：预览页码从 1 开始）
+                for page_num in preview_pages:
+                    if 1 <= page_num <= len(all_image_urls):
+                        preview_urls.append(all_image_urls[page_num - 1])
+            
+            return preview_urls
+            
+        except Exception as e:
+            from infrastructure.logger import error_logger
+            error_logger.error(f"获取 PK 平台预览图片失败: {album_id}, {e}")
+            return []
+    
     def _convert_to_meta_format(self, albums: List[Dict[str, Any]]) -> Dict[str, Any]:
         """将 Picacomic 格式转换为元数据格式
         

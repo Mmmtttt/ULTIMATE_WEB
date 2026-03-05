@@ -100,7 +100,7 @@
         <p class="desc">{{ comic.desc }}</p>
       </div>
       
-      <div class="preview-section">
+      <div class="preview-section" v-if="comic.preview_pages && comic.preview_pages.length > 0">
         <h2 class="section-title">内容预览</h2>
         <div class="preview-grid">
           <div 
