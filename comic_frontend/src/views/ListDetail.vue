@@ -277,7 +277,12 @@ const downloadLoading = ref(false)
 
 const comics = computed(() => listInfo.value?.comics || [])
 const videos = computed(() => listInfo.value?.videos || [])
-const allTags = computed(() => tagStore.tags)
+const allTags = computed(() => {
+    if (activeContentType.value === 'video') {
+      return tagStore.videoTags
+    }
+    return tagStore.tags
+  })
 
 const sortLabel = computed(() => {
   const labels = {
@@ -519,6 +524,12 @@ watch(showFilterPanel, (val) => {
     tempMinScore.value = minScore.value || 0
     tempIncludeTags.value = [...includeTags.value]
     tempExcludeTags.value = [...excludeTags.value]
+  }
+})
+
+watch(activeContentType, async (newContentType) => {
+  if (newContentType === 'video' && tagStore.videoTags.length === 0) {
+    await tagStore.fetchTags('video')
   }
 })
 

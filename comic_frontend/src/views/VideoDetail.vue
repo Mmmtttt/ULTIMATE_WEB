@@ -266,10 +266,18 @@ const currentQuality = ref(0)
 
 const hls = ref(null)
 
-const actions = [
-  { name: '移入回收站', value: 'trash' },
-  { name: '分享', value: 'share' }
-]
+const actions = computed(() => {
+  if (video.value?.is_deleted) {
+    return [
+      { name: '永久删除', value: 'delete', color: '#ee0a24' },
+      { name: '分享', value: 'share' }
+    ]
+  }
+  return [
+    { name: '移入回收站', value: 'trash', color: '#ee0a24' },
+    { name: '分享', value: 'share' }
+  ]
+})
 
 const videoId = computed(() => route.params.id)
 
@@ -429,6 +437,23 @@ async function handleAction(action) {
         router.back()
       } else {
         showFailToast('操作失败')
+      }
+    } catch (e) {
+      // 取消操作
+    }
+  } else if (action.value === 'delete') {
+    try {
+      await showConfirmDialog({
+        title: '永久删除',
+        message: '确定要永久删除此视频吗？此操作不可恢复！'
+      })
+      
+      const success = await videoStore.deletePermanently(videoId.value)
+      if (success) {
+        showSuccessToast('已永久删除')
+        router.back()
+      } else {
+        showFailToast('删除失败')
       }
     } catch (e) {
       // 取消操作

@@ -27,19 +27,36 @@ class FileParser:
             # dir_rule = 'comics/{author}/{title}'
             try:
                 from infrastructure.persistence.json_storage import JsonStorage
-                
-                storage = JsonStorage(JSON_FILE)
-                db_data = storage.read()
-                comics = db_data.get("comics", [])
+                from core.constants import RECOMMENDATION_JSON_FILE
                 
                 author = "unknown"
                 title = "unknown"
                 
+                # 首先从主页数据库查找
+                storage = JsonStorage(JSON_FILE)
+                db_data = storage.read()
+                comics = db_data.get("comics", [])
+                
+                found = False
                 for c in comics:
                     if c.get("id") == comic_id:
                         author = c.get("author") or "unknown"
                         title = c.get("title") or f"漫画_{original_id}"
+                        found = True
                         break
+                
+                # 如果主页没找到，从推荐页数据库查找
+                if not found:
+                    rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+                    rec_db_data = rec_storage.read()
+                    recommendations = rec_db_data.get("recommendations", [])
+                    
+                    for r in recommendations:
+                        if r.get("id") == comic_id:
+                            author = r.get("author") or "unknown"
+                            title = r.get("title") or f"漫画_{original_id}"
+                            found = True
+                            break
                 
                 comic_dir = os.path.join(PK_PICTURES_DIR, "comics", str(author), str(title))
                 
