@@ -143,6 +143,14 @@
         >
           加入清单
         </van-button>
+        <van-button 
+          icon="delete-o"
+          type="danger"
+          block
+          @click="handleMoveToTrash"
+        >
+          移入回收站
+        </van-button>
       </div>
       
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
@@ -421,26 +429,30 @@ function previewImages(index) {
   })
 }
 
+async function handleMoveToTrash() {
+  try {
+    await showConfirmDialog({
+      title: '确认操作',
+      message: '确定将此视频移入回收站吗？'
+    })
+    
+    const success = await videoStore.moveToTrash(videoId.value)
+    if (success) {
+      showSuccessToast('已移入回收站')
+      router.back()
+    } else {
+      showFailToast('操作失败')
+    }
+  } catch (e) {
+    // 取消操作
+  }
+}
+
 async function handleAction(action) {
   showActions.value = false
   
   if (action.value === 'trash') {
-    try {
-      await showConfirmDialog({
-        title: '确认操作',
-        message: '确定将此视频移入回收站吗？'
-      })
-      
-      const success = await videoStore.moveToTrash(videoId.value)
-      if (success) {
-        showSuccessToast('已移入回收站')
-        router.back()
-      } else {
-        showFailToast('操作失败')
-      }
-    } catch (e) {
-      // 取消操作
-    }
+    await handleMoveToTrash()
   } else if (action.value === 'delete') {
     try {
       await showConfirmDialog({

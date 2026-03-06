@@ -756,6 +756,14 @@ function loadDetailsAsync(ids) {
                 }
               }
               
+              // 如果漫画标题包含作者名，也保留
+              if (!shouldKeep && detailWork.title) {
+                const title = String(detailWork.title).trim().toLowerCase()
+                if (title.includes(selectedAuthorName)) {
+                  shouldKeep = true
+                }
+              }
+              
               if (!shouldKeep) {
                 worksToRemove.push(detailWork.id)
               }
