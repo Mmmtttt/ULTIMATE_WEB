@@ -1,0 +1,253 @@
+<template>
+  <div class="preview-page">
+    <!-- Filter & Sort Bar -->
+    <div class="toolbar">
+      <div class="search-trigger" @click="goToSearch">
+        <van-icon name="search" />
+        <span>{{ searchPlaceholder }}</span>
+      </div>
+      
+      <div class="actions">
+        <van-button size="small" plain @click="showSortPanel = true">
+          <van-icon name="sort" />
+        </van-button>
+        <van-popover
+          v-model:show="showMenu"
+          :actions="menuActions"
+          placement="bottom-end"
+          @select="onMenuSelect"
+        >
+          <template #reference>
+            <van-button size="small" plain>
+              <van-icon name="ellipsis" />
+            </van-button>
+          </template>
+        </van-popover>
+      </div>
+    </div>
+
+    <!-- Content Area -->
+    <div class="content-area">
+      <van-loading v-if="isLoading" class="loading-center" />
+      
+      <EmptyState 
+        v-else-if="items.length === 0" 
+        :title="emptyTitle" 
+        description="暂无推荐内容"
+      />
+
+      <MediaGrid 
+        v-else 
+        :items="items" 
+        :show-favorite="true"
+        :is-favorited="isSaved"
+        :selectable="isManageMode"
+        :selected-ids="selectedIds"
+        @click="onItemClick"
+        @toggle-favorite="toggleSave"
+        @select="toggleSelection"
+        :class="{ 'video-mode': isVideoMode }"
+      />
+    </div>
+
+    <!-- Management Bar -->
+    <transition name="slide-up">
+      <div v-if="isManageMode" class="manage-bar">
+        <div class="selection-info">已选 {{ selectedIds.length }} 项</div>
+        <div class="manage-btns">
+          <van-button size="small" @click="isManageMode = false">取消</van-button>
+          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="batchSave">
+            批量保存
+          </van-button>
+          <van-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="batchTrash">
+            移入回收站
+          </van-button>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Sort Panel -->
+    <van-popup v-model:show="showSortPanel" position="bottom" round>
+      <van-picker
+        :columns="sortOptions"
+        @confirm="onSortConfirm"
+        @cancel="showSortPanel = false"
+        show-toolbar
+        title="排序方式"
+      />
+    </van-popup>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore } from '@/stores'
+import MediaGrid from '@/components/common/MediaGrid.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import { showToast } from 'vant'
+
+const router = useRouter()
+const modeStore = useModeStore()
+const comicRecStore = useRecommendationStore()
+const videoRecStore = useVideoRecommendationStore()
+const listStore = useListStore()
+
+// State
+const showSortPanel = ref(false)
+const showMenu = ref(false)
+const isManageMode = ref(false)
+const selectedIds = ref([])
+
+// Computed
+const isVideoMode = computed(() => modeStore.isVideoMode)
+const currentStore = computed(() => isVideoMode.value ? videoRecStore : comicRecStore)
+
+const items = computed(() => {
+  return isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
+})
+
+const isLoading = computed(() => currentStore.value.loading)
+
+const searchPlaceholder = computed(() => 
+  isVideoMode.value ? '搜索推荐视频...' : '搜索推荐漫画...'
+)
+
+const emptyTitle = computed(() => 
+  isVideoMode.value ? '暂无推荐视频' : '暂无推荐漫画'
+)
+
+const menuActions = [
+  { text: '批量管理', icon: 'setting-o' },
+  { text: '刷新列表', icon: 'replay' }
+]
+
+const sortOptions = computed(() => [
+  { text: '最近更新', value: 'create_time' },
+  { text: '评分最高', value: 'score' },
+  { text: '最新发布', value: 'date' }
+])
+
+// Methods
+function goToSearch() {
+  router.push('/search?source=preview')
+}
+
+function onMenuSelect(action) {
+  if (action.text === '批量管理') isManageMode.value = true
+  if (action.text === '刷新列表') loadData(true)
+}
+
+function onItemClick(item) {
+  if (isManageMode.value) {
+    toggleSelection(item)
+  } else {
+    const routeName = isVideoMode.value ? 'VideoRecommendationDetail' : 'RecommendationDetail'
+    router.push({ name: routeName, params: { id: item.id } })
+  }
+}
+
+function toggleSelection(item) {
+  const id = item.id
+  if (selectedIds.value.includes(id)) {
+    selectedIds.value = selectedIds.value.filter(i => i !== id)
+  } else {
+    selectedIds.value.push(id)
+  }
+}
+
+function isSaved(item) {
+  // Check if item is in favorites list
+  return listStore.isFavoritedVideo(item) // Simplified
+}
+
+async function toggleSave(item) {
+  // Implementation for saving/favoriting
+  showToast('Toggle save')
+}
+
+async function batchSave() {
+  showToast('Batch save')
+}
+
+async function batchTrash() {
+  showToast('Batch trash')
+}
+
+async function onSortConfirm({ selectedOptions }) {
+  const sortType = selectedOptions[0].value
+  currentStore.value.setSortType(sortType)
+  await loadData(true)
+  showSortPanel.value = false
+}
+
+async function loadData(force = false) {
+  await currentStore.value.fetchRecommendations(force)
+}
+
+// Lifecycle
+watch(() => modeStore.currentMode, () => {
+  loadData()
+  selectedIds.value = []
+  isManageMode.value = false
+})
+
+onMounted(() => {
+  loadData()
+})
+</script>
+
+<style scoped>
+.preview-page {
+  padding-bottom: 80px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+}
+
+.search-trigger {
+  flex: 1;
+  background: #f7f8fa;
+  height: 36px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  color: #969799;
+  font-size: 14px;
+  gap: 8px;
+  margin-right: 12px;
+  cursor: pointer;
+}
+
+.loading-center {
+  padding: 40px;
+  text-align: center;
+}
+
+.manage-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #fff;
+  padding: 12px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+  z-index: 100;
+}
+
+.video-mode :deep(.media-cover) {
+  aspect-ratio: 16/9;
+}
+</style>

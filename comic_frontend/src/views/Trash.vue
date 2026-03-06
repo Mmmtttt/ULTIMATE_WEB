@@ -1,10 +1,71 @@
 <template>
   <div class="trash">
-    <van-nav-bar title="回收站" left-text="返回" left-arrow @click-left="$router.back()" />
+    <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()" />
     
-    <van-tabs v-model:active="activeTab" sticky>
+    <!-- 视频模式：单列表 -->
+    <div v-if="isVideoMode" class="trash-content">
+      <van-loading v-if="loading.video" type="spinner" color="#1989fa" class="loading-center" />
+      
+      <EmptyState
+        v-else-if="videoTrashList.length === 0"
+        icon="🗑️"
+        title="回收站为空"
+        description="没有已删除的视频"
+      />
+      
+      <template v-else>
+        <div class="manage-bar">
+          <span class="selected-info">已选 {{ selectedVideoIds.length }} 个</span>
+          <div class="manage-actions">
+            <van-button 
+              size="small" 
+              type="primary" 
+              :disabled="selectedVideoIds.length === 0"
+              @click="batchRestore('video')"
+            >
+              批量恢复
+            </van-button>
+            <van-button 
+              size="small" 
+              type="danger" 
+              :disabled="selectedVideoIds.length === 0"
+              @click="batchDelete('video')"
+            >
+              批量删除
+            </van-button>
+          </div>
+        </div>
+        
+        <div class="media-grid">
+          <div 
+            v-for="video in videoTrashList" 
+            :key="video.id" 
+            class="media-item"
+            :class="{ selected: selectedVideoIds.includes(video.id) }"
+            @click="toggleVideoSelection(video.id)"
+          >
+            <van-image 
+              :src="getCoverUrl(video.cover_path)" 
+              fit="cover" 
+              class="media-thumb video-thumb"
+            />
+            <div class="media-title">{{ video.title }}</div>
+            <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
+              <van-icon name="success" />
+            </div>
+            <div class="item-actions">
+              <van-button size="mini" type="primary" @click.stop="restoreComic('video', video.id)">恢复</van-button>
+              <van-button size="mini" type="danger" @click.stop="deleteComic('video', video.id)">删除</van-button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 漫画模式：Tabs -->
+    <van-tabs v-else v-model:active="activeTab" sticky>
       <van-tab title="主页回收站">
-        <van-loading v-if="loading.home" type="spinner" color="#1989fa" />
+        <van-loading v-if="loading.home" type="spinner" color="#1989fa" class="loading-center" />
         
         <EmptyState
           v-else-if="homeTrashList.length === 0"
@@ -36,20 +97,20 @@
             </div>
           </div>
           
-          <div class="comic-select-grid">
+          <div class="media-grid">
             <div 
               v-for="comic in homeTrashList" 
               :key="comic.id" 
-              class="comic-select-item"
+              class="media-item"
               :class="{ selected: selectedHomeIds.includes(comic.id) }"
               @click="toggleHomeSelection(comic.id)"
             >
               <van-image 
                 :src="getCoverUrl(comic.cover_path)" 
                 fit="contain" 
-                class="comic-thumb"
+                class="media-thumb"
               />
-              <div class="comic-title-line">{{ comic.title }}</div>
+              <div class="media-title">{{ comic.title }}</div>
               <div class="select-check" v-if="selectedHomeIds.includes(comic.id)">
                 <van-icon name="success" />
               </div>
@@ -63,7 +124,7 @@
       </van-tab>
       
       <van-tab title="推荐页回收站">
-        <van-loading v-if="loading.recommendation" type="spinner" color="#1989fa" />
+        <van-loading v-if="loading.recommendation" type="spinner" color="#1989fa" class="loading-center" />
         
         <EmptyState
           v-else-if="recommendationTrashList.length === 0"
@@ -95,20 +156,20 @@
             </div>
           </div>
           
-          <div class="comic-select-grid">
+          <div class="media-grid">
             <div 
               v-for="comic in recommendationTrashList" 
               :key="comic.id" 
-              class="comic-select-item"
+              class="media-item"
               :class="{ selected: selectedRecommendationIds.includes(comic.id) }"
               @click="toggleRecommendationSelection(comic.id)"
             >
               <van-image 
                 :src="getCoverUrl(comic.cover_path)" 
                 fit="contain" 
-                class="comic-thumb"
+                class="media-thumb"
               />
-              <div class="comic-title-line">{{ comic.title }}</div>
+              <div class="media-title">{{ comic.title }}</div>
               <div class="select-check" v-if="selectedRecommendationIds.includes(comic.id)">
                 <van-icon name="success" />
               </div>
@@ -120,74 +181,15 @@
           </div>
         </template>
       </van-tab>
-
-      <van-tab title="视频回收站">
-        <van-loading v-if="loading.video" type="spinner" color="#1989fa" />
-        
-        <EmptyState
-          v-else-if="videoTrashList.length === 0"
-          icon="🗑️"
-          title="回收站为空"
-          description="没有已删除的视频"
-        />
-        
-        <template v-else>
-          <div class="manage-bar">
-            <span class="selected-info">已选 {{ selectedVideoIds.length }} 个</span>
-            <div class="manage-actions">
-              <van-button 
-                size="small" 
-                type="primary" 
-                :disabled="selectedVideoIds.length === 0"
-                @click="batchRestore('video')"
-              >
-                批量恢复
-              </van-button>
-              <van-button 
-                size="small" 
-                type="danger" 
-                :disabled="selectedVideoIds.length === 0"
-                @click="batchDelete('video')"
-              >
-                批量删除
-              </van-button>
-            </div>
-          </div>
-          
-          <div class="comic-select-grid">
-            <div 
-              v-for="video in videoTrashList" 
-              :key="video.id" 
-              class="comic-select-item"
-              :class="{ selected: selectedVideoIds.includes(video.id) }"
-              @click="toggleVideoSelection(video.id)"
-            >
-              <van-image 
-                :src="getCoverUrl(video.cover_path)" 
-                fit="cover" 
-                class="comic-thumb"
-              />
-              <div class="comic-title-line">{{ video.title }}</div>
-              <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
-                <van-icon name="success" />
-              </div>
-              <div class="item-actions">
-                <van-button size="mini" type="primary" @click.stop="restoreComic('video', video.id)">恢复</van-button>
-                <van-button size="mini" type="danger" @click.stop="deleteComic('video', video.id)">删除</van-button>
-              </div>
-            </div>
-          </div>
-        </template>
-      </van-tab>
     </van-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { comicApi, recommendationApi } from '@/api'
-import { useVideoStore } from '@/stores'
+import { useVideoStore, useModeStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const activeTab = ref(0)
@@ -204,6 +206,10 @@ const loading = ref({
 })
 
 const videoStore = useVideoStore()
+const modeStore = useModeStore()
+
+const isVideoMode = computed(() => modeStore.isVideoMode)
+const pageTitle = computed(() => isVideoMode.value ? '视频回收站' : '漫画回收站')
 
 async function fetchHomeTrash() {
   loading.value.home = true
@@ -355,9 +361,6 @@ async function deleteComic(type, comicId) {
 
 async function batchRestore(type) {
   if (type === 'video') {
-    // 视频目前没有批量恢复接口，只能逐个恢复
-    // 或者需要后端添加批量接口
-    // 这里先简单实现为循环调用，虽然效率低但可用
     const ids = selectedVideoIds.value
     if (ids.length === 0) return
     
@@ -398,7 +401,6 @@ async function batchRestore(type) {
 
 async function batchDelete(type) {
   if (type === 'video') {
-    // 视频目前没有批量删除接口，只能逐个删除
     const ids = selectedVideoIds.value
     if (ids.length === 0) return
     
@@ -453,10 +455,21 @@ async function batchDelete(type) {
   }
 }
 
+function loadData() {
+  if (isVideoMode.value) {
+    fetchVideoTrash()
+  } else {
+    fetchHomeTrash()
+    fetchRecommendationTrash()
+  }
+}
+
+watch(isVideoMode, () => {
+  loadData()
+})
+
 onMounted(() => {
-  fetchHomeTrash()
-  fetchRecommendationTrash()
-  fetchVideoTrash()
+  loadData()
 })
 </script>
 
@@ -464,6 +477,12 @@ onMounted(() => {
 .trash {
   min-height: 100vh;
   background: #f5f5f5;
+  padding-bottom: 50px;
+}
+
+.loading-center {
+  padding: 40px;
+  text-align: center;
 }
 
 .manage-bar {
@@ -485,14 +504,14 @@ onMounted(() => {
   gap: 8px;
 }
 
-.comic-select-grid {
+.media-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   padding: 8px;
 }
 
-.comic-select-item {
+.media-item {
   position: relative;
   background: #fff;
   border-radius: 8px;
@@ -501,16 +520,20 @@ onMounted(() => {
   transition: border-color 0.2s;
 }
 
-.comic-select-item.selected {
+.media-item.selected {
   border-color: #1989fa;
 }
 
-.comic-thumb {
+.media-thumb {
   width: 100%;
   aspect-ratio: 3/4;
 }
 
-.comic-title-line {
+.video-thumb {
+  aspect-ratio: 16/9;
+}
+
+.media-title {
   padding: 4px 6px;
   font-size: 12px;
   color: #333;
