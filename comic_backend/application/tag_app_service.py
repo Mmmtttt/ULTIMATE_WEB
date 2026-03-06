@@ -33,10 +33,14 @@ class TagAppService:
                 recommendations = self._recommendation_repo.get_all()
                 
                 for comic in comics:
+                    if comic.is_deleted:
+                        continue
                     for tag_id in comic.tag_ids:
                         tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
                 
                 for recommendation in recommendations:
+                    if recommendation.is_deleted:
+                        continue
                     for tag_id in recommendation.tag_ids:
                         tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
                 
@@ -45,6 +49,8 @@ class TagAppService:
                 videos = self._video_repo.get_all()
                 
                 for video in videos:
+                    if video.is_deleted:
+                        continue
                     for tag_id in video.tag_ids:
                         tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
                 

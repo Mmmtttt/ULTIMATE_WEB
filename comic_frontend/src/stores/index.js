@@ -30,6 +30,9 @@ export { useActorStore } from './actor'
 // 推荐漫画管理
 export { useRecommendationStore } from './recommendation'
 
+// 推荐视频管理
+export { useVideoRecommendationStore } from './videoRecommendation'
+
 // 清单管理
 export { useListStore } from './list'
 

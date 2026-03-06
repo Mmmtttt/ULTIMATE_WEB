@@ -91,12 +91,12 @@ class ListJsonRepository(ListRepository):
     def get_comic_count(self, list_id: str) -> int:
         data = self._storage.read()
         comics = data.get("comics", [])
-        return sum(1 for c in comics if list_id in c.get("list_ids", []))
+        return sum(1 for c in comics if list_id in c.get("list_ids", []) and not c.get("is_deleted"))
     
     def get_video_count(self, list_id: str) -> int:
         data = self._storage.read()
         videos = data.get("videos", [])
-        return sum(1 for v in videos if list_id in v.get("list_ids", []))
+        return sum(1 for v in videos if list_id in v.get("list_ids", []) and not v.get("is_deleted"))
     
     def ensure_default_list(self) -> bool:
         data = self._storage.read()

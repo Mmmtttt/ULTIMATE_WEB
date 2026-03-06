@@ -241,12 +241,13 @@ class TaskManager:
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
         
-        from third_party.adapter_factory import AdapterFactory, AdapterConfig
+        from third_party.platform_service import get_platform_service
         from core.platform import Platform
         from infrastructure.persistence.json_storage import JsonStorage
         
         try:
             platform = Platform(task.platform)
+            platform_service = get_platform_service()
             
             # 获取适配器
             db_file = 'data/meta_data/comics_database.json' if task.target == 'home' else 'data/meta_data/recommendations_database.json'
@@ -254,20 +255,13 @@ class TaskManager:
             db_data = storage.read()
             existing_tags = db_data.get('tags', [])
             
-            # 将Platform对象转换为适配器名称
-            adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
-            # 传递空配置字典
-            config_manager = AdapterConfig()
-            adapter_config = config_manager.get_adapter_config(adapter_name)
-            AdapterFactory.reset_instance(adapter_name)
-            adapter = AdapterFactory.get_adapter(adapter_name, adapter_config)
-            
+            # 使用 PlatformService 获取数据
             # 搜索或获取详情
             if task.import_type == 'by_id':
-                result = adapter.get_album_by_id(task.comic_id)
+                result = platform_service.get_album_by_id(platform, task.comic_id)
                 albums = result.get('albums', [])
             elif task.import_type == 'by_search':
-                result = adapter.search_albums(task.keyword, max_pages=1)
+                result = platform_service.search_albums(platform, task.keyword, max_pages=1)
                 albums = result.get('albums', [])
             elif task.import_type == 'by_list':
                 # 批量导入：遍历所有ID
@@ -276,7 +270,7 @@ class TaskManager:
                 total_comics = len(comic_ids)
                 for idx, comic_id in enumerate(comic_ids):
                     try:
-                        result = adapter.get_album_by_id(comic_id)
+                        result = platform_service.get_album_by_id(platform, comic_id)
                         if result.get('albums'):
                             albums.extend(result['albums'])
                         
@@ -313,9 +307,7 @@ class TaskManager:
             if task.target == 'home':
                 from core.platform import get_original_id
                 from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
-                from third_party.platform_service import get_platform_service
                 
-                platform_service = get_platform_service()
                 total_comics = len(converted_data.get('comics', []))
                 for idx, comic in enumerate(converted_data.get('comics', [])):
                     try:

@@ -120,6 +120,65 @@
           </div>
         </template>
       </van-tab>
+
+      <van-tab title="视频回收站">
+        <van-loading v-if="loading.video" type="spinner" color="#1989fa" />
+        
+        <EmptyState
+          v-else-if="videoTrashList.length === 0"
+          icon="🗑️"
+          title="回收站为空"
+          description="没有已删除的视频"
+        />
+        
+        <template v-else>
+          <div class="manage-bar">
+            <span class="selected-info">已选 {{ selectedVideoIds.length }} 个</span>
+            <div class="manage-actions">
+              <van-button 
+                size="small" 
+                type="primary" 
+                :disabled="selectedVideoIds.length === 0"
+                @click="batchRestore('video')"
+              >
+                批量恢复
+              </van-button>
+              <van-button 
+                size="small" 
+                type="danger" 
+                :disabled="selectedVideoIds.length === 0"
+                @click="batchDelete('video')"
+              >
+                批量删除
+              </van-button>
+            </div>
+          </div>
+          
+          <div class="comic-select-grid">
+            <div 
+              v-for="video in videoTrashList" 
+              :key="video.id" 
+              class="comic-select-item"
+              :class="{ selected: selectedVideoIds.includes(video.id) }"
+              @click="toggleVideoSelection(video.id)"
+            >
+              <van-image 
+                :src="getCoverUrl(video.cover_path)" 
+                fit="cover" 
+                class="comic-thumb"
+              />
+              <div class="comic-title-line">{{ video.title }}</div>
+              <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
+                <van-icon name="success" />
+              </div>
+              <div class="item-actions">
+                <van-button size="mini" type="primary" @click.stop="restoreComic('video', video.id)">恢复</van-button>
+                <van-button size="mini" type="danger" @click.stop="deleteComic('video', video.id)">删除</van-button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </van-tab>
     </van-tabs>
   </div>
 </template>
@@ -128,17 +187,23 @@
 import { ref, onMounted } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { comicApi, recommendationApi } from '@/api'
+import { useVideoStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const activeTab = ref(0)
 const homeTrashList = ref([])
 const recommendationTrashList = ref([])
+const videoTrashList = ref([])
 const selectedHomeIds = ref([])
 const selectedRecommendationIds = ref([])
+const selectedVideoIds = ref([])
 const loading = ref({
   home: false,
-  recommendation: false
+  recommendation: false,
+  video: false
 })
+
+const videoStore = useVideoStore()
 
 async function fetchHomeTrash() {
   loading.value.home = true
@@ -168,6 +233,18 @@ async function fetchRecommendationTrash() {
   }
 }
 
+async function fetchVideoTrash() {
+  loading.value.video = true
+  try {
+    await videoStore.fetchTrashList()
+    videoTrashList.value = videoStore.trashList
+  } catch (e) {
+    showToast('获取视频回收站失败')
+  } finally {
+    loading.value.video = false
+  }
+}
+
 function getCoverUrl(coverPath) {
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
@@ -194,8 +271,29 @@ function toggleRecommendationSelection(comicId) {
   }
 }
 
+function toggleVideoSelection(videoId) {
+  const index = selectedVideoIds.value.indexOf(videoId)
+  if (index > -1) {
+    selectedVideoIds.value.splice(index, 1)
+  } else {
+    selectedVideoIds.value.push(videoId)
+  }
+}
+
 async function restoreComic(type, comicId) {
   try {
+    if (type === 'video') {
+      const res = await videoStore.restoreFromTrash(comicId)
+      if (res) {
+        showToast('已恢复')
+        videoTrashList.value = videoTrashList.value.filter(v => v.id !== comicId)
+        selectedVideoIds.value = selectedVideoIds.value.filter(id => id !== comicId)
+      } else {
+        showToast('恢复失败')
+      }
+      return
+    }
+
     const api = type === 'home' ? comicApi : recommendationApi
     const res = await api.restoreFromTrash(comicId)
     if (res.code === 200) {
@@ -219,9 +317,21 @@ async function deleteComic(type, comicId) {
   try {
     await showConfirmDialog({
       title: '永久删除',
-      message: '确定要永久删除此漫画吗？此操作不可恢复！'
+      message: '确定要永久删除此内容吗？此操作不可恢复！'
     })
     
+    if (type === 'video') {
+      const res = await videoStore.deletePermanently(comicId)
+      if (res) {
+        showToast('已永久删除')
+        videoTrashList.value = videoTrashList.value.filter(v => v.id !== comicId)
+        selectedVideoIds.value = selectedVideoIds.value.filter(id => id !== comicId)
+      } else {
+        showToast('删除失败')
+      }
+      return
+    }
+
     const api = type === 'home' ? comicApi : recommendationApi
     const res = await api.deletePermanently(comicId)
     if (res.code === 200) {
@@ -244,6 +354,25 @@ async function deleteComic(type, comicId) {
 }
 
 async function batchRestore(type) {
+  if (type === 'video') {
+    // 视频目前没有批量恢复接口，只能逐个恢复
+    // 或者需要后端添加批量接口
+    // 这里先简单实现为循环调用，虽然效率低但可用
+    const ids = selectedVideoIds.value
+    if (ids.length === 0) return
+    
+    let successCount = 0
+    for (const id of ids) {
+      const res = await videoStore.restoreFromTrash(id)
+      if (res) successCount++
+    }
+    
+    showToast(`已恢复 ${successCount} 个视频`)
+    videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
+    selectedVideoIds.value = []
+    return
+  }
+
   const ids = type === 'home' ? selectedHomeIds.value : selectedRecommendationIds.value
   if (ids.length === 0) return
   
@@ -268,6 +397,32 @@ async function batchRestore(type) {
 }
 
 async function batchDelete(type) {
+  if (type === 'video') {
+    // 视频目前没有批量删除接口，只能逐个删除
+    const ids = selectedVideoIds.value
+    if (ids.length === 0) return
+    
+    try {
+      await showConfirmDialog({
+        title: '永久删除',
+        message: `确定要永久删除 ${ids.length} 个视频吗？此操作不可恢复！`
+      })
+      
+      let successCount = 0
+      for (const id of ids) {
+        const res = await videoStore.deletePermanently(id)
+        if (res) successCount++
+      }
+      
+      showToast(`已永久删除 ${successCount} 个视频`)
+      videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
+      selectedVideoIds.value = []
+    } catch (e) {
+      if (e !== 'cancel') showToast('删除失败')
+    }
+    return
+  }
+
   const ids = type === 'home' ? selectedHomeIds.value : selectedRecommendationIds.value
   if (ids.length === 0) return
   
@@ -301,6 +456,7 @@ async function batchDelete(type) {
 onMounted(() => {
   fetchHomeTrash()
   fetchRecommendationTrash()
+  fetchVideoTrash()
 })
 </script>
 

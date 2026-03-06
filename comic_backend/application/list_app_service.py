@@ -57,10 +57,10 @@ class ListAppService:
                 return ServiceResult.error("清单不存在")
             
             comics = self._comic_repo.get_all()
-            list_comics = [c for c in comics if list_id in c.list_ids]
+            list_comics = [c for c in comics if list_id in c.list_ids and not c.is_deleted]
             
             videos = self._video_repo.get_all()
-            list_videos = [v for v in videos if list_id in v.list_ids]
+            list_videos = [v for v in videos if list_id in v.list_ids and not v.is_deleted]
             
             comic_list = []
             for c in list_comics:

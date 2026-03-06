@@ -351,17 +351,25 @@ def get_by_actor(actor_name):
         return error_response(500, "服务器内部错误")
 
 
+def get_video_adapter(platform_name="javdb", *args, **kwargs):
+    """获取视频平台适配器"""
+    if platform_name.lower() == "javdb":
+        from third_party.javdb_api_scraper import JavdbAdapter
+        return JavdbAdapter(*args, **kwargs)
+    raise ValueError(f"不支持的视频平台: {platform_name}")
+
+
 @video_bp.route('/third-party/search', methods=['GET'])
 def third_party_search():
     try:
         keyword = request.args.get('keyword')
+        platform = request.args.get('platform', 'javdb')
+        
         if not keyword:
             return error_response(400, "缺少搜索关键词")
         
-        from third_party.javdb_api_scraper import JavdbAdapter
-        
-        app_logger.info(f"开始搜索视频，关键词: {keyword}")
-        adapter = JavdbAdapter()
+        app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}")
+        adapter = get_video_adapter(platform)
         videos = adapter.search_videos(keyword, max_pages=1)
         app_logger.info(f"搜索完成，找到 {len(videos)} 个视频")
         
@@ -377,12 +385,12 @@ def third_party_search():
 def third_party_detail():
     try:
         video_id = request.args.get('video_id')
+        platform = request.args.get('platform', 'javdb')
+        
         if not video_id:
             return error_response(400, "缺少参数")
         
-        from third_party.javdb_api_scraper import JavdbAdapter
-        
-        adapter = JavdbAdapter()
+        adapter = get_video_adapter(platform)
         detail = adapter.get_video_detail(video_id)
         
         if detail:
@@ -398,12 +406,12 @@ def third_party_detail():
 def third_party_actor_search():
     try:
         actor_name = request.args.get('actor_name')
+        platform = request.args.get('platform', 'javdb')
+        
         if not actor_name:
             return error_response(400, "缺少演员名称")
         
-        from third_party.javdb_api_scraper import JavdbAdapter
-        
-        adapter = JavdbAdapter()
+        adapter = get_video_adapter(platform)
         actors = adapter.search_actor(actor_name)
         
         return success_response(actors)
@@ -417,13 +425,12 @@ def third_party_actor_works():
     try:
         actor_id = request.args.get('actor_id')
         page = request.args.get('page', 1, type=int)
+        platform = request.args.get('platform', 'javdb')
         
         if not actor_id:
             return error_response(400, "缺少演员ID")
         
-        from third_party.javdb_api_scraper import JavdbAdapter
-        
-        adapter = JavdbAdapter()
+        adapter = get_video_adapter(platform)
         result = adapter.get_actor_works(actor_id, page=page, max_pages=1)
         
         return success_response(result)
@@ -438,6 +445,7 @@ def third_party_import():
         data = request.json
         video_id = data.get('video_id')
         target = data.get('target', 'home')
+        platform = data.get('platform', 'javdb').lower()
         
         if not video_id:
             return error_response(400, "缺少视频ID")
@@ -446,20 +454,20 @@ def third_party_import():
             return error_response(400, "无效的目标目录")
         
         from application.tag_app_service import TagAppService
-        from third_party.javdb_api_scraper import JavdbAdapter
         from domain.tag.entity import ContentType
         from core.constants import VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE, JAV_PICTURES_DIR, JAV_COVER_DIR
         
         tag_service = TagAppService()
         existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         
-        adapter = JavdbAdapter(existing_tags)
+        adapter = get_video_adapter(platform, existing_tags)
         detail = adapter.get_video_detail(video_id)
         
         if not detail:
             return error_response(404, "视频不存在")
         
-        video_id_full = f"JAVDB_{video_id}"
+        platform_prefix = platform.upper() if platform == 'javdb' else platform.upper()
+        video_id_full = f"{platform_prefix}_{video_id}"
         
         if target == 'home':
             existing = video_service.get_video_by_code(detail.get("code", ""))

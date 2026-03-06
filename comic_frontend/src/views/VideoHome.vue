@@ -358,11 +358,11 @@ async function toggleFavoriteVideo(video, event) {
   if (result !== null) {
     if (result) {
       video.list_ids = video.list_ids || []
-      if (!video.list_ids.includes('favorites')) {
-        video.list_ids.push('favorites')
+      if (!video.list_ids.includes('list_favorites')) {
+        video.list_ids.push('list_favorites')
       }
     } else {
-      video.list_ids = (video.list_ids || []).filter(id => id !== 'favorites')
+      video.list_ids = (video.list_ids || []).filter(id => id !== 'list_favorites')
     }
   }
 }

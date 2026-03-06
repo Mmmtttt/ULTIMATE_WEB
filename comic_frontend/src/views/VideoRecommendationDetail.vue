@@ -195,7 +195,6 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVideoRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { videoRecommendationApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const route = useRoute()
@@ -351,7 +350,7 @@ function toggleListItem(listId) {
 
 async function addToLists() {
   try {
-    const result = await listStore.bindVideosToLists(selectedListIds.value, [recommendationId.value])
+    const result = await listStore.bindVideos(selectedListIds.value, [recommendationId.value])
     if (result) {
       recommendation.value.list_ids = selectedListIds.value
       showSuccessToast('保存成功')

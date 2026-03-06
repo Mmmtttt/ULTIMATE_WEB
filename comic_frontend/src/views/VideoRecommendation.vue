@@ -345,17 +345,23 @@ onMounted(async () => {
   }
 })
 
-async function createImportFromIds(ids, target) {
+  async function createImportFromIds(ids, target) {
   try {
     const params = {
       import_type: ids.length === 1 ? 'by_id' : 'by_list',
       target: target,
       platform: 'JAVDB',
-      video_id: ids.length === 1 ? ids[0] : undefined,
-      video_ids: ids.length > 1 ? ids : undefined
+      comic_id: ids.length === 1 ? ids[0] : undefined, // API expects comic_id for by_id
+      comic_ids: ids.length > 1 ? ids : undefined // API expects comic_ids for by_list
     }
     
-    const result = await importTaskStore.createVideoImportTask(params)
+    // 导入任务目前主要针对漫画设计，但后端 import_async 也支持。
+    // 如果要支持视频导入任务，需要后端扩展。
+    // 目前视频导入是同步的 videoApi.importVideo
+    // 假设我们要复用 TaskManager，需要后端支持。
+    // 暂时先用 importTaskStore.createImportTask，但后端需要区分 platform='JAVDB'
+    
+    const result = await importTaskStore.createImportTask(params)
     if (result) {
       showSuccessToast(`已创建导入任务，共 ${ids.length} 个视频`)
     }
