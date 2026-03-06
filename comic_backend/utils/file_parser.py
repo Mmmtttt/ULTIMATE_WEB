@@ -58,11 +58,39 @@ class FileParser:
                             found = True
                             break
                 
-                comic_dir = os.path.join(PK_PICTURES_DIR, "comics", str(author), str(title))
+                # 生成可能的作者和标题变体
+                author_variants = self._generate_name_variants(author)
+                title_variants = self._generate_name_variants(title)
                 
-                # 如果该目录存在，则使用该目录
-                if os.path.exists(comic_dir):
-                    return comic_dir
+                pk_comics_dir = os.path.join(PK_PICTURES_DIR, "comics")
+                if os.path.exists(pk_comics_dir):
+                    # 首先尝试匹配作者目录
+                    matched_author_dir = None
+                    for author_var in author_variants:
+                        test_author_dir = os.path.join(pk_comics_dir, author_var)
+                        if os.path.exists(test_author_dir):
+                            matched_author_dir = test_author_dir
+                            break
+                    
+                    # 如果找到作者目录，尝试匹配标题目录
+                    if matched_author_dir:
+                        for title_var in title_variants:
+                            comic_dir = os.path.join(matched_author_dir, title_var)
+                            if os.path.exists(comic_dir):
+                                return comic_dir
+                    
+                    # 如果没找到精确匹配，尝试模糊匹配作者目录
+                    if not matched_author_dir:
+                        author_dirs = os.listdir(pk_comics_dir)
+                        matched_author_dir = self._fuzzy_match_dir(author_dirs, author)
+                        if matched_author_dir:
+                            matched_author_dir = os.path.join(pk_comics_dir, matched_author_dir)
+                            # 在匹配的作者目录下模糊匹配标题目录
+                            title_dirs = os.listdir(matched_author_dir)
+                            matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
+                            if matched_title_dir:
+                                comic_dir = os.path.join(matched_author_dir, matched_title_dir)
+                                return comic_dir
                 
                 # 回退到按 original_id 命名的目录，兼容未来可能的目录规则调整
                 fallback_dir = os.path.join(PK_PICTURES_DIR, original_id)
@@ -72,6 +100,60 @@ class FileParser:
                 return os.path.join(PK_PICTURES_DIR, original_id)
         else:
             raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+    
+    def _generate_name_variants(self, name):
+        """生成名称的变体，用于目录匹配"""
+        variants = set()
+        variants.add(name)
+        
+        # 替换常见分隔符
+        if " | " in name:
+            variants.add(name.replace(" | ", " _ "))
+            variants.add(name.replace(" | ", "_"))
+        if "|" in name:
+            variants.add(name.replace("|", " _ "))
+            variants.add(name.replace("|", "_"))
+        
+        # 处理空格变化
+        variants.add(name.replace(" ", ""))
+        variants.add(name.replace("  ", " "))
+        
+        # 处理全角/半角空格
+        variants.add(name.replace("\u3000", " "))
+        
+        return list(variants)
+    
+    def _fuzzy_match_dir(self, dir_list, target_name):
+        """在目录列表中模糊匹配目标名称"""
+        target_lower = target_name.lower()
+        
+        # 首先尝试精确匹配（忽略大小写）
+        for dir_name in dir_list:
+            if dir_name.lower() == target_lower:
+                return dir_name
+        
+        # 尝试替换分隔符后的匹配
+        target_variants = self._generate_name_variants(target_name)
+        for dir_name in dir_list:
+            dir_lower = dir_name.lower()
+            for variant in target_variants:
+                if variant.lower() == dir_lower:
+                    return dir_name
+        
+        # 尝试部分匹配
+        for dir_name in dir_list:
+            dir_lower = dir_name.lower()
+            # 检查目标名称是否包含在目录名中，或者反过来
+            if target_lower in dir_lower or dir_lower in target_lower:
+                # 进一步验证相似度
+                if len(target_lower) > 0 and len(dir_lower) > 0:
+                    # 计算共同字符比例
+                    common_chars = set(target_lower) & set(dir_lower)
+                    ratio = len(common_chars) / max(len(set(target_lower)), len(set(dir_lower)))
+                    if ratio > 0.8:  # 80% 以上的相似度
+                        return dir_name
+        
+        return None
     
     def parse_comic_images(self, comic_id):
         try:
