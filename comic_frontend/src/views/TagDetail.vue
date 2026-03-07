@@ -34,21 +34,21 @@
           <div v-if="homeComics.length === 0" class="empty-section">
             <van-empty description="主页暂无此标签的漫画" />
           </div>
-          <ComicGrid v-else :comics="homeComics" @card-click="goToHomeComic" />
+          <MediaGrid v-else :items="homeComics" @click="goToHomeComic" />
         </van-tab>
 
         <van-tab title="推荐漫画">
           <div v-if="recommendationComics.length === 0" class="empty-section">
             <van-empty description="推荐页暂无此标签的漫画" />
           </div>
-          <ComicGrid v-else :comics="recommendationComics" @card-click="goToRecommendationComic" />
+          <MediaGrid v-else :items="recommendationComics" @click="goToRecommendationComic" />
         </van-tab>
 
         <van-tab :title="`全部 (${totalCount})`">
           <div v-if="allComics.length === 0" class="empty-section">
             <van-empty description="暂无此标签的漫画" />
           </div>
-          <ComicGrid v-else :comics="allComics" @card-click="goToComic" />
+          <MediaGrid v-else :items="allComics" @click="goToComic" />
         </van-tab>
       </van-tabs>
     </div>
@@ -77,7 +77,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast } from 'vant'
 import { tagApi } from '@/api'
 import { useTagStore } from '@/stores'
-import ComicGrid from '@/components/comic/ComicGrid.vue'
+import MediaGrid from '@/components/common/MediaGrid.vue'
 
 const route = useRoute()
 const router = useRouter()

@@ -8,7 +8,7 @@
     >
       <div class="media-cover">
         <van-image 
-          :src="getItemCoverUrl(item)" 
+          :src="getCoverUrl(item.cover_path)" 
           fit="cover" 
           class="cover-image"
           lazy-load
@@ -81,11 +81,6 @@ function getCoverUrl(coverPath) {
   if (coverPath.startsWith('/static/')) return coverPath
   if (coverPath.startsWith('/')) return coverPath
   return `/${coverPath}`
-}
-
-function getItemCoverUrl(item) {
-  const coverPath = item.cover_path || item.cover_url
-  return getCoverUrl(coverPath)
 }
 
 function isSelected(item) {

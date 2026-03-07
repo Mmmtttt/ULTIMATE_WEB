@@ -258,32 +258,6 @@ class ComicAppService:
             error_logger.error(f"筛选失败: {e}")
             return ServiceResult.error("筛选失败")
     
-    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
-                     authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
-        try:
-            comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
-            tags = self._tag_repo.get_all()
-            tag_map = {t.id: t.name for t in tags}
-            
-            results = []
-            for c in comics:
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "score": c.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids]
-                }
-                results.append(comic_info)
-            
-            app_logger.info(f"综合筛选成功: 标签 {include_tags}/{exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
-            return ServiceResult.ok(results)
-        except Exception as e:
-            error_logger.error(f"综合筛选失败: {e}")
-            return ServiceResult.error("筛选失败")
-    
     def batch_add_tags(self, comic_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
             for tag_id in tag_ids:

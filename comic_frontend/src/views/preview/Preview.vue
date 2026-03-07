@@ -139,7 +139,7 @@ const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? videoRecStore : comicRecStore)
 
 const items = computed(() => {
-  return isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
+  return isVideoMode.value ? videoRecStore.recommendationList : comicRecStore.recommendationList
 })
 
 const isLoading = computed(() => currentStore.value.loading)

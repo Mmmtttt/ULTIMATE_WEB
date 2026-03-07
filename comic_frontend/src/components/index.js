@@ -3,10 +3,6 @@
  * 集中管理所有组件
  */
 
-// 漫画组件
-export { default as ComicCard } from './comic/ComicCard.vue'
-export { default as ComicGrid } from './comic/ComicGrid.vue'
-
 // 标签组件
 export { default as TagBadge } from './tag/TagBadge.vue'
 export { default as TagFilter } from './tag/TagFilter.vue'
@@ -14,3 +10,5 @@ export { default as TagFilter } from './tag/TagFilter.vue'
 // 通用组件
 export { default as LoadingSpinner } from './common/LoadingSpinner.vue'
 export { default as EmptyState } from './common/EmptyState.vue'
+export { default as MediaGrid } from './common/MediaGrid.vue'
+export { default as ModeSwitch } from './common/ModeSwitch.vue'

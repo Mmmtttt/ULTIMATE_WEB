@@ -68,14 +68,14 @@ const routes = [
     component: () => import('@/views/RecommendationDetail.vue')
   },
   {
-    path: '/video-recommendation/:id',
-    name: 'VideoRecommendationDetail',
-    component: () => import('@/views/VideoRecommendationDetail.vue')
-  },
-  {
     path: '/recommendation-reader/:id',
     name: 'RecommendationReader',
     component: () => import('@/views/RecommendationReader.vue')
+  },
+  {
+    path: '/video-recommendation/:id',
+    name: 'VideoRecommendationDetail',
+    component: () => import('@/views/VideoRecommendationDetail.vue')
   },
   // 管理页面
   {

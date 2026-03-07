@@ -784,6 +784,46 @@ def search_video_recommendations():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/recommendation/filter', methods=['GET'])
+def filter_video_recommendations():
+    """根据标签筛选推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        include_tag_ids = request.args.getlist('include_tag_ids')
+        exclude_tag_ids = request.args.getlist('exclude_tag_ids')
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        filtered_videos = []
+        for video in videos:
+            if video.get('is_deleted'):
+                continue
+            
+            video_tag_ids = video.get('tag_ids', [])
+            
+            if include_tag_ids:
+                has_all_include = all(tag_id in video_tag_ids for tag_id in include_tag_ids)
+                if not has_all_include:
+                    continue
+            
+            if exclude_tag_ids:
+                has_any_exclude = any(tag_id in video_tag_ids for tag_id in exclude_tag_ids)
+                if has_any_exclude:
+                    continue
+            
+            filtered_videos.append(video)
+        
+        app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(filtered_videos)}")
+        return success_response(filtered_videos)
+    except Exception as e:
+        error_logger.error(f"视频推荐筛选失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 # ========== 视频播放相关 API ==========
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])

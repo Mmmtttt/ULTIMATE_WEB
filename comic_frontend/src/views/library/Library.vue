@@ -152,6 +152,15 @@ const items = computed(() => {
   return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
+async function applyFilters() {
+  if (isVideoMode.value) {
+    await videoStore.filterByTags(includeTags.value, excludeTags.value)
+  } else {
+    await comicStore.filterByTags(includeTags.value, excludeTags.value)
+  }
+  showFilterPanel.value = false
+}
+
 const isLoading = computed(() => currentStore.value.loading)
 
 const searchPlaceholder = computed(() => 
@@ -245,25 +254,6 @@ async function loadData(force = false) {
 
 function handleQuickImport() {
   // Logic
-}
-
-function applyFilters() {
-  if (isVideoMode.value) {
-    videoStore.filterByTags(includeTags.value, excludeTags.value)
-  } else {
-    comicStore.filterByTags(includeTags.value, excludeTags.value)
-  }
-  showFilterPanel.value = false
-}
-
-function removeFilter(filter) {
-  // Remove filter logic
-}
-
-function clearAllFilters() {
-  includeTags.value = []
-  excludeTags.value = []
-  loadData(true)
 }
 
 // Lifecycle

@@ -279,7 +279,6 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
-import { useComic } from '@/composables'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { comicApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
@@ -289,8 +288,6 @@ const router = useRouter()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
-
-const { updateScore } = useComic()
 
 const comic = ref(null)
 const isLoading = ref(true)
@@ -445,7 +442,7 @@ function filterByTag(tagId) {
 
 async function handleScoreChange(value) {
   try {
-    await updateScore(comic.value.id, value)
+    await comicStore.updateScore(comic.value.id, value)
     comic.value.score = value
     showSuccessToast('评分保存成功')
   } catch (error) {

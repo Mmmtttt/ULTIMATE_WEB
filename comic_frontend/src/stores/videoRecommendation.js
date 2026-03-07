@@ -11,9 +11,11 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   const error = ref(null)
   const currentSort = ref('create_time')
   const filters = ref({})
+  const filteredRecommendations = ref([])
+  const isFiltering = ref(false)
 
   // Getters
-  const recommendationList = computed(() => recommendations.value)
+  const recommendationList = computed(() => isFiltering.value ? filteredRecommendations.value : recommendations.value)
   const totalCount = computed(() => recommendations.value.length)
 
   // Actions
@@ -68,12 +70,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     try {
       const res = await videoApi.updateVideoRecommendationScore(videoId, score)
       if (res.code === 200) {
-        // 更新列表中的数据
         const index = recommendations.value.findIndex(v => v.id === videoId)
         if (index !== -1) {
           recommendations.value[index].score = score
         }
-        // 更新详情数据
         if (currentRecommendation.value && currentRecommendation.value.id === videoId) {
           currentRecommendation.value.score = score
         }
@@ -122,7 +122,8 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     try {
       const res = await videoApi.searchVideoRecommendations(keyword)
       if (res.code === 200) {
-        recommendations.value = res.data || []
+        filteredRecommendations.value = res.data || []
+        isFiltering.value = true
       }
     } catch (e) {
       console.error('搜索视频推荐失败:', e)
@@ -131,16 +132,45 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
+  async function filterByTags(includeTagIds = [], excludeTagIds = []) {
+    console.log('[Video Recommendation] filterByTags called, include:', includeTagIds, 'exclude:', excludeTagIds)
+    
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await videoApi.filterVideoRecommendations(includeTagIds, excludeTagIds)
+      
+      if (response.code === 200) {
+        filteredRecommendations.value = response.data || []
+        isFiltering.value = true
+        return response.data
+      } else {
+        error.value = response.msg || '筛选失败'
+        return []
+      }
+    } catch (err) {
+      console.error('[Video Recommendation] 筛选失败:', err)
+      error.value = '筛选失败'
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function clearFilter() {
+    console.log('[Video Recommendation] clearFilter called')
+    filteredRecommendations.value = []
+    isFiltering.value = false
+    filters.value = {}
+  }
+
   function setSortType(type) {
     currentSort.value = type
   }
 
   function setFilter(key, value) {
     filters.value[key] = value
-  }
-
-  function clearFilter() {
-    filters.value = {}
   }
 
   function clearSort() {
@@ -153,6 +183,8 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     loading,
     error,
     currentSort,
+    filteredRecommendations,
+    isFiltering,
     recommendationList,
     totalCount,
     fetchRecommendations,
@@ -161,9 +193,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     moveToTrash,
     batchMoveToTrash,
     searchRecommendations,
+    filterByTags,
+    clearFilter,
     setSortType,
     setFilter,
-    clearFilter,
     clearSort
   }
 })

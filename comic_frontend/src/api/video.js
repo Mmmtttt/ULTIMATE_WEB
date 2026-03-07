@@ -122,6 +122,13 @@ export const videoApi = {
   
   searchVideoRecommendations(keyword) {
     return request.get('/v1/video/recommendation/search', { params: { keyword } })
+  },
+  
+  filterVideoRecommendations(includeTags = [], excludeTags = []) {
+    const params = new URLSearchParams()
+    includeTags.forEach(id => params.append('include_tag_ids', id))
+    excludeTags.forEach(id => params.append('exclude_tag_ids', id))
+    return request.get(`/v1/video/recommendation/filter?${params.toString()}`)
   }
 }
 
