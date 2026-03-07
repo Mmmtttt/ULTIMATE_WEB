@@ -8,7 +8,7 @@
     >
       <div class="media-cover">
         <van-image 
-          :src="getCoverUrl(item.cover_path)" 
+          :src="getCoverUrl(item)" 
           fit="cover" 
           class="cover-image"
           lazy-load
@@ -75,7 +75,8 @@ const props = defineProps({
 const emit = defineEmits(['click', 'toggle-favorite', 'select'])
 const { isMobile, isDesktop } = useDevice()
 
-function getCoverUrl(coverPath) {
+function getCoverUrl(item) {
+  const coverPath = item.cover_path || item.cover_url
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
   if (coverPath.startsWith('/static/')) return coverPath

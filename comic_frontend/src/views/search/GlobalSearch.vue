@@ -87,8 +87,25 @@ const emptyDescription = computed(() => {
 
 const normalizedResults = computed(() => {
   return results.value.map(item => {
-    // Normalize data structure if needed
-    return item
+    // Normalize data structure for MediaGrid
+    const normalized = { ...item }
+    
+    // Handle video data
+    if (normalized.cover_url && !normalized.cover_path) {
+      normalized.cover_path = normalized.cover_url
+    }
+    
+    // Handle comic data
+    if (normalized.cover_url && !normalized.cover_path) {
+      normalized.cover_path = normalized.cover_url
+    }
+    
+    // Ensure id exists
+    if (!normalized.id) {
+      normalized.id = normalized.video_id || normalized.album_id || normalized.comic_id
+    }
+    
+    return normalized
   })
 })
 
