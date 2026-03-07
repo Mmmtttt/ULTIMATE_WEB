@@ -13,6 +13,7 @@
           class="cover-image"
           lazy-load
         />
+        <div v-if="item.platform" class="media-platform">{{ item.platform }}</div>
         <div v-if="item.code" class="media-code">{{ item.code }}</div>
         <div v-if="item.score" class="media-score">{{ item.score }}</div>
         <div v-if="showProgress && item.current_page && item.current_page > 0" class="media-progress">
@@ -140,6 +141,19 @@ function isSelected(item) {
 .cover-image {
   width: 100%;
   height: 100%;
+}
+
+.media-platform {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  z-index: 1;
 }
 
 .media-code {

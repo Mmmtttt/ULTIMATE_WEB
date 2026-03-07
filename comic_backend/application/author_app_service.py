@@ -110,19 +110,40 @@ class AuthorAppService:
             return ServiceResult.error("取消订阅作者失败")
     
     def _search_author_works(self, author_name: str) -> List[Dict]:
+        from core.platform import get_supported_platforms
+        
         works = []
         try:
-            result = external_api.search_albums(author_name, max_pages=1, fast_mode=True)
-            albums = result.get("albums", [])
+            platforms_to_search = get_supported_platforms()
+            platform_albums = {}
+            max_result_count = 0
             
-            for album in albums:
-                works.append({
-                    "id": str(album.get("album_id", "")),
-                    "title": album.get("title", ""),
-                    "author": author_name,
-                    "cover_url": album.get("cover_url", ""),
-                    "pages": album.get("pages", 0)
-                })
+            for plat in platforms_to_search:
+                try:
+                    adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                    result = external_api.search_albums(author_name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                    albums = result.get("albums", [])
+                    
+                    if albums:
+                        platform_albums[plat] = albums
+                        if len(albums) > max_result_count:
+                            max_result_count = len(albums)
+                except Exception as e:
+                    error_logger.error(f"搜索作者 {author_name} 在平台 {plat} 的作品失败: {e}")
+                    continue
+            
+            for i in range(max_result_count):
+                for plat in platforms_to_search:
+                    if plat in platform_albums and i < len(platform_albums[plat]):
+                        album = platform_albums[plat][i]
+                        works.append({
+                            "id": str(album.get("album_id", "")),
+                            "title": album.get("title", ""),
+                            "author": author_name,
+                            "cover_url": album.get("cover_url", ""),
+                            "pages": album.get("pages", 0),
+                            "platform": plat
+                        })
                 
         except Exception as e:
             error_logger.error(f"搜索作者 {author_name} 作品失败: {e}")
@@ -192,6 +213,8 @@ class AuthorAppService:
             return ServiceResult.error("检查作者更新失败")
     
     def get_author_new_works(self, author_id: str) -> ServiceResult:
+        from core.platform import get_supported_platforms
+        
         try:
             author = self._author_repo.get_by_id(author_id)
             if not author:
@@ -199,17 +222,36 @@ class AuthorAppService:
             
             works = []
             try:
-                result = external_api.search_albums(author.name, max_pages=1, fast_mode=True)
-                albums = result.get("albums", [])
+                platforms_to_search = get_supported_platforms()
+                platform_albums = {}
+                max_result_count = 0
                 
-                for album in albums:
-                    works.append({
-                        "id": str(album.get("album_id", "")),
-                        "title": album.get("title", ""),
-                        "author": author.name,
-                        "cover_url": album.get("cover_url", ""),
-                        "pages": album.get("pages", 0)
-                    })
+                for plat in platforms_to_search:
+                    try:
+                        adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                        result = external_api.search_albums(author.name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                        albums = result.get("albums", [])
+                        
+                        if albums:
+                            platform_albums[plat] = albums
+                            if len(albums) > max_result_count:
+                                max_result_count = len(albums)
+                    except Exception as e:
+                        error_logger.error(f"搜索作者 {author.name} 在平台 {plat} 的作品失败: {e}")
+                        continue
+                
+                for i in range(max_result_count):
+                    for plat in platforms_to_search:
+                        if plat in platform_albums and i < len(platform_albums[plat]):
+                            album = platform_albums[plat][i]
+                            works.append({
+                                "id": str(album.get("album_id", "")),
+                                "title": album.get("title", ""),
+                                "author": author.name,
+                                "cover_url": album.get("cover_url", ""),
+                                "pages": album.get("pages", 0),
+                                "platform": plat
+                            })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author.name} 作品失败: {e}")
@@ -337,6 +379,8 @@ class AuthorAppService:
         return existing_ids
     
     def get_author_works_paginated(self, author_id: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+        from core.platform import get_supported_platforms
+        
         try:
             author = self._author_repo.get_by_id(author_id)
             if not author:
@@ -358,7 +402,8 @@ class AuthorAppService:
                     for work in paginated_works:
                         if work.get("cover_url"):
                             try:
-                                self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                                platform = work.get("platform", "JM")
+                                self._download_author_cover(work["id"], work["cover_url"], platform)
                             except Exception as e:
                                 error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
                 threading.Thread(target=download_covers_async, daemon=True).start()
@@ -375,24 +420,43 @@ class AuthorAppService:
             
             works = []
             try:
-                result = external_api.search_albums(author.name, max_pages=1, fast_mode=True)
-                albums = result.get("albums", [])
+                platforms_to_search = get_supported_platforms()
+                platform_albums = {}
+                max_result_count = 0
                 
-                for album in albums:
-                    work_id = str(album.get("album_id", ""))
-                    cover_url = album.get("cover_url", "")
-                    if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
-                        cover_url = f"/static/cover/JM/author_cache/{work_id}.jpg"
-                    
-                    works.append({
-                        "id": work_id,
-                        "title": album.get("title", ""),
-                        "author": author.name,
-                        "cover_url": cover_url,
-                        "pages": album.get("pages", 0),
-                        "has_detail": False,
-                        "is_new": True
-                    })
+                for plat in platforms_to_search:
+                    try:
+                        adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                        result = external_api.search_albums(author.name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                        albums = result.get("albums", [])
+                        
+                        if albums:
+                            platform_albums[plat] = albums
+                            if len(albums) > max_result_count:
+                                max_result_count = len(albums)
+                    except Exception as e:
+                        error_logger.error(f"搜索作者 {author.name} 在平台 {plat} 的作品失败: {e}")
+                        continue
+                
+                for i in range(max_result_count):
+                    for plat in platforms_to_search:
+                        if plat in platform_albums and i < len(platform_albums[plat]):
+                            album = platform_albums[plat][i]
+                            work_id = str(album.get("album_id", ""))
+                            cover_url = album.get("cover_url", "")
+                            if os.path.exists(f"static/cover/{plat}/author_cache/{work_id}.jpg"):
+                                cover_url = f"/static/cover/{plat}/author_cache/{work_id}.jpg"
+                            
+                            works.append({
+                                "id": work_id,
+                                "title": album.get("title", ""),
+                                "author": author.name,
+                                "cover_url": cover_url,
+                                "pages": album.get("pages", 0),
+                                "has_detail": False,
+                                "is_new": True,
+                                "platform": plat
+                            })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author.name} 作品失败: {e}")
@@ -428,7 +492,8 @@ class AuthorAppService:
                 for work in paginated_works:
                     if work.get("cover_url"):
                         try:
-                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                            platform = work.get("platform", "JM")
+                            self._download_author_cover(work["id"], work["cover_url"], platform)
                         except Exception as e:
                             error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
             
@@ -457,7 +522,8 @@ class AuthorAppService:
                 for work in paginated_works:
                     if work.get("cover_url"):
                         try:
-                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                            platform = work.get("platform", "JM")
+                            self._download_author_cover(work["id"], work["cover_url"], platform)
                         except Exception as e:
                             error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
             threading.Thread(target=download_covers_async, daemon=True).start()
@@ -472,28 +538,49 @@ class AuthorAppService:
                 "from_cache": True
             })
         
+        from core.platform import get_supported_platforms
+        
         try:
             works = []
             try:
-                result = external_api.search_albums(author_name, max_pages=1, fast_mode=True)
-                albums = result.get("albums", [])
+                platforms_to_search = get_supported_platforms()
+                platform_albums = {}
+                max_result_count = 0
                 
-                for album in albums:
-                    work_id = str(album.get("album_id", ""))
-                    cover_url = album.get("cover_url", "")
-                    local_cover = f"/static/cover/JM/author_cache/{work_id}.jpg"
-                    if os.path.exists(f"static/cover/JM/author_cache/{work_id}.jpg"):
-                        cover_url = local_cover
-                    
-                    works.append({
-                        "id": work_id,
-                        "title": album.get("title", ""),
-                        "author": author_name,
-                        "cover_url": cover_url,
-                        "pages": album.get("pages", 0),
-                        "has_detail": False,
-                        "is_new": True
-                    })
+                for plat in platforms_to_search:
+                    try:
+                        adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                        result = external_api.search_albums(author_name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                        albums = result.get("albums", [])
+                        
+                        if albums:
+                            platform_albums[plat] = albums
+                            if len(albums) > max_result_count:
+                                max_result_count = len(albums)
+                    except Exception as e:
+                        error_logger.error(f"搜索作者 {author_name} 在平台 {plat} 的作品失败: {e}")
+                        continue
+                
+                for i in range(max_result_count):
+                    for plat in platforms_to_search:
+                        if plat in platform_albums and i < len(platform_albums[plat]):
+                            album = platform_albums[plat][i]
+                            work_id = str(album.get("album_id", ""))
+                            cover_url = album.get("cover_url", "")
+                            local_cover = f"/static/cover/{plat}/author_cache/{work_id}.jpg"
+                            if os.path.exists(f"static/cover/{plat}/author_cache/{work_id}.jpg"):
+                                cover_url = local_cover
+                            
+                            works.append({
+                                "id": work_id,
+                                "title": album.get("title", ""),
+                                "author": author_name,
+                                "cover_url": cover_url,
+                                "pages": album.get("pages", 0),
+                                "has_detail": False,
+                                "is_new": True,
+                                "platform": plat
+                            })
                 
             except Exception as e:
                 error_logger.error(f"搜索作者 {author_name} 作品失败: {e}")
@@ -529,7 +616,8 @@ class AuthorAppService:
                 for work in paginated_works:
                     if work.get("cover_url"):
                         try:
-                            self._download_author_cover(work["id"], work["cover_url"], 'JM')
+                            platform = work.get("platform", "JM")
+                            self._download_author_cover(work["id"], work["cover_url"], platform)
                         except Exception as e:
                             error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
             

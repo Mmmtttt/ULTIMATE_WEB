@@ -393,6 +393,7 @@ def search_third_party_comics():
         platform = request.args.get('platform', 'all')
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 20))
+        max_pages = int(request.args.get('max_pages', 3))
         
         if not keyword:
             return error_response(400, "缺少参数: keyword")
@@ -412,18 +413,31 @@ def search_third_party_comics():
             else:
                 return error_response(400, f"不支持的平台: {platform}，支持的平台: {get_supported_platforms()}")
         
+        platform_albums = {}
+        max_result_count = 0
+        
         for plat in platforms_to_search:
             try:
                 adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
-                meta_json = search_albums(keyword, max_pages=1, adapter_name=adapter_name, fast_mode=True)
+                meta_json = search_albums(keyword, max_pages=max_pages, adapter_name=adapter_name, fast_mode=True)
                 
                 if meta_json and meta_json.get('albums'):
+                    albums = []
                     for album in meta_json['albums']:
                         album['platform'] = plat
-                        all_results.append(album)
+                        albums.append(album)
+                    platform_albums[plat] = albums
+                    if len(albums) > max_result_count:
+                        max_result_count = len(albums)
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
                 continue
+        
+        all_results = []
+        for i in range(max_result_count):
+            for plat in platforms_to_search:
+                if plat in platform_albums and i < len(platform_albums[plat]):
+                    all_results.append(platform_albums[plat][i])
         
         total = len(all_results)
         paginated_results = all_results[offset:offset + limit]
@@ -887,7 +901,10 @@ def import_online():
         existing_ids = [c['id'] for c in db_data.get(comics_key, [])]
         checker = DuplicateChecker(existing_ids)
         
-        existing_tags = db_data.get('tags', [])
+        # 无论导入到哪里，都从主数据库读取标签
+        tag_storage = JsonStorage()
+        tag_db_data = tag_storage.read()
+        existing_tags = tag_db_data.get('tags', [])
         adapter = MetaDataAdapter(is_recommendation, existing_tags, platform)
         
         meta_json = None
@@ -970,12 +987,17 @@ def import_online():
         db_data[total_key] = len(db_data[comics_key])
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
+        # 保存新标签到主数据库
         new_tags = converted_data.get("tags", [])
-        existing_tag_ids = {t["id"] for t in db_data.get("tags", [])}
-        for tag in new_tags:
-            if tag["id"] not in existing_tag_ids:
-                db_data.setdefault("tags", []).append(tag)
-                existing_tag_ids.add(tag["id"])
+        if new_tags:
+            existing_tag_ids = {t["id"] for t in tag_db_data.get("tags", [])}
+            for tag in new_tags:
+                if tag["id"] not in existing_tag_ids:
+                    tag_db_data.setdefault("tags", []).append(tag)
+                    existing_tag_ids.add(tag["id"])
+            # 保存主数据库
+            tag_db_data['last_updated'] = time.strftime("%Y-%m-%d")
+            tag_storage.write(tag_db_data)
         
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")

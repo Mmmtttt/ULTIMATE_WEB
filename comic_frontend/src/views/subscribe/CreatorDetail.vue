@@ -157,28 +157,39 @@ function handleImport() {
 
 async function confirmImport(target) {
   showImportSheet.value = false
-  const ids = selectedIds.value
+  const selectedItems = works.value.filter(item => 
+    selectedIds.value.includes(isVideoMode.value ? item.video_id : item.id)
+  )
   
   try {
-    const params = {
-      import_type: 'by_list',
-      target: target,
-      platform: isVideoMode.value ? 'JAVDB' : 'JM',
-      comic_ids: isVideoMode.value ? undefined : ids,
-      video_ids: isVideoMode.value ? ids : undefined // Backend support needed
-    }
-    
-    // For video, we might need to loop if batch not supported
     if (isVideoMode.value) {
-      // Temporary loop
+      // Temporary loop for video
       let successCount = 0
-      for (const id of ids) {
+      for (const item of selectedItems) {
+        const id = item.video_id
         await videoApi.thirdPartyImport(id, target)
         successCount++
       }
       showToast(`已导入 ${successCount} 个视频`)
     } else {
-      await importTaskStore.createImportTask(params)
+      const itemsByPlatform = {}
+      selectedItems.forEach(item => {
+        const platform = item.platform || 'JM'
+        if (!itemsByPlatform[platform]) {
+          itemsByPlatform[platform] = []
+        }
+        itemsByPlatform[platform].push(item.id)
+      })
+      
+      for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+        const params = {
+          import_type: 'by_list',
+          target: target,
+          platform: platform,
+          comic_ids: comicIds
+        }
+        await importTaskStore.createImportTask(params)
+      }
       showToast('已创建导入任务')
     }
     selectedIds.value = []

@@ -30,10 +30,6 @@
 
       <div v-else class="results-container">
         <template v-if="activeTab === 'remote'">
-          <div class="remote-actions-bar" v-if="selectedIds.length > 0">
-            <span class="selection-info">已选 {{ selectedIds.length }} 项</span>
-            <van-button size="small" type="primary" @click="handleImport">导入选中</van-button>
-          </div>
           <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
             <div
               v-for="item in normalizedResults"
@@ -60,6 +56,11 @@
                 <div v-if="item.author" class="card-author">{{ item.author }}</div>
               </div>
             </div>
+          </div>
+          
+          <div class="floating-import-bar" v-if="selectedIds.length > 0">
+            <span class="floating-selection-info">已选 {{ selectedIds.length }} 项</span>
+            <van-button type="primary" @click="handleImport">导入选中</van-button>
           </div>
         </template>
         
@@ -198,24 +199,37 @@ function handleImport() {
 
 async function confirmImport(target) {
   showImportSheet.value = false
-  const ids = [...selectedIds.value]
+  const selectedItems = normalizedResults.value.filter(item => 
+    selectedIds.value.includes(getItemId(item))
+  )
   
   try {
     if (isVideoMode.value) {
       let successCount = 0
-      for (const id of ids) {
-        await videoApi.thirdPartyImport(id, target)
+      for (const item of selectedItems) {
+        await videoApi.thirdPartyImport(getItemId(item), target)
         successCount++
       }
       showToast(`已导入 ${successCount} 个视频`)
     } else {
-      const params = {
-        import_type: 'by_list',
-        target: target,
-        platform: 'JM',
-        comic_ids: ids
+      const itemsByPlatform = {}
+      selectedItems.forEach(item => {
+        const platform = item.platform || 'JM'
+        if (!itemsByPlatform[platform]) {
+          itemsByPlatform[platform] = []
+        }
+        itemsByPlatform[platform].push(getItemId(item))
+      })
+      
+      for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+        const params = {
+          import_type: 'by_list',
+          target: target,
+          platform: platform,
+          comic_ids: comicIds
+        }
+        await importTaskStore.createImportTask(params)
       }
-      await importTaskStore.createImportTask(params)
       showToast('已创建导入任务')
     }
     selectedIds.value = []
@@ -387,22 +401,28 @@ onMounted(() => {
   padding: 20px;
 }
 
-.remote-actions-bar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
+.floating-import-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
   background: #fff;
-  padding: 12px 16px;
+  padding: 12px 20px;
+  border-radius: 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #eee;
-  margin-bottom: 12px;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  max-width: 90%;
+  width: auto;
 }
 
-.selection-info {
+.floating-selection-info {
   font-size: 14px;
   color: #333;
+  white-space: nowrap;
 }
 
 .remote-results-grid {

@@ -6,7 +6,7 @@ from domain.video import VideoRepository
 from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository, VideoRecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.utils import get_current_time, generate_id
+from core.utils import get_current_time
 from core.enums import ContentType
 
 
@@ -85,14 +85,9 @@ class TagAppService:
             if self._tag_repo.exists_by_name(name, content_type):
                 return ServiceResult.error("标签名称已存在")
             
-            tag = Tag(
-                id=generate_id("tag"),
-                name=name,
-                content_type=content_type,
-                create_time=get_current_time()
-            )
+            tag = self._tag_repo.create(name)
             
-            if not self._tag_repo.save(tag):
+            if not tag:
                 return ServiceResult.error("创建标签失败")
             
             app_logger.info(f"创建标签成功: {name}")
