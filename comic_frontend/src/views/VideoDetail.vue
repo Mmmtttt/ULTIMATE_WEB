@@ -421,7 +421,7 @@ async function updateScore(value) {
 }
 
 function goToActor(actorName) {
-  router.push(`/actors?name=${encodeURIComponent(actorName)}`)
+  router.push({ name: 'Library', query: { author: actorName } })
 }
 
 function filterByTag(tagId) {

@@ -15,6 +15,9 @@
         />
         <div v-if="item.code" class="media-code">{{ item.code }}</div>
         <div v-if="item.score" class="media-score">{{ item.score }}</div>
+        <div v-if="showProgress && item.current_page && item.current_page > 0" class="media-progress">
+          {{ item.current_page }}{{ item.total_page ? `/${item.total_page}` : '' }}
+        </div>
         
         <div v-if="showFavorite" class="favorite-btn" @click.stop="$emit('toggle-favorite', item)">
           <van-icon 
@@ -69,6 +72,10 @@ const props = defineProps({
   selectedIds: {
     type: Array,
     default: () => []
+  },
+  showProgress: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -157,6 +164,18 @@ function isSelected(item) {
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
+}
+
+.media-progress {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .favorite-btn {

@@ -60,6 +60,7 @@
         :is-favorited="isFavorited"
         :selectable="isManageMode"
         :selected-ids="selectedIds"
+        :show-progress="!isVideoMode"
         @click="onItemClick"
         @toggle-favorite="toggleFavorite"
         @select="toggleSelection"
@@ -124,7 +125,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore } from '@/stores'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
@@ -132,6 +133,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 
 const router = useRouter()
+const route = useRoute()
 const modeStore = useModeStore()
 const comicStore = useComicStore()
 const videoStore = useVideoStore()
@@ -303,8 +305,19 @@ watch(() => modeStore.currentMode, () => {
   isManageMode.value = false
 })
 
+watch(() => route.query.author, (newAuthor) => {
+  if (newAuthor) {
+    selectedAuthors.value = [newAuthor]
+    applyFilters()
+  }
+})
+
 onMounted(() => {
   loadData()
+  if (route.query.author) {
+    selectedAuthors.value = [route.query.author]
+    applyFilters()
+  }
 })
 </script>
 

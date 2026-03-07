@@ -29,14 +29,50 @@
       />
 
       <div v-else class="results-container">
-        <!-- Remote search often returns different structure, might need adaptation -->
-        <MediaGrid 
-          :items="normalizedResults" 
-          :show-favorite="activeTab !== 'local'"
-          :is-favorited="isFavorited"
-          @click="onItemClick"
-          @toggle-favorite="toggleFavorite"
-        />
+        <template v-if="activeTab === 'remote'">
+          <div class="remote-actions-bar" v-if="selectedIds.length > 0">
+            <span class="selection-info">已选 {{ selectedIds.length }} 项</span>
+            <van-button size="small" type="primary" @click="handleImport">导入选中</van-button>
+          </div>
+          <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
+            <div
+              v-for="item in normalizedResults"
+              :key="getItemId(item)"
+              class="remote-result-card"
+              :class="{ selected: isSelected(item) }"
+              @click="toggleSelection(item)"
+            >
+              <div class="card-cover">
+                <van-image 
+                  :src="getCoverUrl(item)" 
+                  fit="cover" 
+                  class="cover-image"
+                  lazy-load
+                />
+                <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
+                <div v-if="item.score" class="card-score">{{ item.score }}</div>
+                <div v-if="isSelected(item)" class="select-overlay">
+                  <van-icon name="success" class="select-icon" />
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">{{ item.title }}</div>
+                <div v-if="item.author" class="card-author">{{ item.author }}</div>
+              </div>
+            </div>
+          </div>
+        </template>
+        
+        <template v-else>
+          <MediaGrid 
+            :items="normalizedResults" 
+            :show-favorite="activeTab !== 'local'"
+            :is-favorited="isFavorited"
+            :show-progress="!isVideoMode"
+            @click="onItemClick"
+            @toggle-favorite="toggleFavorite"
+          />
+        </template>
         
         <div v-if="hasMore && activeTab === 'remote'" class="load-more">
           <van-button block plain :loading="loadingMore" @click="loadMore">
@@ -45,13 +81,21 @@
         </div>
       </div>
     </div>
+
+    <!-- Import Options -->
+    <van-action-sheet v-model:show="showImportSheet" title="导入位置">
+      <div class="sheet-content">
+        <van-button block type="primary" @click="confirmImport('home')">导入到主页</van-button>
+        <van-button block type="success" @click="confirmImport('recommendation')">导入到推荐页</van-button>
+      </div>
+    </van-action-sheet>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useModeStore, useComicStore, useVideoStore, useRecommendationStore, useVideoRecommendationStore, useListStore } from '@/stores'
+import { useModeStore, useComicStore, useVideoStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useImportTaskStore } from '@/stores'
 import { videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -65,6 +109,7 @@ const videoStore = useVideoStore()
 const comicRecStore = useRecommendationStore()
 const videoRecStore = useVideoRecommendationStore()
 const listStore = useListStore()
+const importTaskStore = useImportTaskStore()
 
 const keyword = ref('')
 const activeTab = ref('local')
@@ -73,6 +118,8 @@ const loadingMore = ref(false)
 const results = ref([])
 const hasMore = ref(false)
 const currentPage = ref(0) // offset for some APIs
+const selectedIds = ref([])
+const showImportSheet = ref(false)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -105,9 +152,77 @@ const normalizedResults = computed(() => {
       normalized.id = normalized.video_id || normalized.album_id || normalized.comic_id
     }
     
+    // Add platform information
+    if (activeTab.value === 'remote') {
+      if (isVideoMode.value) {
+        normalized.platform = 'JAVDB'
+      } else {
+        normalized.platform = normalized.platform || 'JM'
+      }
+    }
+    
     return normalized
   })
 })
+
+function getItemId(item) {
+  return item.id || item.video_id || item.album_id || item.comic_id
+}
+
+function getCoverUrl(item) {
+  const coverPath = item.cover_path || item.cover_url
+  if (!coverPath) return ''
+  if (coverPath.startsWith('http')) return coverPath
+  if (coverPath.startsWith('/static/')) return coverPath
+  if (coverPath.startsWith('/')) return coverPath
+  return `/${coverPath}`
+}
+
+function isSelected(item) {
+  const id = getItemId(item)
+  return selectedIds.value.includes(id)
+}
+
+function toggleSelection(item) {
+  const id = getItemId(item)
+  if (selectedIds.value.includes(id)) {
+    selectedIds.value = selectedIds.value.filter(i => i !== id)
+  } else {
+    selectedIds.value.push(id)
+  }
+}
+
+function handleImport() {
+  showImportSheet.value = true
+}
+
+async function confirmImport(target) {
+  showImportSheet.value = false
+  const ids = [...selectedIds.value]
+  
+  try {
+    if (isVideoMode.value) {
+      let successCount = 0
+      for (const id of ids) {
+        await videoApi.thirdPartyImport(id, target)
+        successCount++
+      }
+      showToast(`已导入 ${successCount} 个视频`)
+    } else {
+      const params = {
+        import_type: 'by_list',
+        target: target,
+        platform: 'JM',
+        comic_ids: ids
+      }
+      await importTaskStore.createImportTask(params)
+      showToast('已创建导入任务')
+    }
+    selectedIds.value = []
+  } catch (e) {
+    showToast('导入失败')
+  }
+}
 
 async function handleSearch() {
   if (!keyword.value.trim()) return
@@ -116,6 +231,7 @@ async function handleSearch() {
   results.value = []
   currentPage.value = 0
   hasMore.value = false
+  selectedIds.value = []
   
   try {
     if (activeTab.value === 'local') {
@@ -269,5 +385,147 @@ onMounted(() => {
 
 .load-more {
   padding: 20px;
+}
+
+.remote-actions-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 12px;
+}
+
+.selection-info {
+  font-size: 14px;
+  color: #333;
+}
+
+.remote-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.remote-result-card {
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  cursor: pointer;
+  transition: transform 0.2s;
+  position: relative;
+}
+
+.remote-result-card:hover {
+  transform: translateY(-2px);
+}
+
+.remote-result-card.selected {
+  box-shadow: 0 0 0 2px #1989fa;
+}
+
+.card-cover {
+  position: relative;
+  aspect-ratio: 2/3;
+  background: #f0f2f5;
+}
+
+.remote-results-grid.video-mode .card-cover {
+  aspect-ratio: 16/9;
+}
+
+.cover-image {
+  width: 100%;
+  height: 100%;
+}
+
+.platform-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.card-score {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #ff9500;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.select-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(25, 137, 250, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.select-icon {
+  font-size: 32px;
+  color: #fff;
+  background: #1989fa;
+  border-radius: 50%;
+  padding: 8px;
+}
+
+.card-info {
+  padding: 10px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.4;
+}
+
+.card-author {
+  font-size: 12px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-content {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (min-width: 768px) {
+  .remote-results-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    padding: 20px;
+  }
 }
 </style>

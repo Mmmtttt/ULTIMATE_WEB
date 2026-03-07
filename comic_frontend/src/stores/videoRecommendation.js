@@ -66,6 +66,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
+  async function fetchRecommendationDetail(videoId) {
+    return fetchDetail(videoId)
+  }
+
   async function updateScore(videoId, score) {
     try {
       const res = await videoApi.updateVideoRecommendationScore(videoId, score)
@@ -189,6 +193,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     totalCount,
     fetchRecommendations,
     fetchDetail,
+    fetchRecommendationDetail,
     updateScore,
     moveToTrash,
     batchMoveToTrash,

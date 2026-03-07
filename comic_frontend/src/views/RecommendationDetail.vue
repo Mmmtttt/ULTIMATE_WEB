@@ -23,7 +23,9 @@
         />
         <div class="info">
           <h1 class="title">{{ recommendation.title }}</h1>
-          <p class="author" v-if="recommendation.author">{{ recommendation.author }}</p>
+          <p class="author" v-if="recommendation.author">
+            <span class="author-link" @click="filterByAuthor(recommendation.author)">{{ recommendation.author }}</span>
+          </p>
           <p class="author" v-else>未知作者</p>
 
           <div class="stats">
@@ -355,6 +357,10 @@ function filterByTag(tagId) {
   router.push(`/recommendation?tagId=${tagId}`)
 }
 
+function filterByAuthor(author) {
+  router.push({ name: 'Preview', query: { author: author } })
+}
+
 /**
  * 评分变化
  */
@@ -619,6 +625,16 @@ watch(showListPopup, async (val) => {
   margin: 0 0 12px 0;
   font-size: 14px;
   opacity: 0.9;
+}
+
+.author-link {
+  color: #1989fa;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.author-link:hover {
+  opacity: 0.8;
 }
 
 .stats {

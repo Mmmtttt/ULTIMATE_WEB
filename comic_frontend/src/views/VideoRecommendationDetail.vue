@@ -63,6 +63,7 @@
             type="primary"
             plain
             class="actor"
+            @click="filterByActor(actor)"
           >
             {{ actor }}
           </van-tag>
@@ -240,6 +241,10 @@ function getCoverUrl(coverPath) {
   if (coverPath.startsWith('/static/')) return coverPath
   if (coverPath.startsWith('/')) return coverPath
   return `/${coverPath}`
+}
+
+function filterByActor(actorName) {
+  router.push({ name: 'Library', query: { author: actorName } })
 }
 
 async function fetchDetail() {

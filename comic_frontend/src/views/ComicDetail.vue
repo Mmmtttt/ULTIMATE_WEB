@@ -40,7 +40,9 @@
         <div class="info">
           <h1 class="title">{{ comic.title }}</h1>
           <div class="author-row">
-            <p class="author" v-if="comic.author">{{ comic.author }}</p>
+            <p class="author" v-if="comic.author">
+              <span class="author-link" @click="filterByAuthor(comic.author)">{{ comic.author }}</span>
+            </p>
             <p class="author" v-else>未知作者</p>
             <van-button 
               v-if="comic.author && !isSubscribed" 
@@ -456,6 +458,10 @@ function filterByTag(tagId) {
   router.push(`/?tagId=${tagId}`)
 }
 
+function filterByAuthor(author) {
+  router.push({ name: 'Library', query: { author: author } })
+}
+
 async function handleScoreChange(value) {
   try {
     await comicStore.updateScore(comic.value.id, value)
@@ -753,6 +759,16 @@ watch(showListPopup, async (val) => {
   font-size: 14px;
   margin: 0 0 12px 0;
   opacity: 0.9;
+}
+
+.author-link {
+  color: #1989fa;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.author-link:hover {
+  opacity: 0.8;
 }
 
 .author-row {
