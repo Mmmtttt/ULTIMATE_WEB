@@ -85,7 +85,7 @@ class TagAppService:
             if self._tag_repo.exists_by_name(name, content_type):
                 return ServiceResult.error("标签名称已存在")
             
-            tag = self._tag_repo.create(name)
+            tag = self._tag_repo.create(name, content_type)
             
             if not tag:
                 return ServiceResult.error("创建标签失败")
@@ -105,7 +105,7 @@ class TagAppService:
             existing_tag = self._tag_repo.get_by_id(tag_id)
             if existing_tag and existing_tag.name == name:
                 pass
-            elif self._tag_repo.exists_by_name(name):
+            elif self._tag_repo.exists_by_name(name, tag.content_type):
                 return ServiceResult.error("标签名称已存在")
             
             tag.update_name(name)

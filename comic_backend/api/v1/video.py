@@ -781,6 +781,110 @@ def batch_move_video_recommendation_to_trash():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/recommendation/trash/list', methods=['GET'])
+def get_video_recommendation_trash_list():
+    """获取推荐视频回收站列表"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        from application.tag_app_service import TagAppService
+        from domain.tag.entity import ContentType
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        tag_service = TagAppService()
+        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        tag_map = {t["id"]: t["name"] for t in tags}
+        
+        trash_videos = []
+        for video in videos:
+            if video.get('is_deleted'):
+                video_with_tags = video.copy()
+                video_tag_ids = video.get('tag_ids', [])
+                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
+                trash_videos.append(video_with_tags)
+        
+        trash_videos.sort(key=lambda x: x.get('deleted_time', ''), reverse=True)
+        return success_response(trash_videos)
+    except Exception as e:
+        error_logger.error(f"获取推荐视频回收站列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/restore', methods=['PUT'])
+def restore_video_recommendation_from_trash():
+    """从回收站恢复推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        video_id = data.get('video_id')
+        
+        if not video_id:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        found = False
+        for video in videos:
+            if video.get('id') == video_id:
+                video['is_deleted'] = False
+                if 'deleted_time' in video:
+                    del video['deleted_time']
+                found = True
+                break
+        
+        if not found:
+            return error_response(404, "视频不存在")
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        app_logger.info(f"推荐视频从回收站恢复: {video_id}")
+        return success_response({"message": "已从回收站恢复"})
+    except Exception as e:
+        error_logger.error(f"从回收站恢复推荐视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/delete', methods=['DELETE'])
+def delete_video_recommendation_permanently():
+    """永久删除推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        video_id = request.args.get('video_id')
+        if not video_id:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        original_count = len(videos)
+        videos = [v for v in videos if v.get('id') != video_id]
+        
+        if len(videos) == original_count:
+            return error_response(404, "视频不存在")
+        
+        db_data['video_recommendations'] = videos
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        app_logger.info(f"推荐视频永久删除: {video_id}")
+        return success_response({"message": "已永久删除"})
+    except Exception as e:
+        error_logger.error(f"永久删除推荐视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @video_bp.route('/recommendation/search', methods=['GET'])
 def search_video_recommendations():
     """搜索推荐视频"""

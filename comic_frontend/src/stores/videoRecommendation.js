@@ -13,6 +13,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   const filters = ref({})
   const filteredRecommendations = ref([])
   const isFiltering = ref(false)
+  const trashList = ref([])
 
   // Getters
   const recommendationList = computed(() => isFiltering.value ? filteredRecommendations.value : recommendations.value)
@@ -121,6 +122,48 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
+  async function fetchTrashList() {
+    loading.value = true
+    try {
+      const res = await videoApi.getVideoRecommendationTrashList()
+      if (res.code === 200) {
+        trashList.value = res.data || []
+      }
+    } catch (e) {
+      console.error('获取推荐视频回收站列表失败:', e)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function restoreFromTrash(videoId) {
+    try {
+      const res = await videoApi.restoreVideoRecommendationFromTrash(videoId)
+      if (res.code === 200) {
+        trashList.value = trashList.value.filter(v => v.id !== videoId)
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('从回收站恢复失败:', e)
+      return false
+    }
+  }
+
+  async function deletePermanently(videoId) {
+    try {
+      const res = await videoApi.deleteVideoRecommendationPermanently(videoId)
+      if (res.code === 200) {
+        trashList.value = trashList.value.filter(v => v.id !== videoId)
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('永久删除失败:', e)
+      return false
+    }
+  }
+
   async function searchRecommendations(keyword) {
     loading.value = true
     try {
@@ -218,8 +261,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     loading,
     error,
     currentSort,
+    filters,
     filteredRecommendations,
     isFiltering,
+    trashList,
     recommendationList,
     totalCount,
     fetchRecommendations,
@@ -228,6 +273,9 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     updateScore,
     moveToTrash,
     batchMoveToTrash,
+    fetchTrashList,
+    restoreFromTrash,
+    deletePermanently,
     searchRecommendations,
     filterByTags,
     filterMulti,

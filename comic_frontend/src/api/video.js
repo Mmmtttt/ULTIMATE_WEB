@@ -126,6 +126,18 @@ export const videoApi = {
     return request.put('/v1/video/recommendation/trash/batch-move', { video_ids: videoIds })
   },
   
+  getVideoRecommendationTrashList() {
+    return request.get('/v1/video/recommendation/trash/list')
+  },
+  
+  restoreVideoRecommendationFromTrash(videoId) {
+    return request.put('/v1/video/recommendation/trash/restore', { video_id: videoId })
+  },
+  
+  deleteVideoRecommendationPermanently(videoId) {
+    return request.delete('/v1/video/recommendation/trash/delete', { params: { video_id: videoId } })
+  },
+  
   searchVideoRecommendations(keyword) {
     return request.get('/v1/video/recommendation/search', { params: { keyword } })
   },

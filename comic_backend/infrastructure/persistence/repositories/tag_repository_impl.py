@@ -99,8 +99,8 @@ class TagJsonRepository(TagRepository):
         max_tag_num += 1
         return f"tag_{max_tag_num:03d}"
     
-    def create(self, name: str) -> Optional[Tag]:
-        if self.exists_by_name(name):
+    def create(self, name: str, content_type: ContentType = ContentType.COMIC) -> Optional[Tag]:
+        if self.exists_by_name(name, content_type):
             return None
         
         data = self._storage.read()
@@ -110,6 +110,7 @@ class TagJsonRepository(TagRepository):
         tag = Tag(
             id=tag_id,
             name=name,
+            content_type=content_type,
             create_time=get_current_time()
         )
         

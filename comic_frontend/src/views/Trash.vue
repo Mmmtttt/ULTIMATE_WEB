@@ -2,65 +2,126 @@
   <div class="trash">
     <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()" />
     
-    <!-- 视频模式：单列表 -->
-    <div v-if="isVideoMode" class="trash-content">
-      <van-loading v-if="loading.video" type="spinner" color="#1989fa" class="loading-center" />
-      
-      <EmptyState
-        v-else-if="videoTrashList.length === 0"
-        icon="🗑️"
-        title="回收站为空"
-        description="没有已删除的视频"
-      />
-      
-      <template v-else>
-        <div class="manage-bar">
-          <span class="selected-info">已选 {{ selectedVideoIds.length }} 个</span>
-          <div class="manage-actions">
-            <van-button 
-              size="small" 
-              type="primary" 
-              :disabled="selectedVideoIds.length === 0"
-              @click="batchRestore('video')"
-            >
-              批量恢复
-            </van-button>
-            <van-button 
-              size="small" 
-              type="danger" 
-              :disabled="selectedVideoIds.length === 0"
-              @click="batchDelete('video')"
-            >
-              批量删除
-            </van-button>
-          </div>
-        </div>
+    <!-- 视频模式：Tabs -->
+    <van-tabs v-if="isVideoMode" v-model:active="activeTab" sticky>
+      <van-tab title="主页回收站">
+        <van-loading v-if="loading.video" type="spinner" color="#1989fa" class="loading-center" />
         
-        <div class="media-grid">
-          <div 
-            v-for="video in videoTrashList" 
-            :key="video.id" 
-            class="media-item"
-            :class="{ selected: selectedVideoIds.includes(video.id) }"
-            @click="toggleVideoSelection(video.id)"
-          >
-            <van-image 
-              :src="getCoverUrl(video.cover_path)" 
-              fit="cover" 
-              class="media-thumb video-thumb"
-            />
-            <div class="media-title">{{ video.title }}</div>
-            <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
-              <van-icon name="success" />
-            </div>
-            <div class="item-actions">
-              <van-button size="mini" type="primary" @click.stop="restoreComic('video', video.id)">恢复</van-button>
-              <van-button size="mini" type="danger" @click.stop="deleteComic('video', video.id)">删除</van-button>
+        <EmptyState
+          v-else-if="videoTrashList.length === 0"
+          icon="🗑️"
+          title="回收站为空"
+          description="没有已删除的视频"
+        />
+        
+        <template v-else>
+          <div class="manage-bar">
+            <span class="selected-info">已选 {{ selectedVideoIds.length }} 个</span>
+            <div class="manage-actions">
+              <van-button 
+                size="small" 
+                type="primary" 
+                :disabled="selectedVideoIds.length === 0"
+                @click="batchRestore('video')"
+              >
+                批量恢复
+              </van-button>
+              <van-button 
+                size="small" 
+                type="danger" 
+                :disabled="selectedVideoIds.length === 0"
+                @click="batchDelete('video')"
+              >
+                批量删除
+              </van-button>
             </div>
           </div>
-        </div>
-      </template>
-    </div>
+          
+          <div class="media-grid">
+            <div 
+              v-for="video in videoTrashList" 
+              :key="video.id" 
+              class="media-item"
+              :class="{ selected: selectedVideoIds.includes(video.id) }"
+              @click="toggleVideoSelection(video.id)"
+            >
+              <van-image 
+                :src="getCoverUrl(video.cover_path)" 
+                fit="cover" 
+                class="media-thumb video-thumb"
+              />
+              <div class="media-title">{{ video.title }}</div>
+              <div class="select-check" v-if="selectedVideoIds.includes(video.id)">
+                <van-icon name="success" />
+              </div>
+              <div class="item-actions">
+                <van-button size="mini" type="primary" @click.stop="restoreComic('video', video.id)">恢复</van-button>
+                <van-button size="mini" type="danger" @click.stop="deleteComic('video', video.id)">删除</van-button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </van-tab>
+      
+      <van-tab title="推荐页回收站">
+        <van-loading v-if="loading.videoRecommendation" type="spinner" color="#1989fa" class="loading-center" />
+        
+        <EmptyState
+          v-else-if="videoRecommendationTrashList.length === 0"
+          icon="🗑️"
+          title="回收站为空"
+          description="没有已删除的视频"
+        />
+        
+        <template v-else>
+          <div class="manage-bar">
+            <span class="selected-info">已选 {{ selectedVideoRecommendationIds.length }} 个</span>
+            <div class="manage-actions">
+              <van-button 
+                size="small" 
+                type="primary" 
+                :disabled="selectedVideoRecommendationIds.length === 0"
+                @click="batchRestore('videoRecommendation')"
+              >
+                批量恢复
+              </van-button>
+              <van-button 
+                size="small" 
+                type="danger" 
+                :disabled="selectedVideoRecommendationIds.length === 0"
+                @click="batchDelete('videoRecommendation')"
+              >
+                批量删除
+              </van-button>
+            </div>
+          </div>
+          
+          <div class="media-grid">
+            <div 
+              v-for="video in videoRecommendationTrashList" 
+              :key="video.id" 
+              class="media-item"
+              :class="{ selected: selectedVideoRecommendationIds.includes(video.id) }"
+              @click="toggleVideoRecommendationSelection(video.id)"
+            >
+              <van-image 
+                :src="getCoverUrl(video.cover_path)" 
+                fit="cover" 
+                class="media-thumb video-thumb"
+              />
+              <div class="media-title">{{ video.title }}</div>
+              <div class="select-check" v-if="selectedVideoRecommendationIds.includes(video.id)">
+                <van-icon name="success" />
+              </div>
+              <div class="item-actions">
+                <van-button size="mini" type="primary" @click.stop="restoreComic('videoRecommendation', video.id)">恢复</van-button>
+                <van-button size="mini" type="danger" @click.stop="deleteComic('videoRecommendation', video.id)">删除</van-button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </van-tab>
+    </van-tabs>
 
     <!-- 漫画模式：Tabs -->
     <van-tabs v-else v-model:active="activeTab" sticky>
@@ -189,23 +250,27 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { comicApi, recommendationApi } from '@/api'
-import { useVideoStore, useModeStore } from '@/stores'
+import { useVideoStore, useModeStore, useVideoRecommendationStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const activeTab = ref(0)
 const homeTrashList = ref([])
 const recommendationTrashList = ref([])
 const videoTrashList = ref([])
+const videoRecommendationTrashList = ref([])
 const selectedHomeIds = ref([])
 const selectedRecommendationIds = ref([])
 const selectedVideoIds = ref([])
+const selectedVideoRecommendationIds = ref([])
 const loading = ref({
   home: false,
   recommendation: false,
-  video: false
+  video: false,
+  videoRecommendation: false
 })
 
 const videoStore = useVideoStore()
+const videoRecommendationStore = useVideoRecommendationStore()
 const modeStore = useModeStore()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
@@ -251,6 +316,18 @@ async function fetchVideoTrash() {
   }
 }
 
+async function fetchVideoRecommendationTrash() {
+  loading.value.videoRecommendation = true
+  try {
+    await videoRecommendationStore.fetchTrashList()
+    videoRecommendationTrashList.value = videoRecommendationStore.trashList
+  } catch (e) {
+    showToast('获取推荐视频回收站失败')
+  } finally {
+    loading.value.videoRecommendation = false
+  }
+}
+
 function getCoverUrl(coverPath) {
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
@@ -286,6 +363,15 @@ function toggleVideoSelection(videoId) {
   }
 }
 
+function toggleVideoRecommendationSelection(videoId) {
+  const index = selectedVideoRecommendationIds.value.indexOf(videoId)
+  if (index > -1) {
+    selectedVideoRecommendationIds.value.splice(index, 1)
+  } else {
+    selectedVideoRecommendationIds.value.push(videoId)
+  }
+}
+
 async function restoreComic(type, comicId) {
   try {
     if (type === 'video') {
@@ -294,6 +380,18 @@ async function restoreComic(type, comicId) {
         showToast('已恢复')
         videoTrashList.value = videoTrashList.value.filter(v => v.id !== comicId)
         selectedVideoIds.value = selectedVideoIds.value.filter(id => id !== comicId)
+      } else {
+        showToast('恢复失败')
+      }
+      return
+    }
+    
+    if (type === 'videoRecommendation') {
+      const res = await videoRecommendationStore.restoreFromTrash(comicId)
+      if (res) {
+        showToast('已恢复')
+        videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => v.id !== comicId)
+        selectedVideoRecommendationIds.value = selectedVideoRecommendationIds.value.filter(id => id !== comicId)
       } else {
         showToast('恢复失败')
       }
@@ -337,6 +435,18 @@ async function deleteComic(type, comicId) {
       }
       return
     }
+    
+    if (type === 'videoRecommendation') {
+      const res = await videoRecommendationStore.deletePermanently(comicId)
+      if (res) {
+        showToast('已永久删除')
+        videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => v.id !== comicId)
+        selectedVideoRecommendationIds.value = selectedVideoRecommendationIds.value.filter(id => id !== comicId)
+      } else {
+        showToast('删除失败')
+      }
+      return
+    }
 
     const api = type === 'home' ? comicApi : recommendationApi
     const res = await api.deletePermanently(comicId)
@@ -373,6 +483,22 @@ async function batchRestore(type) {
     showToast(`已恢复 ${successCount} 个视频`)
     videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
     selectedVideoIds.value = []
+    return
+  }
+  
+  if (type === 'videoRecommendation') {
+    const ids = selectedVideoRecommendationIds.value
+    if (ids.length === 0) return
+    
+    let successCount = 0
+    for (const id of ids) {
+      const res = await videoRecommendationStore.restoreFromTrash(id)
+      if (res) successCount++
+    }
+    
+    showToast(`已恢复 ${successCount} 个视频`)
+    videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
+    selectedVideoRecommendationIds.value = []
     return
   }
 
@@ -424,6 +550,31 @@ async function batchDelete(type) {
     }
     return
   }
+  
+  if (type === 'videoRecommendation') {
+    const ids = selectedVideoRecommendationIds.value
+    if (ids.length === 0) return
+    
+    try {
+      await showConfirmDialog({
+        title: '永久删除',
+        message: `确定要永久删除 ${ids.length} 个视频吗？此操作不可恢复！`
+      })
+      
+      let successCount = 0
+      for (const id of ids) {
+        const res = await videoRecommendationStore.deletePermanently(id)
+        if (res) successCount++
+      }
+      
+      showToast(`已永久删除 ${successCount} 个视频`)
+      videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
+      selectedVideoRecommendationIds.value = []
+    } catch (e) {
+      if (e !== 'cancel') showToast('删除失败')
+    }
+    return
+  }
 
   const ids = type === 'home' ? selectedHomeIds.value : selectedRecommendationIds.value
   if (ids.length === 0) return
@@ -458,6 +609,7 @@ async function batchDelete(type) {
 function loadData() {
   if (isVideoMode.value) {
     fetchVideoTrash()
+    fetchVideoRecommendationTrash()
   } else {
     fetchHomeTrash()
     fetchRecommendationTrash()
