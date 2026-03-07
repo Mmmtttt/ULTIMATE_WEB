@@ -102,6 +102,7 @@ class TaskManager:
                             target=task_data['target'],
                             comic_id=task_data.get('comic_id'),
                             keyword=task_data.get('keyword'),
+                            comic_ids=task_data.get('comic_ids'),
                             title=task_data.get('title', '未知漫画'),
                             progress=task_data.get('progress', 0),
                             total_pages=task_data.get('total_pages', 0),
@@ -249,11 +250,16 @@ class TaskManager:
             platform = Platform(task.platform)
             platform_service = get_platform_service()
             
-            # 获取适配器
+            # 从主数据库读取tag，不管导入到推荐库
+            tag_db_file = 'data/meta_data/comics_database.json'
+            tag_storage = JsonStorage(tag_db_file)
+            tag_db_data = tag_storage.read()
+            existing_tags = tag_db_data.get('tags', [])
+            
+            # 获取漫画/推荐漫画数据库文件
             db_file = 'data/meta_data/comics_database.json' if task.target == 'home' else 'data/meta_data/recommendations_database.json'
             storage = JsonStorage(db_file)
             db_data = storage.read()
-            existing_tags = db_data.get('tags', [])
             
             # 使用 PlatformService 获取数据
             # 搜索或获取详情
@@ -523,25 +529,34 @@ class TaskManager:
         storage = JsonStorage(json_file)
         db_data = storage.read()
         
+        # 保存漫画/推荐漫画数据
         new_comics = converted_data.get('comics', [])
         existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
         
+        # 处理tag保存到主数据库
+        tag_db_file = 'data/meta_data/comics_database.json'
+        tag_storage = JsonStorage(tag_db_file)
+        tag_db_data = tag_storage.read()
+        
+        # 确保最近导入tag
         if new_comics:
-            existing_tag_ids = {t['id'] for t in db_data.get('tags', [])}
+            existing_tag_ids = {t['id'] for t in tag_db_data.get('tags', [])}
             if RECENT_IMPORT_TAG_ID not in existing_tag_ids:
-                db_data.setdefault('tags', []).append({
+                tag_db_data.setdefault('tags', []).append({
                     "id": RECENT_IMPORT_TAG_ID,
                     "name": RECENT_IMPORT_TAG_NAME,
                     "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                 })
                 app_logger.info(f"创建系统标签: {RECENT_IMPORT_TAG_NAME}")
             
+            # 清除旧漫画的最近导入tag
             for comic in db_data.get(comics_key, []):
                 if RECENT_IMPORT_TAG_ID in comic.get('tag_ids', []):
                     comic['tag_ids'].remove(RECENT_IMPORT_TAG_ID)
             
             app_logger.info(f"清除旧漫画的'{RECENT_IMPORT_TAG_NAME}'标签")
         
+        # 添加新漫画并设置最近导入tag
         for comic in new_comics:
             if comic['id'] not in existing_ids:
                 if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
@@ -553,13 +568,19 @@ class TaskManager:
         if new_comics:
             app_logger.info(f"为 {len(new_comics)} 个新漫画添加'{RECENT_IMPORT_TAG_NAME}'标签")
         
+        # 保存新tag到主数据库
         new_tags = converted_data.get('tags', [])
-        existing_tag_ids = {t['id'] for t in db_data.get('tags', [])}
+        existing_tag_ids = {t['id'] for t in tag_db_data.get('tags', [])}
         for tag in new_tags:
             if tag['id'] not in existing_tag_ids:
-                db_data.setdefault('tags', []).append(tag)
+                tag_db_data.setdefault('tags', []).append(tag)
                 existing_tag_ids.add(tag['id'])
         
+        # 更新tag_last_updated
+        tag_db_data['last_updated'] = time.strftime("%Y-%m-%d")
+        tag_storage.write(tag_db_data)
+        
+        # 更新漫画/推荐漫画数据
         db_data[total_key] = len(db_data.get(comics_key, []))
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         

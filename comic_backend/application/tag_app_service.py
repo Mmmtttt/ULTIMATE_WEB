@@ -3,7 +3,7 @@ from domain.tag import Tag, TagRepository
 from domain.comic import ComicRepository
 from domain.recommendation import RecommendationRepository
 from domain.video import VideoRepository
-from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository
+from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository, VideoRecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
@@ -16,12 +16,14 @@ class TagAppService:
         tag_repo: TagRepository = None,
         comic_repo: ComicRepository = None,
         recommendation_repo: RecommendationRepository = None,
-        video_repo: VideoRepository = None
+        video_repo: VideoRepository = None,
+        video_recommendation_repo=None
     ):
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
+        self._video_recommendation_repo = video_recommendation_repo or VideoRecommendationJsonRepository()
     
     def get_tag_list(self, content_type: ContentType = ContentType.COMIC) -> ServiceResult:
         try:
@@ -47,11 +49,18 @@ class TagAppService:
                 count_key = "comic_count"
             else:
                 videos = self._video_repo.get_all()
+                video_recommendations = self._video_recommendation_repo.get_all()
                 
                 for video in videos:
                     if video.is_deleted:
                         continue
                     for tag_id in video.tag_ids:
+                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+                
+                for video_rec in video_recommendations:
+                    if video_rec.is_deleted:
+                        continue
+                    for tag_id in video_rec.tag_ids:
                         tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
                 
                 count_key = "video_count"
@@ -196,6 +205,8 @@ class TagAppService:
             home_videos = []
             videos = self._video_repo.filter_by_tags([tag_id], [])
             for v in videos:
+                if v.is_deleted:
+                    continue
                 video_info = {
                     "id": v.id,
                     "title": v.title,
@@ -208,14 +219,31 @@ class TagAppService:
                 }
                 home_videos.append(video_info)
             
+            recommendation_videos = []
+            recommendations = self._video_recommendation_repo.filter_by_tags([tag_id], [])
+            for r in recommendations:
+                rec_info = {
+                    "id": r.id,
+                    "title": r.title,
+                    "code": r.code,
+                    "cover_path": r.cover_path,
+                    "date": r.date,
+                    "score": r.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "source": "recommendation"
+                }
+                recommendation_videos.append(rec_info)
+            
             result = {
                 "tag": {"id": tag.id, "name": tag.name},
                 "home_videos": home_videos,
+                "recommendation_videos": recommendation_videos,
                 "home_count": len(home_videos),
-                "total_count": len(home_videos)
+                "recommendation_count": len(recommendation_videos),
+                "total_count": len(home_videos) + len(recommendation_videos)
             }
             
-            app_logger.info(f"获取标签下视频成功: {tag_id}, 主页: {len(home_videos)}")
+            app_logger.info(f"获取标签下视频成功: {tag_id}, 主页: {len(home_videos)}, 推荐: {len(recommendation_videos)}")
             return ServiceResult.ok(result)
         except Exception as e:
             error_logger.error(f"获取标签下视频失败: {e}")
@@ -277,9 +305,11 @@ class TagAppService:
             tags = self._tag_repo.get_all(ContentType.VIDEO)
             tag_map = {t.id: t.name for t in tags}
             
-            videos = []
+            home_videos = []
             video_list = self._video_repo.get_all()
             for v in video_list:
+                if v.is_deleted:
+                    continue
                 video_info = {
                     "id": v.id,
                     "title": v.title,
@@ -291,14 +321,33 @@ class TagAppService:
                     "tag_ids": v.tag_ids,
                     "source": "home"
                 }
-                videos.append(video_info)
+                home_videos.append(video_info)
+            
+            recommendation_videos = []
+            rec_list = self._video_recommendation_repo.get_all()
+            for r in rec_list:
+                rec_info = {
+                    "id": r.id,
+                    "title": r.title,
+                    "code": r.code,
+                    "cover_path": r.cover_path,
+                    "date": r.date,
+                    "score": r.score,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "tag_ids": r.tag_ids,
+                    "source": "recommendation"
+                }
+                recommendation_videos.append(rec_info)
             
             result = {
-                "videos": videos,
-                "count": len(videos)
+                "home_videos": home_videos,
+                "recommendation_videos": recommendation_videos,
+                "home_count": len(home_videos),
+                "recommendation_count": len(recommendation_videos),
+                "total_count": len(home_videos) + len(recommendation_videos)
             }
             
-            app_logger.info(f"获取所有视频成功, 共 {len(videos)} 个")
+            app_logger.info(f"获取所有视频成功, 主页: {len(home_videos)}, 推荐: {len(recommendation_videos)}")
             return ServiceResult.ok(result)
         except Exception as e:
             error_logger.error(f"获取所有视频失败: {e}")
@@ -388,50 +437,74 @@ class TagAppService:
                 if not self._tag_repo.get_by_id(tag_id):
                     return ServiceResult.error(f"标签不存在: {tag_id}")
             
-            updated = 0
+            home_updated = 0
+            rec_updated = 0
             
             for item in video_data:
                 video_id = item.get('id')
+                source = item.get('source')
                 
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.add_tags(tag_ids)
-                    if self._video_repo.save(video):
-                        updated += 1
+                if source == 'home':
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.add_tags(tag_ids)
+                        if self._video_repo.save(video):
+                            home_updated += 1
+                elif source == 'recommendation':
+                    recommendation = self._video_recommendation_repo.get_by_id(video_id)
+                    if recommendation:
+                        recommendation.add_tags(tag_ids)
+                        if self._video_recommendation_repo.save(recommendation):
+                            rec_updated += 1
             
-            if updated == 0:
+            total_updated = home_updated + rec_updated
+            if total_updated == 0:
                 return ServiceResult.error("没有找到有效的视频")
             
-            app_logger.info(f"批量添加标签成功: {updated}个视频, 标签: {tag_ids}")
+            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
             return ServiceResult.ok({
-                "updated": updated,
+                "home_updated": home_updated,
+                "recommendation_updated": rec_updated,
+                "total_updated": total_updated,
                 "tag_ids": tag_ids
-            }, f"成功为{updated}个视频添加标签")
+            }, f"成功为{total_updated}个视频添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
             return ServiceResult.error("批量添加标签失败")
     
     def batch_remove_tags_from_videos(self, video_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
-            updated = 0
+            home_updated = 0
+            rec_updated = 0
             
             for item in video_data:
                 video_id = item.get('id')
+                source = item.get('source')
                 
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.remove_tags(tag_ids)
-                    if self._video_repo.save(video):
-                        updated += 1
+                if source == 'home':
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.remove_tags(tag_ids)
+                        if self._video_repo.save(video):
+                            home_updated += 1
+                elif source == 'recommendation':
+                    recommendation = self._video_recommendation_repo.get_by_id(video_id)
+                    if recommendation:
+                        recommendation.remove_tags(tag_ids)
+                        if self._video_recommendation_repo.save(recommendation):
+                            rec_updated += 1
             
-            if updated == 0:
+            total_updated = home_updated + rec_updated
+            if total_updated == 0:
                 return ServiceResult.error("没有找到有效的视频")
             
-            app_logger.info(f"批量移除标签成功: {updated}个视频, 标签: {tag_ids}")
+            app_logger.info(f"批量移除标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
             return ServiceResult.ok({
-                "updated": updated,
+                "home_updated": home_updated,
+                "recommendation_updated": rec_updated,
+                "total_updated": total_updated,
                 "tag_ids": tag_ids
-            }, f"成功从{updated}个视频移除标签")
+            }, f"成功从{total_updated}个视频移除标签")
         except Exception as e:
             error_logger.error(f"批量移除标签失败: {e}")
             return ServiceResult.error("批量移除标签失败")

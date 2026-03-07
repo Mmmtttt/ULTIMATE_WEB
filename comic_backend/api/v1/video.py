@@ -590,6 +590,8 @@ def get_video_recommendation_list():
     try:
         from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
+        from application.tag_app_service import TagAppService
+        from domain.tag.entity import ContentType
         
         sort_type = request.args.get('sort_type')
         min_score = request.args.get('min_score', type=float)
@@ -598,13 +600,21 @@ def get_video_recommendation_list():
         db_data = storage.read()
         videos = db_data.get('video_recommendations', [])
         
+        tag_service = TagAppService()
+        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        tag_map = {t["id"]: t["name"] for t in tags}
+        
         filtered_videos = []
         for video in videos:
             if video.get('is_deleted'):
                 continue
             if min_score is not None and (video.get('score') or 0) < min_score:
                 continue
-            filtered_videos.append(video)
+            
+            video_with_tags = video.copy()
+            video_tag_ids = video.get('tag_ids', [])
+            video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
+            filtered_videos.append(video_with_tags)
         
         if sort_type == 'score':
             filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=True)
@@ -625,6 +635,8 @@ def get_video_recommendation_detail():
     try:
         from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
+        from application.tag_app_service import TagAppService
+        from domain.tag.entity import ContentType
         
         video_id = request.args.get('video_id')
         if not video_id:
@@ -634,9 +646,16 @@ def get_video_recommendation_detail():
         db_data = storage.read()
         videos = db_data.get('video_recommendations', [])
         
+        tag_service = TagAppService()
+        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        tag_map = {t["id"]: t["name"] for t in tags}
+        
         for video in videos:
             if video.get('id') == video_id:
-                return success_response(video)
+                video_with_tags = video.copy()
+                video_tag_ids = video.get('tag_ids', [])
+                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
+                return success_response(video_with_tags)
         
         return error_response(404, "视频不存在")
     except Exception as e:
@@ -757,6 +776,8 @@ def search_video_recommendations():
     try:
         from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
+        from application.tag_app_service import TagAppService
+        from domain.tag.entity import ContentType
         
         keyword = request.args.get('keyword')
         if not keyword:
@@ -768,6 +789,10 @@ def search_video_recommendations():
         db_data = storage.read()
         videos = db_data.get('video_recommendations', [])
         
+        tag_service = TagAppService()
+        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        tag_map = {t["id"]: t["name"] for t in tags}
+        
         results = []
         for video in videos:
             if video.get('is_deleted'):
@@ -776,7 +801,10 @@ def search_video_recommendations():
             code = video.get('code', '').lower()
             actors = ' '.join(video.get('actors', [])).lower()
             if keyword in title or keyword in code or keyword in actors:
-                results.append(video)
+                video_with_tags = video.copy()
+                video_tag_ids = video.get('tag_ids', [])
+                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
+                results.append(video_with_tags)
         
         return success_response(results)
     except Exception as e:
@@ -790,6 +818,8 @@ def filter_video_recommendations():
     try:
         from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
+        from application.tag_app_service import TagAppService
+        from domain.tag.entity import ContentType
         
         include_tag_ids = request.args.getlist('include_tag_ids')
         exclude_tag_ids = request.args.getlist('exclude_tag_ids')
@@ -797,6 +827,10 @@ def filter_video_recommendations():
         storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
         videos = db_data.get('video_recommendations', [])
+        
+        tag_service = TagAppService()
+        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+        tag_map = {t["id"]: t["name"] for t in tags}
         
         filtered_videos = []
         for video in videos:
@@ -815,7 +849,9 @@ def filter_video_recommendations():
                 if has_any_exclude:
                     continue
             
-            filtered_videos.append(video)
+            video_with_tags = video.copy()
+            video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
+            filtered_videos.append(video_with_tags)
         
         app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(filtered_videos)}")
         return success_response(filtered_videos)

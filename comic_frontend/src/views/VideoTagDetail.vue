@@ -17,7 +17,11 @@
       <div class="tag-stats">
         <div class="stat-item">
           <span class="stat-value">{{ homeVideos.length }}</span>
-          <span class="stat-label">视频数量</span>
+          <span class="stat-label">主页视频</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-value">{{ recommendationVideos.length }}</span>
+          <span class="stat-label">推荐视频</span>
         </div>
         <div class="stat-item">
           <span class="stat-value">{{ totalCount }}</span>
@@ -25,44 +29,130 @@
         </div>
       </div>
 
-      <div v-if="homeVideos.length === 0" class="empty-section">
-        <van-empty description="暂无此标签的视频" />
-      </div>
-      <div v-else class="video-grid">
-        <div 
-          v-for="item in homeVideos" 
-          :key="item.id" 
-          class="video-card"
-          @click="goToDetail(item)"
-        >
-          <div class="video-cover">
-            <van-image 
-              :src="getCoverUrl(item.cover_path)" 
-              fit="cover" 
-              class="cover-image"
-              lazy-load
-            />
-            <div v-if="item.code" class="video-code">{{ item.code }}</div>
-            <div v-if="item.score" class="video-score">{{ item.score }}</div>
+      <van-tabs v-model:active="activeTab" sticky>
+        <van-tab title="主页视频">
+          <div v-if="homeVideos.length === 0" class="empty-section">
+            <van-empty description="主页暂无此标签的视频" />
           </div>
-          <div class="video-info">
-            <div class="video-title">{{ item.title }}</div>
-            <div v-if="item.tags && item.tags.length > 0" class="video-tags">
-              <van-tag 
-                v-for="(tag, index) in item.tags.slice(0, 2)" 
-                :key="tag.id || index" 
-                size="mini" 
-                type="primary" 
-                plain
-                class="video-tag"
-              >
-                {{ tag.name }}
-              </van-tag>
+          <div v-else class="video-grid">
+            <div 
+              v-for="item in homeVideos" 
+              :key="item.id" 
+              class="video-card"
+              @click="goToHomeVideo(item)"
+            >
+              <div class="video-cover">
+                <van-image 
+                  :src="getCoverUrl(item.cover_path)" 
+                  fit="cover" 
+                  class="cover-image"
+                  lazy-load
+                />
+                <div v-if="item.code" class="video-code">{{ item.code }}</div>
+                <div v-if="item.score" class="video-score">{{ item.score }}</div>
+              </div>
+              <div class="video-info">
+                <div class="video-title">{{ item.title }}</div>
+                <div v-if="item.tags && item.tags.length > 0" class="video-tags">
+                  <van-tag 
+                    v-for="(tag, index) in item.tags.slice(0, 2)" 
+                    :key="tag.id || index" 
+                    size="mini" 
+                    type="primary" 
+                    plain
+                    class="video-tag"
+                  >
+                    {{ tag.name }}
+                  </van-tag>
+                </div>
+                <div v-if="item.date" class="video-date">{{ item.date }}</div>
+              </div>
             </div>
-            <div v-if="item.date" class="video-date">{{ item.date }}</div>
           </div>
-        </div>
-      </div>
+        </van-tab>
+
+        <van-tab title="推荐视频">
+          <div v-if="recommendationVideos.length === 0" class="empty-section">
+            <van-empty description="推荐页暂无此标签的视频" />
+          </div>
+          <div v-else class="video-grid">
+            <div 
+              v-for="item in recommendationVideos" 
+              :key="item.id" 
+              class="video-card"
+              @click="goToRecommendationVideo(item)"
+            >
+              <div class="video-cover">
+                <van-image 
+                  :src="getCoverUrl(item.cover_path)" 
+                  fit="cover" 
+                  class="cover-image"
+                  lazy-load
+                />
+                <div v-if="item.code" class="video-code">{{ item.code }}</div>
+                <div v-if="item.score" class="video-score">{{ item.score }}</div>
+              </div>
+              <div class="video-info">
+                <div class="video-title">{{ item.title }}</div>
+                <div v-if="item.tags && item.tags.length > 0" class="video-tags">
+                  <van-tag 
+                    v-for="(tag, index) in item.tags.slice(0, 2)" 
+                    :key="tag.id || index" 
+                    size="mini" 
+                    type="primary" 
+                    plain
+                    class="video-tag"
+                  >
+                    {{ tag.name }}
+                  </van-tag>
+                </div>
+                <div v-if="item.date" class="video-date">{{ item.date }}</div>
+              </div>
+            </div>
+          </div>
+        </van-tab>
+
+        <van-tab :title="`全部 (${totalCount})`">
+          <div v-if="allVideos.length === 0" class="empty-section">
+            <van-empty description="暂无此标签的视频" />
+          </div>
+          <div v-else class="video-grid">
+            <div 
+              v-for="item in allVideos" 
+              :key="item.id" 
+              class="video-card"
+              @click="goToVideo(item)"
+            >
+              <div class="video-cover">
+                <van-image 
+                  :src="getCoverUrl(item.cover_path)" 
+                  fit="cover" 
+                  class="cover-image"
+                  lazy-load
+                />
+                <div v-if="item.code" class="video-code">{{ item.code }}</div>
+                <div v-if="item.score" class="video-score">{{ item.score }}</div>
+              </div>
+              <div class="video-info">
+                <div class="video-title">{{ item.title }}</div>
+                <div v-if="item.tags && item.tags.length > 0" class="video-tags">
+                  <van-tag 
+                    v-for="(tag, index) in item.tags.slice(0, 2)" 
+                    :key="tag.id || index" 
+                    size="mini" 
+                    type="primary" 
+                    plain
+                    class="video-tag"
+                  >
+                    {{ tag.name }}
+                  </van-tag>
+                </div>
+                <div v-if="item.date" class="video-date">{{ item.date }}</div>
+              </div>
+            </div>
+          </div>
+        </van-tab>
+      </van-tabs>
     </div>
 
     <van-popup v-model:show="showEditPopup" round position="bottom" :style="{ height: '30%' }">
@@ -95,13 +185,21 @@ const router = useRouter()
 const tagStore = useTagStore()
 
 const isLoading = ref(true)
+const activeTab = ref(0)
 const tagInfo = ref({})
 const homeVideos = ref([])
+const recommendationVideos = ref([])
 
 const showEditPopup = ref(false)
 const editTagName = ref('')
 
-const totalCount = computed(() => homeVideos.value.length)
+const totalCount = computed(() => homeVideos.value.length + recommendationVideos.value.length)
+
+const allVideos = computed(() => {
+  const homeWithSource = homeVideos.value.map(v => ({ ...v, source: 'home' }))
+  const recWithSource = recommendationVideos.value.map(v => ({ ...v, source: 'recommendation' }))
+  return [...homeWithSource, ...recWithSource]
+})
 
 function getCoverUrl(coverPath) {
   if (!coverPath) return ''
@@ -122,6 +220,7 @@ async function fetchTagDetail() {
     if (response.code === 200) {
       tagInfo.value = response.data.tag || {}
       homeVideos.value = response.data.home_videos || []
+      recommendationVideos.value = response.data.recommendation_videos || []
     } else {
       showFailToast(response.msg || '获取标签详情失败')
     }
@@ -133,8 +232,20 @@ async function fetchTagDetail() {
   }
 }
 
-function goToDetail(video) {
+function goToHomeVideo(video) {
   router.push(`/video/${video.id}`)
+}
+
+function goToRecommendationVideo(video) {
+  router.push(`/video-recommendation/${video.id}`)
+}
+
+function goToVideo(video) {
+  if (video.source === 'home') {
+    router.push(`/video/${video.id}`)
+  } else {
+    router.push(`/video-recommendation/${video.id}`)
+  }
 }
 
 function openEditPopup() {

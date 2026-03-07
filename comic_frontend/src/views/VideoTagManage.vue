@@ -217,7 +217,11 @@ const fetchVideoList = async () => {
   try {
     const response = await tagApi.getAllVideos()
     if (response.code === 200) {
-      videoList.value = response.data.videos || []
+      const homeVideos = response.data.home_videos || []
+      const recommendationVideos = response.data.recommendation_videos || []
+      const homeWithSource = homeVideos.map(v => ({ ...v, source: 'home' }))
+      const recWithSource = recommendationVideos.map(v => ({ ...v, source: 'recommendation' }))
+      videoList.value = [...homeWithSource, ...recWithSource]
     }
   } catch (error) {
     console.error('获取视频列表失败:', error)
@@ -331,7 +335,7 @@ const batchAddTags = async () => {
     
     const videoData = videoList.value
       .filter(v => selectedVideoIds.value.includes(v.id))
-      .map(v => ({ id: v.id }))
+      .map(v => ({ id: v.id, source: v.source }))
     
     const response = await tagApi.batchAddTagsToVideos(videoData, selectedTagIds.value)
     if (response.code === 200) {
@@ -356,7 +360,7 @@ const batchRemoveTags = async () => {
     
     const videoData = videoList.value
       .filter(v => selectedVideoIds.value.includes(v.id))
-      .map(v => ({ id: v.id }))
+      .map(v => ({ id: v.id, source: v.source }))
     
     const response = await tagApi.batchRemoveTagsFromVideos(videoData, selectedTagIds.value)
     if (response.code === 200) {

@@ -2,7 +2,7 @@ from typing import List, Optional
 import os
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
-from infrastructure.persistence.repositories import RecommendationJsonRepository, RecommendationTagJsonRepository
+from infrastructure.persistence.repositories import RecommendationJsonRepository, TagJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
@@ -22,7 +22,7 @@ class RecommendationAppService:
         tag_repo: TagRepository = None
     ):
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
-        self._tag_repo = tag_repo or RecommendationTagJsonRepository()
+        self._tag_repo = tag_repo or TagJsonRepository()
     
     def get_recommendation_list(
         self,
