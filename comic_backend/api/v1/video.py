@@ -375,16 +375,26 @@ def third_party_search():
     try:
         keyword = request.args.get('keyword')
         platform = request.args.get('platform', 'javdb')
+        page = request.args.get('page', 1, type=int)
         
         if not keyword:
             return error_response(400, "缺少搜索关键词")
         
-        app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}")
+        app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}, 页码: {page}")
         adapter = get_video_adapter(platform)
-        videos = adapter.search_videos(keyword, max_pages=1)
-        app_logger.info(f"搜索完成，找到 {len(videos)} 个视频")
+        result = adapter.search_videos(keyword, page=page, max_pages=1)
         
-        return success_response(videos)
+        app_logger.info(f"搜索完成，平台: {platform}, 页码: {page}, 找到 {len(result.get('videos', []))} 个视频")
+        
+        response_data = {
+            "platform": platform,
+            "page": result.get("page"),
+            "has_next": result.get("has_next", False),
+            "total_pages": result.get("total_pages"),
+            "videos": result.get("videos", [])
+        }
+        
+        return success_response(response_data)
     except Exception as e:
         import traceback
         error_logger.error(f"第三方搜索失败: {e}")
@@ -444,7 +454,15 @@ def third_party_actor_works():
         adapter = get_video_adapter(platform)
         result = adapter.get_actor_works(actor_id, page=page, max_pages=1)
         
-        return success_response(result)
+        response_data = {
+            "platform": platform,
+            "page": result.get("page"),
+            "has_next": result.get("has_next", False),
+            "total_pages": result.get("total_pages"),
+            "works": result.get("works", [])
+        }
+        
+        return success_response(response_data)
     except Exception as e:
         error_logger.error(f"获取演员作品失败: {e}")
         return error_response(500, "服务器内部错误")

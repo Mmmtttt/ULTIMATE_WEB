@@ -151,13 +151,13 @@ export const comicApi = {
    * 第三方平台搜索漫画
    * @param {string} keyword - 搜索关键词
    * @param {string} platform - 平台（JM/PK/all）
-   * @param {number} offset - 偏移量
+   * @param {number} page - 页码
    * @param {number} limit - 数量
    * @returns {Promise}
    */
-  searchThirdParty: (keyword, platform = 'all', offset = 0, limit = 20) => {
+  searchThirdParty: (keyword, platform = 'all', page = 1, limit = 20) => {
     return request.get('/v1/comic/search-third-party', {
-      params: { keyword, platform, offset, limit }
+      params: { keyword, platform, page, limit }
     })
   },
   

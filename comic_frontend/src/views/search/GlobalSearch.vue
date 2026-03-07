@@ -76,6 +76,20 @@
         </template>
         
         <div v-if="hasMore && activeTab === 'remote'" class="load-more">
+          <div v-if="paginationInfo" class="pagination-info">
+            <template v-if="isVideoMode">
+              <span class="platform-info">平台: {{ paginationInfo.platform.toUpperCase() }}</span>
+              <span class="page-info">第 {{ paginationInfo.page }} 页</span>
+              <span v-if="paginationInfo.total_pages" class="total-pages">/ {{ paginationInfo.total_pages }} 页</span>
+            </template>
+            <template v-else>
+              <div v-for="(info, plat) in paginationInfo" :key="plat" class="platform-item">
+                <span class="platform-info">平台: {{ plat }}</span>
+                <span class="page-info">第 {{ info.page }} 页</span>
+                <span v-if="info.total_pages" class="total-pages">/ {{ info.total_pages }} 页</span>
+              </div>
+            </template>
+          </div>
           <van-button block plain :loading="loadingMore" @click="loadMore">
             加载更多
           </van-button>
@@ -121,6 +135,7 @@ const hasMore = ref(false)
 const currentPage = ref(0) // offset for some APIs
 const selectedIds = ref([])
 const showImportSheet = ref(false)
+const paginationInfo = ref(null) // 分页信息：{ platform, page, total_pages, has_next }
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -246,6 +261,7 @@ async function handleSearch() {
   currentPage.value = 0
   hasMore.value = false
   selectedIds.value = []
+  paginationInfo.value = null
   
   try {
     if (activeTab.value === 'local') {
@@ -285,15 +301,28 @@ async function searchPreview() {
 
 async function searchRemote() {
   if (isVideoMode.value) {
-    const res = await videoApi.thirdPartySearch(keyword.value)
-    results.value = res.code === 200 ? res.data : (res || [])
-    // Pagination handling for video remote search is complex, simplifying
+    const res = await videoApi.thirdPartySearch(keyword.value, 1)
+    if (res.code === 200 && res.data) {
+      results.value = res.data.videos || []
+      paginationInfo.value = {
+        platform: res.data.platform,
+        page: res.data.page,
+        total_pages: res.data.total_pages,
+        has_next: res.data.has_next
+      }
+      hasMore.value = res.data.has_next
+    } else {
+      results.value = []
+      paginationInfo.value = null
+      hasMore.value = false
+    }
   } else {
-    const res = await comicStore.thirdPartySearch(keyword.value, 'all', 0)
+    const res = await comicStore.thirdPartySearch(keyword.value, 'all', 1, 40)
     if (res.results) {
       results.value = res.results
-      currentPage.value = res.offset + res.limit
+      currentPage.value = res.page
       hasMore.value = res.has_more
+      paginationInfo.value = res.platform_info || {}
     }
   }
 }
@@ -304,13 +333,26 @@ async function loadMore() {
   
   try {
     if (isVideoMode.value) {
-      // Implement pagination if API supports
+      const nextPage = paginationInfo.value ? paginationInfo.value.page + 1 : 2
+      const res = await videoApi.thirdPartySearch(keyword.value, nextPage)
+      if (res.code === 200 && res.data) {
+        results.value = [...results.value, ...(res.data.videos || [])]
+        paginationInfo.value = {
+          platform: res.data.platform,
+          page: res.data.page,
+          total_pages: res.data.total_pages,
+          has_next: res.data.has_next
+        }
+        hasMore.value = res.data.has_next
+      }
     } else {
-      const res = await comicStore.thirdPartySearch(keyword.value, 'all', currentPage.value)
+      const nextPage = currentPage.value + 1
+      const res = await comicStore.thirdPartySearch(keyword.value, 'all', nextPage, 40)
       if (res.results) {
         results.value = [...results.value, ...res.results]
-        currentPage.value = res.offset + res.limit
+        currentPage.value = res.page
         hasMore.value = res.has_more
+        paginationInfo.value = res.platform_info || {}
       }
     }
   } finally {
@@ -399,6 +441,43 @@ onMounted(() => {
 
 .load-more {
   padding: 20px;
+}
+
+.pagination-info {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 16px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  flex-wrap: wrap;
+}
+
+.platform-item {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.platform-info,
+.page-info,
+.total-pages {
+  font-size: 14px;
+  color: #666;
+}
+
+.platform-info {
+  font-weight: 600;
+  color: #1989fa;
+}
+
+.page-info {
+  font-weight: 500;
+  color: #333;
 }
 
 .floating-import-bar {

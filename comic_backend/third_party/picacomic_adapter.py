@@ -77,26 +77,48 @@ class PicacomicAdapter(BaseAdapter):
         except Exception as e:
             raise RuntimeError(f"获取专辑 {album_id} 失败: {e}")
     
-    def search_albums(self, keyword: str, max_pages: int = 1, fast_mode: bool = False) -> Dict[str, Any]:
+    def search_albums(self, keyword: str, page: int = 1, max_pages: int = 1, fast_mode: bool = False) -> Dict[str, Any]:
         """搜索漫画专辑
         
         Args:
             keyword: 搜索关键词
+            page: 起始页码
             max_pages: 最大搜索页数
             fast_mode: 快速模式，不获取详情，速度更快
             
         Returns:
-            元数据 JSON 格式
+            {
+                'page': 当前页码,
+                'has_next': 是否有下一页,
+                'total_pages': 总页数,
+                'albums': 漫画专辑列表
+            }
         """
         try:
             if fast_mode:
-                result = self._picacomic_api_module.search_comics(keyword, max_pages=max_pages, option=self._option)
+                result = self._picacomic_api_module.search_comics(keyword, page=page, max_pages=max_pages, option=self._option)
                 albums = result.get('results', [])
-                return self._convert_basic_to_meta_format(albums)
+                total_pages = result.get('page_count')
+                has_next = page < total_pages if total_pages else len(albums) > 0
+                converted = self._convert_basic_to_meta_format(albums)
+                return {
+                    'page': page,
+                    'has_next': has_next,
+                    'total_pages': total_pages,
+                    'albums': converted.get('albums', [])
+                }
             else:
-                result = self._picacomic_api_module.search_comics_full(keyword, max_pages=max_pages, option=self._option)
+                result = self._picacomic_api_module.search_comics_full(keyword, page=page, max_pages=max_pages, option=self._option)
                 albums = result.get('results', [])
-                return self._convert_to_meta_format(albums)
+                total_pages = result.get('page_count')
+                has_next = page < total_pages if total_pages else len(albums) > 0
+                converted = self._convert_to_meta_format(albums)
+                return {
+                    'page': page,
+                    'has_next': has_next,
+                    'total_pages': total_pages,
+                    'albums': converted.get('albums', [])
+                }
             
         except Exception as e:
             raise RuntimeError(f"搜索漫画失败: {e}")

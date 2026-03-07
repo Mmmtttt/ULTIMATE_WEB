@@ -391,17 +391,14 @@ def search_third_party_comics():
     try:
         keyword = request.args.get('keyword')
         platform = request.args.get('platform', 'all')
-        offset = int(request.args.get('offset', 0))
-        limit = int(request.args.get('limit', 20))
-        max_pages = int(request.args.get('max_pages', 3))
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 40))
         
         if not keyword:
             return error_response(400, "缺少参数: keyword")
         
         from third_party.external_api import search_albums
         from core.platform import Platform, is_platform_supported, get_supported_platforms
-        
-        all_results = []
         
         platforms_to_search = []
         if platform == 'all':
@@ -413,41 +410,50 @@ def search_third_party_comics():
             else:
                 return error_response(400, f"不支持的平台: {platform}，支持的平台: {get_supported_platforms()}")
         
-        platform_albums = {}
-        max_result_count = 0
+        platform_results = {}
+        all_albums = []
         
         for plat in platforms_to_search:
             try:
                 adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
-                meta_json = search_albums(keyword, max_pages=max_pages, adapter_name=adapter_name, fast_mode=True)
+                result = search_albums(
+                    keyword, 
+                    page=page, 
+                    max_pages=1, 
+                    adapter_name=adapter_name, 
+                    fast_mode=True
+                )
                 
-                if meta_json and meta_json.get('albums'):
-                    albums = []
-                    for album in meta_json['albums']:
-                        album['platform'] = plat
-                        albums.append(album)
-                    platform_albums[plat] = albums
-                    if len(albums) > max_result_count:
-                        max_result_count = len(albums)
+                if result and result.get('albums'):
+                    albums_with_platform = []
+                    for album in result.get('albums', []):
+                        album_with_platform = album.copy()
+                        album_with_platform['platform'] = plat
+                        album_with_platform['platform_page'] = result.get('page', 1)
+                        album_with_platform['platform_total_pages'] = result.get('total_pages')
+                        album_with_platform['platform_has_next'] = result.get('has_next', False)
+                        albums_with_platform.append(album_with_platform)
+                    
+                    platform_results[plat] = {
+                        'page': result.get('page', 1),
+                        'total_pages': result.get('total_pages'),
+                        'has_next': result.get('has_next', False),
+                        'albums': albums_with_platform
+                    }
+                    
+                    all_albums.extend(albums_with_platform)
+                    
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
                 continue
         
-        all_results = []
-        for i in range(max_result_count):
-            for plat in platforms_to_search:
-                if plat in platform_albums and i < len(platform_albums[plat]):
-                    all_results.append(platform_albums[plat][i])
+        has_more = any(info.get('has_next', False) for info in platform_results.values())
         
-        total = len(all_results)
-        paginated_results = all_results[offset:offset + limit]
-        has_more = offset + limit < total
-        
-        app_logger.info(f"第三方搜索成功: 关键词 '{keyword}', 平台 {platform}, offset {offset}, limit {limit}, 结果数量: {len(paginated_results)}/{total}")
+        app_logger.info(f"第三方搜索成功: 关键词 '{keyword}', 平台 {platform}, page {page}, 结果数量: {len(all_albums)}")
         return success_response({
-            'results': paginated_results,
-            'total': total,
-            'offset': offset,
+            'results': all_albums,
+            'platform_info': platform_results,
+            'page': page,
             'limit': limit,
             'has_more': has_more
         })

@@ -408,23 +408,23 @@ export const useComicStore = defineStore('comic', () => {
    * @param {string} platform - 平台（JM/PK/all）
    * @returns {Array} 搜索结果
    */
-  async function thirdPartySearch(keyword, platform = 'all', offset = 0, limit = 20) {
+  async function thirdPartySearch(keyword, platform = 'all', page = 1, limit = 20) {
     if (!keyword || keyword.trim() === '') {
-      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
+      return { results: [], platform_info: {}, page: 1, limit: 20, has_more: false }
     }
     
     loading.value = true
     
     try {
-      console.log('[Comic] 第三方搜索:', keyword, platform, offset, limit)
-      const response = await comicApi.searchThirdParty(keyword.trim(), platform, offset, limit)
+      console.log('[Comic] 第三方搜索:', keyword, platform, page, limit)
+      const response = await comicApi.searchThirdParty(keyword.trim(), platform, page, limit)
       if (response.code === 200) {
-        return response.data || { results: [], total: 0, offset: 0, limit: 20, has_more: false }
+        return response.data || { results: [], platform_info: {}, page: 1, limit: 20, has_more: false }
       }
-      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
+      return { results: [], platform_info: {}, page: 1, limit: 20, has_more: false }
     } catch (err) {
       console.error('[Comic] 第三方搜索失败:', err)
-      return { results: [], total: 0, offset: 0, limit: 20, has_more: false }
+      return { results: [], platform_info: {}, page: 1, limit: 20, has_more: false }
     } finally {
       loading.value = false
     }

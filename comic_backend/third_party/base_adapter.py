@@ -47,15 +47,22 @@ class BaseAdapter(ABC):
         pass
     
     @abstractmethod
-    def search_albums(self, keyword: str, max_pages: int = 1) -> Dict[str, Any]:
+    def search_albums(self, keyword: str, page: int = 1, max_pages: int = 1, fast_mode: bool = False) -> Dict[str, Any]:
         """搜索漫画专辑
         
         Args:
             keyword: 搜索关键词
+            page: 起始页码
             max_pages: 最大搜索页数
+            fast_mode: 快速模式，不获取详情，速度更快
             
         Returns:
-            元数据 JSON 格式，必须包含 albums 字段
+            {
+                'page': 当前页码,
+                'has_next': 是否有下一页,
+                'total_pages': 总页数（如果知道）,
+                'albums': 漫画专辑列表
+            }
         """
         pass
     
