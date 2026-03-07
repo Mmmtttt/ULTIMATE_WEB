@@ -91,16 +91,86 @@ class RecommendationCacheManager:
                     title = rec.get("title") or f"漫画_{original_id}"
                     break
             
-            comic_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, "comics", str(author), str(title))
+            author_variants = self._generate_name_variants(author)
+            title_variants = self._generate_name_variants(title)
             
-            if os.path.exists(comic_dir):
-                return comic_dir
+            pk_comics_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, "comics")
+            if os.path.exists(pk_comics_dir):
+                matched_author_dir = None
+                for author_var in author_variants:
+                    test_author_dir = os.path.join(pk_comics_dir, author_var)
+                    if os.path.exists(test_author_dir):
+                        matched_author_dir = test_author_dir
+                        break
+                
+                if matched_author_dir:
+                    for title_var in title_variants:
+                        comic_dir = os.path.join(matched_author_dir, title_var)
+                        if os.path.exists(comic_dir):
+                            return comic_dir
+                
+                if not matched_author_dir:
+                    author_dirs = os.listdir(pk_comics_dir)
+                    matched_author_dir = self._fuzzy_match_dir(author_dirs, author)
+                    if matched_author_dir:
+                        matched_author_dir = os.path.join(pk_comics_dir, matched_author_dir)
+                        title_dirs = os.listdir(matched_author_dir)
+                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
+                        if matched_title_dir:
+                            comic_dir = os.path.join(matched_author_dir, matched_title_dir)
+                            return comic_dir
             
             fallback_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
             return fallback_dir
         except Exception as e:
             error_logger.error(f"解析 PK 推荐页漫画目录失败，使用默认目录结构: {e}")
             return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+    
+    def _generate_name_variants(self, name):
+        """生成名称的变体，用于目录匹配"""
+        variants = set()
+        variants.add(name)
+        
+        if " | " in name:
+            variants.add(name.replace(" | ", " _ "))
+            variants.add(name.replace(" | ", "_"))
+        if "|" in name:
+            variants.add(name.replace("|", " _ "))
+            variants.add(name.replace("|", "_"))
+        
+        variants.add(name.replace(" ", ""))
+        variants.add(name.replace("  ", " "))
+        
+        return list(variants)
+    
+    def _fuzzy_match_dir(self, dir_list, target_name):
+        """模糊匹配目录名"""
+        if not target_name or not dir_list:
+            return None
+        
+        target_lower = target_name.lower()
+        
+        for dir_name in dir_list:
+            if dir_name.lower() == target_lower:
+                return dir_name
+        
+        target_variants = self._generate_name_variants(target_name)
+        for dir_name in dir_list:
+            dir_lower = dir_name.lower()
+            for variant in target_variants:
+                if variant.lower() == dir_lower:
+                    return dir_name
+        
+        for dir_name in dir_list:
+            dir_lower = dir_name.lower()
+            if target_lower in dir_lower or dir_lower in target_lower:
+                if len(target_lower) > 0 and len(dir_lower) > 0:
+                    common_chars = set(target_lower) & set(dir_lower)
+                    ratio = len(common_chars) / max(len(set(target_lower)), len(set(dir_lower)))
+                    if ratio > 0.8:
+                        return dir_name
+        
+        return None
     
     def _load_cache_index(self):
         """加载缓存索引"""

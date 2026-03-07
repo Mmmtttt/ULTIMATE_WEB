@@ -314,6 +314,36 @@ export const useComicStore = defineStore('comic', () => {
   }
   
   /**
+   * 综合筛选（标签、作者、清单）
+   * @param {string[]} includeTags - 包含的标签ID
+   * @param {string[]} excludeTags - 排除的标签ID
+   * @param {string[]} authors - 作者名称
+   * @param {string[]} listIds - 清单ID
+   * @returns {Array} 筛选结果
+   */
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
+    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+      isFiltering.value = false
+      return comics.value
+    }
+    
+    loading.value = true
+    
+    try {
+      console.log('[Comic] 综合筛选:', { includeTags, excludeTags, authors, listIds })
+      const response = await comicApi.filter(includeTags, excludeTags, authors, listIds)
+      filteredComics.value = response.data || []
+      isFiltering.value = true
+      return filteredComics.value
+    } catch (err) {
+      console.error('[Comic] 综合筛选漫画失败:', err)
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+  
+  /**
    * 按排序方式获取列表
    * @param {string} sortType - 排序类型
    * @returns {Array} 排序后的列表
@@ -450,6 +480,7 @@ export const useComicStore = defineStore('comic', () => {
     saveProgress,
     searchComics,
     filterByTags,
+    filterMulti,
     sortComics,
     clearFilter,
     setCurrentComic,

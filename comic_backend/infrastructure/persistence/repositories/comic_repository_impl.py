@@ -94,6 +94,33 @@ class ComicJsonRepository(ComicRepository):
             results.append(Comic.from_dict(c))
         
         return results
+    
+    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None, 
+                     authors: List[str] = None, list_ids: List[str] = None) -> List[Comic]:
+        data = self._storage.read()
+        comics = data.get("comics", [])
+        
+        results = []
+        for c in comics:
+            comic_tags = set(c.get("tag_ids", []))
+            comic_author = c.get("author", "")
+            comic_list_ids = set(c.get("list_ids", []))
+            
+            if include_tags and not all(t in comic_tags for t in include_tags):
+                continue
+            
+            if exclude_tags and any(t in comic_tags for t in exclude_tags):
+                continue
+            
+            if authors and comic_author not in authors:
+                continue
+            
+            if list_ids and not any(lid in comic_list_ids for lid in list_ids):
+                continue
+            
+            results.append(Comic.from_dict(c))
+        
+        return results
 
 
 class ComicJsonRepositoryV2(BaseContentJsonRepository):

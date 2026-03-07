@@ -448,10 +448,21 @@ def filter_comics():
     try:
         include_tag_ids = request.args.getlist('include_tag_ids')
         exclude_tag_ids = request.args.getlist('exclude_tag_ids')
+        authors = request.args.getlist('authors')
+        list_ids = request.args.getlist('list_ids')
         
-        result = comic_service.filter_by_tags(include_tag_ids, exclude_tag_ids)
+        if authors or list_ids:
+            result = comic_service.filter_multi(
+                include_tags=include_tag_ids if include_tag_ids else None,
+                exclude_tags=exclude_tag_ids if exclude_tag_ids else None,
+                authors=authors if authors else None,
+                list_ids=list_ids if list_ids else None
+            )
+        else:
+            result = comic_service.filter_by_tags(include_tag_ids, exclude_tag_ids)
+        
         if result.success:
-            app_logger.info(f"筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(result.data)}")
+            app_logger.info(f"筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(result.data)}")
             return success_response(result.data)
         else:
             return error_response(500, result.message)

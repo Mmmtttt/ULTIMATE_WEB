@@ -8,6 +8,9 @@
       </div>
       
       <div class="actions">
+        <van-button size="small" plain @click="showFilterPanel = true">
+          <van-icon name="filter-o" />
+        </van-button>
         <van-button size="small" plain @click="showSortPanel = true">
           <van-icon name="sort" />
         </van-button>
@@ -76,28 +79,60 @@
         title="排序方式"
       />
     </van-popup>
+    
+    <!-- 标签筛选面板 -->
+    <van-popup 
+      v-model:show="showFilterPanel" 
+      :position="isDesktop ? 'center' : 'bottom'" 
+      round 
+      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '70%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="标签筛选" left-text="关闭" @click-left="showFilterPanel = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="applyFilterAndClose">
+              确定
+            </van-button>
+          </template>
+        </van-nav-bar>
+        
+        <TagFilter
+          v-model:include-tags="tempIncludeTags"
+          v-model:exclude-tags="tempExcludeTags"
+          :tags="availableTags"
+          show-count
+        />
+      </div>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore } from '@/stores'
+import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore } from '@/stores'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import TagFilter from '@/components/tag/TagFilter.vue'
 import { showToast } from 'vant'
+import { useDevice } from '@/composables/useDevice'
 
 const router = useRouter()
 const modeStore = useModeStore()
 const comicRecStore = useRecommendationStore()
 const videoRecStore = useVideoRecommendationStore()
 const listStore = useListStore()
+const tagStore = useTagStore()
+const { isDesktop, isMobile } = useDevice()
 
 // State
 const showSortPanel = ref(false)
 const showMenu = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
+const showFilterPanel = ref(false)
+const tempIncludeTags = ref([])
+const tempExcludeTags = ref([])
 
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
@@ -116,6 +151,8 @@ const searchPlaceholder = computed(() =>
 const emptyTitle = computed(() => 
   isVideoMode.value ? '暂无推荐视频' : '暂无推荐漫画'
 )
+
+const availableTags = computed(() => tagStore.tags)
 
 const menuActions = [
   { text: '批量管理', icon: 'setting-o' },
@@ -179,6 +216,11 @@ async function onSortConfirm({ selectedOptions }) {
   currentStore.value.setSortType(sortType)
   await loadData(true)
   showSortPanel.value = false
+}
+
+async function applyFilterAndClose() {
+  await currentStore.value.filterByTags(tempIncludeTags.value, tempExcludeTags.value)
+  showFilterPanel.value = false
 }
 
 async function loadData(force = false) {
@@ -249,5 +291,16 @@ onMounted(() => {
 
 .video-mode :deep(.media-cover) {
   aspect-ratio: 16/9;
+}
+
+.filter-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.filter-panel :deep(.tag-filter) {
+  flex: 1;
+  overflow-y: auto;
 }
 </style>

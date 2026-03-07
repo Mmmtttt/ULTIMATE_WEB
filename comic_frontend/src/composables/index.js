@@ -9,9 +9,6 @@ export { useReader } from './useReader'
 // 漫画操作
 export { useComic } from './useComic'
 
-// 搜索筛选
-export { useSearch } from './useSearch'
-
 // 缓存操作
 export { useCache } from './useCache'
 

@@ -149,7 +149,7 @@ const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? videoStore : comicStore)
 
 const items = computed(() => {
-  return isVideoMode.value ? videoStore.videoList : comicStore.comics
+  return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
 const isLoading = computed(() => currentStore.value.loading)
@@ -245,6 +245,25 @@ async function loadData(force = false) {
 
 function handleQuickImport() {
   // Logic
+}
+
+function applyFilters() {
+  if (isVideoMode.value) {
+    videoStore.filterByTags(includeTags.value, excludeTags.value)
+  } else {
+    comicStore.filterByTags(includeTags.value, excludeTags.value)
+  }
+  showFilterPanel.value = false
+}
+
+function removeFilter(filter) {
+  // Remove filter logic
+}
+
+function clearAllFilters() {
+  includeTags.value = []
+  excludeTags.value = []
+  loadData(true)
 }
 
 // Lifecycle

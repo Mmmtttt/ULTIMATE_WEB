@@ -87,8 +87,11 @@ const emptyDescription = computed(() => {
 
 const normalizedResults = computed(() => {
   return results.value.map(item => {
-    // Normalize data structure if needed
-    return item
+    return {
+      ...item,
+      id: item.id || item.album_id || item.comic_id,
+      cover_path: item.cover_path || item.cover_url
+    }
   })
 })
 

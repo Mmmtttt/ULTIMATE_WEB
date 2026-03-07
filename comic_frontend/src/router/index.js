@@ -72,6 +72,11 @@ const routes = [
     name: 'VideoRecommendationDetail',
     component: () => import('@/views/VideoRecommendationDetail.vue')
   },
+  {
+    path: '/recommendation-reader/:id',
+    name: 'RecommendationReader',
+    component: () => import('@/views/RecommendationReader.vue')
+  },
   // 管理页面
   {
     path: '/tags',

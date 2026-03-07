@@ -162,15 +162,19 @@ export const comicApi = {
   },
   
   /**
-   * 按标签筛选漫画
+   * 综合筛选漫画
    * @param {string[]} includeTagIds - 包含标签ID数组
    * @param {string[]} excludeTagIds - 排除标签ID数组
+   * @param {string[]} authors - 作者名称数组
+   * @param {string[]} listIds - 清单ID数组
    * @returns {Promise}
    */
-  filter: (includeTagIds = [], excludeTagIds = []) => {
+  filter: (includeTagIds = [], excludeTagIds = [], authors = [], listIds = []) => {
     const params = new URLSearchParams()
     includeTagIds.forEach(id => params.append('include_tag_ids', id))
     excludeTagIds.forEach(id => params.append('exclude_tag_ids', id))
+    authors.forEach(author => params.append('authors', author))
+    listIds.forEach(id => params.append('list_ids', id))
     return request.get(`/v1/comic/filter?${params.toString()}`)
   },
   
