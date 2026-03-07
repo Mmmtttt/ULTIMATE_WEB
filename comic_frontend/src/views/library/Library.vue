@@ -93,11 +93,16 @@
 
     <van-popup v-model:show="showFilterPanel" position="right" :style="{ width: '80%', height: '100%' }">
       <div class="filter-panel-content">
-        <h3>标签筛选</h3>
-        <TagFilter 
+        <h3>高级筛选</h3>
+        <AdvancedFilter
           v-model:include-tags="includeTags"
           v-model:exclude-tags="excludeTags"
+          v-model:selected-authors="selectedAuthors"
+          v-model:selected-list-ids="selectedListIds"
           :tags="availableTags"
+          :authors="availableAuthors"
+          :lists="availableLists"
+          @change="onFilterChange"
         />
         <div class="filter-actions">
           <van-button block type="primary" @click="applyFilters">应用</van-button>
@@ -122,7 +127,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore } from '@/stores'
 import MediaGrid from '@/components/common/MediaGrid.vue'
-import TagFilter from '@/components/tag/TagFilter.vue' // 假设已有
+import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 
@@ -143,6 +148,8 @@ const selectedIds = ref([])
 const importInput = ref('')
 const includeTags = ref([])
 const excludeTags = ref([])
+const selectedAuthors = ref([])
+const selectedListIds = ref([])
 
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
@@ -152,11 +159,24 @@ const items = computed(() => {
   return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
+function onFilterChange(filterData) {
+}
+
 async function applyFilters() {
   if (isVideoMode.value) {
-    await videoStore.filterByTags(includeTags.value, excludeTags.value)
+    await videoStore.filterMulti(
+      includeTags.value,
+      excludeTags.value,
+      selectedAuthors.value,
+      selectedListIds.value
+    )
   } else {
-    await comicStore.filterByTags(includeTags.value, excludeTags.value)
+    await comicStore.filterMulti(
+      includeTags.value,
+      excludeTags.value,
+      selectedAuthors.value,
+      selectedListIds.value
+    )
   }
   showFilterPanel.value = false
 }
@@ -185,6 +205,23 @@ const sortOptions = computed(() => [
 
 const availableTags = computed(() => {
   return isVideoMode.value ? tagStore.videoTags : tagStore.tags
+})
+
+const availableAuthors = computed(() => {
+  const items = isVideoMode.value ? videoStore.videos : comicStore.comics
+  const authors = new Set()
+  items.forEach(item => {
+    if (item.author) authors.add(item.author)
+    if (item.creator) authors.add(item.creator)
+  })
+  return Array.from(authors).sort()
+})
+
+const availableLists = computed(() => {
+  return listStore.lists.map(list => ({
+    ...list,
+    item_count: list.item_ids?.length || 0
+  }))
 })
 
 const activeFilters = computed(() => {
@@ -243,6 +280,9 @@ async function batchDelete() {
 }
 
 async function loadData(force = false) {
+  if (listStore.lists.length === 0) {
+    await listStore.fetchLists()
+  }
   if (isVideoMode.value) {
     if (tagStore.videoTags.length === 0) await tagStore.fetchTags('video')
     await videoStore.fetchList()

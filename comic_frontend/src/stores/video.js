@@ -202,6 +202,31 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
+    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+      isFiltering.value = false
+      return videos.value
+    }
+    
+    loading.value = true
+    
+    try {
+      console.log('[Video] 综合筛选:', { includeTags, excludeTags, authors, listIds })
+      const response = await videoApi.filter(includeTags, excludeTags, authors, listIds)
+      if (response.code === 200) {
+        filteredVideos.value = response.data || []
+        isFiltering.value = true
+        return filteredVideos.value
+      }
+      return []
+    } catch (err) {
+      console.error('[Video] 综合筛选视频失败:', err)
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+  
   function clearFilter() {
     isFiltering.value = false
     filteredVideos.value = []
@@ -236,6 +261,7 @@ export const useVideoStore = defineStore('video', () => {
     thirdPartyDetail,
     thirdPartyImport,
     filterByTags,
+    filterMulti,
     clearFilter,
     clearCurrentVideo
   }

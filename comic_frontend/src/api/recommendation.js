@@ -106,6 +106,15 @@ export const recommendationApi = {
    * @param {string[]} excludeTagIds - 排除的标签ID
    * @returns {Promise}
    */
+  filter: (includeTagIds = [], excludeTagIds = [], authors = [], listIds = []) => {
+    const params = new URLSearchParams()
+    includeTagIds.forEach(id => params.append('include_tag_ids', id))
+    excludeTagIds.forEach(id => params.append('exclude_tag_ids', id))
+    authors.forEach(author => params.append('authors', author))
+    listIds.forEach(id => params.append('list_ids', id))
+    return request.get(`/v1/recommendation/filter?${params.toString()}`)
+  },
+  
   filterByTags: (includeTagIds = [], excludeTagIds = []) => {
     const params = new URLSearchParams()
     includeTagIds.forEach(id => params.append('include_tag_ids', id))

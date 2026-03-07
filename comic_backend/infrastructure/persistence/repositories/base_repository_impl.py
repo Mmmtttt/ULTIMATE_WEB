@@ -121,6 +121,33 @@ class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
                 results.append(self._get_entity_class().from_dict(e))
         
         return results
+    
+    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
+                     authors: List[str] = None, list_ids: List[str] = None) -> List[C]:
+        data = self._storage.read()
+        entities = data.get(self._data_key, [])
+        
+        results = []
+        for e in entities:
+            entity_tags = set(e.get("tag_ids", []))
+            entity_author = e.get("author", "") or e.get("creator", "")
+            entity_list_ids = set(e.get("list_ids", []))
+            
+            if include_tags and not all(t in entity_tags for t in include_tags):
+                continue
+            
+            if exclude_tags and any(t in entity_tags for t in exclude_tags):
+                continue
+            
+            if authors and entity_author not in authors:
+                continue
+            
+            if list_ids and not any(lid in entity_list_ids for lid in list_ids):
+                continue
+            
+            results.append(self._get_entity_class().from_dict(e))
+        
+        return results
 
 
 class BaseCreatorJsonRepository(BaseJsonRepository[R], Generic[R]):

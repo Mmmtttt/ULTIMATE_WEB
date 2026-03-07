@@ -103,3 +103,34 @@ class RecommendationJsonRepository(RecommendationRepository):
             results.append(Recommendation.from_dict(r))
         
         return results
+    
+    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
+                     authors: List[str] = None, list_ids: List[str] = None) -> List[Recommendation]:
+        """多条件筛选：标签、作者、清单"""
+        data = self._storage.read()
+        recommendations = data.get("recommendations", [])
+        
+        results = []
+        for r in recommendations:
+            tag_ids = set(r.get("tag_ids", []))
+            author = r.get("author", "")
+            rec_list_ids = set(r.get("list_ids", []))
+            
+            # 标签筛选
+            if include_tags and not all(tag in tag_ids for tag in include_tags):
+                continue
+            
+            if exclude_tags and any(tag in tag_ids for tag in exclude_tags):
+                continue
+            
+            # 作者筛选
+            if authors and author not in authors:
+                continue
+            
+            # 清单筛选
+            if list_ids and not any(lid in rec_list_ids for lid in list_ids):
+                continue
+            
+            results.append(Recommendation.from_dict(r))
+        
+        return results

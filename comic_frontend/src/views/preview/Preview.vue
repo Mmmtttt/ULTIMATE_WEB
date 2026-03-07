@@ -80,15 +80,15 @@
       />
     </van-popup>
     
-    <!-- 标签筛选面板 -->
+    <!-- 高级筛选面板 -->
     <van-popup 
       v-model:show="showFilterPanel" 
       :position="isDesktop ? 'center' : 'bottom'" 
       round 
-      :style="isDesktop ? { width: '600px', height: '80vh' } : { height: '70%' }"
+      :style="isDesktop ? { width: '700px', height: '85vh' } : { height: '80%' }"
     >
       <div class="filter-panel">
-        <van-nav-bar title="标签筛选" left-text="关闭" @click-left="showFilterPanel = false">
+        <van-nav-bar title="高级筛选" left-text="关闭" @click-left="showFilterPanel = false">
           <template #right>
             <van-button type="primary" size="small" @click="applyFilterAndClose">
               确定
@@ -96,11 +96,14 @@
           </template>
         </van-nav-bar>
         
-        <TagFilter
+        <AdvancedFilter
           v-model:include-tags="tempIncludeTags"
           v-model:exclude-tags="tempExcludeTags"
+          v-model:selected-authors="tempSelectedAuthors"
+          v-model:selected-list-ids="tempSelectedListIds"
           :tags="availableTags"
-          show-count
+          :authors="availableAuthors"
+          :lists="availableLists"
         />
       </div>
     </van-popup>
@@ -113,7 +116,7 @@ import { useRouter } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore } from '@/stores'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import TagFilter from '@/components/tag/TagFilter.vue'
+import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
 
@@ -133,6 +136,8 @@ const selectedIds = ref([])
 const showFilterPanel = ref(false)
 const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
+const tempSelectedAuthors = ref([])
+const tempSelectedListIds = ref([])
 
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
@@ -153,6 +158,23 @@ const emptyTitle = computed(() =>
 )
 
 const availableTags = computed(() => tagStore.tags)
+
+const availableAuthors = computed(() => {
+  const items = isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
+  const authors = new Set()
+  items.forEach(item => {
+    if (item.author) authors.add(item.author)
+    if (item.creator) authors.add(item.creator)
+  })
+  return Array.from(authors).sort()
+})
+
+const availableLists = computed(() => {
+  return listStore.lists.map(list => ({
+    ...list,
+    item_count: list.item_ids?.length || 0
+  }))
+})
 
 const menuActions = [
   { text: '批量管理', icon: 'setting-o' },
@@ -219,11 +241,19 @@ async function onSortConfirm({ selectedOptions }) {
 }
 
 async function applyFilterAndClose() {
-  await currentStore.value.filterByTags(tempIncludeTags.value, tempExcludeTags.value)
+  await currentStore.value.filterMulti(
+    tempIncludeTags.value,
+    tempExcludeTags.value,
+    tempSelectedAuthors.value,
+    tempSelectedListIds.value
+  )
   showFilterPanel.value = false
 }
 
 async function loadData(force = false) {
+  if (listStore.lists.length === 0) {
+    await listStore.fetchLists()
+  }
   await currentStore.value.fetchRecommendations(force)
 }
 
@@ -299,7 +329,7 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.filter-panel :deep(.tag-filter) {
+.filter-panel :deep(.advanced-filter) {
   flex: 1;
   overflow-y: auto;
 }

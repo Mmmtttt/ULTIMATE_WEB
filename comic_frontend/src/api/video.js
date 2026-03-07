@@ -85,10 +85,12 @@ export const videoApi = {
     return request.put('/v1/video/tag/bind', { video_id: videoId, tag_id_list: tagIdList })
   },
   
-  filter(includeTags = [], excludeTags = []) {
+  filter(includeTags = [], excludeTags = [], authors = [], listIds = []) {
     const params = new URLSearchParams()
     includeTags.forEach(id => params.append('include_tag_ids', id))
     excludeTags.forEach(id => params.append('exclude_tag_ids', id))
+    authors.forEach(author => params.append('authors', author))
+    listIds.forEach(id => params.append('list_ids', id))
     return request.get(`/v1/video/filter?${params.toString()}`)
   },
   
@@ -124,10 +126,12 @@ export const videoApi = {
     return request.get('/v1/video/recommendation/search', { params: { keyword } })
   },
   
-  filterVideoRecommendations(includeTags = [], excludeTags = []) {
+  filterVideoRecommendations(includeTags = [], excludeTags = [], authors = [], listIds = []) {
     const params = new URLSearchParams()
     includeTags.forEach(id => params.append('include_tag_ids', id))
     excludeTags.forEach(id => params.append('exclude_tag_ids', id))
+    authors.forEach(author => params.append('authors', author))
+    listIds.forEach(id => params.append('list_ids', id))
     return request.get(`/v1/video/recommendation/filter?${params.toString()}`)
   }
 }

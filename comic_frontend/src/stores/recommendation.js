@@ -338,6 +338,45 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       loading.value = false
     }
   }
+  
+  /**
+   * 综合筛选（标签、作者、清单）
+   * @param {string[]} includeTags - 包含的标签ID
+   * @param {string[]} excludeTags - 排除的标签ID
+   * @param {string[]} authors - 作者名称
+   * @param {string[]} listIds - 清单ID
+   * @returns {Array} 筛选结果
+   */
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
+    console.log('[Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds })
+    
+    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+      isFiltering.value = false
+      return recommendations.value
+    }
+    
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await recommendationApi.filter(includeTags, excludeTags, authors, listIds)
+      
+      if (response.code === 200) {
+        filteredRecommendations.value = response.data || []
+        isFiltering.value = true
+        return response.data
+      } else {
+        error.value = response.msg || '筛选失败'
+        return []
+      }
+    } catch (err) {
+      console.error('[Recommendation] 综合筛选失败:', err)
+      error.value = '筛选失败'
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
 
   /**
    * 清空筛选
@@ -464,6 +503,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     bindTags,
     searchRecommendations,
     filterByTags,
+    filterMulti,
     clearFilter,
     setSortType,
     clearSort,

@@ -306,6 +306,38 @@ class RecommendationAppService:
             error_logger.error(f"筛选失败: {e}")
             return ServiceResult.error("筛选失败")
     
+    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
+                     authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
+        """多条件筛选：标签、作者、清单"""
+        try:
+            results = self._recommendation_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            recommendation_list = []
+            for r in results:
+                is_favorited = FAVORITES_LIST_ID in r.list_ids
+                recommendation_list.append({
+                    "id": r.id,
+                    "title": r.title,
+                    "author": r.author,
+                    "cover_path": r.cover_path,
+                    "total_page": r.total_page,
+                    "current_page": r.current_page,
+                    "score": r.score,
+                    "tag_ids": r.tag_ids,
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
+                    "last_read_time": r.last_read_time,
+                    "create_time": r.create_time,
+                    "is_favorited": is_favorited
+                })
+            
+            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(recommendation_list)}")
+            return ServiceResult.ok(recommendation_list)
+        except Exception as e:
+            error_logger.error(f"筛选失败: {e}")
+            return ServiceResult.error("筛选失败")
+    
     def batch_add_tags(self, recommendation_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         """批量添加标签"""
         try:

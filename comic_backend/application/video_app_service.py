@@ -261,6 +261,25 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"筛选失败: {e}")
             return ServiceResult.error("筛选失败")
     
+    def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
+                     authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
+        try:
+            videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
+            tags = self._tag_repo.get_all()
+            tag_map = {t.id: t.name for t in tags}
+            
+            results = []
+            for v in videos:
+                video_info = v.to_dict()
+                video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
+                results.append(video_info)
+            
+            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
+            return ServiceResult.ok(results)
+        except Exception as e:
+            error_logger.error(f"筛选失败: {e}")
+            return ServiceResult.error("筛选失败")
+    
     def batch_add_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
             for tag_id in tag_ids:
