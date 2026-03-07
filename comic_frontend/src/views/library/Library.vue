@@ -312,10 +312,21 @@ watch(() => route.query.author, (newAuthor) => {
   }
 })
 
+watch(() => route.query.tagId, (newTagId) => {
+  if (newTagId) {
+    includeTags.value = [newTagId]
+    applyFilters()
+  }
+})
+
 onMounted(() => {
   loadData()
   if (route.query.author) {
     selectedAuthors.value = [route.query.author]
+    applyFilters()
+  }
+  if (route.query.tagId) {
+    includeTags.value = [route.query.tagId]
     applyFilters()
   }
 })

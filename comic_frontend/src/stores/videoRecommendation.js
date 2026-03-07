@@ -162,6 +162,37 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
+    console.log('[Video Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds })
+    
+    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+      isFiltering.value = false
+      return recommendations.value
+    }
+    
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await videoApi.filterVideoRecommendations(includeTags, excludeTags, authors, listIds)
+      
+      if (response.code === 200) {
+        filteredRecommendations.value = response.data || []
+        isFiltering.value = true
+        return response.data
+      } else {
+        error.value = response.msg || '筛选失败'
+        return []
+      }
+    } catch (err) {
+      console.error('[Video Recommendation] 综合筛选失败:', err)
+      error.value = '筛选失败'
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+
   function clearFilter() {
     console.log('[Video Recommendation] clearFilter called')
     filteredRecommendations.value = []
@@ -199,6 +230,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     batchMoveToTrash,
     searchRecommendations,
     filterByTags,
+    filterMulti,
     clearFilter,
     setSortType,
     setFilter,

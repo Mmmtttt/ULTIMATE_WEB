@@ -421,11 +421,19 @@ async function updateScore(value) {
 }
 
 function goToActor(actorName) {
-  router.push({ name: 'Library', query: { author: actorName } })
+  if (video.value.source === 'preview') {
+    router.push({ name: 'Preview', query: { author: actorName } })
+  } else {
+    router.push({ name: 'Library', query: { author: actorName } })
+  }
 }
 
 function filterByTag(tagId) {
-  router.push(`/video-home?tagId=${tagId}`)
+  if (video.value.source === 'preview') {
+    router.push({ name: 'Preview', query: { tagId: tagId } })
+  } else {
+    router.push({ name: 'Library', query: { tagId: tagId } })
+  }
 }
 
 function copyMagnet(magnet) {

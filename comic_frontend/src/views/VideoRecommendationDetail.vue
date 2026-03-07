@@ -80,6 +80,7 @@
             type="primary"
             plain
             class="tag"
+            @click="filterByTag(tag.id)"
           >
             {{ tag.name }}
           </van-tag>
@@ -244,7 +245,11 @@ function getCoverUrl(coverPath) {
 }
 
 function filterByActor(actorName) {
-  router.push({ name: 'Library', query: { author: actorName } })
+  router.push({ name: 'Preview', query: { author: actorName } })
+}
+
+function filterByTag(tagId) {
+  router.push({ name: 'Preview', query: { tagId: tagId } })
 }
 
 async function fetchDetail() {
@@ -535,6 +540,7 @@ watch(showListPopup, async (val) => {
 .actor,
 .tag {
   margin: 0;
+  cursor: pointer;
 }
 
 .preview-grid {

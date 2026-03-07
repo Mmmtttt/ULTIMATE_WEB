@@ -455,11 +455,19 @@ function onPreviewChange(index) {
 }
 
 function filterByTag(tagId) {
-  router.push(`/?tagId=${tagId}`)
+  if (comic.value.source === 'preview') {
+    router.push({ name: 'Preview', query: { tagId: tagId } })
+  } else {
+    router.push({ name: 'Library', query: { tagId: tagId } })
+  }
 }
 
 function filterByAuthor(author) {
-  router.push({ name: 'Library', query: { author: author } })
+  if (comic.value.source === 'preview') {
+    router.push({ name: 'Preview', query: { author: author } })
+  } else {
+    router.push({ name: 'Library', query: { author: author } })
+  }
 }
 
 async function handleScoreChange(value) {

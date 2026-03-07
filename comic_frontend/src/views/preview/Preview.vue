@@ -273,10 +273,21 @@ watch(() => route.query.author, (newAuthor) => {
   }
 })
 
+watch(() => route.query.tagId, (newTagId) => {
+  if (newTagId) {
+    tempIncludeTags.value = [newTagId]
+    applyFilterAndClose()
+  }
+})
+
 onMounted(() => {
   loadData()
   if (route.query.author) {
     tempSelectedAuthors.value = [route.query.author]
+    applyFilterAndClose()
+  }
+  if (route.query.tagId) {
+    tempIncludeTags.value = [route.query.tagId]
     applyFilterAndClose()
   }
 })

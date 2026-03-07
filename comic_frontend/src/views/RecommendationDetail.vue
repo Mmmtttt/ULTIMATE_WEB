@@ -354,7 +354,7 @@ function onPreviewChange(index) {
  * 根据标签筛选
  */
 function filterByTag(tagId) {
-  router.push(`/recommendation?tagId=${tagId}`)
+  router.push({ name: 'Preview', query: { tagId: tagId } })
 }
 
 function filterByAuthor(author) {
