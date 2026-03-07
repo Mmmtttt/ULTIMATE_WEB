@@ -4,3 +4,6 @@
 [submodule "comic_backend/third_party/javdb-api-scraper"]
 	path = comic_backend/third_party/javdb-api-scraper
 	url = https://github.com/Mmmtttt/javdb-api-scraper.git
+[submodule "comic_backend/third_party/Picacomic-Crawler"]
+	path = comic_backend/third_party/Picacomic-Crawler
+	url = https://github.com/Mmmtttt/Picacomic-Crawler.git
