@@ -23,10 +23,25 @@
         />
         <div class="info">
           <h1 class="title">{{ recommendation.title }}</h1>
-          <p class="author" v-if="recommendation.author">
-            <span class="author-link" @click="filterByAuthor(recommendation.author)">{{ recommendation.author }}</span>
-          </p>
-          <p class="author" v-else>未知作者</p>
+          <div class="author-row">
+            <p class="author" v-if="recommendation.author">
+              <span class="author-link" @click="filterByAuthor(recommendation.author)">{{ recommendation.author }}</span>
+            </p>
+            <p class="author" v-else>未知作者</p>
+            <van-button 
+              v-if="recommendation.author && !isSubscribed" 
+              size="mini" 
+              type="primary" 
+              plain
+              @click="subscribeAuthor"
+              :loading="subscribing"
+            >
+              订阅作者
+            </van-button>
+            <van-tag v-else-if="recommendation.author && isSubscribed" type="success" size="medium">
+              已订阅
+            </van-tag>
+          </div>
 
           <div class="stats">
             <span class="stat-item">ID: {{ recommendation.id }}</span>
@@ -239,7 +254,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { recommendationApi } from '@/api'
+import { recommendationApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const route = useRoute()
@@ -261,6 +276,8 @@ const selectedTagIds = ref([])
 const selectedListIds = ref([])
 const scoreValue = ref(6)
 const favoriteLoading = ref(false)
+const isSubscribed = ref(false)
+const subscribing = ref(false)
 
 const actions = [
   { name: '绑定标签', value: 'tags' },
@@ -296,6 +313,41 @@ const isRead = computed(() => {
 /**
  * 获取推荐漫画详情
  */
+async function checkSubscriptionStatus() {
+  if (!recommendation.value?.author) return
+  
+  try {
+    const response = await authorApi.getList()
+    if (response.code === 200) {
+      isSubscribed.value = response.data.some(
+        author => author.name.toLowerCase() === recommendation.value.author.toLowerCase()
+      )
+    }
+  } catch (error) {
+    console.error('检查订阅状态失败:', error)
+  }
+}
+
+async function subscribeAuthor() {
+  if (!recommendation.value?.author || subscribing.value) return
+  
+  subscribing.value = true
+  try {
+    const response = await authorApi.subscribe(recommendation.value.author)
+    if (response.code === 200) {
+      isSubscribed.value = true
+      showSuccessToast('订阅成功')
+    } else {
+      showFailToast(response.msg || '订阅失败')
+    }
+  } catch (error) {
+    console.error('订阅作者失败:', error)
+    showFailToast('订阅失败')
+  } finally {
+    subscribing.value = false
+  }
+}
+
 async function fetchDetail() {
   const id = recommendationId.value
   isLoading.value = true
@@ -306,6 +358,7 @@ async function fetchDetail() {
       recommendation.value = detail
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
+      await checkSubscriptionStatus()
     }
   } catch (error) {
     console.error('获取推荐漫画详情失败:', error)
@@ -621,8 +674,16 @@ watch(showListPopup, async (val) => {
   line-height: 1.3;
 }
 
+.author-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .author {
-  margin: 0 0 12px 0;
+  margin: 0;
   font-size: 14px;
   opacity: 0.9;
 }

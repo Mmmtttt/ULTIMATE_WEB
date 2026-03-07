@@ -40,9 +40,9 @@ export const useActorStore = defineStore('actor', () => {
     }
   }
   
-  async function subscribe(name, actorId = '') {
+  async function subscribe(name) {
     try {
-      const res = await actorApi.subscribe(name, actorId)
+      const res = await actorApi.subscribe(name)
       if (res.code === 200) {
         await fetchList()
         return { success: true, data: res.data }

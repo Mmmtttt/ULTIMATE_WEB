@@ -77,6 +77,10 @@ export const videoApi = {
     return request.get(`/v1/video/${videoId}/play-urls`)
   },
   
+  getRecommendationPlayUrls(videoId) {
+    return request.get(`/v1/video/recommendation/${videoId}/play-urls`)
+  },
+  
   getTags() {
     return request.get('/v1/video/tags')
   },
@@ -145,8 +149,8 @@ export const actorApi = {
     return request.get('/v1/actor/all')
   },
   
-  subscribe(name, actorId = '') {
-    return request.post('/v1/actor/subscribe', { name, actor_id: actorId })
+  subscribe(name) {
+    return request.post('/v1/actor/subscribe', { name })
   },
   
   unsubscribe(actorSubscriptionId) {

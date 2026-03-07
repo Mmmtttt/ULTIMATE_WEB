@@ -93,15 +93,30 @@
         <div v-if="video.actors && video.actors.length > 0" class="info-row">
           <span class="label">演员:</span>
           <div class="actor-tags">
-            <van-tag 
-              v-for="actor in video.actors" 
-              :key="actor" 
-              type="primary" 
-              plain
-              @click="goToActor(actor)"
-            >
-              {{ actor }}
-            </van-tag>
+            <div v-for="actor in video.actors" :key="actor" class="actor-item">
+              <van-tag 
+                type="primary" 
+                plain
+                class="actor-tag"
+                @click="goToActor(actor)"
+              >
+                {{ actor }}
+              </van-tag>
+              <van-button 
+                v-if="!isActorSubscribed(actor)" 
+                size="mini" 
+                type="primary" 
+                plain
+                class="subscribe-button"
+                @click="subscribeActor(actor)"
+                :loading="subscribingActors.includes(actor)"
+              >
+                订阅
+              </van-button>
+              <van-tag v-else type="success" size="mini" class="subscribed-tag">
+                已订阅
+              </van-tag>
+            </div>
           </div>
         </div>
         
@@ -257,7 +272,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
-import { useVideoStore, useListStore } from '@/stores'
+import { useVideoStore, useListStore, useActorStore } from '@/stores'
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
@@ -267,6 +282,7 @@ const route = useRoute()
 const router = useRouter()
 const videoStore = useVideoStore()
 const listStore = useListStore()
+const actorStore = useActorStore()
 const { isDesktop, isMobile } = useDevice()
 
 const video = ref(null)
@@ -275,6 +291,7 @@ const showActions = ref(false)
 const showListPopup = ref(false)
 const selectedListIds = ref([])
 const scoreValue = ref(0)
+const subscribingActors = ref([])
 
 // 播放器相关
 const showPlayer = ref(false)
@@ -326,7 +343,34 @@ async function loadVideo() {
     selectedListIds.value = [...data.list_ids]
   }
   await listStore.fetchLists('video')
+  await actorStore.fetchList()
   loading.value = false
+}
+
+function isActorSubscribed(actorName) {
+  return actorStore.actors.some(actor => actor.name.toLowerCase() === actorName.toLowerCase())
+}
+
+async function subscribeActor(actorName) {
+  if (subscribingActors.value.includes(actorName)) return
+  
+  subscribingActors.value.push(actorName)
+  try {
+    const result = await actorStore.subscribe(actorName)
+    if (result.success) {
+      showSuccessToast(`订阅 ${actorName} 成功`)
+    } else {
+      showFailToast(result.message || '订阅失败')
+    }
+  } catch (error) {
+    console.error('订阅演员失败:', error)
+    showFailToast('订阅失败')
+  } finally {
+    const index = subscribingActors.value.indexOf(actorName)
+    if (index > -1) {
+      subscribingActors.value.splice(index, 1)
+    }
+  }
 }
 
 async function toggleFavorite() {
@@ -829,7 +873,25 @@ onUnmounted(() => {
 .actor-tags {
   display: flex;
   flex-wrap: wrap;
+  gap: 12px;
+}
+
+.actor-item {
+  display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.actor-tag {
+  cursor: pointer;
+}
+
+.subscribe-button {
+  flex-shrink: 0;
+}
+
+.subscribed-tag {
+  flex-shrink: 0;
 }
 
 .score-text {

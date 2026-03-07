@@ -886,6 +886,101 @@ def filter_video_recommendations():
 
 # ========== 视频播放相关 API ==========
 
+@video_bp.route('/recommendation/<video_id>/play-urls', methods=['GET'])
+def get_video_recommendation_play_urls(video_id):
+    """获取推荐视频播放链接（从 MissAV 和 Jable 提取）"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        video = None
+        for v in videos:
+            if v.get('id') == video_id:
+                video = v
+                break
+        
+        if not video:
+            return error_response(404, "视频不存在")
+        
+        code = video.get('code', '')
+        
+        if not code:
+            return error_response(400, "视频没有番号信息")
+        
+        import sys
+        import os
+        _player_path = os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper')
+        if _player_path not in sys.path:
+            sys.path.insert(0, _player_path)
+        from player.av_player_server import extract_from_missav, extract_from_jable
+        
+        sources = []
+        
+        try:
+            missav_result, missav_error = extract_from_missav(code)
+            if missav_result:
+                sources.append({
+                    'name': 'MissAV',
+                    'source': 'missav',
+                    'streams': missav_result.get('streams', []),
+                    'page_url': missav_result.get('page_url', ''),
+                    'available': True
+                })
+            else:
+                sources.append({
+                    'name': 'MissAV',
+                    'source': 'missav',
+                    'available': False,
+                    'error': missav_error
+                })
+        except Exception as e:
+            sources.append({
+                'name': 'MissAV',
+                'source': 'missav',
+                'available': False,
+                'error': str(e)
+            })
+        
+        try:
+            jable_result, jable_error = extract_from_jable(code)
+            if jable_result:
+                sources.append({
+                    'name': 'Jable',
+                    'source': 'jable',
+                    'streams': jable_result.get('streams', []),
+                    'page_url': jable_result.get('page_url', ''),
+                    'available': True
+                })
+            else:
+                sources.append({
+                    'name': 'Jable',
+                    'source': 'jable',
+                    'available': False,
+                    'error': jable_error
+                })
+        except Exception as e:
+            sources.append({
+                'name': 'Jable',
+                'source': 'jable',
+                'available': False,
+                'error': str(e)
+            })
+        
+        return success_response({
+            'video_id': video_id,
+            'code': code,
+            'title': video.get('title', ''),
+            'sources': sources
+        })
+        
+    except Exception as e:
+        error_logger.error(f"获取播放链接失败: {e}")
+        return error_response(500, "服务器内部错误")
+
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
 def get_video_play_urls(video_id):
     """获取视频播放链接（从 MissAV 和 Jable 提取）"""

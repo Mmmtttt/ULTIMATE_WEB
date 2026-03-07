@@ -42,6 +42,7 @@ class ActorAppService(BaseCreatorAppService):
                 return ServiceResult.error("演员名称不能为空")
             
             name = name.strip()
+            app_logger.info(f"开始订阅演员: {name}")
             
             if self._actor_repo.exists_by_name(name):
                 return ServiceResult.error("已订阅该演员")
@@ -50,9 +51,10 @@ class ActorAppService(BaseCreatorAppService):
                 id=generate_id("actor"),
                 name=name,
                 actor_id=actor_id,
-                create_time=get_current_time(),
                 subscribe_time=get_current_time()
             )
+            
+            app_logger.info(f"创建演员对象成功: {actor.id}")
             
             if not self._actor_repo.save(actor):
                 return ServiceResult.error("订阅演员失败")
@@ -61,6 +63,8 @@ class ActorAppService(BaseCreatorAppService):
             return ServiceResult.ok(actor.to_dict(), "订阅成功")
         except Exception as e:
             error_logger.error(f"订阅演员失败: {e}")
+            import traceback
+            error_logger.error(traceback.format_exc())
             return ServiceResult.error("订阅演员失败")
     
     def unsubscribe_actor(self, actor_subscription_id: str) -> ServiceResult:

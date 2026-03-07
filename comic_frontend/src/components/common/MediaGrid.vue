@@ -27,6 +27,11 @@
           />
         </div>
 
+        <!-- 视频播放按钮 -->
+        <div v-if="isVideoItem(item)" class="play-btn">
+          <van-icon name="play-circle-o" size="48" />
+        </div>
+
         <!-- 选中状态覆盖层 (管理模式) -->
         <div v-if="selectable" class="select-overlay" :class="{ selected: isSelected(item) }" @click.stop="$emit('select', item)">
           <van-icon name="success" class="select-icon" />
@@ -94,6 +99,10 @@ function getCoverUrl(item) {
 
 function isSelected(item) {
   return props.selectedIds.includes(item.id)
+}
+
+function isVideoItem(item) {
+  return item.actors && item.actors.length > 0
 }
 </script>
 
@@ -203,6 +212,18 @@ function isSelected(item) {
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(4px);
+  z-index: 2;
+}
+
+.play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  z-index: 1;
+  pointer-events: none;
 }
 
 .media-info {
