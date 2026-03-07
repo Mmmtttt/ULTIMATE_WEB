@@ -58,6 +58,18 @@
             fit="cover"
             class="cover-image"
           />
+          <van-tag
+            v-if="video.source === 'preview'"
+            type="primary"
+            size="small"
+            class="source-tag"
+          >预览库</van-tag>
+          <van-tag
+            v-else
+            type="success"
+            size="small"
+            class="source-tag"
+          >本地库</van-tag>
         </div>
         <div class="play-overlay">
           <van-icon name="play-circle-o" class="play-icon" />
@@ -241,7 +253,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
@@ -313,20 +325,21 @@ async function loadVideo() {
   if (data?.list_ids) {
     selectedListIds.value = [...data.list_ids]
   }
-  await listStore.fetchLists()
+  await listStore.fetchLists('video')
   loading.value = false
 }
 
 async function toggleFavorite() {
-  const result = await listStore.toggleFavoriteVideo(videoId.value)
+  const result = await listStore.toggleFavoriteVideo(videoId.value, video.value.source || 'local')
   if (result !== null) {
+    const FAVORITES_LIST_ID = 'list_favorites_video'
     if (result) {
       video.value.list_ids = video.value.list_ids || []
-      if (!video.value.list_ids.includes('list_favorites')) {
-        video.value.list_ids.push('list_favorites')
+      if (!video.value.list_ids.includes(FAVORITES_LIST_ID)) {
+        video.value.list_ids.push(FAVORITES_LIST_ID)
       }
     } else {
-      video.value.list_ids = (video.value.list_ids || []).filter(id => id !== 'list_favorites')
+      video.value.list_ids = (video.value.list_ids || []).filter(id => id !== FAVORITES_LIST_ID)
     }
   }
 }
@@ -361,17 +374,18 @@ async function addToLists() {
     
     let addCount = 0
     let removeCount = 0
+    const source = video.value.source || 'local'
     
     for (const listId of toAdd) {
-      console.log('[VideoDetail] 绑定清单:', listId, '视频ID:', videoId.value)
-      const result = await listStore.bindVideos(listId, [videoId.value])
+      console.log('[VideoDetail] 绑定清单:', listId, '视频ID:', videoId.value, 'source:', source)
+      const result = await listStore.bindVideos(listId, [videoId.value], source)
       console.log('[VideoDetail] 绑定结果:', result)
       if (result) addCount++
     }
     
     for (const listId of toRemove) {
-      console.log('[VideoDetail] 移除清单:', listId, '视频ID:', videoId.value)
-      const result = await listStore.removeVideos(listId, [videoId.value])
+      console.log('[VideoDetail] 移除清单:', listId, '视频ID:', videoId.value, 'source:', source)
+      const result = await listStore.removeVideos(listId, [videoId.value], source)
       console.log('[VideoDetail] 移除结果:', result)
       if (result) removeCount++
     }
@@ -382,7 +396,7 @@ async function addToLists() {
       showListPopup.value = false
       selectedListIds.value = []
       await loadVideo()
-      await listStore.fetchLists()
+      await listStore.fetchLists('video')
       
       let message = ''
       if (addCount > 0) message += `加入${addCount}个清单 `
@@ -628,6 +642,15 @@ onMounted(() => {
   loadVideo()
 })
 
+watch(showListPopup, async (val) => {
+  if (val) {
+    await listStore.fetchLists('video')
+    if (video.value) {
+      selectedListIds.value = [...(video.value.list_ids || [])]
+    }
+  }
+})
+
 onUnmounted(() => {
   // 清理 HLS 实例
   if (hls.value) {
@@ -666,6 +689,14 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   justify-content: center;
+  position: relative;
+}
+
+.source-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
 }
 
 .cover-image {

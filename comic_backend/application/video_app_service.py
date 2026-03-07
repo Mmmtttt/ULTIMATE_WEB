@@ -87,6 +87,7 @@ class VideoAppService(BaseContentAppService):
             
             detail = video.to_dict()
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids]
+            detail["source"] = "local"
             
             app_logger.info(f"获取视频详情成功: {video_id}")
             return ServiceResult.ok(detail)

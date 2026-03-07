@@ -25,10 +25,10 @@
         >
           <template #value>
             <div class="list-counts">
-              <van-badge :content="list.comic_count" :show-zero="false" class="count-badge">
+              <van-badge v-if="list.content_type === 'comic'" :content="list.comic_count" :show-zero="false" class="count-badge">
                 <van-icon name="photo-o" size="16" />
               </van-badge>
-              <van-badge :content="list.video_count" :show-zero="false" class="count-badge">
+              <van-badge v-if="list.content_type === 'video'" :content="list.video_count" :show-zero="false" class="count-badge">
                 <van-icon name="video-o" size="16" />
               </van-badge>
             </div>
@@ -72,13 +72,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useListStore } from '@/stores'
+import { useListStore, useModeStore } from '@/stores'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 
 const router = useRouter()
 const listStore = useListStore()
+const modeStore = useModeStore()
 
 const loading = ref(false)
 const creating = ref(false)
@@ -93,9 +94,11 @@ const editingListId = ref('')
 
 const lists = ref([])
 
+const currentContentType = computed(() => modeStore.isVideoMode ? 'video' : 'comic')
+
 async function loadLists() {
   loading.value = true
-  await listStore.fetchLists()
+  await listStore.fetchLists(currentContentType.value)
   lists.value = listStore.lists
   loading.value = false
 }
@@ -118,7 +121,7 @@ async function createList() {
   }
   
   creating.value = true
-  const result = await listStore.createList(newListName.value.trim(), newListDesc.value.trim())
+  const result = await listStore.createList(newListName.value.trim(), newListDesc.value.trim(), currentContentType.value)
   creating.value = false
   
   if (result) {
@@ -139,7 +142,8 @@ async function updateList() {
   const result = await listStore.updateList(
     editingListId.value,
     editListName.value.trim(),
-    editListDesc.value.trim()
+    editListDesc.value.trim(),
+    currentContentType.value
   )
   updating.value = false
   
@@ -152,10 +156,10 @@ async function updateList() {
 async function confirmDelete(list) {
   showConfirmDialog({
     title: '删除清单',
-    message: `确定要删除清单「${list.name}」吗？清单内的漫画不会被删除。`,
+    message: `确定要删除清单「${list.name}」吗？清单内的内容不会被删除。`,
   })
     .then(async () => {
-      const result = await listStore.deleteList(list.id)
+      const result = await listStore.deleteList(list.id, currentContentType.value)
       if (result) {
         await loadLists()
       }

@@ -281,7 +281,8 @@ async function clearAllCache() {
 }
 
 function goToFavorites() {
-  router.push('/list/list_favorites')
+  const favoritesListId = isVideoMode.value ? 'list_favorites_video' : 'list_favorites_comic'
+  router.push(`/list/${favoritesListId}`)
 }
 
 // Import Logic

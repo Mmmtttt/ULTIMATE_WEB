@@ -3,7 +3,8 @@ import { ref, computed } from 'vue'
 import { listApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
 
-const FAVORITES_LIST_ID = 'list_favorites'
+const FAVORITES_COMIC_LIST_ID = 'list_favorites_comic'
+const FAVORITES_VIDEO_LIST_ID = 'list_favorites_video'
 
 export const useListStore = defineStore('list', () => {
   const lists = ref([])
@@ -11,19 +12,19 @@ export const useListStore = defineStore('list', () => {
   const loading = ref(false)
   
   const favoritesList = computed(() => 
-    lists.value.find(l => l.id === FAVORITES_LIST_ID)
+    lists.value.find(l => l.id === FAVORITES_COMIC_LIST_ID || l.id === FAVORITES_VIDEO_LIST_ID)
   )
   
   const customLists = computed(() => 
-    lists.value.filter(l => l.id !== FAVORITES_LIST_ID)
+    lists.value.filter(l => l.id !== FAVORITES_COMIC_LIST_ID && l.id !== FAVORITES_VIDEO_LIST_ID)
   )
   
   const totalLists = computed(() => lists.value.length)
   
-  async function fetchLists() {
+  async function fetchLists(contentType = null) {
     loading.value = true
     try {
-      const res = await listApi.getListAll()
+      const res = await listApi.getListAll(contentType)
       if (res.code === 200) {
         lists.value = res.data || []
         return true
@@ -54,12 +55,12 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function createList(name, desc = '') {
+  async function createList(name, desc = '', contentType = 'comic') {
     try {
-      const res = await listApi.create(name, desc)
+      const res = await listApi.create(name, desc, contentType)
       if (res.code === 200) {
         showSuccessToast('创建成功')
-        await fetchLists()
+        await fetchLists(contentType)
         return res.data
       } else {
         showFailToast(res.msg || '创建失败')
@@ -71,12 +72,12 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function updateList(listId, name, desc) {
+  async function updateList(listId, name, desc, contentType = 'comic') {
     try {
       const res = await listApi.update(listId, name, desc)
       if (res.code === 200) {
         showSuccessToast('更新成功')
-        await fetchLists()
+        await fetchLists(contentType)
         return true
       } else {
         showFailToast(res.msg || '更新失败')
@@ -88,12 +89,12 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function deleteList(listId) {
+  async function deleteList(listId, contentType = 'comic') {
     try {
       const res = await listApi.delete(listId)
       if (res.code === 200) {
         showSuccessToast('删除成功')
-        await fetchLists()
+        await fetchLists(contentType)
         return true
       } else {
         showFailToast(res.msg || '删除失败')
@@ -105,9 +106,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function bindComics(listId, comicIds) {
+  async function bindComics(listId, comicIds, source = 'local') {
     try {
-      const res = await listApi.bindComics(listId, comicIds)
+      const res = await listApi.bindComics(listId, comicIds, source)
       if (res.code === 200) {
         showSuccessToast(`成功加入${res.data.updated_count}个漫画`)
         return true
@@ -121,9 +122,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function removeComics(listId, comicIds) {
+  async function removeComics(listId, comicIds, source = 'local') {
     try {
-      const res = await listApi.removeComics(listId, comicIds)
+      const res = await listApi.removeComics(listId, comicIds, source)
       if (res.code === 200) {
         showSuccessToast(`成功移出${res.data.updated_count}个漫画`)
         return true
@@ -137,9 +138,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
   
-  async function toggleFavorite(comicId) {
+  async function toggleFavorite(comicId, source = 'local') {
     try {
-      const res = await listApi.toggleFavorite(comicId)
+      const res = await listApi.toggleFavorite(comicId, source)
       if (res.code === 200) {
         const action = res.data.is_favorited ? '收藏成功' : '取消收藏'
         showSuccessToast(action)
@@ -154,9 +155,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
 
-  async function bindVideos(listId, videoIds) {
+  async function bindVideos(listId, videoIds, source = 'local') {
     try {
-      const res = await listApi.bindVideos(listId, videoIds)
+      const res = await listApi.bindVideos(listId, videoIds, source)
       if (res.code === 200) {
         showSuccessToast(`成功加入${res.data.updated_count}个视频`)
         return true
@@ -170,9 +171,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
 
-  async function removeVideos(listId, videoIds) {
+  async function removeVideos(listId, videoIds, source = 'local') {
     try {
-      const res = await listApi.removeVideos(listId, videoIds)
+      const res = await listApi.removeVideos(listId, videoIds, source)
       if (res.code === 200) {
         showSuccessToast(`成功移出${res.data.updated_count}个视频`)
         return true
@@ -186,9 +187,9 @@ export const useListStore = defineStore('list', () => {
     }
   }
 
-  async function toggleFavoriteVideo(videoId) {
+  async function toggleFavoriteVideo(videoId, source = 'local') {
     try {
-      const res = await listApi.toggleFavoriteVideo(videoId)
+      const res = await listApi.toggleFavoriteVideo(videoId, source)
       if (res.code === 200) {
         const action = res.data.is_favorited ? '收藏成功' : '取消收藏'
         showSuccessToast(action)
@@ -204,11 +205,11 @@ export const useListStore = defineStore('list', () => {
   }
 
   function isFavorited(comic) {
-    return comic?.list_ids?.includes(FAVORITES_LIST_ID) || false
+    return comic?.list_ids?.includes(FAVORITES_COMIC_LIST_ID) || false
   }
 
   function isFavoritedVideo(video) {
-    return video?.list_ids?.includes(FAVORITES_LIST_ID) || false
+    return video?.list_ids?.includes(FAVORITES_VIDEO_LIST_ID) || false
   }
 
   function clearCurrentList() {

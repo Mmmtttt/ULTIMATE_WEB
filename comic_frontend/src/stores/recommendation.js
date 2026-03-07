@@ -432,6 +432,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     }
   }
 
+  function clearCache(type = 'all', id = null) {
+    cacheStore.clearCache(type, id)
+  }
+
   // ============ Return ============
   return {
     // State
@@ -465,6 +469,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     clearSort,
     fetchImages,
     addRecommendation,
-    deleteRecommendation
+    deleteRecommendation,
+    clearCache
   }
 })

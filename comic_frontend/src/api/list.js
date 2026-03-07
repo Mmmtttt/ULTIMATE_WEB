@@ -1,16 +1,17 @@
 import request from './request'
 
 export const listApi = {
-  getListAll() {
-    return request.get('/v1/list/list')
+  getListAll(contentType = null) {
+    const params = contentType ? { content_type: contentType } : {}
+    return request.get('/v1/list/list', { params })
   },
   
   getDetail(listId) {
     return request.get('/v1/list/detail', { params: { list_id: listId } })
   },
   
-  create(name, desc = '') {
-    return request.post('/v1/list/add', { list_name: name, desc })
+  create(name, desc = '', contentType = 'comic') {
+    return request.post('/v1/list/add', { list_name: name, desc, content_type: contentType })
   },
   
   update(listId, name = null, desc = null) {
@@ -21,42 +22,44 @@ export const listApi = {
     return request.delete('/v1/list/delete', { params: { list_id: listId } })
   },
   
-  bindComics(listId, comicIds) {
-    return request.put('/v1/list/comic/bind', { list_id: listId, comic_id_list: comicIds })
+  bindComics(listId, comicIds, source = 'local') {
+    return request.put('/v1/list/comic/bind', { list_id: listId, comic_id_list: comicIds, source })
   },
   
-  removeComics(listId, comicIds) {
+  removeComics(listId, comicIds, source = 'local') {
     const params = new URLSearchParams()
     params.append('list_id', listId)
+    params.append('source', source)
     comicIds.forEach(id => params.append('comic_id_list', id))
     return request.delete('/v1/list/comic/remove', { params })
   },
   
-  toggleFavorite(comicId) {
-    return request.put('/v1/list/favorite/toggle', { comic_id: comicId })
+  toggleFavorite(comicId, source = 'local') {
+    return request.put('/v1/list/favorite/toggle', { comic_id: comicId, source })
   },
   
-  checkFavorite(comicId) {
-    return request.get('/v1/list/favorite/check', { params: { comic_id: comicId } })
+  checkFavorite(comicId, source = 'local') {
+    return request.get('/v1/list/favorite/check', { params: { comic_id: comicId, source } })
   },
 
-  bindVideos(listId, videoIds) {
-    return request.put('/v1/list/video/bind', { list_id: listId, video_id_list: videoIds })
+  bindVideos(listId, videoIds, source = 'local') {
+    return request.put('/v1/list/video/bind', { list_id: listId, video_id_list: videoIds, source })
   },
 
-  removeVideos(listId, videoIds) {
+  removeVideos(listId, videoIds, source = 'local') {
     const params = new URLSearchParams()
     params.append('list_id', listId)
+    params.append('source', source)
     videoIds.forEach(id => params.append('video_id_list', id))
     return request.delete('/v1/list/video/remove', { params })
   },
 
-  toggleFavoriteVideo(videoId) {
-    return request.put('/v1/list/video/favorite/toggle', { video_id: videoId })
+  toggleFavoriteVideo(videoId, source = 'local') {
+    return request.put('/v1/list/video/favorite/toggle', { video_id: videoId, source })
   },
 
-  checkFavoriteVideo(videoId) {
-    return request.get('/v1/list/video/favorite/check', { params: { video_id: videoId } })
+  checkFavoriteVideo(videoId, source = 'local') {
+    return request.get('/v1/list/video/favorite/check', { params: { video_id: videoId, source } })
   }
 }
 

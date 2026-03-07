@@ -446,9 +446,9 @@ async function saveTags() {
 async function handleToggleFavorite() {
   favoriteLoading.value = true
   try {
-    const result = await listStore.toggleFavorite(recommendation.value.id)
+    const result = await listStore.toggleFavorite(recommendation.value.id, 'preview')
     if (result !== null) {
-      const FAVORITES_LIST_ID = 'list_favorites'
+      const FAVORITES_LIST_ID = 'list_favorites_comic'
       if (result) {
         if (!recommendation.value.list_ids) {
           recommendation.value.list_ids = []
@@ -498,12 +498,12 @@ async function addToLists() {
     let removeCount = 0
 
     for (const listId of toAdd) {
-      const result = await listStore.bindComics(listId, [recommendation.value.id])
+      const result = await listStore.bindComics(listId, [recommendation.value.id], 'preview')
       if (result) addCount++
     }
 
     for (const listId of toRemove) {
-      const result = await listStore.removeComics(listId, [recommendation.value.id])
+      const result = await listStore.removeComics(listId, [recommendation.value.id], 'preview')
       if (result) removeCount++
     }
 
@@ -512,7 +512,7 @@ async function addToLists() {
       selectedListIds.value = []
       recommendationStore.clearCache('detail', recommendation.value.id)
       await fetchDetail()
-      await listStore.fetchLists()
+      await listStore.fetchLists('comic')
 
       let message = ''
       if (addCount > 0) message += `加入${addCount}个清单 `
@@ -551,7 +551,7 @@ async function markAsRead() {
 onMounted(async () => {
   await fetchDetail()
   await fetchAllTags()
-  await listStore.fetchLists()
+  await listStore.fetchLists('comic')
 })
 
 watch(() => route.params.id, async (newId) => {
@@ -560,7 +560,7 @@ watch(() => route.params.id, async (newId) => {
 
 watch(showListPopup, async (val) => {
   if (val) {
-    await listStore.fetchLists()
+    await listStore.fetchLists('comic')
     if (recommendation.value) {
       selectedListIds.value = [...(recommendation.value.list_ids || [])]
     }

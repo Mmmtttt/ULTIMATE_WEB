@@ -125,7 +125,8 @@ class ComicAppService:
                 "last_read_time": comic.last_read_time,
                 "create_time": comic.create_time,
                 "list_ids": comic.list_ids,
-                "is_favorited": is_favorited
+                "is_favorited": is_favorited,
+                "source": "local"
             }
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")

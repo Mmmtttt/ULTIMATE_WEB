@@ -25,7 +25,8 @@ def error_response(code, msg):
 @list_bp.route('/list', methods=['GET'])
 def get_list_all():
     try:
-        result = list_service.get_list_all()
+        content_type = request.args.get('content_type')
+        result = list_service.get_list_all(content_type)
         if result.success:
             app_logger.info(f"获取清单列表成功，共 {len(result.data)} 个清单")
             return success_response(result.data)
@@ -63,8 +64,9 @@ def create_list():
         
         name = data['list_name']
         desc = data.get('desc', '')
+        content_type = data.get('content_type', 'comic')
         
-        result = list_service.create_list(name, desc)
+        result = list_service.create_list(name, desc, content_type)
         if result.success:
             app_logger.info(f"创建清单成功: {result.data['id']}, 名称: {name}")
             return success_response(result.data)
@@ -124,8 +126,9 @@ def bind_comics():
         
         list_id = data['list_id']
         comic_ids = data['comic_id_list']
+        source = data.get('source', 'local')
         
-        result = list_service.bind_comics(list_id, comic_ids)
+        result = list_service.bind_comics(list_id, comic_ids, source)
         if result.success:
             app_logger.info(f"批量加入清单成功: 清单 {list_id}, {result.data['updated_count']}个漫画")
             return success_response(result.data)
@@ -141,11 +144,12 @@ def remove_comics():
     try:
         list_id = request.args.get('list_id')
         comic_id_list = request.args.getlist('comic_id_list')
+        source = request.args.get('source', 'local')
         
         if not list_id or not comic_id_list:
             return error_response(400, "缺少参数: list_id 或 comic_id_list")
         
-        result = list_service.remove_comics(list_id, comic_id_list)
+        result = list_service.remove_comics(list_id, comic_id_list, source)
         if result.success:
             app_logger.info(f"批量移出清单成功: 清单 {list_id}, {result.data['updated_count']}个漫画")
             return success_response(result.data)
@@ -164,8 +168,9 @@ def toggle_favorite():
             return error_response(400, "缺少参数: comic_id")
         
         comic_id = data['comic_id']
+        source = data.get('source', 'local')
         
-        result = list_service.toggle_favorite(comic_id)
+        result = list_service.toggle_favorite(comic_id, source)
         if result.success:
             action = "收藏" if result.data['is_favorited'] else "取消收藏"
             app_logger.info(f"{action}成功: {comic_id}")
@@ -181,10 +186,11 @@ def toggle_favorite():
 def check_favorite():
     try:
         comic_id = request.args.get('comic_id')
+        source = request.args.get('source', 'local')
         if not comic_id:
             return error_response(400, "缺少参数: comic_id")
         
-        is_favorited = list_service.is_favorited(comic_id)
+        is_favorited = list_service.is_favorited(comic_id, source)
         return success_response({"comic_id": comic_id, "is_favorited": is_favorited})
     except Exception as e:
         error_logger.error(f"检查收藏状态失败: {e}")
@@ -200,8 +206,9 @@ def bind_videos():
         
         list_id = data['list_id']
         video_ids = data['video_id_list']
+        source = data.get('source', 'local')
         
-        result = list_service.bind_videos(list_id, video_ids)
+        result = list_service.bind_videos(list_id, video_ids, source)
         if result.success:
             app_logger.info(f"批量加入清单成功: 清单 {list_id}, {result.data['updated_count']}个视频")
             return success_response(result.data)
@@ -217,11 +224,12 @@ def remove_videos():
     try:
         list_id = request.args.get('list_id')
         video_id_list = request.args.getlist('video_id_list')
+        source = request.args.get('source', 'local')
         
         if not list_id or not video_id_list:
             return error_response(400, "缺少参数: list_id 或 video_id_list")
         
-        result = list_service.remove_videos(list_id, video_id_list)
+        result = list_service.remove_videos(list_id, video_id_list, source)
         if result.success:
             app_logger.info(f"批量移出清单成功: 清单 {list_id}, {result.data['updated_count']}个视频")
             return success_response(result.data)
@@ -240,8 +248,9 @@ def toggle_favorite_video():
             return error_response(400, "缺少参数: video_id")
         
         video_id = data['video_id']
+        source = data.get('source', 'local')
         
-        result = list_service.toggle_favorite_video(video_id)
+        result = list_service.toggle_favorite_video(video_id, source)
         if result.success:
             action = "收藏" if result.data['is_favorited'] else "取消收藏"
             app_logger.info(f"{action}成功: {video_id}")
@@ -257,10 +266,11 @@ def toggle_favorite_video():
 def check_favorite_video():
     try:
         video_id = request.args.get('video_id')
+        source = request.args.get('source', 'local')
         if not video_id:
             return error_response(400, "缺少参数: video_id")
         
-        is_favorited = list_service.is_favorited_video(video_id)
+        is_favorited = list_service.is_favorited_video(video_id, source)
         return success_response({"video_id": video_id, "is_favorited": is_favorited})
     except Exception as e:
         error_logger.error(f"检查收藏状态失败: {e}")

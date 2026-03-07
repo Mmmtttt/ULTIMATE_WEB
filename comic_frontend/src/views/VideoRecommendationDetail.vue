@@ -291,15 +291,16 @@ async function handleScoreChange(value) {
 async function handleToggleFavorite() {
   favoriteLoading.value = true
   try {
-    const result = await listStore.toggleFavoriteVideo(recommendationId.value)
+    const result = await listStore.toggleFavoriteVideo(recommendationId.value, 'preview')
     if (result !== null) {
+      const FAVORITES_LIST_ID = 'list_favorites_video'
       if (result) {
         recommendation.value.list_ids = recommendation.value.list_ids || []
-        if (!recommendation.value.list_ids.includes('favorites')) {
-          recommendation.value.list_ids.push('favorites')
+        if (!recommendation.value.list_ids.includes(FAVORITES_LIST_ID)) {
+          recommendation.value.list_ids.push(FAVORITES_LIST_ID)
         }
       } else {
-        recommendation.value.list_ids = (recommendation.value.list_ids || []).filter(id => id !== 'favorites')
+        recommendation.value.list_ids = (recommendation.value.list_ids || []).filter(id => id !== FAVORITES_LIST_ID)
       }
     }
   } catch (e) {
@@ -349,29 +350,61 @@ function toggleListItem(listId) {
 }
 
 async function addToLists() {
+  const currentListIds = recommendation.value?.list_ids || []
+  const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
+  const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
+
+  let addCount = 0
+  let removeCount = 0
+
   try {
-    const result = await listStore.bindVideos(selectedListIds.value, [recommendationId.value])
-    if (result) {
+    for (const listId of toAdd) {
+      const result = await listStore.bindVideos(listId, [recommendationId.value], 'preview')
+      if (result) addCount++
+    }
+
+    for (const listId of toRemove) {
+      const result = await listStore.removeVideos(listId, [recommendationId.value], 'preview')
+      if (result) removeCount++
+    }
+
+    if (addCount > 0 || removeCount > 0) {
       recommendation.value.list_ids = selectedListIds.value
-      showSuccessToast('保存成功')
       showListPopup.value = false
-    } else {
-      showFailToast('保存失败')
+      await listStore.fetchLists('video')
+
+      let message = ''
+      if (addCount > 0) message += `加入${addCount}个清单 `
+      if (removeCount > 0) message += `移出${removeCount}个清单`
+      showSuccessToast(message.trim())
+    } else if (toAdd.length === 0 && toRemove.length === 0) {
+      showSuccessToast('清单无变化')
+      showListPopup.value = false
     }
   } catch (e) {
     console.error('保存失败:', e)
-    showFailToast('保存失败')
+    showFailToast('操作失败')
   }
 }
 
 // ============ Lifecycle ============
 onMounted(async () => {
-  await listStore.fetchLists()
+  await listStore.fetchLists('video')
   await fetchDetail()
 })
 
 watch(recommendationId, () => {
   fetchDetail()
+})
+
+watch(showListPopup, async (val) => {
+  if (val) {
+    await listStore.fetchLists('video')
+    if (recommendation.value) {
+      const currentListIds = recommendation.value.list_ids || []
+      selectedListIds.value = [...currentListIds]
+    }
+  }
 })
 </script>
 

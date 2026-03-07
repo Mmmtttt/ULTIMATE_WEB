@@ -146,7 +146,8 @@ class RecommendationAppService:
                 "is_cached": is_cached,
                 "last_read_time": recommendation.last_read_time,
                 "create_time": recommendation.create_time,
-                "is_favorited": is_favorited
+                "is_favorited": is_favorited,
+                "source": "preview"
             }
             
             app_logger.info(f"获取推荐详情成功: {recommendation_id}, 平台: {platform}, 缓存状态: {is_cached}")

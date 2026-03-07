@@ -20,7 +20,23 @@
           class="cover" 
           lazy-load
           @click="startReading"
-        />
+        >
+          <template #loading>
+            <van-loading class="loading" />
+          </template>
+        </van-image>
+        <van-tag
+          v-if="comic.source === 'preview'"
+          type="primary"
+          size="small"
+          class="source-tag"
+        >预览库</van-tag>
+        <van-tag
+          v-else
+          type="success"
+          size="small"
+          class="source-tag"
+        >本地库</van-tag>
         <div class="info">
           <h1 class="title">{{ comic.title }}</h1>
           <div class="author-row">
@@ -550,9 +566,9 @@ async function saveTags() {
 async function handleToggleFavorite() {
   favoriteLoading.value = true
   try {
-    const result = await listStore.toggleFavorite(comic.value.id)
+    const result = await listStore.toggleFavorite(comic.value.id, comic.value.source || 'local')
     if (result !== null) {
-      const FAVORITES_LIST_ID = 'list_favorites'
+      const FAVORITES_LIST_ID = 'list_favorites_comic'
       if (result) {
         if (!comic.value.list_ids) {
           comic.value.list_ids = []
@@ -602,17 +618,18 @@ async function addToLists() {
     
     let addCount = 0
     let removeCount = 0
+    const source = comic.value.source || 'local'
     
     for (const listId of toAdd) {
-      console.log('[Detail] 绑定清单:', listId, '漫画ID:', comic.value.id)
-      const result = await listStore.bindComics(listId, [comic.value.id])
+      console.log('[Detail] 绑定清单:', listId, '漫画ID:', comic.value.id, 'source:', source)
+      const result = await listStore.bindComics(listId, [comic.value.id], source)
       console.log('[Detail] 绑定结果:', result)
       if (result) addCount++
     }
     
     for (const listId of toRemove) {
-      console.log('[Detail] 移除清单:', listId, '漫画ID:', comic.value.id)
-      const result = await listStore.removeComics(listId, [comic.value.id])
+      console.log('[Detail] 移除清单:', listId, '漫画ID:', comic.value.id, 'source:', source)
+      const result = await listStore.removeComics(listId, [comic.value.id], source)
       console.log('[Detail] 移除结果:', result)
       if (result) removeCount++
     }
@@ -624,7 +641,7 @@ async function addToLists() {
       selectedListIds.value = []
       comicStore.clearCache('detail', comic.value.id)
       await fetchComicDetail()
-      await listStore.fetchLists()
+      await listStore.fetchLists('comic')
       
       let message = ''
       if (addCount > 0) message += `加入${addCount}个清单 `
@@ -660,7 +677,7 @@ onMounted(async () => {
   console.log('[Detail] onMounted, id:', route.params.id)
   await fetchComicDetail()
   await fetchAllTags()
-  await listStore.fetchLists()
+  await listStore.fetchLists('comic')
 })
 
 watch(() => route.params.id, async (newId) => {
@@ -671,7 +688,7 @@ watch(() => route.params.id, async (newId) => {
 watch(showListPopup, async (val) => {
   console.log('[Detail] showListPopup changed:', val)
   if (val) {
-    await listStore.fetchLists()
+    await listStore.fetchLists('comic')
     console.log('[Detail] listStore.lists:', listStore.lists)
     console.log('[Detail] customLists:', customLists.value)
     if (comic.value) {
@@ -708,6 +725,14 @@ watch(showListPopup, async (val) => {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   flex-shrink: 0;
   cursor: pointer;
+  position: relative;
+}
+
+.source-tag {
+  position: absolute;
+  top: 20px;
+  left: 16px;
+  z-index: 2;
 }
 
 .info {

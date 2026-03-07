@@ -17,14 +17,9 @@
       <div class="list-header">
         <p class="list-desc">{{ listInfo.desc || '暂无描述' }}</p>
         <div class="list-stats">
-          <van-tabs v-model:active="activeContentType" line-width="50px">
-            <van-tab title="漫画" name="comic">
-              <span class="tab-count">({{ (listInfo.comics || []).length }})</span>
-            </van-tab>
-            <van-tab title="视频" name="video">
-              <span class="tab-count">({{ (listInfo.videos || []).length }})</span>
-            </van-tab>
-          </van-tabs>
+          <span class="tab-count">
+            {{ listInfo.content_type === 'comic' ? '漫画' : '视频' }}: ({{ (listInfo.content_type === 'comic' ? (listInfo.comics || []).length : (listInfo.videos || []).length) }})
+          </span>
         </div>
       </div>
       
@@ -50,7 +45,7 @@
           <van-icon name="filter-o" />
         </van-button>
         <van-button 
-          v-if="activeContentType === 'comic'"
+          v-if="listInfo.content_type === 'comic'"
           size="small" 
           type="primary" 
           plain 
@@ -106,10 +101,10 @@
         <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
       </div>
       
-      <van-empty v-if="activeContentType === 'comic' && filteredComics.length === 0" description="没有匹配的漫画" />
-      <van-empty v-else-if="activeContentType === 'video' && filteredVideos.length === 0" description="没有匹配的视频" />
+      <van-empty v-if="listInfo.content_type === 'comic' && filteredComics.length === 0" description="没有匹配的漫画" />
+      <van-empty v-else-if="listInfo.content_type === 'video' && filteredVideos.length === 0" description="没有匹配的视频" />
       
-      <div v-else-if="activeContentType === 'comic'" class="comic-grid">
+      <div v-else-if="listInfo.content_type === 'comic'" class="comic-grid">
         <div
           v-for="comic in filteredComics"
           :key="comic.id"
@@ -124,11 +119,17 @@
               <span class="comic-pages">{{ comic.current_page }}/{{ comic.total_page }}</span>
             </div>
           </div>
+          <van-tag
+            v-if="comic.source === 'preview'"
+            type="primary"
+            size="small"
+            class="source-tag"
+          >预览</van-tag>
           <van-icon
             v-if="!listInfo.is_default"
             name="cross"
             class="remove-btn"
-            @click.stop="removeComic(comic.id)"
+            @click.stop="removeComic(comic.id, comic.source)"
           />
         </div>
       </div>
@@ -148,11 +149,17 @@
               <span v-if="video.code" class="video-code">{{ video.code }}</span>
             </div>
           </div>
+          <van-tag
+            v-if="video.source === 'preview'"
+            type="primary"
+            size="small"
+            class="source-tag"
+          >预览</van-tag>
           <van-icon
             v-if="!listInfo.is_default"
             name="cross"
             class="remove-btn"
-            @click.stop="removeVideo(video.id)"
+            @click.stop="removeVideo(video.id, video.source)"
           />
         </div>
       </div>
@@ -260,7 +267,7 @@ const tagStore = useTagStore()
 const loading = ref(false)
 const listInfo = ref(null)
 const listId = computed(() => route.params.id)
-const activeContentType = ref('comic')
+const activeContentType = computed(() => listInfo.value?.content_type || 'comic')
 
 const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
@@ -419,13 +426,13 @@ function goToVideo(videoId) {
   router.push(`/video/${videoId}`)
 }
 
-async function removeComic(comicId) {
+async function removeComic(comicId, source = 'local') {
   showConfirmDialog({
     title: '移出漫画',
     message: '确定要将该漫画从清单中移出吗？',
   })
     .then(async () => {
-      const result = await listStore.removeComics(listId.value, [comicId])
+      const result = await listStore.removeComics(listId.value, [comicId], source)
       if (result) {
         await loadDetail()
       }
@@ -433,13 +440,13 @@ async function removeComic(comicId) {
     .catch(() => {})
 }
 
-async function removeVideo(videoId) {
+async function removeVideo(videoId, source = 'local') {
   showConfirmDialog({
     title: '移出视频',
     message: '确定要将该视频从清单中移出吗？',
   })
     .then(async () => {
-      const result = await listStore.removeVideos(listId.value, [videoId])
+      const result = await listStore.removeVideos(listId.value, [videoId], source)
       if (result) {
         await loadDetail()
       }
@@ -712,6 +719,13 @@ onMounted(async () => {
   border-radius: 50%;
   padding: 4px;
   font-size: 12px;
+}
+
+.source-tag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
 }
 
 .filter-panel {
