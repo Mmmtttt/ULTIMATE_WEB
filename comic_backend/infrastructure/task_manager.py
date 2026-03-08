@@ -267,7 +267,7 @@ class TaskManager:
                 result = platform_service.get_album_by_id(platform, task.comic_id)
                 albums = result.get('albums', [])
             elif task.import_type == 'by_search':
-                result = platform_service.search_albums(platform, task.keyword, max_pages=1)
+                result = platform_service.search_albums(platform, task.keyword, max_pages=1, fast_mode=False)
                 albums = result.get('albums', [])
             elif task.import_type == 'by_list':
                 # 批量导入：遍历所有ID

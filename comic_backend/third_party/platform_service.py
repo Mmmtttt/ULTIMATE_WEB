@@ -192,7 +192,8 @@ class PlatformService:
         self,
         platform: Platform,
         keyword: str,
-        max_pages: int = 1
+        max_pages: int = 1,
+        fast_mode: bool = False
     ) -> Dict[str, Any]:
         """搜索漫画专辑
         
@@ -200,12 +201,13 @@ class PlatformService:
             platform: 平台
             keyword: 搜索关键词
             max_pages: 最大搜索页数
+            fast_mode: 快速模式，不获取详情（默认False以获取完整标签）
             
         Returns:
             元数据JSON格式
         """
         adapter = self.get_adapter(platform)
-        return adapter.search_albums(keyword, max_pages)
+        return adapter.search_albums(keyword, page=1, max_pages=max_pages, fast_mode=fast_mode)
     
     def get_favorites(self, platform: Platform) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画

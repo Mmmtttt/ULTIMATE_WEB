@@ -91,7 +91,11 @@ class PicacomicAdapter(BaseAdapter):
                 'page': 当前页码,
                 'has_next': 是否有下一页,
                 'total_pages': 总页数,
-                'albums': 漫画专辑列表
+                'albums': 漫画专辑列表,
+                'collection_name': 'Picacomic 导入',
+                'user': '',
+                'total_favorites': 数量,
+                'last_updated': 最后更新时间
             }
         """
         try:
@@ -105,7 +109,11 @@ class PicacomicAdapter(BaseAdapter):
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
-                    'albums': converted.get('albums', [])
+                    'albums': converted.get('albums', []),
+                    'collection_name': 'Picacomic 导入',
+                    'user': '',
+                    'total_favorites': len(albums),
+                    'last_updated': ''
                 }
             else:
                 result = self._picacomic_api_module.search_comics_full(keyword, page=page, max_pages=max_pages, option=self._option)
@@ -117,7 +125,11 @@ class PicacomicAdapter(BaseAdapter):
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
-                    'albums': converted.get('albums', [])
+                    'albums': converted.get('albums', []),
+                    'collection_name': converted.get('collection_name', 'Picacomic 导入'),
+                    'user': converted.get('user', ''),
+                    'total_favorites': converted.get('total_favorites', len(albums)),
+                    'last_updated': converted.get('last_updated', '')
                 }
             
         except Exception as e:

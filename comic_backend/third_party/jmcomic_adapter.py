@@ -146,7 +146,11 @@ class JMComicAdapter(BaseAdapter):
                 'page': 当前页码,
                 'has_next': 是否有下一页,
                 'total_pages': 总页数,
-                'albums': 漫画专辑列表
+                'albums': 漫画专辑列表,
+                'collection_name': 'JMComic 导入',
+                'user': 用户名,
+                'total_favorites': 数量,
+                'last_updated': 最后更新时间
             }
         """
         try:
@@ -162,7 +166,11 @@ class JMComicAdapter(BaseAdapter):
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
-                    'albums': converted.get('albums', [])
+                    'albums': converted.get('albums', []),
+                    'collection_name': 'JMComic 导入',
+                    'user': self.get_config('username', ''),
+                    'total_favorites': len(albums),
+                    'last_updated': ''
                 }
             else:
                 result = search_comics_full(keyword, page=page, max_pages=max_pages)
@@ -174,7 +182,11 @@ class JMComicAdapter(BaseAdapter):
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
-                    'albums': converted.get('albums', [])
+                    'albums': converted.get('albums', []),
+                    'collection_name': converted.get('collection_name', 'JMComic 导入'),
+                    'user': converted.get('user', ''),
+                    'total_favorites': converted.get('total_favorites', len(albums)),
+                    'last_updated': converted.get('last_updated', '')
                 }
             
         except Exception as e:
