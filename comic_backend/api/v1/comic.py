@@ -897,6 +897,7 @@ def import_online():
         from third_party.adapter import MetaDataAdapter, DuplicateChecker
         from third_party.external_api import get_album_by_id, search_albums, get_favorites
         from infrastructure.persistence.json_storage import JsonStorage
+        from core.constants import TAGS_JSON_FILE
         
         storage = JsonStorage() if not is_recommendation else JsonStorage(RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
@@ -907,8 +908,8 @@ def import_online():
         existing_ids = [c['id'] for c in db_data.get(comics_key, [])]
         checker = DuplicateChecker(existing_ids)
         
-        # 无论导入到哪里，都从主数据库读取标签
-        tag_storage = JsonStorage()
+        # 无论导入到哪里，都从独立标签数据库读取标签
+        tag_storage = JsonStorage(TAGS_JSON_FILE)
         tag_db_data = tag_storage.read()
         existing_tags = tag_db_data.get('tags', [])
         adapter = MetaDataAdapter(is_recommendation, existing_tags, platform)
@@ -1098,6 +1099,21 @@ def import_online():
                 storage.write(db_data)
             except Exception as e:
                 error_logger.error(f"写入推荐页封面更新失败: {e}")
+        
+        # 保存新标签到独立标签数据库
+        new_tags = converted_data.get("tags", [])
+        if new_tags:
+            def update_tags(data):
+                existing_tag_ids = {t["id"] for t in data.get("tags", [])}
+                for tag in new_tags:
+                    if tag["id"] not in existing_tag_ids:
+                        data.setdefault("tags", []).append(tag)
+                        existing_tag_ids.add(tag["id"])
+                        app_logger.info(f"添加新标签: {tag['id']} - {tag['name']}")
+                data['last_updated'] = time.strftime("%Y-%m-%d")
+                return data
+            
+            tag_storage.atomic_update(update_tags)
         
         app_logger.info(f"在线导入成功: 平台={platform_name}, 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
         
