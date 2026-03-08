@@ -4,11 +4,12 @@ from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import error_logger
 from core.utils import get_current_time
 from core.enums import ContentType
+from core.constants import TAGS_JSON_FILE
 
 
 class TagJsonRepository(TagRepository):
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage()
+        self._storage = storage or JsonStorage(TAGS_JSON_FILE)
     
     def get_by_id(self, tag_id: str) -> Optional[Tag]:
         data = self._storage.read()

@@ -3,7 +3,7 @@ import os
 import time
 import shutil
 import uuid
-from core.constants import JSON_FILE, BACKUP_SUFFIX
+from core.constants import JSON_FILE, BACKUP_SUFFIX, TAGS_JSON_FILE, LISTS_JSON_FILE
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -132,23 +132,36 @@ class JsonStorage:
         return False
     
     def _create_empty_data(self) -> dict:
-        is_recommendation = "recommendations" in self.json_file
-        comics_key = "recommendations" if is_recommendation else "comics"
-        total_key = "total_recommendations" if is_recommendation else "total_comics"
-        
-        return {
-            "collection_name": "推荐漫画" if is_recommendation else "我的收藏集",
-            "user": "用户名",
-            total_key: 0,
-            "last_updated": time.strftime("%Y-%m-%d"),
-            "tags": [],
-            "lists": [],
-            comics_key: [],
-            "user_config": {
-                "default_page_mode": "left_right",
-                "default_background": "dark" if is_recommendation else "white"
+        if "tags" in self.json_file:
+            return {
+                "collection_name": "标签库",
+                "user": "用户名",
+                "last_updated": time.strftime("%Y-%m-%d"),
+                "tags": []
             }
-        }
+        elif "lists" in self.json_file:
+            return {
+                "collection_name": "清单库",
+                "user": "用户名",
+                "last_updated": time.strftime("%Y-%m-%d"),
+                "lists": []
+            }
+        else:
+            is_recommendation = "recommendations" in self.json_file
+            comics_key = "recommendations" if is_recommendation else "comics"
+            total_key = "total_recommendations" if is_recommendation else "total_comics"
+            
+            return {
+                "collection_name": "推荐漫画" if is_recommendation else "我的收藏集",
+                "user": "用户名",
+                total_key: 0,
+                "last_updated": time.strftime("%Y-%m-%d"),
+                comics_key: [],
+                "user_config": {
+                    "default_page_mode": "left_right",
+                    "default_background": "dark" if is_recommendation else "white"
+                }
+            }
     
     def restore_backup(self) -> dict:
         backup_file = self.json_file + BACKUP_SUFFIX

@@ -245,14 +245,14 @@ class TaskManager:
         from third_party.platform_service import get_platform_service
         from core.platform import Platform
         from infrastructure.persistence.json_storage import JsonStorage
+        from core.constants import TAGS_JSON_FILE
         
         try:
             platform = Platform(task.platform)
             platform_service = get_platform_service()
             
-            # 从主数据库读取tag，不管导入到推荐库
-            tag_db_file = 'data/meta_data/comics_database.json'
-            tag_storage = JsonStorage(tag_db_file)
+            # 从独立的标签数据库读取tag
+            tag_storage = JsonStorage(TAGS_JSON_FILE)
             tag_db_data = tag_storage.read()
             existing_tags = tag_db_data.get('tags', [])
             
@@ -513,6 +513,7 @@ class TaskManager:
         """保存到数据库"""
         from infrastructure.persistence.json_storage import JsonStorage
         from datetime import datetime
+        from core.constants import TAGS_JSON_FILE
         
         RECENT_IMPORT_TAG_ID = "tag_recent_import"
         RECENT_IMPORT_TAG_NAME = "最近导入"
@@ -533,9 +534,8 @@ class TaskManager:
         new_comics = converted_data.get('comics', [])
         existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
         
-        # 处理tag保存到主数据库
-        tag_db_file = 'data/meta_data/comics_database.json'
-        tag_storage = JsonStorage(tag_db_file)
+        # 处理tag保存到独立的标签数据库
+        tag_storage = JsonStorage(TAGS_JSON_FILE)
         tag_db_data = tag_storage.read()
         
         # 确保最近导入tag

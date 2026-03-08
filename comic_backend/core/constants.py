@@ -41,6 +41,8 @@ RECOMMENDATION_JSON_FILE = "data/meta_data/recommendations_database.json"
 VIDEO_JSON_FILE = "data/meta_data/videos_database.json"
 VIDEO_RECOMMENDATION_JSON_FILE = "data/meta_data/video_recommendations_database.json"
 ACTOR_JSON_FILE = "data/meta_data/actors_database.json"
+TAGS_JSON_FILE = "data/meta_data/tags_database.json"
+LISTS_JSON_FILE = "data/meta_data/lists_database.json"
 BACKUP_SUFFIX = ".bkp"
 
 DEFAULT_PAGE_MODE = "left_right"

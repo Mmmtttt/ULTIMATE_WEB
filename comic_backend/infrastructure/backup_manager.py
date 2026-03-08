@@ -16,7 +16,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, BACKUP_SUFFIX
+from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE, LISTS_JSON_FILE, BACKUP_SUFFIX
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -305,6 +305,14 @@ class BackupManagerFactory:
         # 推荐页数据库
         rec_manager = self.get_manager(RECOMMENDATION_JSON_FILE)
         rec_manager.start()
+        
+        # 标签库数据库
+        tags_manager = self.get_manager(TAGS_JSON_FILE)
+        tags_manager.start()
+        
+        # 清单库数据库
+        lists_manager = self.get_manager(LISTS_JSON_FILE)
+        lists_manager.start()
         
         app_logger.info("[BackupManagerFactory] 所有备份管理器已启动")
     
