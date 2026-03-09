@@ -180,7 +180,7 @@ def delete_permanently():
     try:
         video_id = request.args.get('video_id')
         if not video_id:
-            return error_response(400, "缺少参数")
+            return error_response(400, "缺少参数: video_id")
         
         result = video_service.delete_permanently(video_id)
         if result.success:
@@ -189,6 +189,60 @@ def delete_permanently():
             return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"永久删除失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/trash/batch-move', methods=['PUT'])
+def batch_move_to_trash():
+    """批量移动视频到回收站"""
+    try:
+        data = request.json
+        if not data or 'video_ids' not in data:
+            return error_response(400, "缺少参数: video_ids")
+        
+        result = video_service.batch_move_to_trash(data['video_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量移入回收站失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/trash/batch-restore', methods=['PUT'])
+def batch_restore_from_trash():
+    """批量从回收站恢复视频"""
+    try:
+        data = request.json
+        if not data or 'video_ids' not in data:
+            return error_response(400, "缺少参数: video_ids")
+        
+        result = video_service.batch_restore_from_trash(data['video_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量从回收站恢复失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/trash/batch-delete', methods=['DELETE'])
+def batch_delete_permanently():
+    """批量永久删除视频"""
+    try:
+        data = request.json
+        if not data or 'video_ids' not in data:
+            return error_response(400, "缺少参数: video_ids")
+        
+        result = video_service.batch_delete_permanently(data['video_ids'])
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"批量永久删除失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -454,12 +508,30 @@ def third_party_actor_works():
         adapter = get_video_adapter(platform)
         result = adapter.get_actor_works(actor_id, page=page, max_pages=1)
         
+        # 对返回的作品列表进行本地封面优先匹配：
+        # 如果本地已导入该视频并存在封面，则优先使用本地封面路径（/static/cover/...），否则使用第三方图床 URL
+        works = result.get("works", []) or []
+        enhanced_works = []
+        for work in works:
+            try:
+                code = work.get("code") or work.get("video_code") or ""
+                if code:
+                    local_video = video_service.get_video_by_code(code)
+                    if local_video.success and local_video.data:
+                        local_cover = local_video.data.get("cover_path") or ""
+                        if local_cover:
+                            # 覆盖为本地封面路径，实现“先本地缓存，否则图床”
+                            work["cover_url"] = local_cover
+            except Exception as e:
+                error_logger.error(f"为演员作品匹配本地封面失败: {e}")
+            enhanced_works.append(work)
+        
         response_data = {
             "platform": platform,
             "page": result.get("page"),
             "has_next": result.get("has_next", False),
             "total_pages": result.get("total_pages"),
-            "works": result.get("works", [])
+            "works": enhanced_works
         }
         
         return success_response(response_data)
@@ -874,8 +946,9 @@ def restore_video_recommendation_from_trash():
 def delete_video_recommendation_permanently():
     """永久删除推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE, COVER_DIR
         from infrastructure.persistence.json_storage import JsonStorage
+        import os
         
         video_id = request.args.get('video_id')
         if not video_id:
@@ -886,6 +959,13 @@ def delete_video_recommendation_permanently():
         videos = db_data.get('video_recommendations', [])
         
         original_count = len(videos)
+        
+        video_to_delete = None
+        for v in videos:
+            if v.get('id') == video_id:
+                video_to_delete = v
+                break
+        
         videos = [v for v in videos if v.get('id') != video_id]
         
         if len(videos) == original_count:
@@ -896,10 +976,116 @@ def delete_video_recommendation_permanently():
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
         
+        if video_to_delete and video_to_delete.get('cover_path'):
+            cover_path = video_to_delete['cover_path']
+            relative_path = cover_path.lstrip('/')
+            if relative_path.startswith('static/cover/'):
+                relative_path = relative_path.replace('static/cover/', '', 1)
+            
+            cover_path_full = os.path.join(COVER_DIR, relative_path)
+            if os.path.exists(cover_path_full):
+                try:
+                    os.remove(cover_path_full)
+                    app_logger.info(f"已删除推荐视频封面: {cover_path_full}")
+                except Exception as e:
+                    error_logger.error(f"删除推荐视频封面失败: {e}")
+        
         app_logger.info(f"推荐视频永久删除: {video_id}")
         return success_response({"message": "已永久删除"})
     except Exception as e:
         error_logger.error(f"永久删除推荐视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/batch-restore', methods=['PUT'])
+def batch_restore_video_recommendation_from_trash():
+    """批量从回收站恢复推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        video_ids = data.get('video_ids', [])
+        
+        if not video_ids:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        count = 0
+        for video in videos:
+            if video.get('id') in video_ids:
+                video['is_deleted'] = False
+                if 'deleted_time' in video:
+                    del video['deleted_time']
+                count += 1
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        return success_response({"restored_count": count}, f"已恢复 {count} 个视频")
+    except Exception as e:
+        error_logger.error(f"批量恢复推荐视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/trash/batch-delete', methods=['DELETE'])
+def batch_delete_video_recommendation_permanently():
+    """批量永久删除推荐视频"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE, COVER_DIR
+        from infrastructure.persistence.json_storage import JsonStorage
+        import os
+        
+        data = request.json
+        video_ids = data.get('video_ids', [])
+        
+        if not video_ids:
+            return error_response(400, "缺少参数")
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        original_count = len(videos)
+        
+        videos_to_delete = []
+        remaining_videos = []
+        for video in videos:
+            if video.get('id') in video_ids:
+                videos_to_delete.append(video)
+            else:
+                remaining_videos.append(video)
+        
+        if len(remaining_videos) == original_count:
+            return error_response(404, "没有找到视频")
+        
+        db_data['video_recommendations'] = remaining_videos
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        for video in videos_to_delete:
+            if video.get('cover_path'):
+                cover_path = video['cover_path']
+                relative_path = cover_path.lstrip('/')
+                if relative_path.startswith('static/cover/'):
+                    relative_path = relative_path.replace('static/cover/', '', 1)
+                
+                cover_path_full = os.path.join(COVER_DIR, relative_path)
+                if os.path.exists(cover_path_full):
+                    try:
+                        os.remove(cover_path_full)
+                        app_logger.info(f"已删除推荐视频封面: {cover_path_full}")
+                    except Exception as e:
+                        error_logger.error(f"删除推荐视频封面失败: {e}")
+        
+        app_logger.info(f"推荐视频批量永久删除: {len(videos_to_delete)}个")
+        return success_response({"deleted_count": len(videos_to_delete)}, f"已永久删除 {len(videos_to_delete)} 个视频")
+    except Exception as e:
+        error_logger.error(f"批量永久删除推荐视频失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

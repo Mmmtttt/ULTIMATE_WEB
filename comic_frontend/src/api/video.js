@@ -33,6 +33,18 @@ export const videoApi = {
     return request.delete('/v1/video/trash/delete', { params: { video_id: videoId } })
   },
   
+  batchMoveToTrash(videoIds) {
+    return request.put('/v1/video/trash/batch-move', { video_ids: videoIds })
+  },
+  
+  batchRestoreFromTrash(videoIds) {
+    return request.put('/v1/video/trash/batch-restore', { video_ids: videoIds })
+  },
+  
+  batchDeletePermanently(videoIds) {
+    return request.delete('/v1/video/trash/batch-delete', { data: { video_ids: videoIds } })
+  },
+  
   getTrashList() {
     return request.get('/v1/video/trash/list')
   },
@@ -138,6 +150,18 @@ export const videoApi = {
     return request.delete('/v1/video/recommendation/trash/delete', { params: { video_id: videoId } })
   },
   
+  batchMoveVideoRecommendationToTrash(videoIds) {
+    return request.put('/v1/video/recommendation/trash/batch-move', { video_ids: videoIds })
+  },
+  
+  batchRestoreVideoRecommendationFromTrash(videoIds) {
+    return request.put('/v1/video/recommendation/trash/batch-restore', { video_ids: videoIds })
+  },
+  
+  batchDeleteVideoRecommendationPermanently(videoIds) {
+    return request.delete('/v1/video/recommendation/trash/batch-delete', { data: { video_ids: videoIds } })
+  },
+  
   searchVideoRecommendations(keyword) {
     return request.get('/v1/video/recommendation/search', { params: { keyword } })
   },
@@ -184,5 +208,14 @@ export const actorApi = {
       work_title: workTitle,
       new_count: newCount
     })
+  },
+
+  /**
+   * 检查演员订阅更新
+   * @param {string|null} actorSubscriptionId 可选，传则检查单个
+   */
+  checkUpdates(actorSubscriptionId = null) {
+    const data = actorSubscriptionId ? { actor_subscription_id: actorSubscriptionId } : {}
+    return request.post('/v1/actor/check-updates', data)
   }
 }

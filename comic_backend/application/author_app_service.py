@@ -166,6 +166,9 @@ class AuthorAppService:
             
             for author in authors:
                 try:
+                    cache_key = f"author_works_{author.name}"
+                    cached_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+                    
                     works = self._search_author_works(author.name)
                     
                     if not works:
@@ -175,15 +178,20 @@ class AuthorAppService:
                     latest_work_id = latest_work.get("id", "")
                     latest_work_title = latest_work.get("title", "")
                     
-                    has_update = False
+                    cached_latest_id = None
+                    if cached_works:
+                        first_cached = cached_works[0] if isinstance(cached_works, list) and cached_works else None
+                        if first_cached:
+                            cached_latest_id = first_cached.get("id", "")
+                    
+                    has_update = cached_latest_id is None or cached_latest_id != latest_work_id
                     new_count = 0
                     
-                    if not author.last_work_id:
-                        has_update = True
+                    if has_update:
                         new_count = 1
-                    elif author.last_work_id != latest_work_id:
-                        has_update = True
-                        new_count = 1
+                        # 只在检测到更新时刷新本地缓存最近作品列表（例如前20个）
+                        works_for_cache = works[:20]
+                        self._cache_manager.set_persistent(cache_key, works_for_cache, 'author_works')
                     
                     author.update_check_info(
                         latest_work_id,
@@ -387,8 +395,12 @@ class AuthorAppService:
                 return ServiceResult.error("订阅不存在")
             
             cache_key = f"author_works_{author.name}"
+            use_cache_only = offset == 0
             
-            cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+            cached_all_works = None
+            if use_cache_only:
+                cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+            
             if cached_all_works is not None:
                 existing_ids = self._get_existing_comic_ids()
                 filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
@@ -469,7 +481,9 @@ class AuthorAppService:
                     "has_more": False
                 })
             
-            self._cache_manager.set_persistent(cache_key, works, 'author_works')
+            # 仅在持久化缓存中保存最近的一批作品（例如前20个），用于进入作者页时的快速展示
+            works_for_cache = works[:20]
+            self._cache_manager.set_persistent(cache_key, works_for_cache, 'author_works')
             
             existing_ids = self._get_existing_comic_ids()
             filtered_works = [w for w in works if w.get('id') not in existing_ids]

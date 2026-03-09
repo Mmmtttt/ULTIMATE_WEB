@@ -146,3 +146,20 @@ def update_last_work():
     except Exception as e:
         error_logger.error(f"更新最新作品失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/check-updates', methods=['POST'])
+def check_updates():
+    """检查演员订阅更新（可选传 actor_subscription_id，仅检查单个）"""
+    try:
+        data = request.json or {}
+        actor_subscription_id = data.get('actor_subscription_id')
+        
+        result = actor_service.check_actor_updates(actor_subscription_id)
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"检查演员更新失败: {e}")
+        return error_response(500, "服务器内部错误")

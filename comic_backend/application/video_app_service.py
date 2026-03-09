@@ -143,18 +143,33 @@ class VideoAppService(BaseContentAppService):
             if not video:
                 return ServiceResult.error("视频不存在")
             
-            if video.cover_path:
-                cover_full_path = video.cover_path.lstrip("/")
-                if os.path.exists(cover_full_path):
-                    os.remove(cover_full_path)
+            self._cleanup_video_files(video)
             
             success = self._video_repo.delete(video_id)
             if success:
+                app_logger.info(f"视频已永久删除: {video_id}")
                 return ServiceResult.ok({"message": "视频已永久删除"})
             return ServiceResult.error("删除失败")
         except Exception as e:
             error_logger.error(f"永久删除视频失败: {e}")
             return ServiceResult.error("删除失败")
+    
+    def _cleanup_video_files(self, video):
+        """清理视频相关的所有文件"""
+        from core.constants import COVER_DIR
+        
+        if video.cover_path:
+            relative_path = video.cover_path.lstrip('/')
+            if relative_path.startswith('static/cover/'):
+                relative_path = relative_path.replace('static/cover/', '', 1)
+            
+            cover_path_full = os.path.join(COVER_DIR, relative_path)
+            if os.path.exists(cover_path_full):
+                try:
+                    os.remove(cover_path_full)
+                    app_logger.info(f"已删除视频封面: {cover_path_full}")
+                except Exception as e:
+                    error_logger.error(f"删除视频封面失败: {e}")
     
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
@@ -407,12 +422,81 @@ class VideoAppService(BaseContentAppService):
                 cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")
                 image.convert("RGB").save(cover_path, "JPEG", quality=95)
                 
+                from domain.video_recommendation.repository import VideoRecommendationRepository
+                from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
+                
+                video_recommendation_repo = VideoRecommendationJsonRepository()
+                video = video_recommendation_repo.get_by_id(video_id)
+                if video:
+                    video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
+                    video_recommendation_repo.save(video)
+                
                 app_logger.info(f"下载推荐页封面成功: {video_id}")
             except Exception as e:
                 error_logger.error(f"下载推荐页封面失败: {e}")
         
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
+    
+    def batch_move_to_trash(self, video_ids: List[str]) -> ServiceResult:
+        """批量移动视频到回收站"""
+        try:
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.move_to_trash()
+                    if self._video_repo.save(video):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量移入回收站成功: {updated_count}个视频")
+            return ServiceResult.ok({"updated_count": updated_count}, f"已将{updated_count}个视频移入回收站")
+        except Exception as e:
+            error_logger.error(f"批量移入回收站失败: {e}")
+            return ServiceResult.error("批量移入回收站失败")
+    
+    def batch_restore_from_trash(self, video_ids: List[str]) -> ServiceResult:
+        """批量从回收站恢复视频"""
+        try:
+            updated_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    video.restore_from_trash()
+                    if self._video_repo.save(video):
+                        updated_count += 1
+            
+            if updated_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量从回收站恢复成功: {updated_count}个视频")
+            return ServiceResult.ok({"updated_count": updated_count}, f"已恢复{updated_count}个视频")
+        except Exception as e:
+            error_logger.error(f"批量从回收站恢复失败: {e}")
+            return ServiceResult.error("批量从回收站恢复失败")
+    
+    def batch_delete_permanently(self, video_ids: List[str]) -> ServiceResult:
+        """批量永久删除视频"""
+        try:
+            deleted_count = 0
+            for video_id in video_ids:
+                video = self._video_repo.get_by_id(video_id)
+                if video:
+                    self._cleanup_video_files(video)
+                if self._video_repo.delete(video_id):
+                    deleted_count += 1
+            
+            if deleted_count == 0:
+                return ServiceResult.error("没有找到有效的视频")
+            
+            app_logger.info(f"批量永久删除成功: {deleted_count}个视频")
+            return ServiceResult.ok({"deleted_count": deleted_count}, f"已永久删除{deleted_count}个视频")
+        except Exception as e:
+            error_logger.error(f"批量永久删除失败: {e}")
+            return ServiceResult.error("批量永久删除失败")
     
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:

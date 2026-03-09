@@ -107,6 +107,7 @@ const currentPage = ref(1)
 const selectedIds = ref([])
 const showImportSheet = ref(false)
 const isSubscribed = ref(false)
+const authorSubscriptionId = ref(null)
 const actorId = ref(null) // For video mode
 
 async function loadData(page = 1) {
@@ -136,14 +137,45 @@ async function loadData(page = 1) {
         }
       }
     } else {
-      // Comic mode
-      const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20) // Assuming pagination
-      if (res.code === 200) {
-        const newWorks = res.data.works || []
-        if (page === 1) works.value = newWorks
-        else works.value = [...works.value, ...newWorks]
-        
-        hasMore.value = res.data.has_more
+      // Comic mode：如果是已订阅作者，则优先走订阅作者作品接口，支持持久化缓存
+      if (page === 1) {
+        // 尝试根据名称匹配订阅记录
+        const allAuthorsRes = await authorApi.getAllAuthors()
+        if (allAuthorsRes.code === 200 && Array.isArray(allAuthorsRes.data)) {
+          const match = allAuthorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
+          if (match) {
+            isSubscribed.value = true
+            authorSubscriptionId.value = match.subscription.id
+          } else {
+            isSubscribed.value = false
+            authorSubscriptionId.value = null
+          }
+        }
+      }
+
+      if (isSubscribed.value && authorSubscriptionId.value) {
+        // 已订阅作者：优先从后端 author_works 持久化缓存中读取，第一页给 20 条
+        const offset = (page - 1) * 20
+        const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20)
+        if (res.code === 200) {
+          const newWorks = res.data.works || []
+          if (page === 1) works.value = newWorks
+          else works.value = [...works.value, ...newWorks]
+          
+          hasMore.value = !!res.data.has_more
+          totalWorks.value = res.data.total || works.value.length
+        }
+      } else {
+        // 非订阅作者：保持原有按名称搜索逻辑
+        const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        if (res.code === 200) {
+          const newWorks = res.data.works || []
+          if (page === 1) works.value = newWorks
+          else works.value = [...works.value, ...newWorks]
+          
+          hasMore.value = res.data.has_more
+          totalWorks.value = res.data.total || works.value.length
+        }
       }
     }
   } catch (e) {
@@ -234,8 +266,8 @@ async function confirmImport(target) {
 }
 
 async function toggleSubscribe() {
-  // Toggle logic similar to SubscriptionList
-  showToast('Toggle subscribe')
+  // 订阅/取消订阅逻辑，可根据当前是否已订阅调用对应接口
+  showToast('订阅功能稍后完善')
 }
 
 onMounted(() => {

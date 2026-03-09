@@ -7,9 +7,20 @@
         shape="round"
         background="transparent"
       />
-      <van-button icon="plus" type="primary" size="small" round @click="showAddPopup = true">
-        添加
-      </van-button>
+      <div class="header-buttons">
+        <van-button 
+          type="default" 
+          size="small" 
+          round 
+          :loading="checkingUpdates"
+          @click="checkAllUpdates"
+        >
+          检查更新
+        </van-button>
+        <van-button icon="plus" type="primary" size="small" round @click="showAddPopup = true">
+          添加
+        </van-button>
+      </div>
     </div>
 
     <!-- Content -->
@@ -94,6 +105,7 @@ const items = ref([])
 const searchKeyword = ref('')
 const showAddPopup = ref(false)
 const newSubscriptionName = ref('')
+const checkingUpdates = ref(false)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -124,6 +136,46 @@ async function loadData() {
     showToast('加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function checkAllUpdates() {
+  if (checkingUpdates.value) return
+  checkingUpdates.value = true
+  try {
+    if (isVideoMode.value) {
+      // 视频模式：调用演员订阅检查更新
+      const res = await actorApi.checkUpdates()
+      if (res.code === 200) {
+        await loadData()
+        const total = res.data?.total_new_works || 0
+        if (total > 0) {
+          showToast(`有 ${total} 个新作品`)
+        } else {
+          showToast('暂无新作品')
+        }
+      } else {
+        showToast(res.msg || '检查更新失败')
+      }
+    } else {
+      // 漫画模式：调用作者订阅检查更新
+      const res = await authorApi.checkUpdates()
+      if (res.code === 200) {
+        await loadData()
+        const total = res.data?.total_new_works || 0
+        if (total > 0) {
+          showToast(`有 ${total} 个新作品`)
+        } else {
+          showToast('暂无新作品')
+        }
+      } else {
+        showToast(res.msg || '检查更新失败')
+      }
+    }
+  } catch (e) {
+    showToast('检查更新失败')
+  } finally {
+    checkingUpdates.value = false
   }
 }
 
@@ -200,6 +252,12 @@ onMounted(() => {
   flex: 1;
   padding: 0;
   margin-right: 12px;
+}
+
+.header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .loading-center {

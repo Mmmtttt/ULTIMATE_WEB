@@ -159,6 +159,90 @@ class ActorAppService(BaseCreatorAppService):
             error_logger.error(f"获取所有演员失败: {e}")
             return ServiceResult.error("获取演员失败")
     
+    def check_actor_updates(self, actor_subscription_id: str = None) -> ServiceResult:
+        """
+        检查演员订阅是否有新作品：
+        - 通过第三方接口获取演员作品列表
+        - 取最新一部作品，与订阅记录中的 last_work_id 对比
+        - 不一致则认为有更新，new_work_count 置为 1
+        """
+        from application.video_app_service import VideoAppService
+        from api.v1.video import get_video_adapter
+        
+        try:
+            if actor_subscription_id:
+                actors = [self._actor_repo.get_by_id(actor_subscription_id)]
+                actors = [a for a in actors if a]
+            else:
+                actors = self._actor_repo.get_all()
+            
+            if not actors:
+                return ServiceResult.ok({"updated_actors": [], "total_new_works": 0})
+            
+            video_service = VideoAppService()
+            updated_actors = []
+            total_new_works = 0
+            
+            for actor in actors:
+                try:
+                    # 优先使用记录下来的 actor_id，如果没有则按名字搜索一次取第一个
+                    actor_id = actor.actor_id
+                    if not actor_id:
+                        adapter = get_video_adapter("javdb")
+                        search_res = adapter.search_actor(actor.name)
+                        if search_res:
+                            actor_id = search_res[0].get("actor_id", "")
+                            if actor_id:
+                                actor.actor_id = actor_id
+                    
+                    if not actor_id:
+                        continue
+                    
+                    adapter = get_video_adapter("javdb")
+                    result = adapter.get_actor_works(actor_id, page=1, max_pages=1)
+                    works = result.get("works", []) or []
+                    if not works:
+                        continue
+                    
+                    latest_work = works[0]
+                    latest_work_id = latest_work.get("id") or latest_work.get("video_id") or ""
+                    latest_title = latest_work.get("title", "")
+                    
+                    has_update = False
+                    new_count = 0
+                    
+                    if not actor.last_work_id:
+                        has_update = True
+                        new_count = 1
+                    elif actor.last_work_id != latest_work_id:
+                        has_update = True
+                        new_count = 1
+                    
+                    actor.last_work_id = latest_work_id
+                    actor.last_work_title = latest_title
+                    actor.new_work_count = new_count
+                    actor.last_check_time = get_current_time()
+                    self._actor_repo.save(actor)
+                    
+                    if has_update:
+                        updated_actors.append({
+                            "actor": actor.to_dict(),
+                            "new_works": [latest_work]
+                        })
+                        total_new_works += new_count
+                except Exception as e:
+                    error_logger.error(f"检查演员 {actor.name} 更新失败: {e}")
+                    continue
+            
+            app_logger.info(f"检查演员更新完成，{len(updated_actors)} 个演员有更新，共 {total_new_works} 个新作品")
+            return ServiceResult.ok({
+                "updated_actors": updated_actors,
+                "total_new_works": total_new_works
+            })
+        except Exception as e:
+            error_logger.error(f"检查演员更新失败: {e}")
+            return ServiceResult.error("检查演员更新失败")
+    
     def cache_actor_works(self, actor_id: str, works: List[Dict]) -> ServiceResult:
         try:
             cache_key = f"actor_works_{actor_id}"
