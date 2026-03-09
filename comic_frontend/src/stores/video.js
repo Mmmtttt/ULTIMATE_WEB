@@ -94,6 +94,19 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
+  async function batchMoveToTrash(videoIds) {
+    try {
+      const res = await videoApi.batchMoveToTrash(videoIds)
+      if (res.code === 200) {
+        videos.value = videos.value.filter(v => !videoIds.includes(v.id))
+        return true
+      }
+      return false
+    } catch (e) {
+      return false
+    }
+  }
+  
   async function restoreFromTrash(videoId) {
     try {
       const res = await videoApi.restoreFromTrash(videoId)
@@ -253,6 +266,7 @@ export const useVideoStore = defineStore('video', () => {
     updateScore,
     updateProgress,
     moveToTrash,
+    batchMoveToTrash,
     restoreFromTrash,
     deletePermanently,
     fetchTrashList,

@@ -474,15 +474,15 @@ async function batchRestore(type) {
     const ids = selectedVideoIds.value
     if (ids.length === 0) return
     
-    let successCount = 0
-    for (const id of ids) {
-      const res = await videoStore.restoreFromTrash(id)
-      if (res) successCount++
+    const success = await Promise.all(ids.map(id => videoStore.restoreFromTrash(id)))
+    const successCount = success.filter(Boolean).length
+    if (successCount > 0) {
+      showToast(`已恢复 ${successCount} 个视频`)
+      videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
+      selectedVideoIds.value = []
+    } else {
+      showToast('恢复失败')
     }
-    
-    showToast(`已恢复 ${successCount} 个视频`)
-    videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
-    selectedVideoIds.value = []
     return
   }
   
@@ -490,15 +490,14 @@ async function batchRestore(type) {
     const ids = selectedVideoRecommendationIds.value
     if (ids.length === 0) return
     
-    let successCount = 0
-    for (const id of ids) {
-      const res = await videoRecommendationStore.restoreFromTrash(id)
-      if (res) successCount++
+    const success = await videoRecommendationStore.batchRestoreFromTrash(ids)
+    if (success) {
+      showToast(`已恢复 ${ids.length} 个视频`)
+      videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
+      selectedVideoRecommendationIds.value = []
+    } else {
+      showToast('恢复失败')
     }
-    
-    showToast(`已恢复 ${successCount} 个视频`)
-    videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
-    selectedVideoRecommendationIds.value = []
     return
   }
 
@@ -536,11 +535,8 @@ async function batchDelete(type) {
         message: `确定要永久删除 ${ids.length} 个视频吗？此操作不可恢复！`
       })
       
-      let successCount = 0
-      for (const id of ids) {
-        const res = await videoStore.deletePermanently(id)
-        if (res) successCount++
-      }
+      const successList = await Promise.all(ids.map(id => videoStore.deletePermanently(id)))
+      const successCount = successList.filter(Boolean).length
       
       showToast(`已永久删除 ${successCount} 个视频`)
       videoTrashList.value = videoTrashList.value.filter(v => !ids.includes(v.id))
@@ -561,15 +557,14 @@ async function batchDelete(type) {
         message: `确定要永久删除 ${ids.length} 个视频吗？此操作不可恢复！`
       })
       
-      let successCount = 0
-      for (const id of ids) {
-        const res = await videoRecommendationStore.deletePermanently(id)
-        if (res) successCount++
+      const success = await videoRecommendationStore.batchDeletePermanently(ids)
+      if (success) {
+        showToast(`已永久删除 ${ids.length} 个视频`)
+        videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
+        selectedVideoRecommendationIds.value = []
+      } else {
+        showToast('删除失败')
       }
-      
-      showToast(`已永久删除 ${successCount} 个视频`)
-      videoRecommendationTrashList.value = videoRecommendationTrashList.value.filter(v => !ids.includes(v.id))
-      selectedVideoRecommendationIds.value = []
     } catch (e) {
       if (e !== 'cancel') showToast('删除失败')
     }

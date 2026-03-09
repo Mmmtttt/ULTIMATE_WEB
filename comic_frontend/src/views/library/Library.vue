@@ -127,6 +127,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore } from '@/stores'
+import { comicApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -152,6 +153,37 @@ const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
 const selectedListIds = ref([])
+
+function getFilterStorageKey() {
+  return isVideoMode.value ? 'library_filters_video' : 'library_filters_comic'
+}
+
+function saveFilterState() {
+  const payload = {
+    includeTags: includeTags.value,
+    excludeTags: excludeTags.value,
+    selectedAuthors: selectedAuthors.value,
+    selectedListIds: selectedListIds.value
+  }
+  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+}
+
+function restoreFilterState() {
+  const raw = sessionStorage.getItem(getFilterStorageKey())
+  if (!raw) {
+    return false
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    includeTags.value = parsed.includeTags || []
+    excludeTags.value = parsed.excludeTags || []
+    selectedAuthors.value = parsed.selectedAuthors || []
+    selectedListIds.value = parsed.selectedListIds || []
+    return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0
+  } catch {
+    return false
+  }
+}
 
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
@@ -180,6 +212,7 @@ async function applyFilters() {
       selectedListIds.value
     )
   }
+  saveFilterState()
   showFilterPanel.value = false
 }
 
@@ -250,7 +283,7 @@ function onItemClick(item) {
     toggleSelection(item)
   } else {
     const routeName = isVideoMode.value ? 'VideoDetail' : 'ComicDetail'
-    router.push({ name: routeName, params: { id: item.id } })
+    router.push({ name: routeName, params: { id: item.id }, query: route.query })
   }
 }
 
@@ -277,8 +310,45 @@ async function toggleFavorite(item) {
 }
 
 async function batchDelete() {
-  // Implementation
-  showToast('Delete logic here')
+  if (selectedIds.value.length === 0) return
+  
+  try {
+    await showConfirmDialog({
+      title: '移入回收站',
+      message: `确定将 ${selectedIds.value.length} 项内容移入回收站吗？`
+    })
+    
+    let success = false
+    if (isVideoMode.value) {
+      success = await videoStore.batchMoveToTrash(selectedIds.value)
+    } else {
+      const res = await comicApi.batchMoveToTrash(selectedIds.value)
+      success = res.code === 200
+    }
+    
+    if (!success) {
+      showToast('移入回收站失败')
+      return
+    }
+    
+    showToast('已移入回收站')
+    selectedIds.value = []
+    isManageMode.value = false
+    await loadData(true)
+  } catch (e) {
+    if (e !== 'cancel') {
+      showToast('移入回收站失败')
+    }
+  }
+}
+
+function clearAllFilters() {
+  includeTags.value = []
+  excludeTags.value = []
+  selectedAuthors.value = []
+  selectedListIds.value = []
+  currentStore.value.clearFilter()
+  saveFilterState()
 }
 
 async function loadData(force = false) {
@@ -303,6 +373,8 @@ watch(() => modeStore.currentMode, () => {
   loadData()
   selectedIds.value = []
   isManageMode.value = false
+  restoreFilterState()
+  applyFilters()
 })
 
 watch(() => route.query.author, (newAuthor) => {
@@ -321,6 +393,10 @@ watch(() => route.query.tagId, (newTagId) => {
 
 onMounted(() => {
   loadData()
+  const restored = restoreFilterState()
+  if (restored) {
+    applyFilters()
+  }
   if (route.query.author) {
     selectedAuthors.value = [route.query.author]
     applyFilters()

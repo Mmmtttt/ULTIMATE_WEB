@@ -282,6 +282,38 @@ const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
 const downloadLoading = ref(false)
 
+function getFilterStorageKey() {
+  return `list_detail_filters_${listId.value}`
+}
+
+function saveFilterState() {
+  const payload = {
+    currentSortType: currentSortType.value,
+    minScore: minScore.value,
+    includeTags: includeTags.value,
+    excludeTags: excludeTags.value
+  }
+  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+}
+
+function restoreFilterState() {
+  const raw = sessionStorage.getItem(getFilterStorageKey())
+  if (!raw) {
+    return
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    currentSortType.value = parsed.currentSortType || ''
+    minScore.value = parsed.minScore ?? null
+    includeTags.value = parsed.includeTags || []
+    excludeTags.value = parsed.excludeTags || []
+    tempMinScore.value = minScore.value || 0
+    tempIncludeTags.value = [...includeTags.value]
+    tempExcludeTags.value = [...excludeTags.value]
+  } catch {
+  }
+}
+
 const comics = computed(() => listInfo.value?.comics || [])
 const videos = computed(() => listInfo.value?.videos || [])
 const allTags = computed(() => {
@@ -470,24 +502,29 @@ async function confirmDelete() {
 
 function setSortType(sortType) {
   currentSortType.value = sortType
+  saveFilterState()
   showSortPanel.value = false
 }
 
 function clearSort() {
   currentSortType.value = ''
+  saveFilterState()
 }
 
 function removeIncludeTag(tagId) {
   includeTags.value = includeTags.value.filter(id => id !== tagId)
+  saveFilterState()
 }
 
 function removeExcludeTag(tagId) {
   excludeTags.value = excludeTags.value.filter(id => id !== tagId)
+  saveFilterState()
 }
 
 function clearScoreFilter() {
   minScore.value = null
   tempMinScore.value = 0
+  saveFilterState()
 }
 
 function clearAllFilters() {
@@ -498,12 +535,14 @@ function clearAllFilters() {
   excludeTags.value = []
   tempIncludeTags.value = []
   tempExcludeTags.value = []
+  saveFilterState()
 }
 
 function applyFilterAndClose() {
   minScore.value = tempMinScore.value > 0 ? tempMinScore.value : null
   includeTags.value = [...tempIncludeTags.value]
   excludeTags.value = [...tempExcludeTags.value]
+  saveFilterState()
   showFilterPanel.value = false
 }
 
@@ -545,6 +584,7 @@ onMounted(async () => {
     await tagStore.fetchTags()
   }
   await loadDetail()
+  restoreFilterState()
 })
 </script>
 

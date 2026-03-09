@@ -4,6 +4,7 @@
 
 from typing import List, Dict, Optional
 import os
+import shutil
 import threading
 import requests
 from io import BytesIO
@@ -19,7 +20,7 @@ from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
-from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR
+from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR, JAV_PICTURES_DIR, JAV_COVER_DIR
 from application.base.content_app_service import BaseContentAppService
 
 
@@ -170,6 +171,37 @@ class VideoAppService(BaseContentAppService):
                     app_logger.info(f"已删除视频封面: {cover_path_full}")
                 except Exception as e:
                     error_logger.error(f"删除视频封面失败: {e}")
+        
+        jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video.id}.jpg")
+        if os.path.exists(jav_cover_path):
+            try:
+                os.remove(jav_cover_path)
+                app_logger.info(f"已删除视频封面: {jav_cover_path}")
+            except Exception as e:
+                error_logger.error(f"删除视频封面失败: {e}")
+        
+        video_dir = os.path.join(JAV_PICTURES_DIR, video.id)
+        if os.path.exists(video_dir):
+            try:
+                shutil.rmtree(video_dir)
+                app_logger.info(f"已删除视频目录: {video_dir}")
+            except Exception as e:
+                error_logger.error(f"删除视频目录失败: {e}")
+    
+    def delete_recommendation_assets(self, video_id: str):
+        jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video_id}.jpg")
+        if os.path.exists(jav_cover_path):
+            try:
+                os.remove(jav_cover_path)
+            except Exception as e:
+                error_logger.error(f"删除推荐视频封面失败: {e}")
+        
+        video_dir = os.path.join(JAV_PICTURES_DIR, video_id)
+        if os.path.exists(video_dir):
+            try:
+                shutil.rmtree(video_dir)
+            except Exception as e:
+                error_logger.error(f"删除推荐视频目录失败: {e}")
     
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:

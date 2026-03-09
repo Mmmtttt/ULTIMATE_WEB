@@ -149,6 +149,20 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       return false
     }
   }
+  
+  async function batchRestoreFromTrash(videoIds) {
+    try {
+      const res = await videoApi.batchRestoreVideoRecommendationFromTrash(videoIds)
+      if (res.code === 200) {
+        trashList.value = trashList.value.filter(v => !videoIds.includes(v.id))
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('批量从回收站恢复失败:', e)
+      return false
+    }
+  }
 
   async function deletePermanently(videoId) {
     try {
@@ -160,6 +174,20 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       return false
     } catch (e) {
       console.error('永久删除失败:', e)
+      return false
+    }
+  }
+  
+  async function batchDeletePermanently(videoIds) {
+    try {
+      const res = await videoApi.batchDeleteVideoRecommendationPermanently(videoIds)
+      if (res.code === 200) {
+        trashList.value = trashList.value.filter(v => !videoIds.includes(v.id))
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('批量永久删除失败:', e)
       return false
     }
   }
@@ -275,7 +303,9 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     batchMoveToTrash,
     fetchTrashList,
     restoreFromTrash,
+    batchRestoreFromTrash,
     deletePermanently,
+    batchDeletePermanently,
     searchRecommendations,
     filterByTags,
     filterMulti,

@@ -659,6 +659,7 @@ def third_party_import():
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": detail.get("preview_video", ""),
+                "cover_path": detail.get("cover_url", ""),
                 "tag_ids": video_tag_ids,
                 "list_ids": [],
                 "create_time": get_current_time(),
@@ -946,9 +947,8 @@ def restore_video_recommendation_from_trash():
 def delete_video_recommendation_permanently():
     """永久删除推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE, COVER_DIR
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
-        import os
         
         video_id = request.args.get('video_id')
         if not video_id:
@@ -976,19 +976,7 @@ def delete_video_recommendation_permanently():
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
         
-        if video_to_delete and video_to_delete.get('cover_path'):
-            cover_path = video_to_delete['cover_path']
-            relative_path = cover_path.lstrip('/')
-            if relative_path.startswith('static/cover/'):
-                relative_path = relative_path.replace('static/cover/', '', 1)
-            
-            cover_path_full = os.path.join(COVER_DIR, relative_path)
-            if os.path.exists(cover_path_full):
-                try:
-                    os.remove(cover_path_full)
-                    app_logger.info(f"已删除推荐视频封面: {cover_path_full}")
-                except Exception as e:
-                    error_logger.error(f"删除推荐视频封面失败: {e}")
+        video_service.delete_recommendation_assets(video_id)
         
         app_logger.info(f"推荐视频永久删除: {video_id}")
         return success_response({"message": "已永久删除"})
@@ -1035,9 +1023,8 @@ def batch_restore_video_recommendation_from_trash():
 def batch_delete_video_recommendation_permanently():
     """批量永久删除推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE, COVER_DIR
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         from infrastructure.persistence.json_storage import JsonStorage
-        import os
         
         data = request.json
         video_ids = data.get('video_ids', [])
@@ -1068,19 +1055,7 @@ def batch_delete_video_recommendation_permanently():
             return error_response(500, "数据写入失败")
         
         for video in videos_to_delete:
-            if video.get('cover_path'):
-                cover_path = video['cover_path']
-                relative_path = cover_path.lstrip('/')
-                if relative_path.startswith('static/cover/'):
-                    relative_path = relative_path.replace('static/cover/', '', 1)
-                
-                cover_path_full = os.path.join(COVER_DIR, relative_path)
-                if os.path.exists(cover_path_full):
-                    try:
-                        os.remove(cover_path_full)
-                        app_logger.info(f"已删除推荐视频封面: {cover_path_full}")
-                    except Exception as e:
-                        error_logger.error(f"删除推荐视频封面失败: {e}")
+            video_service.delete_recommendation_assets(video.get('id', ''))
         
         app_logger.info(f"推荐视频批量永久删除: {len(videos_to_delete)}个")
         return success_response({"deleted_count": len(videos_to_delete)}, f"已永久删除 {len(videos_to_delete)} 个视频")

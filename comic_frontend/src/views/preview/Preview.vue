@@ -115,6 +115,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore } from '@/stores'
+import { recommendationApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
@@ -141,6 +142,41 @@ const tempExcludeTags = ref([])
 const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
 
+function getFilterStorageKey() {
+  return isVideoMode.value ? 'preview_filters_video' : 'preview_filters_comic'
+}
+
+function saveFilterState() {
+  const payload = {
+    includeTags: tempIncludeTags.value,
+    excludeTags: tempExcludeTags.value,
+    selectedAuthors: tempSelectedAuthors.value,
+    selectedListIds: tempSelectedListIds.value
+  }
+  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+}
+
+async function restoreFilterState() {
+  const raw = sessionStorage.getItem(getFilterStorageKey())
+  if (!raw) {
+    return
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    tempIncludeTags.value = parsed.includeTags || []
+    tempExcludeTags.value = parsed.excludeTags || []
+    tempSelectedAuthors.value = parsed.selectedAuthors || []
+    tempSelectedListIds.value = parsed.selectedListIds || []
+    await currentStore.value.filterMulti(
+      tempIncludeTags.value,
+      tempExcludeTags.value,
+      tempSelectedAuthors.value,
+      tempSelectedListIds.value
+    )
+  } catch {
+  }
+}
+
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? videoRecStore : comicRecStore)
@@ -159,7 +195,7 @@ const emptyTitle = computed(() =>
   isVideoMode.value ? '暂无推荐视频' : '暂无推荐漫画'
 )
 
-const availableTags = computed(() => tagStore.tags)
+const availableTags = computed(() => isVideoMode.value ? tagStore.videoTags : tagStore.tags)
 
 const availableAuthors = computed(() => {
   const items = isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
@@ -204,7 +240,7 @@ function onItemClick(item) {
     toggleSelection(item)
   } else {
     const routeName = isVideoMode.value ? 'VideoRecommendationDetail' : 'RecommendationDetail'
-    router.push({ name: routeName, params: { id: item.id } })
+    router.push({ name: routeName, params: { id: item.id }, query: route.query })
   }
 }
 
@@ -232,7 +268,26 @@ async function batchSave() {
 }
 
 async function batchTrash() {
-  showToast('Batch trash')
+  if (selectedIds.value.length === 0) return
+  
+  if (isVideoMode.value) {
+    const success = await videoRecStore.batchMoveToTrash(selectedIds.value)
+    if (!success) {
+      showToast('移入回收站失败')
+      return
+    }
+  } else {
+    const res = await recommendationApi.batchMoveToTrash(selectedIds.value)
+    if (res.code !== 200) {
+      showToast(res.msg || '移入回收站失败')
+      return
+    }
+  }
+  
+  showToast('已移入回收站')
+  selectedIds.value = []
+  isManageMode.value = false
+  await loadData(true)
 }
 
 async function onSortConfirm({ selectedOptions }) {
@@ -249,6 +304,7 @@ async function applyFilterAndClose() {
     tempSelectedAuthors.value,
     tempSelectedListIds.value
   )
+  saveFilterState()
   showFilterPanel.value = false
 }
 
@@ -264,6 +320,7 @@ watch(() => modeStore.currentMode, () => {
   loadData()
   selectedIds.value = []
   isManageMode.value = false
+  restoreFilterState()
 })
 
 watch(() => route.query.author, (newAuthor) => {
@@ -282,6 +339,7 @@ watch(() => route.query.tagId, (newTagId) => {
 
 onMounted(() => {
   loadData()
+  restoreFilterState()
   if (route.query.author) {
     tempSelectedAuthors.value = [route.query.author]
     applyFilterAndClose()

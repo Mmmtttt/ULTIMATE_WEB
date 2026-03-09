@@ -25,16 +25,16 @@ export const videoApi = {
     return request.put('/v1/video/trash/move', { video_id: videoId })
   },
   
+  batchMoveToTrash(videoIds) {
+    return request.put('/v1/video/trash/batch-move', { video_ids: videoIds })
+  },
+  
   restoreFromTrash(videoId) {
     return request.put('/v1/video/trash/restore', { video_id: videoId })
   },
   
   deletePermanently(videoId) {
     return request.delete('/v1/video/trash/delete', { params: { video_id: videoId } })
-  },
-  
-  batchMoveToTrash(videoIds) {
-    return request.put('/v1/video/trash/batch-move', { video_ids: videoIds })
   },
   
   batchRestoreFromTrash(videoIds) {
@@ -146,16 +146,12 @@ export const videoApi = {
     return request.put('/v1/video/recommendation/trash/restore', { video_id: videoId })
   },
   
-  deleteVideoRecommendationPermanently(videoId) {
-    return request.delete('/v1/video/recommendation/trash/delete', { params: { video_id: videoId } })
-  },
-  
-  batchMoveVideoRecommendationToTrash(videoIds) {
-    return request.put('/v1/video/recommendation/trash/batch-move', { video_ids: videoIds })
-  },
-  
   batchRestoreVideoRecommendationFromTrash(videoIds) {
     return request.put('/v1/video/recommendation/trash/batch-restore', { video_ids: videoIds })
+  },
+  
+  deleteVideoRecommendationPermanently(videoId) {
+    return request.delete('/v1/video/recommendation/trash/delete', { params: { video_id: videoId } })
   },
   
   batchDeleteVideoRecommendationPermanently(videoIds) {
