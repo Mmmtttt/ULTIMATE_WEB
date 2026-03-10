@@ -84,7 +84,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useActorStore, useImportTaskStore } from '@/stores'
-import { videoApi, authorApi } from '@/api' // Ensure authorApi is exported
+import { videoApi, actorApi, authorApi } from '@/api' // Ensure authorApi is exported
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
@@ -115,72 +115,143 @@ async function loadData(page = 1) {
   else loadingMore.value = true
   
   try {
+    console.log('=== CreatorDetail loadData start ===')
+    console.log('isVideoMode:', isVideoMode.value)
+    console.log('creatorName:', creatorName.value)
+    console.log('page:', page)
+    
     if (isVideoMode.value) {
-      // First, find actor ID if not known
-      if (!actorId.value) {
-        const searchRes = await videoApi.thirdPartyActorSearch(creatorName.value)
-        if (searchRes.code === 200 && searchRes.data.length > 0) {
-          // Exact match preferred
-          const match = searchRes.data.find(a => a.actor_name === creatorName.value) || searchRes.data[0]
-          actorId.value = match.actor_id
-        }
-      }
+      console.log('=== Video mode ===')
       
-      if (actorId.value) {
-        const res = await videoApi.thirdPartyActorWorks(actorId.value, page)
-        if (res.code === 200) {
-          const newWorks = res.data.works || []
-          if (page === 1) works.value = newWorks
-          else works.value = [...works.value, ...newWorks]
-          
-          hasMore.value = res.data.has_next
-        }
-      }
-    } else {
-      // Comic mode：如果是已订阅作者，则优先走订阅作者作品接口，支持持久化缓存
+      // Video mode：如果是已订阅演员，则优先走订阅演员作品接口，支持持久化缓存
       if (page === 1) {
+        console.log('=== Page 1, checking all actors ===')
         // 尝试根据名称匹配订阅记录
-        const allAuthorsRes = await authorApi.getAllAuthors()
-        if (allAuthorsRes.code === 200 && Array.isArray(allAuthorsRes.data)) {
-          const match = allAuthorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
+        const allActorsRes = await actorApi.getAll()
+        console.log('allActorsRes:', allActorsRes)
+        
+        if (allActorsRes.code === 200 && Array.isArray(allActorsRes.data)) {
+          console.log('All actors data:', allActorsRes.data)
+          const match = allActorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
+          console.log('Match found:', match)
+          
           if (match) {
             isSubscribed.value = true
-            authorSubscriptionId.value = match.subscription.id
+            actorId.value = match.subscription.id
+            console.log('Set isSubscribed=true, actorId:', actorId.value)
           } else {
             isSubscribed.value = false
-            authorSubscriptionId.value = null
+            actorId.value = null
+            console.log('Set isSubscribed=false, actorId=null')
           }
         }
       }
 
-      if (isSubscribed.value && authorSubscriptionId.value) {
-        // 已订阅作者：优先从后端 author_works 持久化缓存中读取，第一页给 20 条
+      if (isSubscribed.value && actorId.value) {
+        console.log('=== Loading subscribed actor works ===')
+        console.log('actorId:', actorId.value)
+        // 已订阅演员：优先从后端 actor_works 持久化缓存中读取，第一页给 20 条
         const offset = (page - 1) * 20
-        const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20)
+        const res = await actorApi.getWorks(actorId.value, offset, 20)
+        console.log('getWorks response:', res)
+        
         if (res.code === 200) {
           const newWorks = res.data.works || []
+          console.log('New works:', newWorks)
           if (page === 1) works.value = newWorks
           else works.value = [...works.value, ...newWorks]
           
           hasMore.value = !!res.data.has_more
           totalWorks.value = res.data.total || works.value.length
+          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
         }
       } else {
-        // 非订阅作者：保持原有按名称搜索逻辑
-        const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        console.log('=== Loading unsubscribed actor works by search ===')
+        console.log('Searching for:', creatorName.value)
+        // 非订阅演员：保持原有按名称搜索逻辑，支持缓存
+        const res = await actorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        console.log('searchWorksByName response:', res)
+        
         if (res.code === 200) {
           const newWorks = res.data.works || []
+          console.log('New works:', newWorks)
           if (page === 1) works.value = newWorks
           else works.value = [...works.value, ...newWorks]
           
           hasMore.value = res.data.has_more
           totalWorks.value = res.data.total || works.value.length
+          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
+        }
+      }
+    } else {
+      console.log('=== Comic mode ===')
+      // Comic mode：如果是已订阅作者，则优先走订阅作者作品接口，支持持久化缓存
+      if (page === 1) {
+        console.log('=== Page 1, checking all authors ===')
+        // 尝试根据名称匹配订阅记录
+        const allAuthorsRes = await authorApi.getAllAuthors()
+        console.log('allAuthorsRes:', allAuthorsRes)
+        
+        if (allAuthorsRes.code === 200 && Array.isArray(allAuthorsRes.data)) {
+          console.log('All authors data:', allAuthorsRes.data)
+          const match = allAuthorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
+          console.log('Match found:', match)
+          
+          if (match) {
+            isSubscribed.value = true
+            authorSubscriptionId.value = match.subscription.id
+            console.log('Set isSubscribed=true, authorSubscriptionId:', authorSubscriptionId.value)
+          } else {
+            isSubscribed.value = false
+            authorSubscriptionId.value = null
+            console.log('Set isSubscribed=false, authorSubscriptionId=null')
+          }
+        }
+      }
+
+      if (isSubscribed.value && authorSubscriptionId.value) {
+        console.log('=== Loading subscribed author works ===')
+        console.log('authorSubscriptionId:', authorSubscriptionId.value)
+        // 已订阅作者：优先从后端 author_works 持久化缓存中读取，第一页给 20 条
+        const offset = (page - 1) * 20
+        const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20)
+        console.log('getWorks response:', res)
+        
+        if (res.code === 200) {
+          const newWorks = res.data.works || []
+          console.log('New works:', newWorks)
+          if (page === 1) works.value = newWorks
+          else works.value = [...works.value, ...newWorks]
+          
+          hasMore.value = !!res.data.has_more
+          totalWorks.value = res.data.total || works.value.length
+          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
+        }
+      } else {
+        console.log('=== Loading unsubscribed author works by search ===')
+        console.log('Searching for:', creatorName.value)
+        // 非订阅作者：保持原有按名称搜索逻辑
+        const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        console.log('searchWorksByName response:', res)
+        
+        if (res.code === 200) {
+          const newWorks = res.data.works || []
+          console.log('New works:', newWorks)
+          if (page === 1) works.value = newWorks
+          else works.value = [...works.value, ...newWorks]
+          
+          hasMore.value = res.data.has_more
+          totalWorks.value = res.data.total || works.value.length
+          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
         }
       }
     }
   } catch (e) {
+    console.error('=== Error in loadData ===', e)
+    console.error('Error stack:', e.stack)
     showToast('加载失败')
   } finally {
+    console.log('=== CreatorDetail loadData end ===')
     loading.value = false
     loadingMore.value = false
   }

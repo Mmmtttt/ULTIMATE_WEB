@@ -2,7 +2,7 @@
 演员应用服务
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 import os
 import threading
 import requests
@@ -14,35 +14,170 @@ from domain.video import VideoRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.persistence.cache import CacheManager
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
-from core.constants import VIDEO_ACTOR_COVER_CACHE_DIR, VIDEO_CACHE_DIR
+from core.constants import (
+    VIDEO_ACTOR_COVER_CACHE_DIR, 
+    JAV_ACTOR_COVER_CACHE_DIR,
+    VIDEO_JSON_FILE,
+    VIDEO_RECOMMENDATION_JSON_FILE
+)
 from application.base.content_app_service import BaseCreatorAppService
+from core.enums import ContentType
 
 
 class ActorAppService(BaseCreatorAppService):
-    _entity_name = "演员"
-    _cache_manager = CacheManager()
+    _entity_name: str = "演员"
+    _content_type: ContentType = ContentType.VIDEO
     
-    def __init__(
-        self,
-        actor_repo: ActorRepository = None,
-        video_repo: VideoRepository = None
-    ):
+    def __init__(self, actor_repo: ActorRepository = None, video_repo: VideoRepository = None):
         self._actor_repo = actor_repo or ActorJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
     
-    def get_subscription_list(self) -> ServiceResult:
-        return self._get_all_impl(self._actor_repo)
+    def _search_works(self, creator_name: str) -> List[Dict]:
+        """搜索演员作品"""
+        from api.v1.video import get_video_adapter
+        
+        works = []
+        try:
+            adapter = get_video_adapter("javdb")
+            result = adapter.search_videos(creator_name, page=1, max_pages=3)
+            videos = result.get("videos", [])
+            
+            for video in videos:
+                work_id = str(video.get("video_id", ""))
+                cover_url = video.get("cover_url", "")
+                local_cover = f"/static/cover/video/actor_cache/{work_id}.jpg"
+                if os.path.exists(f"static/cover/video/actor_cache/{work_id}.jpg"):
+                    cover_url = local_cover
+                
+                works.append({
+                    "id": work_id,
+                    "title": video.get("title", ""),
+                    "actor": creator_name,
+                    "cover_url": cover_url,
+                    "duration": video.get("duration", 0),
+                    "has_detail": False,
+                    "is_new": True,
+                    "platform": "javdb"
+                })
+                
+        except Exception as e:
+            error_logger.error(f"搜索演员 {creator_name} 作品失败: {e}")
+        
+        return works
     
-    def subscribe_actor(self, name: str, actor_id: str = "") -> ServiceResult:
+    def _get_existing_content_ids(self) -> Set[str]:
+        """获取已存在的视频ID集合"""
+        existing_ids = set()
+        
+        try:
+            home_storage = JsonStorage(VIDEO_JSON_FILE)
+            home_data = home_storage.read()
+            for video in home_data.get('videos', []):
+                existing_ids.add(video.get('id', ''))
+        except Exception as e:
+            error_logger.error(f"获取主页视频ID失败: {e}")
+        
+        try:
+            rec_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+            rec_data = rec_storage.read()
+            for video in rec_data.get('video_recommendations', []):
+                existing_ids.add(video.get('id', ''))
+        except Exception as e:
+            error_logger.error(f"获取推荐页视频ID失败: {e}")
+        
+        return existing_ids
+    
+    def _download_cover(self, content_id: str, cover_url: str, platform: str) -> str:
+        """下载演员作品封面"""
+        if not cover_url:
+            return ""
+        
+        cache_dir = JAV_ACTOR_COVER_CACHE_DIR if platform == 'JAVDB' else VIDEO_ACTOR_COVER_CACHE_DIR
+        local_path = os.path.join(cache_dir, f"{content_id}.jpg")
+        
+        if os.path.exists(local_path):
+            return f"/static/cover/video/actor_cache/{content_id}.jpg"
+        
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(cover_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            with Image.open(BytesIO(response.content)) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                img.save(local_path, 'JPEG', quality=85)
+            
+            return f"/static/cover/video/actor_cache/{content_id}.jpg"
+        except Exception as e:
+            error_logger.error(f"下载演员作品封面失败 {content_id}: {e}")
+            return cover_url
+    
+    def _get_cache_key_prefix(self) -> str:
+        """获取缓存键前缀"""
+        return "actor_works"
+    
+    def get_all_actors(self) -> ServiceResult:
+        """获取所有演员（主页+推荐页）"""
+        try:
+            actor_set = set()
+            
+            videos = self._video_repo.get_all()
+            for video in videos:
+                for actor in video.actors or []:
+                    if actor and actor.strip():
+                        actor_set.add(actor.strip())
+            
+            from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
+            rec_repo = VideoRecommendationJsonRepository()
+            recommendations = rec_repo.get_all()
+            for rec in recommendations:
+                for actor in rec.actors or []:
+                    if actor and actor.strip():
+                        actor_set.add(actor.strip())
+            
+            subscribed_actors = self._actor_repo.get_all()
+            subscribed_actor_names = {a.name for a in subscribed_actors}
+            
+            all_actors = []
+            for name in sorted(actor_set):
+                is_subscribed = name in subscribed_actor_names
+                all_actors.append({
+                    "name": name,
+                    "is_subscribed": is_subscribed,
+                    "subscription": next((a.to_dict() for a in subscribed_actors if a.name == name), None)
+                })
+            
+            app_logger.info(f"获取所有演员成功，共 {len(all_actors)} 个")
+            return ServiceResult.ok(all_actors)
+        except Exception as e:
+            error_logger.error(f"获取所有演员失败: {e}")
+            return ServiceResult.error("获取所有演员失败")
+    
+    def get_subscription_list(self) -> ServiceResult:
+        try:
+            actors = self._actor_repo.get_all()
+            actor_list = [a.to_dict() for a in actors]
+            app_logger.info(f"获取演员订阅列表成功，共 {len(actor_list)} 个")
+            return ServiceResult.ok(actor_list)
+        except Exception as e:
+            error_logger.error(f"获取演员订阅列表失败: {e}")
+            return ServiceResult.error("获取演员订阅列表失败")
+    
+    def subscribe_actor(self, name: str) -> ServiceResult:
         try:
             if not name or not name.strip():
                 return ServiceResult.error("演员名称不能为空")
             
             name = name.strip()
-            app_logger.info(f"开始订阅演员: {name}")
             
             if self._actor_repo.exists_by_name(name):
                 return ServiceResult.error("已订阅该演员")
@@ -50,11 +185,8 @@ class ActorAppService(BaseCreatorAppService):
             actor = ActorSubscription(
                 id=generate_id("actor"),
                 name=name,
-                actor_id=actor_id,
                 subscribe_time=get_current_time()
             )
-            
-            app_logger.info(f"创建演员对象成功: {actor.id}")
             
             if not self._actor_repo.save(actor):
                 return ServiceResult.error("订阅演员失败")
@@ -63,115 +195,27 @@ class ActorAppService(BaseCreatorAppService):
             return ServiceResult.ok(actor.to_dict(), "订阅成功")
         except Exception as e:
             error_logger.error(f"订阅演员失败: {e}")
-            import traceback
-            error_logger.error(traceback.format_exc())
             return ServiceResult.error("订阅演员失败")
     
-    def unsubscribe_actor(self, actor_subscription_id: str) -> ServiceResult:
+    def unsubscribe_actor(self, actor_id: str) -> ServiceResult:
         try:
-            actor = self._actor_repo.get_by_id(actor_subscription_id)
+            actor = self._actor_repo.get_by_id(actor_id)
             if not actor:
-                return ServiceResult.error("订阅记录不存在")
+                return ServiceResult.error("订阅不存在")
             
-            success = self._actor_repo.delete(actor_subscription_id)
-            if success:
-                app_logger.info(f"取消订阅演员成功: {actor.name}")
-                return ServiceResult.ok({"message": "取消订阅成功"})
-            return ServiceResult.error("取消订阅失败")
+            if not self._actor_repo.delete(actor_id):
+                return ServiceResult.error("取消订阅失败")
+            
+            app_logger.info(f"取消订阅演员成功: {actor_id}")
+            return ServiceResult.ok({"id": actor_id}, "取消订阅成功")
         except Exception as e:
             error_logger.error(f"取消订阅演员失败: {e}")
-            return ServiceResult.error("取消订阅失败")
+            return ServiceResult.error("取消订阅演员失败")
     
-    def update_check_time(self, actor_subscription_id: str) -> ServiceResult:
+    def check_actor_updates(self, actor_id: str = None) -> ServiceResult:
         try:
-            actor = self._actor_repo.get_by_id(actor_subscription_id)
-            if not actor:
-                return ServiceResult.error("订阅记录不存在")
-            
-            actor.last_check_time = get_current_time()
-            self._actor_repo.save(actor)
-            return ServiceResult.ok({"message": "更新成功"})
-        except Exception as e:
-            error_logger.error(f"更新检查时间失败: {e}")
-            return ServiceResult.error("更新失败")
-    
-    def update_last_work(
-        self,
-        actor_subscription_id: str,
-        work_id: str,
-        work_title: str,
-        new_count: int = 0
-    ) -> ServiceResult:
-        try:
-            actor = self._actor_repo.get_by_id(actor_subscription_id)
-            if not actor:
-                return ServiceResult.error("订阅记录不存在")
-            
-            actor.last_work_id = work_id
-            actor.last_work_title = work_title
-            actor.new_work_count = new_count
-            actor.last_check_time = get_current_time()
-            
-            self._actor_repo.save(actor)
-            return ServiceResult.ok(actor.to_dict())
-        except Exception as e:
-            error_logger.error(f"更新最新作品失败: {e}")
-            return ServiceResult.error("更新失败")
-    
-    def get_actor_videos(self, actor_name: str) -> ServiceResult:
-        try:
-            videos = self._video_repo.get_all()
-            result = []
-            for v in videos:
-                if v.is_deleted:
-                    continue
-                if actor_name in v.actors:
-                    result.append(v.to_dict())
-            return ServiceResult.ok(result)
-        except Exception as e:
-            error_logger.error(f"获取演员视频失败: {e}")
-            return ServiceResult.error("获取视频失败")
-    
-    def get_all_actors(self) -> ServiceResult:
-        try:
-            actor_set = set()
-            
-            videos = self._video_repo.get_all()
-            for video in videos:
-                for actor_name in video.actors:
-                    if actor_name and actor_name.strip():
-                        actor_set.add(actor_name.strip())
-            
-            subscribed_actors = self._actor_repo.get_all()
-            subscribed_names = {a.name for a in subscribed_actors}
-            
-            all_actors = []
-            for name in sorted(actor_set):
-                is_subscribed = name in subscribed_names
-                all_actors.append({
-                    "name": name,
-                    "is_subscribed": is_subscribed,
-                    "subscription": next((a.to_dict() for a in subscribed_actors if a.name == name), None)
-                })
-            
-            return ServiceResult.ok(all_actors)
-        except Exception as e:
-            error_logger.error(f"获取所有演员失败: {e}")
-            return ServiceResult.error("获取演员失败")
-    
-    def check_actor_updates(self, actor_subscription_id: str = None) -> ServiceResult:
-        """
-        检查演员订阅是否有新作品：
-        - 通过第三方接口获取演员作品列表
-        - 取最新一部作品，与订阅记录中的 last_work_id 对比
-        - 不一致则认为有更新，new_work_count 置为 1
-        """
-        from application.video_app_service import VideoAppService
-        from api.v1.video import get_video_adapter
-        
-        try:
-            if actor_subscription_id:
-                actors = [self._actor_repo.get_by_id(actor_subscription_id)]
+            if actor_id:
+                actors = [self._actor_repo.get_by_id(actor_id)]
                 actors = [a for a in actors if a]
             else:
                 actors = self._actor_repo.get_all()
@@ -179,49 +223,42 @@ class ActorAppService(BaseCreatorAppService):
             if not actors:
                 return ServiceResult.ok({"updated_actors": [], "total_new_works": 0})
             
-            video_service = VideoAppService()
             updated_actors = []
             total_new_works = 0
             
             for actor in actors:
                 try:
-                    # 优先使用记录下来的 actor_id，如果没有则按名字搜索一次取第一个
-                    actor_id = actor.actor_id
-                    if not actor_id:
-                        adapter = get_video_adapter("javdb")
-                        search_res = adapter.search_actor(actor.name)
-                        if search_res:
-                            actor_id = search_res[0].get("actor_id", "")
-                            if actor_id:
-                                actor.actor_id = actor_id
+                    cache_key = f"{self._get_cache_key_prefix()}_{actor.name}"
+                    cached_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
                     
-                    if not actor_id:
-                        continue
+                    works = self._search_works(actor.name)
                     
-                    adapter = get_video_adapter("javdb")
-                    result = adapter.get_actor_works(actor_id, page=1, max_pages=1)
-                    works = result.get("works", []) or []
                     if not works:
                         continue
                     
                     latest_work = works[0]
-                    latest_work_id = latest_work.get("id") or latest_work.get("video_id") or ""
-                    latest_title = latest_work.get("title", "")
+                    latest_work_id = latest_work.get("id", "")
+                    latest_work_title = latest_work.get("title", "")
                     
-                    has_update = False
+                    cached_latest_id = None
+                    if cached_works:
+                        first_cached = cached_works[0] if isinstance(cached_works, list) and cached_works else None
+                        if first_cached:
+                            cached_latest_id = first_cached.get("id", "")
+                    
+                    has_update = cached_latest_id is None or cached_latest_id != latest_work_id
                     new_count = 0
                     
-                    if not actor.last_work_id:
-                        has_update = True
+                    if has_update:
                         new_count = 1
-                    elif actor.last_work_id != latest_work_id:
-                        has_update = True
-                        new_count = 1
+                        works_for_cache = works[:20]
+                        self._cache_manager.set_persistent(cache_key, works_for_cache, self._get_cache_key_prefix())
                     
-                    actor.last_work_id = latest_work_id
-                    actor.last_work_title = latest_title
-                    actor.new_work_count = new_count
-                    actor.last_check_time = get_current_time()
+                    actor.update_check_info(
+                        latest_work_id,
+                        latest_work_title,
+                        new_count
+                    )
                     self._actor_repo.save(actor)
                     
                     if has_update:
@@ -230,6 +267,7 @@ class ActorAppService(BaseCreatorAppService):
                             "new_works": [latest_work]
                         })
                         total_new_works += new_count
+                        
                 except Exception as e:
                     error_logger.error(f"检查演员 {actor.name} 更新失败: {e}")
                     continue
@@ -243,46 +281,182 @@ class ActorAppService(BaseCreatorAppService):
             error_logger.error(f"检查演员更新失败: {e}")
             return ServiceResult.error("检查演员更新失败")
     
-    def cache_actor_works(self, actor_id: str, works: List[Dict]) -> ServiceResult:
-        try:
-            cache_key = f"actor_works_{actor_id}"
-            self._cache_manager.set(cache_key, works, VIDEO_CACHE_DIR)
-            return ServiceResult.ok({"message": "缓存成功"})
-        except Exception as e:
-            error_logger.error(f"缓存演员作品失败: {e}")
-            return ServiceResult.error("缓存失败")
-    
-    def get_cached_actor_works(self, actor_id: str) -> ServiceResult:
-        try:
-            cache_key = f"actor_works_{actor_id}"
-            works = self._cache_manager.get(cache_key, VIDEO_CACHE_DIR)
-            if works:
-                return ServiceResult.ok(works)
-            return ServiceResult.ok(None)
-        except Exception as e:
-            error_logger.error(f"获取缓存演员作品失败: {e}")
-            return ServiceResult.ok(None)
-    
-    def download_actor_avatar_async(self, actor_name: str, avatar_url: str):
-        def download():
-            try:
-                if not avatar_url:
-                    return
-                
-                response = requests.get(avatar_url, timeout=30)
-                if response.status_code != 200:
-                    return
-                
-                image = Image.open(BytesIO(response.content))
-                os.makedirs(VIDEO_ACTOR_COVER_CACHE_DIR, exist_ok=True)
-                
-                safe_name = "".join(c for c in actor_name if c.isalnum() or c in (' ', '-', '_'))
-                avatar_path = os.path.join(VIDEO_ACTOR_COVER_CACHE_DIR, f"{safe_name}.jpg")
-                image.convert("RGB").save(avatar_path, "JPEG", quality=95)
-                
-                app_logger.info(f"下载演员头像成功: {actor_name}")
-            except Exception as e:
-                error_logger.error(f"下载演员头像失败: {e}")
+    def get_actor_new_works(self, actor_id: str) -> ServiceResult:
+        from core.platform import get_supported_platforms
+        from third_party import external_api
         
-        thread = threading.Thread(target=download, daemon=True)
-        thread.start()
+        try:
+            actor = self._actor_repo.get_by_id(actor_id)
+            if not actor:
+                return ServiceResult.error("订阅不存在")
+            
+            works = []
+            try:
+                platforms_to_search = get_supported_platforms()
+                platform_videos = {}
+                max_result_count = 0
+                
+                for plat in platforms_to_search:
+                    try:
+                        adapter_name = 'javdb'
+                        result = external_api.search_videos(actor.name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                        videos = result.get("videos", [])
+                        
+                        if videos:
+                            platform_videos[plat] = videos
+                            if len(videos) > max_result_count:
+                                max_result_count = len(videos)
+                    except Exception as e:
+                        error_logger.error(f"搜索演员 {actor.name} 在平台 {plat} 的作品失败: {e}")
+                        continue
+                
+                for i in range(max_result_count):
+                    for plat in platforms_to_search:
+                        if plat in platform_videos and i < len(platform_videos[plat]):
+                            video = platform_videos[plat][i]
+                            works.append({
+                                "id": str(video.get("video_id", "")),
+                                "title": video.get("title", ""),
+                                "actor": actor.name,
+                                "cover_url": video.get("cover_url", ""),
+                                "duration": video.get("duration", 0),
+                                "platform": plat
+                            })
+                
+            except Exception as e:
+                error_logger.error(f"搜索演员 {actor.name} 作品失败: {e}")
+            
+            if not works:
+                return ServiceResult.ok({"actor": actor.to_dict(), "new_works": []})
+            
+            new_works = []
+            if not actor.last_work_id:
+                new_works = works[:5]
+            else:
+                found_last = False
+                for work in works:
+                    if work.get("id") == actor.last_work_id:
+                        found_last = True
+                        break
+                    new_works.append(work)
+                
+                if not found_last:
+                    new_works = works[:5]
+            
+            return ServiceResult.ok({
+                "actor": actor.to_dict(),
+                "new_works": new_works
+            })
+        except Exception as e:
+            error_logger.error(f"获取演员新作品失败: {e}")
+            return ServiceResult.error("获取演员新作品失败")
+    
+    def clear_actor_new_count(self, actor_id: str) -> ServiceResult:
+        try:
+            actor = self._actor_repo.get_by_id(actor_id)
+            if not actor:
+                return ServiceResult.error("订阅不存在")
+            
+            actor.clear_new_count()
+            self._actor_repo.save(actor)
+            
+            return ServiceResult.ok({"id": actor_id}, "已清除")
+        except Exception as e:
+            error_logger.error(f"清除新作品计数失败: {e}")
+            return ServiceResult.error("清除新作品计数失败")
+    
+    def get_actor_works_paginated(self, actor_id: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+        """分页获取演员作品"""
+        try:
+            actor = self._actor_repo.get_by_id(actor_id)
+            if not actor:
+                return ServiceResult.error("订阅不存在")
+            
+            result = self.get_works_paginated_impl(actor, offset, limit)
+            
+            if result.success:
+                data = result.data
+                data["actor"] = data.pop("creator")
+            
+            return result
+        except Exception as e:
+            error_logger.error(f"获取演员作品失败: {e}")
+            return ServiceResult.error("获取演员作品失败")
+    
+    def search_actor_works_by_name(self, actor_name: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+        """根据演员名搜索作品（不需要订阅）"""
+        return self.search_works_by_name_impl(actor_name, offset, limit)
+    
+    def clear_actor_cover_cache(self) -> ServiceResult:
+        """清理演员作品封面缓存"""
+        import shutil
+        
+        cleared_count = 0
+        freed_size = 0
+        
+        try:
+            for cache_dir in [VIDEO_ACTOR_COVER_CACHE_DIR, JAV_ACTOR_COVER_CACHE_DIR]:
+                if os.path.exists(cache_dir):
+                    for filename in os.listdir(cache_dir):
+                        filepath = os.path.join(cache_dir, filename)
+                        try:
+                            if os.path.isfile(filepath):
+                                file_size = os.path.getsize(filepath)
+                                os.remove(filepath)
+                                cleared_count += 1
+                                freed_size += file_size
+                        except Exception as e:
+                            error_logger.error(f"删除文件失败 {filepath}: {e}")
+            
+            app_logger.info(f"清理演员封面缓存完成: 清理 {cleared_count} 个文件, 释放 {freed_size} 字节")
+            return ServiceResult.ok({
+                "cleared_count": cleared_count,
+                "freed_size_bytes": freed_size,
+                "freed_size_mb": round(freed_size / (1024 * 1024), 2)
+            })
+        except Exception as e:
+            error_logger.error(f"清理演员封面缓存失败: {e}")
+            return ServiceResult.error("清理演员封面缓存失败")
+    
+    def clear_actor_works_cache(self, actor_name: str = None) -> ServiceResult:
+        """清理演员作品缓存"""
+        return self.clear_works_cache_impl(actor_name)
+    
+    def get_actor_videos(self, actor_name: str) -> ServiceResult:
+        """获取演员作品（简化版）"""
+        try:
+            works = self._search_works(actor_name)
+            return ServiceResult.ok(works)
+        except Exception as e:
+            error_logger.error(f"获取演员视频失败: {e}")
+            return ServiceResult.error("获取演员视频失败")
+    
+    def update_check_time(self, actor_subscription_id: str) -> ServiceResult:
+        """更新检查时间"""
+        try:
+            actor = self._actor_repo.get_by_id(actor_subscription_id)
+            if not actor:
+                return ServiceResult.error("订阅不存在")
+            
+            actor.update_check_time(get_current_time())
+            self._actor_repo.save(actor)
+            
+            return ServiceResult.ok(actor.to_dict())
+        except Exception as e:
+            error_logger.error(f"更新检查时间失败: {e}")
+            return ServiceResult.error("更新检查时间失败")
+    
+    def update_last_work(self, actor_subscription_id: str, work_id: str, work_title: str, new_count: int = 0) -> ServiceResult:
+        """更新最新作品信息"""
+        try:
+            actor = self._actor_repo.get_by_id(actor_subscription_id)
+            if not actor:
+                return ServiceResult.error("订阅不存在")
+            
+            actor.update_check_info(work_id, work_title, new_count)
+            self._actor_repo.save(actor)
+            
+            return ServiceResult.ok(actor.to_dict())
+        except Exception as e:
+            error_logger.error(f"更新最新作品失败: {e}")
+            return ServiceResult.error("更新最新作品失败")

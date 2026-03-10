@@ -185,8 +185,10 @@ export const actorApi = {
     return request.post('/v1/actor/subscribe', { name })
   },
   
-  unsubscribe(actorSubscriptionId) {
-    return request.delete('/v1/actor/unsubscribe', { params: { actor_subscription_id: actorSubscriptionId } })
+  unsubscribe(actorId) {
+    return request.delete('/v1/actor/unsubscribe', {
+      data: { actor_id: actorId }
+    })
   },
   
   getVideos(actorName) {
@@ -208,10 +210,73 @@ export const actorApi = {
 
   /**
    * 检查演员订阅更新
-   * @param {string|null} actorSubscriptionId 可选，传则检查单个
+   * @param {string|null} actorId 可选，传则检查单个
    */
-  checkUpdates(actorSubscriptionId = null) {
-    const data = actorSubscriptionId ? { actor_subscription_id: actorSubscriptionId } : {}
-    return request.post('/v1/actor/check-updates', data)
+  checkUpdates(actorId = null) {
+    return request.post('/v1/actor/check-updates',
+      actorId ? { actor_id: actorId } : {}
+    )
+  },
+
+  /**
+   * 获取演员新作品
+   * @param {string} actorId - 演员ID
+   * @returns {Promise}
+   */
+  getNewWorks: (actorId) => {
+    return request.get(`/v1/actor/new-works/${actorId}`)
+  },
+
+  /**
+   * 清除新作品计数
+   * @param {string} actorId - 演员ID
+   * @returns {Promise}
+   */
+  clearNewCount: (actorId) => {
+    return request.post(`/v1/actor/clear-new-count/${actorId}`)
+  },
+
+  /**
+   * 分页获取演员作品（已订阅演员使用，支持缓存）
+   * @param {string} actorId - 演员ID
+   * @param {number} offset - 偏移量
+   * @param {number} limit - 每页数量
+   * @returns {Promise}
+   */
+  getWorks(actorId, offset = 0, limit = 5) {
+    return request.get(`/v1/actor/works/${actorId}`, {
+      params: { offset, limit }
+    })
+  },
+
+  /**
+   * 清理演员封面缓存
+   * @returns {Promise}
+   */
+  clearCoverCache: () => {
+    return request.delete('/v1/actor/cover-cache/clear')
+  },
+
+  /**
+   * 根据演员名搜索作品（不需要订阅，支持缓存）
+   * @param {string} actorName - 演员名称
+   * @param {number} offset - 偏移量
+   * @param {number} limit - 每页数量
+   * @returns {Promise}
+   */
+  searchWorksByName(actorName, offset = 0, limit = 5) {
+    return request.get('/v1/actor/search-works', {
+      params: { actor_name: actorName, offset, limit }
+    })
+  },
+
+  /**
+   * 清理演员作品缓存
+   * @param {string} actorName - 演员名称（可选，不传则清理所有）
+   * @returns {Promise}
+   */
+  clearWorksCache(actorName = null) {
+    const params = actorName ? { actor_name: actorName } : {}
+    return request.delete('/v1/actor/works-cache/clear', { params })
   }
 }

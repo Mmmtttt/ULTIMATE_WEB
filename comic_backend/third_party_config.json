@@ -15,8 +15,8 @@
     },
     "picacomic": {
       "enabled": true,
-      "account": "",
-      "password": "",
+      "account": "REDACTED_USERNAME",
+      "password": "REDACTED_PASSWORD",
       "base_dir": "data/pictures/PK"
     },
     "javdb": {

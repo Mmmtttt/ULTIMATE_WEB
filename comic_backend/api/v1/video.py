@@ -1487,3 +1487,61 @@ def proxy_video_request2():
         error_logger.error(f"代理请求2失败: {e}")
         from flask import Response
         return Response(f'Proxy error: {str(e)}', status=500)
+
+
+# ========== 演员作品分页获取 API ==========
+
+@video_bp.route('/actor/works/<actor_id>', methods=['GET'])
+def get_actor_works(actor_id):
+    try:
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 5))
+        
+        result = actor_service.get_actor_works_paginated(actor_id, offset, limit)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取演员作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/actor/search-works', methods=['GET'])
+def search_actor_works():
+    """根据演员名搜索作品（不需要订阅）"""
+    try:
+        actor_name = request.args.get('actor_name')
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 5))
+        
+        if not actor_name:
+            return error_response(400, "演员名称不能为空")
+        
+        result = actor_service.search_actor_works_by_name(actor_name, offset, limit)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"搜索演员作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/actor/works-cache/clear', methods=['DELETE'])
+def clear_actor_works_cache():
+    """清理演员作品缓存"""
+    try:
+        actor_name = request.args.get('actor_name')
+        
+        result = actor_service.clear_actor_works_cache(actor_name)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清理演员作品缓存失败: {e}")
+        return error_response(500, "服务器内部错误")

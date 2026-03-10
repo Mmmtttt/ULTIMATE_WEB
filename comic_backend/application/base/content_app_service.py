@@ -1,10 +1,17 @@
-from abc import ABC
-from typing import List, Optional, TypeVar, Generic, Dict, Any
+from abc import ABC, abstractmethod
+from typing import List, Optional, TypeVar, Generic, Dict, Any, Set
+import os
+import threading
+import requests
+from PIL import Image
+from io import BytesIO
 
 from domain.base.entity import BaseEntity, BaseContent, BaseCreator
 from domain.base.repository import BaseRepository, BaseContentRepository, BaseCreatorRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.cache import CacheManager
+from infrastructure.persistence.json_storage import JsonStorage
 from core.enums import ContentType
 
 T = TypeVar('T', bound=BaseEntity)
@@ -189,6 +196,27 @@ class BaseContentAppService(BaseAppService[BaseContent]):
 class BaseCreatorAppService(BaseAppService[BaseCreator]):
     _entity_name: str = "创作者"
     _content_type: ContentType = ContentType.COMIC
+    _cache_manager = CacheManager()
+    
+    @abstractmethod
+    def _search_works(self, creator_name: str) -> List[Dict]:
+        """搜索创作者作品，子类必须实现"""
+        pass
+    
+    @abstractmethod
+    def _get_existing_content_ids(self) -> Set[str]:
+        """获取已存在的内容ID集合，子类必须实现"""
+        pass
+    
+    @abstractmethod
+    def _download_cover(self, content_id: str, cover_url: str, platform: str) -> str:
+        """下载作品封面，子类必须实现"""
+        pass
+    
+    @abstractmethod
+    def _get_cache_key_prefix(self) -> str:
+        """获取缓存键前缀，子类必须实现"""
+        pass
     
     def _get_subscribed_impl(
         self,
@@ -234,3 +262,179 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
         except Exception as e:
             error_logger.error(f"取消订阅失败: {e}")
             return ServiceResult.error("取消订阅失败")
+    
+    def get_works_paginated_impl(
+        self,
+        creator: BaseCreator,
+        offset: int = 0,
+        limit: int = 5
+    ) -> ServiceResult:
+        """通用的分页获取作品实现"""
+        try:
+            cache_key = f"{self._get_cache_key_prefix()}_{creator.name}"
+            
+            cached_all_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
+            
+            if offset == 0 and cached_all_works is not None:
+                existing_ids = self._get_existing_content_ids()
+                filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
+                total = len(filtered_works)
+                paginated_works = filtered_works[offset:offset + limit]
+                
+                has_more = True
+                
+                app_logger.info(f"[Cache] 从持久化缓存读取{self._entity_name} {creator.name} 作品，共 {total} 个")
+                
+                self._async_download_covers(paginated_works)
+                
+                return ServiceResult.ok({
+                    "creator": creator.to_dict(),
+                    "works": paginated_works,
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": has_more,
+                    "from_cache": True
+                })
+            
+            works = self._search_works(creator.name)
+            
+            if not works:
+                return ServiceResult.ok({
+                    "creator": creator.to_dict(),
+                    "works": [],
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": False
+                })
+            
+            works_for_cache = works[:20]
+            self._cache_manager.set_persistent(cache_key, works_for_cache, self._get_cache_key_prefix())
+            
+            existing_ids = self._get_existing_content_ids()
+            filtered_works = [w for w in works if w.get('id') not in existing_ids]
+            total = len(filtered_works)
+            paginated_works = filtered_works[offset:offset + limit]
+            
+            has_more = offset + limit < total
+            
+            result = ServiceResult.ok({
+                "creator": creator.to_dict(),
+                "works": paginated_works,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "from_cache": False
+            })
+            
+            self._async_download_covers(paginated_works)
+            
+            return result
+        except Exception as e:
+            error_logger.error(f"获取{self._entity_name}作品失败: {e}")
+            return ServiceResult.error(f"获取{self._entity_name}作品失败")
+    
+    def search_works_by_name_impl(
+        self,
+        creator_name: str,
+        offset: int = 0,
+        limit: int = 5
+    ) -> ServiceResult:
+        """通用的按名称搜索作品实现"""
+        try:
+            cache_key = f"{self._get_cache_key_prefix()}_{creator_name}"
+            
+            cached_all_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
+            
+            if offset == 0 and cached_all_works is not None:
+                existing_ids = self._get_existing_content_ids()
+                filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
+                total = len(filtered_works)
+                paginated_works = filtered_works[offset:offset + limit]
+                
+                has_more = True
+                
+                app_logger.info(f"[Cache] 从持久化缓存读取{self._entity_name} {creator_name} 作品，共 {total} 个")
+                
+                self._async_download_covers(paginated_works)
+                
+                return ServiceResult.ok({
+                    "creator_name": creator_name,
+                    "works": paginated_works,
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": has_more,
+                    "from_cache": True
+                })
+            
+            works = self._search_works(creator_name)
+            
+            if not works:
+                return ServiceResult.ok({
+                    "creator_name": creator_name,
+                    "works": [],
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "has_more": False
+                })
+            
+            self._cache_manager.set_persistent(cache_key, works, self._get_cache_key_prefix())
+            
+            existing_ids = self._get_existing_content_ids()
+            filtered_works = [w for w in works if w.get('id') not in existing_ids]
+            total = len(filtered_works)
+            paginated_works = filtered_works[offset:offset + limit]
+            
+            has_more = offset + limit < total
+            
+            result = ServiceResult.ok({
+                "creator_name": creator_name,
+                "works": paginated_works,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "from_cache": False
+            })
+            
+            self._async_download_covers(paginated_works)
+            
+            return result
+        except Exception as e:
+            error_logger.error(f"搜索{self._entity_name}作品失败: {e}")
+            return ServiceResult.error(f"搜索{self._entity_name}作品失败")
+    
+    def clear_works_cache_impl(self, creator_name: str = None) -> ServiceResult:
+        """通用的清除作品缓存实现"""
+        try:
+            if creator_name:
+                cache_key = f"{self._get_cache_key_prefix()}_{creator_name}"
+                deleted = self._cache_manager.delete_persistent(cache_key, self._get_cache_key_prefix())
+                return ServiceResult.ok({
+                    "cleared_count": 1 if deleted else 0,
+                    "creator_name": creator_name
+                })
+            else:
+                count = self._cache_manager.clear_persistent_category(self._get_cache_key_prefix())
+                return ServiceResult.ok({
+                    "cleared_count": count
+                })
+        except Exception as e:
+            error_logger.error(f"清理{self._entity_name}作品缓存失败: {e}")
+            return ServiceResult.error(f"清理{self._entity_name}作品缓存失败")
+    
+    def _async_download_covers(self, works: List[Dict]):
+        """异步下载作品封面"""
+        def download_covers():
+            for work in works:
+                if work.get("cover_url"):
+                    try:
+                        platform = work.get("platform", "")
+                        self._download_cover(work["id"], work["cover_url"], platform)
+                    except Exception as e:
+                        error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
+        threading.Thread(target=download_covers, daemon=True).start()
