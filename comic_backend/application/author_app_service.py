@@ -27,20 +27,33 @@ class AuthorAppService(BaseCreatorAppService):
         self._comic_repo = ComicJsonRepository()
         self._recommendation_repo = RecommendationJsonRepository()
     
-    def _search_works(self, creator_name: str) -> List[Dict]:
-        """搜索作者作品"""
-        from core.platform import get_supported_platforms
+    def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
+        """搜索作者作品 - 支持分页
         
+        Args:
+            creator_name: 作者名称
+            page: 起始页码
+            max_pages: 最大搜索页数
+            
+        Returns:
+            Dict: {
+                "works": List[Dict],  # 作品列表
+                "has_more": bool,     # 是否还有更多
+                "page": int           # 当前页码
+            }
+        """
         works = []
+        has_more = False
+        
         try:
-            platforms_to_search = get_supported_platforms()
+            platforms_to_search = ['JM', 'PK']
             platform_albums = {}
             max_result_count = 0
             
             for plat in platforms_to_search:
                 try:
                     adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
-                    result = external_api.search_albums(creator_name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
+                    result = external_api.search_albums(creator_name, max_pages=max_pages, adapter_name=adapter_name, fast_mode=True)
                     albums = result.get("albums", [])
                     
                     if albums:
@@ -75,7 +88,11 @@ class AuthorAppService(BaseCreatorAppService):
         except Exception as e:
             error_logger.error(f"搜索作者 {creator_name} 作品失败: {e}")
         
-        return works
+        return {
+            "works": works,
+            "has_more": has_more,
+            "page": page
+        }
     
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的漫画ID集合"""
@@ -241,7 +258,8 @@ class AuthorAppService(BaseCreatorAppService):
                     cache_key = f"{self._get_cache_key_prefix()}_{author.name}"
                     cached_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
                     
-                    works = self._search_works(author.name)
+                    search_result = self._search_works(author.name, page=1, max_pages=3)
+                    works = search_result.get("works", [])
                     
                     if not works:
                         continue

@@ -36,15 +36,31 @@ class ActorAppService(BaseCreatorAppService):
         self._actor_repo = actor_repo or ActorJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
     
-    def _search_works(self, creator_name: str) -> List[Dict]:
-        """搜索演员作品"""
+    def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
+        """搜索演员作品 - 支持分页
+        
+        Args:
+            creator_name: 演员名称
+            page: 起始页码
+            max_pages: 最大搜索页数
+            
+        Returns:
+            Dict: {
+                "works": List[Dict],  # 作品列表
+                "has_more": bool,     # 是否还有更多
+                "page": int           # 当前页码
+            }
+        """
         from api.v1.video import get_video_adapter
         
         works = []
+        has_more = False
+        
         try:
             adapter = get_video_adapter("javdb")
-            result = adapter.search_videos(creator_name, page=1, max_pages=3)
+            result = adapter.search_videos(creator_name, page=page, max_pages=max_pages)
             videos = result.get("videos", [])
+            has_more = result.get("has_next", False)
             
             for video in videos:
                 work_id = str(video.get("video_id", ""))
@@ -67,7 +83,11 @@ class ActorAppService(BaseCreatorAppService):
         except Exception as e:
             error_logger.error(f"搜索演员 {creator_name} 作品失败: {e}")
         
-        return works
+        return {
+            "works": works,
+            "has_more": has_more,
+            "page": page
+        }
     
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的视频ID集合"""
@@ -231,7 +251,8 @@ class ActorAppService(BaseCreatorAppService):
                     cache_key = f"{self._get_cache_key_prefix()}_{actor.name}"
                     cached_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
                     
-                    works = self._search_works(actor.name)
+                    search_result = self._search_works(actor.name, page=1, max_pages=3)
+                    works = search_result.get("works", [])
                     
                     if not works:
                         continue
@@ -425,7 +446,8 @@ class ActorAppService(BaseCreatorAppService):
     def get_actor_videos(self, actor_name: str) -> ServiceResult:
         """获取演员作品（简化版）"""
         try:
-            works = self._search_works(actor_name)
+            search_result = self._search_works(actor_name, page=1, max_pages=3)
+            works = search_result.get("works", [])
             return ServiceResult.ok(works)
         except Exception as e:
             error_logger.error(f"获取演员视频失败: {e}")
