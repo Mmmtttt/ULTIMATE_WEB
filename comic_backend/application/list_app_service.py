@@ -1,17 +1,19 @@
 from typing import List as ListType, Optional
 from domain.list import List, ListRepository
 from domain.comic import ComicRepository
-from domain.video import VideoRepository
+from domain.video import VideoRepository, Video
 from domain.recommendation import RecommendationRepository
-from domain.video_recommendation import VideoRecommendationRepository
+from domain.video_recommendation import VideoRecommendationRepository, VideoRecommendation
 from infrastructure.persistence.repositories import ListJsonRepository, ComicJsonRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.utils import get_current_time, generate_id
+from core.utils import get_current_time, generate_id, generate_uuid
 from core.enums import ContentType
+from core.platform import Platform
+from third_party.platform_service import get_platform_service
 
 
 class ListAppService:
@@ -454,3 +456,319 @@ class ListAppService:
             return False
         except:
             return False
+    
+    def get_platform_user_lists(self, platform_str: str) -> ServiceResult:
+        """获取平台用户清单列表
+        
+        Args:
+            platform_str: 平台字符串
+            
+        Returns:
+            包含清单列表的结果
+        """
+        try:
+            app_logger.info(f"获取平台用户清单列表: {platform_str}")
+            
+            platform = Platform(platform_str)
+            platform_service = get_platform_service()
+            result = platform_service.get_user_lists(platform)
+            
+            app_logger.info(f"获取平台用户清单列表成功: {len(result.get('lists', []))} 个清单")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取平台用户清单列表失败: {e}")
+            return ServiceResult.error(f"获取平台用户清单列表失败: {e}")
+    
+    def get_platform_list_detail(self, platform_str: str, list_id: str) -> ServiceResult:
+        """获取平台清单详情
+        
+        Args:
+            platform_str: 平台字符串
+            list_id: 清单ID
+            
+        Returns:
+            包含清单详情的结果
+        """
+        try:
+            app_logger.info(f"获取平台清单详情: {platform_str}, {list_id}")
+            
+            platform = Platform(platform_str)
+            platform_service = get_platform_service()
+            result = platform_service.get_list_detail(platform, list_id)
+            
+            app_logger.info(f"获取平台清单详情成功: {list_id}, {len(result.get('works', []))} 个作品")
+            return ServiceResult.ok(result)
+        except Exception as e:
+            error_logger.error(f"获取平台清单详情失败: {e}")
+            return ServiceResult.error(f"获取平台清单详情失败: {e}")
+    
+    def import_platform_list(
+        self, 
+        platform_str: str, 
+        platform_list_id: str, 
+        platform_list_name: str, 
+        source: str = "local"
+    ) -> ServiceResult:
+        """导入平台清单到本地清单
+        
+        Args:
+            platform_str: 平台字符串
+            platform_list_id: 平台清单ID
+            platform_list_name: 平台清单名称
+            source: 导入来源 - "local" 本地库, "preview" 预览库
+            
+        Returns:
+            导入结果
+        """
+        try:
+            app_logger.info(f"开始导入平台清单: {platform_str}, {platform_list_id} ({platform_list_name}), source={source}")
+            
+            platform = Platform(platform_str)
+            platform_service = get_platform_service()
+            
+            # 自动创建本地清单
+            list_name = f"远程跟踪：{platform_list_name}"
+            list_desc = f"远程清单ID：{platform_list_id}"
+            
+            from core.enums import ContentType
+            content_type = ContentType.VIDEO if platform == Platform.JAVDB else ContentType.COMIC
+            
+            new_list = self._list_repo.create(
+                name=list_name,
+                desc=list_desc,
+                content_type=content_type
+            )
+            
+            if not new_list:
+                return ServiceResult.error("创建本地清单失败")
+            
+            app_logger.info(f"已创建本地清单: {new_list.id} - {new_list.name}")
+            
+            list_detail = platform_service.get_list_detail(platform, platform_list_id)
+            works = list_detail.get('works', [])
+            
+            if not works:
+                return ServiceResult.error("清单中没有内容")
+            
+            if platform == Platform.JAVDB:
+                result = self._import_javdb_videos(works, new_list.id, source)
+            else:
+                result = self._import_comics(works, new_list.id, source, platform)
+            
+            app_logger.info(f"导入平台清单完成: {result.data}")
+            
+            # 返回新创建的清单ID
+            if result.success:
+                result.data['list_id'] = new_list.id
+            
+            return result
+        except Exception as e:
+            error_logger.error(f"导入平台清单失败: {e}")
+            return ServiceResult.error(f"导入平台清单失败: {e}")
+    
+    def _import_javdb_videos(
+        self, 
+        works: ListType[dict], 
+        target_list_id: str, 
+        source: str = "local"
+    ) -> ServiceResult:
+        """导入JAVDB视频
+        
+        Args:
+            works: JAVDB视频列表
+            target_list_id: 目标清单ID
+            source: 导入来源
+            
+        Returns:
+            导入结果
+        """
+        try:
+            from core.platform import add_platform_prefix
+            from application.tag_app_service import TagAppService
+            from domain.tag.entity import ContentType
+            from core.constants import JAV_PICTURES_DIR, JAV_COVER_DIR
+            from application.video_app_service import VideoAppService
+            
+            repo = self._video_repo if source == "local" else self._video_rec_repo
+            entity_class = Video if source == "local" else VideoRecommendation
+            video_service = VideoAppService()
+            
+            tag_service = TagAppService()
+            existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+            
+            tag_name_to_id = {}
+            for tag in existing_tags:
+                tag_name_to_id[tag["name"]] = tag["id"]
+            
+            imported_count = 0
+            skipped_count = 0
+            
+            # 获取平台服务来获取视频详情
+            from third_party.platform_service import get_platform_service
+            platform_service = get_platform_service()
+            
+            for work in works:
+                try:
+                    video_id = work.get('video_id', '')
+                    if not video_id:
+                        skipped_count += 1
+                        continue
+                    
+                    prefixed_id = add_platform_prefix(Platform.JAVDB, video_id)
+                    
+                    existing_video = repo.get_by_id(prefixed_id)
+                    if existing_video:
+                        if target_list_id not in existing_video.list_ids:
+                            existing_video.add_to_list(target_list_id)
+                            repo.save(existing_video)
+                            imported_count += 1
+                        else:
+                            skipped_count += 1
+                        continue
+                    
+                    # 获取完整的视频详情
+                    app_logger.info(f"获取视频详情: {video_id}")
+                    detail = platform_service.get_album_by_id(Platform.JAVDB, video_id)
+                    
+                    if not detail:
+                        app_logger.warning(f"无法获取视频详情: {video_id}")
+                        skipped_count += 1
+                        continue
+                    
+                    # 从详情中提取第一个视频（因为 get_album_by_id 返回的是 videos 数组）
+                    videos = detail.get('videos', [])
+                    if not videos:
+                        app_logger.warning(f"视频详情中没有视频数据: {video_id}")
+                        skipped_count += 1
+                        continue
+                    
+                    video_detail = videos[0]
+                    
+                    # 处理标签
+                    video_tag_ids = []
+                    for tag_name in video_detail.get("tags", []):
+                        if tag_name not in tag_name_to_id:
+                            result = tag_service.create_tag(tag_name, ContentType.VIDEO)
+                            if result.success:
+                                tag_name_to_id[tag_name] = result.data["id"]
+                                app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
+                        if tag_name in tag_name_to_id:
+                            video_tag_ids.append(tag_name_to_id[tag_name])
+                    
+                    # 构建视频数据
+                    video_data = {
+                        'id': prefixed_id,
+                        'title': video_detail.get('title', ''),
+                        'code': video_detail.get('code', ''),
+                        'date': video_detail.get('date', ''),
+                        'series': video_detail.get('series', ''),
+                        'creator': video_detail.get('actors', [''])[0] if video_detail.get('actors') else '',
+                        'actors': video_detail.get('actors', []),
+                        'magnets': video_detail.get('magnets', []),
+                        'thumbnail_images': video_detail.get('thumbnail_images', []),
+                        'preview_video': video_detail.get('preview_video', ''),
+                        'tag_ids': video_tag_ids,
+                        'list_ids': [target_list_id],
+                        'create_time': get_current_time(),
+                        'last_access_time': get_current_time()
+                    }
+                    
+                    # 处理评分
+                    rating = work.get('rating', '')
+                    score = 8.0
+                    if rating:
+                        try:
+                            rating_num = float(rating.replace('分', ''))
+                            score = min(max(rating_num, 1.0), 10.0)
+                        except:
+                            pass
+                    video_data['score'] = score
+                    
+                    # 对于本地库，使用 VideoAppService 导入
+                    if source == "local":
+                        result = video_service.import_video(video_data)
+                        if result.success:
+                            imported_count += 1
+                            # 下载封面
+                            cover_url = video_detail.get('cover_url', '')
+                            app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
+                            if cover_url:
+                                app_logger.info(f"开始下载封面: {prefixed_id}")
+                                video_service.download_cover_async(prefixed_id, cover_url)
+                                video_service.download_high_quality_thumbnail_async(
+                                    prefixed_id, cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR
+                                )
+                            else:
+                                app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
+                        else:
+                            skipped_count += 1
+                    else:
+                        # 预览库直接保存
+                        from infrastructure.persistence.json_storage import JsonStorage
+                        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+                        
+                        video_data['cover_path'] = video_detail.get('cover_url', '')
+                        
+                        db_file = VIDEO_RECOMMENDATION_JSON_FILE
+                        storage = JsonStorage(db_file)
+                        db_data = storage.read()
+                        videos_key = 'video_recommendations'
+                        
+                        if videos_key not in db_data:
+                            db_data[videos_key] = []
+                        db_data[videos_key].append(video_data)
+                        
+                        if storage.write(db_data):
+                            imported_count += 1
+                            # 下载封面
+                            cover_url = video_detail.get('cover_url', '')
+                            app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
+                            if cover_url:
+                                app_logger.info(f"开始下载推荐封面: {prefixed_id}")
+                                video_service.download_cover_async_for_recommendation(prefixed_id, cover_url, JAV_COVER_DIR)
+                            else:
+                                app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
+                        else:
+                            skipped_count += 1
+                        
+                except Exception as e:
+                    app_logger.warning(f"导入单个视频失败: {work.get('video_id', '')}, {e}")
+                    import traceback
+                    app_logger.warning(traceback.format_exc())
+                    skipped_count += 1
+            
+            return ServiceResult.ok({
+                'imported_count': imported_count,
+                'skipped_count': skipped_count,
+                'total_count': len(works)
+            }, f"成功导入 {imported_count} 个视频，跳过 {skipped_count} 个")
+            
+        except Exception as e:
+            error_logger.error(f"导入JAVDB视频失败: {e}")
+            import traceback
+            error_logger.error(traceback.format_exc())
+            return ServiceResult.error(f"导入JAVDB视频失败: {e}")
+    
+    def _import_comics(
+        self, 
+        works: ListType[dict], 
+        target_list_id: str, 
+        source: str = "local",
+        platform: Platform = None
+    ) -> ServiceResult:
+        """导入漫画（待实现）
+        
+        Args:
+            works: 漫画列表
+            target_list_id: 目标清单ID
+            source: 导入来源
+            platform: 平台
+            
+        Returns:
+            导入结果
+        """
+        return ServiceResult.ok({
+            'imported_count': 0,
+            'skipped_count': len(works),
+            'total_count': len(works)
+        }, "漫画导入功能待实现")

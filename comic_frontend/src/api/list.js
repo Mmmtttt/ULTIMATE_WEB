@@ -60,6 +60,18 @@ export const listApi = {
 
   checkFavoriteVideo(videoId, source = 'local') {
     return request.get('/v1/list/video/favorite/check', { params: { video_id: videoId, source } })
+  },
+
+  getPlatformUserLists(platform) {
+    return request.get('/v1/list/platform/lists', { params: { platform } })
+  },
+
+  getPlatformListDetail(platform, listId) {
+    return request.get('/v1/list/platform/list/detail', { params: { platform, list_id: listId } })
+  },
+
+  importPlatformList(platform, platformListId, platformListName, source = 'local') {
+    return request.post('/v1/list/import', { platform, platform_list_id: platformListId, platform_list_name: platformListName, source })
   }
 }
 

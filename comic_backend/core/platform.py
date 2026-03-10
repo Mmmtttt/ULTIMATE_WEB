@@ -6,31 +6,37 @@ import os
 class Platform(Enum):
     JM = "JM"
     PK = "PK"
-    
+    JAVDB = "JAVDB"
+
 
 PLATFORM_PREFIXES = {
     Platform.JM: "JM",
     Platform.PK: "PK",
+    Platform.JAVDB: "JAVDB",
 }
 
 PLATFORM_NAMES = {
     Platform.JM: "JMComic",
     Platform.PK: "PK",
+    Platform.JAVDB: "JAVDB",
 }
 
 PLATFORM_DOWNLOAD_DIRS = {
     Platform.JM: "JM",
     Platform.PK: "PK",
+    Platform.JAVDB: "JAVDB",
 }
 
 PLATFORM_COVER_URLS = {
     Platform.JM: "https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg",
     Platform.PK: None,
+    Platform.JAVDB: None,
 }
 
 PLATFORM_IMAGE_URLS = {
     Platform.JM: "https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp",
     Platform.PK: None,
+    Platform.JAVDB: None,
 }
 
 

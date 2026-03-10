@@ -275,3 +275,66 @@ def check_favorite_video():
     except Exception as e:
         error_logger.error(f"检查收藏状态失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/platform/lists', methods=['GET'])
+def get_platform_user_lists():
+    try:
+        platform = request.args.get('platform')
+        if not platform:
+            return error_response(400, "缺少参数: platform")
+        
+        result = list_service.get_platform_user_lists(platform)
+        if result.success:
+            app_logger.info(f"获取平台用户清单列表成功: {platform}")
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取平台用户清单列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/platform/list/detail', methods=['GET'])
+def get_platform_list_detail():
+    try:
+        platform = request.args.get('platform')
+        list_id = request.args.get('list_id')
+        if not platform or not list_id:
+            return error_response(400, "缺少参数: platform 或 list_id")
+        
+        result = list_service.get_platform_list_detail(platform, list_id)
+        if result.success:
+            app_logger.info(f"获取平台清单详情成功: {platform}, {list_id}")
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"获取平台清单详情失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/import', methods=['POST'])
+def import_platform_list():
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少请求体")
+        
+        platform = data.get('platform')
+        platform_list_id = data.get('platform_list_id')
+        platform_list_name = data.get('platform_list_name', '')
+        source = data.get('source', 'local')
+        
+        if not platform or not platform_list_id:
+            return error_response(400, "缺少必要参数: platform, platform_list_id")
+        
+        result = list_service.import_platform_list(platform, platform_list_id, platform_list_name, source)
+        if result.success:
+            app_logger.info(f"导入平台清单成功: {platform}, {platform_list_id} ({platform_list_name})")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"导入平台清单失败: {e}")
+        return error_response(500, "服务器内部错误")
