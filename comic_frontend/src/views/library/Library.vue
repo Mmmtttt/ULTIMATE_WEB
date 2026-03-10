@@ -103,6 +103,7 @@
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
+          :is-video-mode="isVideoMode"
           @change="onFilterChange"
         />
         <div class="filter-actions">

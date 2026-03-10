@@ -105,6 +105,7 @@
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
+          :is-video-mode="isVideoMode"
         />
       </div>
     </van-popup>

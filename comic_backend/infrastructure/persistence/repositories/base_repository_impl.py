@@ -88,6 +88,9 @@ class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
         
         results = []
         for e in entities:
+            if e.get("is_deleted", False):
+                continue
+            
             entity_tags = set(e.get("tag_ids", []))
             
             if include_tags and not all(t in entity_tags for t in include_tags):
@@ -106,6 +109,9 @@ class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
         
         results = []
         for e in entities:
+            if e.get("is_deleted", False):
+                continue
+            
             if tag_id in e.get("tag_ids", []):
                 results.append(self._get_entity_class().from_dict(e))
         
@@ -117,6 +123,9 @@ class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
         
         results = []
         for e in entities:
+            if e.get("is_deleted", False):
+                continue
+            
             if list_id in e.get("list_ids", []):
                 results.append(self._get_entity_class().from_dict(e))
         
@@ -129,6 +138,9 @@ class BaseContentJsonRepository(BaseJsonRepository[C], Generic[C]):
         
         results = []
         for e in entities:
+            if e.get("is_deleted", False):
+                continue
+            
             entity_tags = set(e.get("tag_ids", []))
             entity_author = e.get("author", "") or e.get("creator", "")
             entity_list_ids = set(e.get("list_ids", []))

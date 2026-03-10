@@ -1110,58 +1110,37 @@ def search_video_recommendations():
 def filter_video_recommendations():
     """根据标签、作者、清单筛选推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        from application.tag_app_service import TagAppService
-        from domain.tag.entity import ContentType
+        from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
+        from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
         
         include_tag_ids = request.args.getlist('include_tag_ids')
         exclude_tag_ids = request.args.getlist('exclude_tag_ids')
         authors = request.args.getlist('authors')
         list_ids = request.args.getlist('list_ids')
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
-        videos = db_data.get('video_recommendations', [])
+        video_repo = VideoRecommendationJsonRepository()
+        tag_repo = TagJsonRepository()
+        tags = tag_repo.get_all()
+        tag_map = {t.id: t.name for t in tags}
         
-        tag_service = TagAppService()
-        tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
-        tag_map = {t["id"]: t["name"] for t in tags}
+        if authors or list_ids:
+            videos = video_repo.filter_multi(
+                include_tags=include_tag_ids if include_tag_ids else None,
+                exclude_tags=exclude_tag_ids if exclude_tag_ids else None,
+                authors=authors if authors else None,
+                list_ids=list_ids if list_ids else None
+            )
+        else:
+            videos = video_repo.filter_by_tags(include_tag_ids, exclude_tag_ids)
         
-        filtered_videos = []
-        for video in videos:
-            if video.get('is_deleted'):
-                continue
-            
-            video_tag_ids = video.get('tag_ids', [])
-            video_author = video.get("author", "") or video.get("creator", "")
-            video_list_ids = set(video.get("list_ids", []))
-            
-            # 标签筛选
-            if include_tag_ids:
-                has_all_include = all(tag_id in video_tag_ids for tag_id in include_tag_ids)
-                if not has_all_include:
-                    continue
-            
-            if exclude_tag_ids:
-                has_any_exclude = any(tag_id in video_tag_ids for tag_id in exclude_tag_ids)
-                if has_any_exclude:
-                    continue
-            
-            # 作者筛选
-            if authors and video_author not in authors:
-                continue
-            
-            # 清单筛选
-            if list_ids and not any(lid in video_list_ids for lid in list_ids):
-                continue
-            
-            video_with_tags = video.copy()
-            video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-            filtered_videos.append(video_with_tags)
+        results = []
+        for v in videos:
+            video_info = v.to_dict()
+            video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
+            results.append(video_info)
         
-        app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(filtered_videos)}")
-        return success_response(filtered_videos)
+        app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
+        return success_response(results)
     except Exception as e:
         error_logger.error(f"视频推荐筛选失败: {e}")
         return error_response(500, "服务器内部错误")

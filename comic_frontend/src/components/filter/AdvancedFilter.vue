@@ -88,7 +88,7 @@
             @click="toggleTag(tag.id)"
           >
             {{ tag.name }}
-            <span v-if="showTagCount" class="count">({{ tag.comic_count }})</span>
+            <span v-if="showTagCount" class="count">({{ tag[tagCountKey] }})</span>
           </span>
         </div>
         <div class="filter-hint">
@@ -171,6 +171,10 @@ const props = defineProps({
   showTagCount: {
     type: Boolean,
     default: true
+  },
+  isVideoMode: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -198,6 +202,10 @@ const hasSelection = computed(() => {
     props.selectedAuthors.length > 0 ||
     props.selectedListIds.length > 0
   )
+})
+
+const tagCountKey = computed(() => {
+  return props.isVideoMode ? 'video_count' : 'comic_count'
 })
 
 const selectedIncludeTags = computed(() => {
