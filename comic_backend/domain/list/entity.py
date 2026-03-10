@@ -12,6 +12,10 @@ class List:
     content_type: ContentType = ContentType.COMIC
     is_default: bool = False
     create_time: str = ""
+    platform: str = ""
+    platform_list_id: str = ""
+    import_source: str = ""
+    last_sync_time: str = ""
     
     @classmethod
     def from_dict(cls, data: dict) -> "List":
@@ -21,7 +25,11 @@ class List:
             desc=data.get("desc", ""),
             content_type=ContentType(data.get("content_type", "comic")),
             is_default=data.get("is_default", False),
-            create_time=data.get("create_time", "")
+            create_time=data.get("create_time", ""),
+            platform=data.get("platform", ""),
+            platform_list_id=data.get("platform_list_id", ""),
+            import_source=data.get("import_source", ""),
+            last_sync_time=data.get("last_sync_time", "")
         )
     
     def to_dict(self) -> dict:
@@ -31,7 +39,11 @@ class List:
             "desc": self.desc,
             "content_type": self.content_type.value,
             "is_default": self.is_default,
-            "create_time": self.create_time
+            "create_time": self.create_time,
+            "platform": self.platform,
+            "platform_list_id": self.platform_list_id,
+            "import_source": self.import_source,
+            "last_sync_time": self.last_sync_time
         }
     
     def update(self, name: str = None, desc: str = None):

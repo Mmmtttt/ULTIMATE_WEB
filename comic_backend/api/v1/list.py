@@ -338,3 +338,26 @@ def import_platform_list():
     except Exception as e:
         error_logger.error(f"导入平台清单失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/sync', methods=['POST'])
+def sync_platform_list():
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少请求体")
+        
+        list_id = data.get('list_id')
+        
+        if not list_id:
+            return error_response(400, "缺少必要参数: list_id")
+        
+        result = list_service.sync_platform_list(list_id)
+        if result.success:
+            app_logger.info(f"同步平台清单成功: {list_id}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"同步平台清单失败: {e}")
+        return error_response(500, "服务器内部错误")

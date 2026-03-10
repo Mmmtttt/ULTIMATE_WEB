@@ -72,6 +72,10 @@ export const listApi = {
 
   importPlatformList(platform, platformListId, platformListName, source = 'local') {
     return request.post('/v1/list/import', { platform, platform_list_id: platformListId, platform_list_name: platformListName, source })
+  },
+
+  syncPlatformList(listId) {
+    return request.post('/v1/list/sync', { list_id: listId })
   }
 }
 

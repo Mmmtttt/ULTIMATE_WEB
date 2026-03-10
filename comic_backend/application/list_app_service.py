@@ -49,9 +49,20 @@ class ListAppService:
             
             result = []
             for lst in lists:
+                # 自动修复旧数据：如果清单描述包含"远程清单ID"但缺少 platform 和 platform_list_id
+                if (not lst.platform or not lst.platform_list_id) and lst.desc and "远程清单ID" in lst.desc:
+                    import re
+                    match = re.search(r'远程清单ID[：:]\s*(\S+)', lst.desc)
+                    if match:
+                        lst.platform = "JAVDB"
+                        lst.platform_list_id = match.group(1)
+                        lst.import_source = "local"
+                        self._list_repo.save(lst)
+                        app_logger.info(f"自动修复旧清单数据: {lst.id}, {lst.platform}, {lst.platform_list_id}")
+                
                 comic_count = self._list_repo.get_comic_count(lst.id)
                 video_count = self._list_repo.get_video_count(lst.id)
-                result.append({
+                list_data = {
                     "id": lst.id,
                     "name": lst.name,
                     "desc": lst.desc,
@@ -59,8 +70,14 @@ class ListAppService:
                     "is_default": lst.is_default,
                     "comic_count": comic_count,
                     "video_count": video_count,
-                    "create_time": lst.create_time
-                })
+                    "create_time": lst.create_time,
+                    "platform": lst.platform,
+                    "platform_list_id": lst.platform_list_id,
+                    "import_source": lst.import_source,
+                    "last_sync_time": lst.last_sync_time
+                }
+                app_logger.info(f"清单数据: {list_data}")
+                result.append(list_data)
             
             app_logger.info(f"获取清单列表成功，共 {len(result)} 个清单")
             return ServiceResult.ok(result)
@@ -159,6 +176,10 @@ class ListAppService:
                 "comic_count": len(comic_list),
                 "video_count": len(video_list),
                 "create_time": lst.create_time,
+                "platform": lst.platform,
+                "platform_list_id": lst.platform_list_id,
+                "import_source": lst.import_source,
+                "last_sync_time": lst.last_sync_time,
                 "comics": comic_list,
                 "videos": video_list
             }
@@ -542,6 +563,13 @@ class ListAppService:
             if not new_list:
                 return ServiceResult.error("创建本地清单失败")
             
+            # 保存网络清单信息
+            new_list.platform = platform_str
+            new_list.platform_list_id = platform_list_id
+            new_list.import_source = source
+            new_list.last_sync_time = get_current_time()
+            self._list_repo.save(new_list)
+            
             app_logger.info(f"已创建本地清单: {new_list.id} - {new_list.name}")
             
             list_detail = platform_service.get_list_detail(platform, platform_list_id)
@@ -565,6 +593,99 @@ class ListAppService:
         except Exception as e:
             error_logger.error(f"导入平台清单失败: {e}")
             return ServiceResult.error(f"导入平台清单失败: {e}")
+    
+    def sync_platform_list(self, list_id: str) -> ServiceResult:
+        """同步平台清单
+        
+        Args:
+            list_id: 本地清单ID
+            
+        Returns:
+            同步结果
+        """
+        try:
+            app_logger.info(f"开始同步清单: {list_id}")
+            
+            lst = self._list_repo.get_by_id(list_id)
+            if not lst:
+                return ServiceResult.error("清单不存在")
+            
+            # 如果没有 platform 和 platform_list_id，从描述中解析
+            if not lst.platform or not lst.platform_list_id:
+                import re
+                match = re.search(r'远程清单ID[：:]\s*(\S+)', lst.desc)
+                if match:
+                    lst.platform = "JAVDB"
+                    lst.platform_list_id = match.group(1)
+                    lst.import_source = "local"
+                    self._list_repo.save(lst)
+                    app_logger.info(f"从描述中解析出清单信息: {lst.platform}, {lst.platform_list_id}")
+                else:
+                    return ServiceResult.error("该清单不是网络清单，无法同步")
+            
+            platform = Platform(lst.platform)
+            platform_service = get_platform_service()
+            source = lst.import_source or "local"
+            
+            app_logger.info(f"从平台 {lst.platform} 同步清单 {lst.platform_list_id}")
+            
+            # 获取平台最新的清单内容
+            list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
+            works = list_detail.get('works', [])
+            
+            if not works:
+                return ServiceResult.error("清单中没有内容")
+            
+            # 获取当前清单已有的视频
+            videos = self._video_repo.get_all()
+            existing_video_codes = set()
+            for video in videos:
+                if list_id in video.list_ids and not video.is_deleted:
+                    existing_video_codes.add(video.code)
+            
+            app_logger.info(f"当前清单已有 {len(existing_video_codes)} 个视频")
+            
+            # 筛选出新增的视频
+            new_works = []
+            for work in works:
+                code = work.get('code', '')
+                if code and code not in existing_video_codes:
+                    new_works.append(work)
+                    app_logger.info(f"发现新视频: {code}")
+            
+            app_logger.info(f"需要导入 {len(new_works)} 个新视频")
+            
+            if not new_works:
+                # 更新最后同步时间
+                lst.last_sync_time = get_current_time()
+                self._list_repo.save(lst)
+                
+                return ServiceResult.ok({
+                    'imported_count': 0,
+                    'skipped_count': 0,
+                    'total_count': len(works),
+                    'list_id': list_id
+                }, "清单已是最新，无需同步")
+            
+            # 导入新增的视频
+            if platform == Platform.JAVDB:
+                result = self._import_javdb_videos(new_works, list_id, source)
+            else:
+                result = self._import_comics(new_works, list_id, source, platform)
+            
+            # 更新最后同步时间
+            if result.success:
+                lst.last_sync_time = get_current_time()
+                self._list_repo.save(lst)
+                result.data['list_id'] = list_id
+            
+            app_logger.info(f"同步清单完成: {result.data}")
+            return result
+        except Exception as e:
+            error_logger.error(f"同步清单失败: {e}")
+            import traceback
+            error_logger.error(traceback.format_exc())
+            return ServiceResult.error(f"同步清单失败: {e}")
     
     def _import_javdb_videos(
         self, 

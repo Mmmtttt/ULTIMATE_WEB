@@ -28,6 +28,7 @@
         >
           <template #value>
             <div class="list-counts">
+              <van-button v-if="list.platform" size="small" type="success" text="同步" class="sync-btn-inline" @click.stop="syncList(list)" />
               <van-badge v-if="list.content_type === 'comic'" :content="list.comic_count" :show-zero="false" class="count-badge">
                 <van-icon name="photo-o" size="16" />
               </van-badge>
@@ -227,6 +228,7 @@ const loadingPlatformLists = ref(false)
 const selectedPlatformList = ref(null)
 const importSource = ref('local')
 const importing = ref(false)
+const syncing = ref(false)
 
 const availablePlatforms = computed(() => {
   if (currentContentType.value === 'video') {
@@ -252,6 +254,7 @@ async function loadLists() {
   loading.value = true
   await listStore.fetchLists(currentContentType.value)
   lists.value = listStore.lists
+  console.log('清单列表数据:', lists.value)
   loading.value = false
 }
 
@@ -415,6 +418,39 @@ async function doImport() {
   }
 }
 
+async function syncList(list) {
+  try {
+    await showConfirmDialog({
+      title: '同步清单',
+      message: `确定要同步清单"${list.name}"吗？\n\n将从网络侧获取最新内容，新增的内容将被导入到本地。`
+    })
+  } catch {
+    return
+  }
+  
+  syncing.value = true
+  try {
+    const res = await listApi.syncPlatformList(list.id)
+    
+    if (res.code === 200) {
+      const data = res.data
+      let message = res.msg || '同步成功'
+      if (data && data.imported_count !== undefined) {
+        message = `同步成功，新增 ${data.imported_count} 个，跳过 ${data.skipped_count} 个`
+      }
+      showSuccessToast(message)
+      await loadLists()
+    } else {
+      showFailToast(res.msg || '同步失败')
+    }
+  } catch (e) {
+    console.error(e)
+    showFailToast('同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
 onMounted(() => {
   loadLists()
 })
@@ -443,6 +479,7 @@ onMounted(() => {
 .list-counts {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .count-badge {
@@ -451,7 +488,12 @@ onMounted(() => {
   gap: 4px;
 }
 
-.edit-btn {
+.sync-btn-inline {
+  margin-right: 8px;
+}
+
+.edit-btn,
+.sync-btn {
   width: 60px;
 }
 
