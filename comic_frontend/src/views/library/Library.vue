@@ -56,7 +56,7 @@
       <MediaGrid 
         v-else 
         :items="items" 
-        :show-favorite="isVideoMode"
+        :show-favorite="true"
         :is-favorited="isFavorited"
         :selectable="isManageMode"
         :selected-ids="selectedIds"
@@ -298,15 +298,18 @@ function toggleSelection(item) {
 }
 
 function isFavorited(item) {
-  return listStore.isFavoritedVideo(item) // Need to unify this API
+  if (isVideoMode.value) {
+    return listStore.isFavoritedVideo(item)
+  } else {
+    return listStore.isFavorited(item)
+  }
 }
 
 async function toggleFavorite(item) {
-  // Logic from VideoHome.vue
   if (isVideoMode.value) {
-    await listStore.toggleFavoriteVideo(item.id)
+    await listStore.toggleFavoriteVideo(item.id, item.source)
   } else {
-    // comic logic
+    await listStore.toggleFavorite(item.id, item.source)
   }
 }
 

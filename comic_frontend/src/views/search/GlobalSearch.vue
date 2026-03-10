@@ -67,7 +67,7 @@
         <template v-else>
           <MediaGrid 
             :items="normalizedResults" 
-            :show-favorite="activeTab !== 'local'"
+            :show-favorite="true"
             :is-favorited="isFavorited"
             :show-progress="!isVideoMode"
             @click="onItemClick"
@@ -377,11 +377,20 @@ function onItemClick(item) {
 }
 
 function isFavorited(item) {
-  return listStore.isFavoritedVideo(item)
+  if (isVideoMode.value) {
+    return listStore.isFavoritedVideo(item)
+  } else {
+    return listStore.isFavorited(item)
+  }
 }
 
-function toggleFavorite(item) {
-  // Logic
+async function toggleFavorite(item) {
+  const source = activeTab.value === 'local' ? 'local' : 'preview'
+  if (isVideoMode.value) {
+    await listStore.toggleFavoriteVideo(item.id, source)
+  } else {
+    await listStore.toggleFavorite(item.id, source)
+  }
 }
 
 onMounted(() => {

@@ -255,13 +255,19 @@ function toggleSelection(item) {
 }
 
 function isSaved(item) {
-  // Check if item is in favorites list
-  return listStore.isFavoritedVideo(item) // Simplified
+  if (isVideoMode.value) {
+    return listStore.isFavoritedVideo(item)
+  } else {
+    return listStore.isFavorited(item)
+  }
 }
 
 async function toggleSave(item) {
-  // Implementation for saving/favoriting
-  showToast('Toggle save')
+  if (isVideoMode.value) {
+    await listStore.toggleFavoriteVideo(item.id, item.source || 'preview')
+  } else {
+    await listStore.toggleFavorite(item.id, item.source || 'preview')
+  }
 }
 
 async function batchSave() {
