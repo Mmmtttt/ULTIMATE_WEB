@@ -1,10 +1,5 @@
-"""
-演员 API 路由
-"""
-
 from flask import Blueprint, request, jsonify
 from application.actor_app_service import ActorAppService
-from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 
 actor_bp = Blueprint('actor', __name__)
@@ -28,9 +23,10 @@ def error_response(code, msg):
 
 
 @actor_bp.route('/list', methods=['GET'])
-def actor_list():
+def get_actor_list():
     try:
         result = actor_service.get_subscription_list()
+        
         if result.success:
             return success_response(result.data)
         else:
@@ -41,9 +37,11 @@ def actor_list():
 
 
 @actor_bp.route('/all', methods=['GET'])
-def all_actors():
+def get_all_actors():
+    """获取所有演员（主页+推荐页）"""
     try:
         result = actor_service.get_all_actors()
+        
         if result.success:
             return success_response(result.data)
         else:
@@ -53,18 +51,40 @@ def all_actors():
         return error_response(500, "服务器内部错误")
 
 
+@actor_bp.route('/search-works', methods=['GET'])
+def search_actor_works():
+    """根据演员名搜索作品（不需要订阅）"""
+    try:
+        actor_name = request.args.get('actor_name')
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 5))
+        
+        if not actor_name:
+            return error_response(400, "演员名称不能为空")
+        
+        result = actor_service.search_actor_works_by_name(actor_name, offset, limit)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(500, result.message)
+    except Exception as e:
+        error_logger.error(f"搜索演员作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @actor_bp.route('/subscribe', methods=['POST'])
-def subscribe():
+def subscribe_actor():
     try:
         data = request.json
-        name = data.get('name')
-        actor_id = data.get('actor_id', '')
+        if not data or 'name' not in data:
+            return error_response(400, "缺少参数: name")
         
-        if not name:
-            return error_response(400, "缺少演员名称")
+        name = data['name']
+        result = actor_service.subscribe_actor(name)
         
-        result = actor_service.subscribe_actor(name, actor_id)
         if result.success:
+            app_logger.info(f"订阅演员成功: {name}")
             return success_response(result.data, result.message)
         else:
             return error_response(400, result.message)
@@ -74,19 +94,116 @@ def subscribe():
 
 
 @actor_bp.route('/unsubscribe', methods=['DELETE'])
-def unsubscribe():
+def unsubscribe_actor():
     try:
-        actor_subscription_id = request.args.get('actor_subscription_id')
-        if not actor_subscription_id:
-            return error_response(400, "缺少参数")
+        data = request.json
+        if not data or 'actor_id' not in data:
+            return error_response(400, "缺少参数: actor_id")
         
-        result = actor_service.unsubscribe_actor(actor_subscription_id)
+        actor_id = data['actor_id']
+        result = actor_service.unsubscribe_actor(actor_id)
+        
+        if result.success:
+            app_logger.info(f"取消订阅演员成功: {actor_id}")
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"取消订阅演员失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/check-updates', methods=['POST'])
+def check_updates():
+    try:
+        data = request.json or {}
+        actor_id = data.get('actor_id')
+        
+        result = actor_service.check_actor_updates(actor_id)
+        
         if result.success:
             return success_response(result.data)
         else:
             return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"取消订阅失败: {e}")
+        error_logger.error(f"检查演员更新失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/new-works/<actor_id>', methods=['GET'])
+def get_new_works(actor_id):
+    try:
+        result = actor_service.get_actor_new_works(actor_id)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取演员新作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/clear-new-count/<actor_id>', methods=['POST'])
+def clear_new_count(actor_id):
+    try:
+        result = actor_service.clear_actor_new_count(actor_id)
+        
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清除新作品计数失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/works/<actor_id>', methods=['GET'])
+def get_actor_works(actor_id):
+    try:
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', 5))
+        
+        result = actor_service.get_actor_works_paginated(actor_id, offset, limit)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"获取演员作品失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/cover-cache/clear', methods=['DELETE'])
+def clear_actor_cover_cache():
+    """清理演员作品封面缓存"""
+    try:
+        result = actor_service.clear_actor_cover_cache()
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清理演员封面缓存失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@actor_bp.route('/works-cache/clear', methods=['DELETE'])
+def clear_actor_works_cache():
+    """清理演员作品数据缓存"""
+    try:
+        actor_name = request.args.get('actor_name')
+        
+        result = actor_service.clear_actor_works_cache(actor_name)
+        
+        if result.success:
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"清理演员作品缓存失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -145,21 +262,4 @@ def update_last_work():
             return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"更新最新作品失败: {e}")
-        return error_response(500, "服务器内部错误")
-
-
-@actor_bp.route('/check-updates', methods=['POST'])
-def check_updates():
-    """检查演员订阅更新（可选传 actor_subscription_id，仅检查单个）"""
-    try:
-        data = request.json or {}
-        actor_subscription_id = data.get('actor_subscription_id')
-        
-        result = actor_service.check_actor_updates(actor_subscription_id)
-        if result.success:
-            return success_response(result.data)
-        else:
-            return error_response(400, result.message)
-    except Exception as e:
-        error_logger.error(f"检查演员更新失败: {e}")
         return error_response(500, "服务器内部错误")
