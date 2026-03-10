@@ -47,14 +47,14 @@
     <div class="all-tags">
       <div class="tags-grid">
         <TagBadge
-          v-for="tag in tags"
+          v-for="tag in sortedTags"
           :key="tag.id"
           :tag="tag"
           :selected="isIncludeTag(tag.id)"
           :type="getTagType(tag.id)"
           clickable
           :show-count="showCount"
-          :count="tag.comic_count"
+          :count="tag[tagCountKey]"
           @click="toggleTag(tag.id)"
         />
       </div>
@@ -87,7 +87,23 @@ const props = defineProps({
   showCount: {
     type: Boolean,
     default: true
+  },
+  isVideoMode: {
+    type: Boolean,
+    default: false
   }
+})
+
+const tagCountKey = computed(() => {
+  return props.isVideoMode ? 'video_count' : 'comic_count'
+})
+
+const sortedTags = computed(() => {
+  return [...props.tags].sort((a, b) => {
+    const countA = a[tagCountKey.value] || 0
+    const countB = b[tagCountKey.value] || 0
+    return countB - countA
+  })
 })
 
 const emit = defineEmits([

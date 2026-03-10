@@ -7,21 +7,49 @@
     </van-nav-bar>
     
     <van-tabs v-model:active="activeTab" sticky>
-      <van-tab title="标签列表">
+      <van-tab title="漫画标签">
         <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
         
-        <div v-else-if="tagList.length === 0" class="empty">
+        <div v-else-if="sortedComicTags.length === 0" class="empty">
           <van-empty description="暂无标签" />
           <van-button type="primary" @click="showAddPopup = true">添加标签</van-button>
         </div>
         
         <div v-else class="tag-list">
-          <van-swipe-cell v-for="tag in tagList" :key="tag.id">
+          <van-swipe-cell v-for="tag in sortedComicTags" :key="tag.id">
             <van-cell 
               :title="tag.name" 
               :label="`${tag.comic_count || 0} 个漫画`"
               is-link
               @click="goToTagComics(tag.id)"
+            >
+              <template #icon>
+                <van-icon name="label-o" class="tag-icon" />
+              </template>
+            </van-cell>
+            <template #right>
+              <van-button square type="primary" text="编辑" class="swipe-btn" @click="openEditPopup(tag)" />
+              <van-button square type="danger" text="删除" class="swipe-btn" @click="confirmDelete(tag)" />
+            </template>
+          </van-swipe-cell>
+        </div>
+      </van-tab>
+      
+      <van-tab title="视频标签">
+        <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
+        
+        <div v-else-if="sortedVideoTags.length === 0" class="empty">
+          <van-empty description="暂无标签" />
+          <van-button type="primary" @click="showAddPopup = true">添加标签</van-button>
+        </div>
+        
+        <div v-else class="tag-list">
+          <van-swipe-cell v-for="tag in sortedVideoTags" :key="tag.id">
+            <van-cell 
+              :title="tag.name" 
+              :label="`${tag.video_count || 0} 个视频`"
+              is-link
+              @click="goToTagVideos(tag.id)"
             >
               <template #icon>
                 <van-icon name="label-o" class="tag-icon" />
@@ -70,7 +98,7 @@
           
           <div class="tag-select-grid">
             <van-tag 
-              v-for="tag in tagList" 
+              v-for="tag in sortedComicTags" 
               :key="tag.id" 
               :type="selectedTagIds.includes(tag.id) ? 'primary' : 'default'"
               size="large"
@@ -171,7 +199,8 @@ const tagStore = useTagStore()
 const active = ref(1)
 const activeTab = ref(0)
 const isLoading = ref(true)
-const tagList = ref([])
+const comicTagList = ref([])
+const videoTagList = ref([])
 const comicList = ref([])
 const showAddPopup = ref(false)
 const showEditPopup = ref(false)
@@ -181,6 +210,24 @@ const editingTag = ref(null)
 
 const selectedComicIds = ref([])
 const selectedTagIds = ref([])
+
+const sortedComicTags = computed(() => {
+  return [...comicTagList.value].sort((a, b) => {
+    return (b.comic_count || 0) - (a.comic_count || 0)
+  })
+})
+
+const sortedVideoTags = computed(() => {
+  return [...videoTagList.value].sort((a, b) => {
+    return (b.video_count || 0) - (a.video_count || 0)
+  })
+})
+
+const currentContentType = computed(() => {
+  if (activeTab.value === 0) return 'comic'
+  if (activeTab.value === 1) return 'video'
+  return 'comic'
+})
 
 const canBatchAdd = computed(() => {
   return selectedComicIds.value.length > 0 && selectedTagIds.value.length > 0
@@ -197,9 +244,15 @@ const getCoverUrl = (coverPath) => {
 const fetchTagList = async () => {
   isLoading.value = true
   try {
-    const response = await tagStore.fetchTags('comic')
-    if (response) {
-      tagList.value = response
+    const [comicResponse, videoResponse] = await Promise.all([
+      tagStore.fetchTags('comic'),
+      tagStore.fetchTags('video')
+    ])
+    if (comicResponse) {
+      comicTagList.value = comicResponse
+    }
+    if (videoResponse) {
+      videoTagList.value = videoResponse
     }
   } catch (error) {
     console.error('获取标签列表失败:', error)
@@ -229,7 +282,7 @@ const addTag = async () => {
   }
   
   try {
-    const response = await tagStore.addTag(newTagName.value.trim(), 'comic')
+    const response = await tagStore.addTag(newTagName.value.trim(), currentContentType.value)
     if (response.success) {
       showAddPopup.value = false
       newTagName.value = ''
@@ -242,6 +295,10 @@ const addTag = async () => {
     console.error('添加标签失败:', error)
     showFailToast('添加失败')
   }
+}
+
+const goToTagVideos = (tagId) => {
+  router.push(`/video/tag/${tagId}`)
 }
 
 const openEditPopup = (tag) => {

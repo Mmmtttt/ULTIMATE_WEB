@@ -81,7 +81,7 @@
       <div v-show="activeTab === 'tags'" class="tag-panel">
         <div class="tags-grid">
           <span
-            v-for="tag in tags"
+            v-for="tag in sortedTags"
             :key="tag.id"
             class="tag-item"
             :class="getTagType(tag.id)"
@@ -206,6 +206,14 @@ const hasSelection = computed(() => {
 
 const tagCountKey = computed(() => {
   return props.isVideoMode ? 'video_count' : 'comic_count'
+})
+
+const sortedTags = computed(() => {
+  return [...props.tags].sort((a, b) => {
+    const countA = a[tagCountKey.value] || 0
+    const countB = b[tagCountKey.value] || 0
+    return countB - countA
+  })
 })
 
 const selectedIncludeTags = computed(() => {

@@ -242,6 +242,7 @@
               v-model:exclude-tags="tempExcludeTags"
               :tags="allTags"
               show-count
+              :is-video-mode="activeContentType === 'video'"
             />
           </div>
         </div>
