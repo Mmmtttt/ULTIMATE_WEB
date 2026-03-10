@@ -15,9 +15,23 @@
     },
     "picacomic": {
       "enabled": true,
-      "account": "REDACTED_USERNAME",
-      "password": "REDACTED_PASSWORD",
+      "account": "",
+      "password": "",
       "base_dir": "data/pictures/PK"
+    },
+    "javdb": {
+      "enabled": true,
+      "domain_index": 0,
+      "timeout": 30,
+      "retry_times": 3,
+      "sleep_time": 0.5,
+      "cookies": {
+        "_jdb_session": "DbL1FbeiCx7EwFTHgUm6PYKqcb0pnotYwg8lL919mdovigevu%2BDMxXFhRiNwdI2fMGAqHKj9LCahEZ7%2BQN%2B84neTSIfa6IPmbgv%2B0IoUJpZayp99LzRuI3qtag5K8vS7evrbWGAcBF9bIWYqWB2zzgFoiU1vf6P2jF4mkmzh3PNU9aGxszcrDmXWnpbIlKkVLfdt8n%2F9j7iNC06KAEmmPuQE6WXzfWjzTrFNTLARMvfMOvm%2BucF47gFzR2hWoZ%2F7IfFa7%2F%2Bzzsijm%2FJQo%2BARDQU%2BBngHn%2FGin2GqZ1u8tdWTJ0aeAz3KZjAUyAPDltrP0L%2BjDhrvNXX6k1Bv1Xnu8DZ%2BUPXgiD%2FiTq0w5v1wxNJTpNjQpsmMh1zMkBhZ5BhfbaU%3D--qtKvFIfzNGqaJb8P--hu%2BncFC%2B33kSysk0caGdZg%3D%3D",
+        "list_mode": "h",
+        "theme": "auto",
+        "over18": "1",
+        "locale": "zh"
+      }
     }
   }
 }

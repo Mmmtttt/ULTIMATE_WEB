@@ -256,3 +256,245 @@ chmod +x scripts/*.sh
 - 确认后端服务已启动
 - 检查 Vite 代理配置
 - 查看浏览器控制台错误信息
+
+## data 目录结构说明
+
+### 目录概览
+```
+data/
+├── cache/                   # 缓存目录
+├── meta_data/               # 元数据目录（核心数据库）
+└── recommendation_cache/    # 推荐内容缓存目录
+```
+
+---
+
+### 1. cache/ - 缓存目录
+
+**用途**：存储各类临时缓存数据，提高系统性能
+
+**文件说明**：
+- `author_works_author_works_*.json`
+  - **作用**：缓存作者作品列表数据
+  - **更新时机**：首次查询某作者作品时创建，后续直接使用缓存
+  - **新增内容**：添加新作者或查询新作者作品时会新增对应文件
+
+---
+
+### 2. meta_data/ - 元数据目录（核心数据库）
+
+**用途**：存储系统的核心业务数据，采用 JSON 文件格式存储
+
+#### 2.1 主数据库文件
+
+| 文件名 | 作用 | 更新时机 | 新增内容 |
+|--------|------|----------|----------|
+| `comics_database.json` | 主页漫画数据库，存储所有收藏的漫画信息 | 添加/修改/删除漫画、更新阅读进度、更新评分、绑定标签时更新 | 导入新漫画时新增漫画记录 |
+| `recommendations_database.json` | 推荐页漫画数据库，存储推荐漫画信息 | 添加/修改/删除推荐漫画时更新 | 导入新推荐漫画时新增记录 |
+| `tags_database.json` | 标签数据库，存储所有标签信息 | 添加/修改/删除标签时更新 | 创建新标签时新增标签记录 |
+| `lists_database.json` | 清单数据库，存储用户创建的漫画清单 | 添加/修改/删除清单时更新 | 创建新清单时新增清单记录 |
+| `actors_database.json` | 演员数据库（视频功能） | 添加/修改/删除演员信息时更新 | 添加新演员时新增记录 |
+| `authors_database.json` | 作者数据库 | 添加/修改/删除作者信息时更新 | 添加新作者时新增记录 |
+| `videos_database.json` | 视频数据库 | 添加/修改/删除视频时更新 | 导入新视频时新增记录 |
+| `video_recommendations_database.json` | 视频推荐数据库 | 添加/修改/删除视频推荐时更新 | 添加新视频推荐时新增记录 |
+| `import_tasks.json` | 导入任务数据库，存储漫画/视频导入任务状态 | 创建任务、任务进度更新、任务完成/失败时更新 | 创建新导入任务时新增任务记录 |
+| `recommendation_cache_index.json` | 推荐缓存索引，管理推荐内容缓存 | 添加/删除推荐缓存、更新缓存访问时间时更新 | 新增推荐内容到缓存时新增索引记录 |
+
+#### 2.2 备份文件（*.bkp）
+- **作用**：JSON 数据库文件的实时备份，防止数据损坏
+- **更新时机**：每次写入主数据库前自动创建备份
+- **注意**：这些是自动备份文件，无需手动维护
+
+#### 2.3 backup/ - 三级备份目录
+包含子目录：`lists_database/`、`recommendations_database/`、`tags_database/` 等
+
+**备份策略**：
+- **Tier 1**：每 10 分钟备份一次，保留最近 3 个版本（30 分钟历史）
+- **Tier 2**：每 1 小时备份一次（从 Tier 1 复制），保留最近 3 个版本（3 小时历史）
+- **Tier 3**：每 1 天备份一次（从 Tier 2 复制），保留最近 3 个版本（3 天历史）
+
+**文件说明**：
+- `*_tier*.time`：记录该层级上次备份时间的时间戳文件
+- `*_tier*_YYYYMMDD_HHMMSS.bkp`：具体的备份文件，带时间戳
+
+#### 2.4 临时文件（*.tmp）
+- **作用**：JSON 写入时的临时文件，确保写入操作的原子性
+- **更新时机**：每次写入数据库时临时创建，写入成功后自动删除
+- **注意**：如果系统异常中断，可能会残留 tmp 文件，可以安全删除
+
+---
+
+### 3. recommendation_cache/ - 推荐内容缓存目录
+
+**用途**：存储推荐页漫画/视频的图片缓存，使用 LRU（最近最少使用）算法管理
+
+**目录结构**：
+```
+recommendation_cache/
+├── JM/          # 禁漫天堂平台内容缓存
+│   └── {漫画ID}/
+│       └── {章节}/
+│           └── 00001.jpg, 00002.jpg, ...
+└── PK/          # 哔咔漫画平台内容缓存
+    └── comics/
+        └── {作者名}/
+            └── {漫画名}/
+                └── {章节名}/
+                    └── 0001.jpg, 0002.jpg, ...
+```
+
+**管理机制**：
+- **最大容量**：默认 5120 MB（可配置）
+- **淘汰策略**：当缓存容量满时，自动淘汰最久未访问的内容
+- **索引管理**：通过 `meta_data/recommendation_cache_index.json` 管理缓存索引
+
+**更新时机**：
+- 阅读推荐页内容时，如果图片未缓存则下载并缓存
+- 访问已缓存内容时更新访问时间（移到 LRU 队列末尾）
+- 缓存容量不足时自动淘汰旧缓存
+
+**新增内容**：
+- 首次阅读某推荐内容时，下载图片并添加到缓存
+- 通过 API 主动将内容添加到缓存
+
+---
+
+## 数据文件维护建议
+
+### 日常维护
+1. **不要手动修改**：建议通过系统 API 或前端界面操作数据，避免直接编辑 JSON 文件
+2. **备份重要**：`meta_data/backup/` 目录中的三级备份非常重要，不要删除
+3. **临时文件**：如有残留的 `.tmp` 文件，可以安全删除
+4. **缓存清理**：可以通过 API 清理推荐缓存，释放磁盘空间
+
+### 数据恢复
+如果主数据库损坏，可以：
+1. 先尝试使用同目录下的 `.bkp` 备份恢复（去掉 `.bkp` 后缀）
+2. 如果不行，使用 `meta_data/backup/` 目录中的三级备份
+3. 通过备份管理 API 选择特定时间点的备份恢复
+
+### 磁盘空间管理
+- 监控 `recommendation_cache/` 目录大小，必要时清理
+- 定期清理 `import_tasks.json` 中已完成的旧任务
+- 三级备份会自动轮转，无需手动清理
+
+---
+
+## 第三方库敏感数据配置说明
+
+### 排查结果
+
+经过详细排查，确认以下三个第三方库的配置情况：
+
+1. **JMComic (禁漫天堂)** ✅ 符合要求
+   - 配置文件：`comic_backend/third_party/JMComic-Crawler-Python/config.json`
+   - 适配器：`comic_backend/third_party/jmcomic_adapter.py`
+   - 状态：敏感数据已从代码中移除，统一从 `third_party_config.json` 读取
+
+2. **Picacomic (哔咔漫画)** ✅ 符合要求
+   - 配置文件：`comic_backend/third_party/Picacomic-Crawler/config.json`
+   - 适配器：`comic_backend/third_party/picacomic_adapter.py`
+   - 状态：敏感数据已从代码中移除，统一从 `third_party_config.json` 读取
+
+3. **JavDB** ✅ 符合要求
+   - 配置文件：`comic_backend/third_party_config.json`（主配置）
+   - 适配器：`comic_backend/third_party/javdb_api_scraper.py`
+   - 状态：敏感数据已从代码中移除，统一从 `third_party_config.json` 读取
+   - 已清理：`javdb-api-scraper/config.py` 和 `javdb-api-scraper/cookies.json` 中的敏感数据
+
+### 配置方法
+
+#### 1. 配置文件位置
+
+核心配置文件位于：
+```
+comic_backend/third_party_config.json
+```
+
+**重要**：请将此文件添加到 `.gitignore` 中，避免敏感数据被提交到 Git 仓库！
+
+#### 2. 配置文件格式
+
+```json
+{
+  "default_adapter": "jmcomic",
+  "adapters": {
+    "jmcomic": {
+      "enabled": true,
+      "config_path": "JMComic-Crawler-Python/config.json",
+      "username": "你的JMComic用户名",
+      "password": "你的JMComic密码",
+      "download_dir": "data/pictures",
+      "output_json": "comics_database.json",
+      "progress_file": "download_progress.json",
+      "favorite_list_file": "favorite_comics.txt",
+      "consecutive_hit_threshold": 10,
+      "collection_name": "我的最爱"
+    },
+    "picacomic": {
+      "enabled": true,
+      "account": "你的哔咔邮箱账号",
+      "password": "你的哔咔密码",
+      "base_dir": "data/pictures/PK"
+    },
+    "javdb": {
+      "enabled": true,
+      "domain_index": 0,
+      "timeout": 30,
+      "retry_times": 3,
+      "sleep_time": 0.5,
+      "cookies": {}
+    }
+  }
+}
+```
+
+#### 3. 各平台配置说明
+
+**JMComic (禁漫天堂)**：
+- `username`：JMComic 账号用户名
+- `password`：JMComic 账号密码
+- 如果不填写账号密码，仍可使用部分公共功能，但无法访问收藏夹和下载限制内容
+
+**Picacomic (哔咔漫画)**：
+- `account`：哔咔注册邮箱账号
+- `password`：哔咔账号密码
+- 哔咔平台需要登录才能使用搜索、下载等功能
+
+**JavDB**：
+- `domain_index`：域名索引（0-2，用于自动切换域名）
+- `timeout`：请求超时时间（秒）
+- `retry_times`：请求失败重试次数
+- `sleep_time`：请求间隔时间（秒）
+- `cookies`：登录后的 cookie 数据（JSON 对象格式，可选）
+- 当前版本无需配置账号密码即可使用基础功能
+- 如需使用登录功能，可将登录后的 cookies 填入配置
+
+#### 4. 工作原理
+
+1. 系统启动时，`AdapterConfig` 类会加载 `third_party_config.json`
+2. 各适配器通过 `BaseAdapter.get_config()` 方法读取配置
+3. JMComic 适配器会动态将配置写入其自身的 `config.json` 文件
+4. Picacomic 适配器直接在内存中使用配置，不写入磁盘
+5. 所有敏感数据仅存在于 `third_party_config.json` 中，代码库中无硬编码
+
+#### 5. 安全建议
+
+- ✅ 务必将 `comic_backend/third_party_config.json` 添加到 `.gitignore`
+- ✅ 定期备份配置文件，但不要将备份提交到代码仓库
+- ✅ 不同环境（开发/测试/生产）使用不同的配置文件
+- ✅ 不要在代码注释、文档或日志中泄露敏感信息
+- ✅ 如发现配置文件被意外提交，立即更改相关账号密码
+
+#### 6. .gitignore 配置建议
+
+在项目根目录的 `.gitignore` 文件中添加：
+```
+# 第三方库敏感配置
+comic_backend/third_party_config.json
+comic_backend/third_party/JMComic-Crawler-Python/config.json
+comic_backend/third_party/Picacomic-Crawler/config.json
+comic_backend/third_party/javdb-api-scraper/config.py
+comic_backend/third_party/javdb-api-scraper/cookies.json
+comic_backend/third_party/javdb-api-scraper/third_party_config.json
+```
