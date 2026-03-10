@@ -50,7 +50,8 @@ class PlatformService:
         """根据平台获取适配器名称"""
         adapter_mapping = {
             Platform.JM: 'jmcomic',
-            Platform.PK: 'picacomic'
+            Platform.PK: 'picacomic',
+            Platform.JAVDB: 'javdb'
         }
         return adapter_mapping.get(platform, 'jmcomic')
     
@@ -220,6 +221,31 @@ class PlatformService:
         """
         adapter = self.get_adapter(platform)
         return adapter.get_favorites()
+    
+    def get_user_lists(self, platform: Platform) -> Dict[str, Any]:
+        """获取用户的清单列表
+        
+        Args:
+            platform: 平台
+            
+        Returns:
+            包含清单列表的字典
+        """
+        adapter = self.get_adapter(platform)
+        return adapter.get_user_lists()
+    
+    def get_list_detail(self, platform: Platform, list_id: str) -> Dict[str, Any]:
+        """获取清单的详细内容
+        
+        Args:
+            platform: 平台
+            list_id: 清单ID
+            
+        Returns:
+            包含清单详情和内容的字典
+        """
+        adapter = self.get_adapter(platform)
+        return adapter.get_list_detail(list_id)
 
 
 def get_platform_service() -> PlatformService:

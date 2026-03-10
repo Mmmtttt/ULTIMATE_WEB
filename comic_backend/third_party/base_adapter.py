@@ -208,3 +208,22 @@ class BaseAdapter(ABC):
             value: 配置值
         """
         self.config[key] = value
+    
+    def get_user_lists(self) -> Dict[str, Any]:
+        """获取用户的清单列表
+        
+        Returns:
+            包含清单列表的字典
+        """
+        return {"lists": []}
+    
+    def get_list_detail(self, list_id: str) -> Dict[str, Any]:
+        """获取清单的详细内容
+        
+        Args:
+            list_id: 清单ID
+            
+        Returns:
+            包含清单详情和内容的字典
+        """
+        return {"list_id": list_id, "list_name": "", "works": []}

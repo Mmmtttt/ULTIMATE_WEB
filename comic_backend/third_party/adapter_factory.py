@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, Type
 from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
 from .picacomic_adapter import PicacomicAdapter
+from .javdb_adapter import JavdbAdapter
 
 
 class AdapterFactory:
@@ -17,6 +18,7 @@ class AdapterFactory:
     _adapters: Dict[str, Type[BaseAdapter]] = {
         'jmcomic': JMComicAdapter,
         'picacomic': PicacomicAdapter,
+        'javdb': JavdbAdapter,
     }
     
     _instances: Dict[str, BaseAdapter] = {}
@@ -137,6 +139,10 @@ class AdapterConfig:
                     "account": "",
                     "password": "",
                     "base_dir": "../../data/pictures/PK"
+                },
+                "javdb": {
+                    "enabled": True,
+                    "domain_index": 0
                 }
             }
         }
