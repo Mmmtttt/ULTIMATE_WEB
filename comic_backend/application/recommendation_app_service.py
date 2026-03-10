@@ -10,7 +10,7 @@ from core.utils import get_current_time, get_preview_pages
 from core.platform import get_platform_from_id, get_original_id, Platform, get_platform_image_url
 from third_party.adapter_factory import AdapterFactory, AdapterConfig
 
-FAVORITES_LIST_ID = "list_favorites"
+FAVORITES_LIST_ID = "list_favorites_comic"
 
 
 class RecommendationAppService:
@@ -66,7 +66,6 @@ class RecommendationAppService:
             # 构建返回数据
             recommendation_list = []
             for r in recommendations:
-                is_favorited = FAVORITES_LIST_ID in r.list_ids
                 rec_info = {
                     "id": r.id,
                     "title": r.title,
@@ -80,7 +79,7 @@ class RecommendationAppService:
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
                     "last_read_time": r.last_read_time,
                     "create_time": r.create_time,
-                    "is_favorited": is_favorited
+                    "list_ids": r.list_ids
                 }
                 recommendation_list.append(rec_info)
             
@@ -258,7 +257,6 @@ class RecommendationAppService:
             
             recommendation_list = []
             for r in results:
-                is_favorited = FAVORITES_LIST_ID in r.list_ids
                 recommendation_list.append({
                     "id": r.id,
                     "title": r.title,
@@ -267,8 +265,9 @@ class RecommendationAppService:
                     "total_page": r.total_page,
                     "current_page": r.current_page,
                     "score": r.score,
+                    "tag_ids": r.tag_ids,
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
-                    "is_favorited": is_favorited
+                    "list_ids": r.list_ids
                 })
             
             app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(recommendation_list)}")
@@ -287,7 +286,6 @@ class RecommendationAppService:
             
             recommendation_list = []
             for r in results:
-                is_favorited = FAVORITES_LIST_ID in r.list_ids
                 recommendation_list.append({
                     "id": r.id,
                     "title": r.title,
@@ -296,8 +294,9 @@ class RecommendationAppService:
                     "total_page": r.total_page,
                     "current_page": r.current_page,
                     "score": r.score,
+                    "tag_ids": r.tag_ids,
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
-                    "is_favorited": is_favorited
+                    "list_ids": r.list_ids
                 })
             
             app_logger.info(f"筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(recommendation_list)}")
@@ -316,7 +315,6 @@ class RecommendationAppService:
             
             recommendation_list = []
             for r in results:
-                is_favorited = FAVORITES_LIST_ID in r.list_ids
                 recommendation_list.append({
                     "id": r.id,
                     "title": r.title,
@@ -329,7 +327,7 @@ class RecommendationAppService:
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
                     "last_read_time": r.last_read_time,
                     "create_time": r.create_time,
-                    "is_favorited": is_favorited
+                    "list_ids": r.list_ids
                 })
             
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(recommendation_list)}")

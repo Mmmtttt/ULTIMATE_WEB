@@ -395,18 +395,20 @@ class AuthorAppService:
                 return ServiceResult.error("订阅不存在")
             
             cache_key = f"author_works_{author.name}"
-            use_cache_only = offset == 0
             
-            cached_all_works = None
-            if use_cache_only:
-                cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
+            # 无论offset是多少，都先尝试从缓存读取，但只作为第一页的快速展示
+            # 当需要加载更多或者缓存中没有足够数据时，总是去重新搜索
+            cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
             
-            if cached_all_works is not None:
+            # 如果是第一页且缓存有数据，先尝试用缓存
+            if offset == 0 and cached_all_works is not None:
                 existing_ids = self._get_existing_comic_ids()
                 filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
                 total = len(filtered_works)
                 paginated_works = filtered_works[offset:offset + limit]
-                has_more = offset + limit < total
+                
+                # 如果缓存中有足够的数据（达到limit），可以先显示缓存，但设置has_more为true，允许用户点击加载更多
+                has_more = True
                 
                 app_logger.info(f"[Cache] 从持久化缓存读取作者 {author.name} 作品，共 {total} 个")
                 
@@ -430,6 +432,7 @@ class AuthorAppService:
                     "from_cache": True
                 })
             
+            # 否则，总是重新搜索，确保获取完整数据
             works = []
             try:
                 platforms_to_search = get_supported_platforms()
@@ -523,12 +526,14 @@ class AuthorAppService:
         cache_key = f"author_works_{author_name}"
         
         cached_all_works = self._cache_manager.get_persistent(cache_key, 'author_works')
-        if cached_all_works is not None:
+        if offset == 0 and cached_all_works is not None:
             existing_ids = self._get_existing_comic_ids()
             filtered_works = [w for w in cached_all_works if w.get('id') not in existing_ids]
             total = len(filtered_works)
             paginated_works = filtered_works[offset:offset + limit]
-            has_more = offset + limit < total
+            
+            # 设置has_more为true，允许用户点击加载更多
+            has_more = True
             
             app_logger.info(f"[Cache] 从持久化缓存读取作者 {author_name} 作品，共 {total} 个")
             

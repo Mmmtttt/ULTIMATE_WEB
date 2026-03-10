@@ -7,7 +7,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, get_preview_pages
 
-FAVORITES_LIST_ID = "list_favorites"
+FAVORITES_LIST_ID = "list_favorites_comic"
 
 
 class ComicAppService:
@@ -65,7 +65,6 @@ class ComicAppService:
                 except Exception as e:
                     error_logger.error(f"确保漫画封面失败（列表）: {c.id}, {e}")
                 
-                is_favorited = FAVORITES_LIST_ID in c.list_ids
                 comic_info = {
                     "id": c.id,
                     "title": c.title,
@@ -79,7 +78,7 @@ class ComicAppService:
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
                     "last_read_time": c.last_read_time,
                     "create_time": c.create_time,
-                    "is_favorited": is_favorited
+                    "list_ids": c.list_ids
                 }
                 comic_list.append(comic_info)
             
@@ -268,7 +267,6 @@ class ComicAppService:
             
             results = []
             for c in comics:
-                is_favorited = FAVORITES_LIST_ID in c.list_ids
                 comic_info = {
                     "id": c.id,
                     "title": c.title,
@@ -281,7 +279,7 @@ class ComicAppService:
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
                     "last_read_time": c.last_read_time,
                     "create_time": c.create_time,
-                    "is_favorited": is_favorited
+                    "list_ids": c.list_ids
                 }
                 results.append(comic_info)
             

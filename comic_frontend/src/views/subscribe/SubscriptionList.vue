@@ -57,13 +57,13 @@
           <van-swipe-cell v-for="author in filteredItems" :key="author.id">
             <van-cell 
               :title="author.name" 
-              :label="author.subscription?.last_work_title || '暂无更新'"
+              :label="author.last_work_title || '暂无更新'"
               is-link
               @click="goToDetail(author)"
             >
               <template #value>
-                <van-tag v-if="author.subscription?.new_work_count > 0" type="danger" round>
-                  {{ author.subscription.new_work_count }}
+                <van-tag v-if="author.new_work_count > 0" type="danger" round>
+                  {{ author.new_work_count }}
                 </van-tag>
               </template>
             </van-cell>
@@ -90,15 +90,14 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useModeStore, useActorStore, useCacheStore } from '@/stores' // Assuming author store logic is in cacheStore or need to migrate
-import { authorApi, actorApi } from '@/api' // Need to ensure correct imports
+import { useModeStore, useActorStore, useAuthorStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 
 const router = useRouter()
 const modeStore = useModeStore()
 const actorStore = useActorStore()
-const cacheStore = useCacheStore()
+const authorStore = useAuthorStore()
 
 const loading = ref(false)
 const items = ref([])
@@ -108,11 +107,13 @@ const newSubscriptionName = ref('')
 const checkingUpdates = ref(false)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
+const currentStore = computed(() => isVideoMode.value ? actorStore : authorStore)
 
 const filteredItems = computed(() => {
-  if (!searchKeyword.value) return items.value
-  return items.value.filter(item => 
-    item.name.toLowerCase().includes(searchKeyword.value.toLowerCase())
+  const safeItems = items.value || []
+  if (!searchKeyword.value) return safeItems
+  return safeItems.filter(item => 
+    item.name?.toLowerCase().includes(searchKeyword.value.toLowerCase())
   )
 })
 
@@ -121,17 +122,8 @@ async function loadData() {
   items.value = []
   
   try {
-    if (isVideoMode.value) {
-      await actorStore.fetchList()
-      items.value = actorStore.actors
-    } else {
-      // Logic from AuthorSubscription.vue
-      // Assuming authorApi.getAllAuthors() exists
-      const res = await authorApi.getAllAuthors()
-      if (res.code === 200) {
-        items.value = res.data.filter(a => a.is_subscribed)
-      }
-    }
+    await currentStore.value.fetchList()
+    items.value = currentStore.value.actors || []
   } catch (e) {
     showToast('加载失败')
   } finally {
@@ -143,34 +135,17 @@ async function checkAllUpdates() {
   if (checkingUpdates.value) return
   checkingUpdates.value = true
   try {
-    if (isVideoMode.value) {
-      // 视频模式：调用演员订阅检查更新
-      const res = await actorApi.checkUpdates()
-      if (res.code === 200) {
-        await loadData()
-        const total = res.data?.total_new_works || 0
-        if (total > 0) {
-          showToast(`有 ${total} 个新作品`)
-        } else {
-          showToast('暂无新作品')
-        }
+    const res = await currentStore.value.checkUpdates()
+    if (res) {
+      await loadData()
+      const total = res?.total_new_works || 0
+      if (total > 0) {
+        showToast(`有 ${total} 个新作品`)
       } else {
-        showToast(res.msg || '检查更新失败')
+        showToast('暂无新作品')
       }
     } else {
-      // 漫画模式：调用作者订阅检查更新
-      const res = await authorApi.checkUpdates()
-      if (res.code === 200) {
-        await loadData()
-        const total = res.data?.total_new_works || 0
-        if (total > 0) {
-          showToast(`有 ${total} 个新作品`)
-        } else {
-          showToast('暂无新作品')
-        }
-      } else {
-        showToast(res.msg || '检查更新失败')
-      }
+      showToast('检查更新失败')
     }
   } catch (e) {
     showToast('检查更新失败')
@@ -187,14 +162,11 @@ async function addSubscription() {
   if (!newSubscriptionName.value) return
   
   try {
-    if (isVideoMode.value) {
-      const res = await actorStore.subscribe(newSubscriptionName.value)
-      if (res.success) showToast('订阅成功')
-      else showToast(res.message || '订阅失败')
+    const res = await currentStore.value.subscribe(newSubscriptionName.value)
+    if (res.success) {
+      showToast('订阅成功')
     } else {
-      const res = await authorApi.subscribe(newSubscriptionName.value)
-      if (res.code === 200) showToast('订阅成功')
-      else showToast(res.msg || '订阅失败')
+      showToast(res.message || '订阅失败')
     }
     await loadData()
     newSubscriptionName.value = ''
@@ -210,13 +182,8 @@ async function unsubscribe(item) {
       message: `确定取消订阅 ${item.name} 吗？`
     })
     
-    if (isVideoMode.value) {
-      await actorStore.unsubscribe(item.id)
-    } else {
-      // Need author subscription id
-      const subId = item.subscription?.id || item.id
-      await authorApi.unsubscribe(subId)
-    }
+    const subId = item.id
+    await currentStore.value.unsubscribe(subId)
     showToast('已取消')
     await loadData()
   } catch (e) {

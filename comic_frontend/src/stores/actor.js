@@ -103,6 +103,19 @@ export const useActorStore = defineStore('actor', () => {
     }
   }
   
+  async function checkUpdates(actorId = null) {
+    try {
+      const res = await actorApi.checkUpdates(actorId)
+      if (res.code === 200) {
+        await fetchList()
+        return res.data
+      }
+      return null
+    } catch (e) {
+      return null
+    }
+  }
+  
   return {
     actors,
     allActors,
@@ -115,6 +128,7 @@ export const useActorStore = defineStore('actor', () => {
     unsubscribe,
     getVideos,
     updateCheckTime,
-    updateLastWork
+    updateLastWork,
+    checkUpdates
   }
 })

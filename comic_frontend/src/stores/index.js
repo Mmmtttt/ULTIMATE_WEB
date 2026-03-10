@@ -27,6 +27,9 @@ export { useVideoStore } from './video'
 // 演员管理
 export { useActorStore } from './actor'
 
+// 作者管理
+export { useAuthorStore } from './author'
+
 // 推荐漫画管理
 export { useRecommendationStore } from './recommendation'
 
