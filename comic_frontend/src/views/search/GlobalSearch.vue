@@ -213,7 +213,7 @@ async function confirmImport(target) {
     if (isVideoMode.value) {
       let successCount = 0
       for (const item of selectedItems) {
-        await videoApi.thirdPartyImport(getItemId(item), target)
+        await videoApi.thirdPartyImport(getItemId(item), target, item.platform)
         successCount++
       }
       showToast(`已导入 ${successCount} 个视频`)

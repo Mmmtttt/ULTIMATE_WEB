@@ -81,8 +81,8 @@ export const videoApi = {
     return request.get('/v1/video/third-party/actor/works', { params: { actor_id: actorId, page } })
   },
   
-  thirdPartyImport(videoId, target = 'home') {
-    return request.post('/v1/video/third-party/import', { video_id: videoId, target })
+  thirdPartyImport(videoId, target = 'home', platform = 'javdb') {
+    return request.post('/v1/video/third-party/import', { video_id: videoId, target, platform })
   },
   
   getPlayUrls(videoId) {

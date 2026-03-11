@@ -422,7 +422,7 @@ def get_video_adapter(platform_name="javdb", *args, **kwargs):
         from third_party.javdb_api_scraper import JavdbAdapter
         return JavdbAdapter(*args, **kwargs)
     elif platform_name.lower() == "javbus":
-        from third_party.javdb_api_scraper.lib.javbus_adapter import JavbusAdapter
+        from third_party.javdb_api_scraper import JavbusAdapter
         return JavbusAdapter(*args, **kwargs)
     raise ValueError(f"不支持的视频平台: {platform_name}")
 
@@ -483,11 +483,14 @@ def third_party_search():
         
         has_more = any(info.get('has_next', False) for info in platform_results.values())
         
+        total_pages_list = [info.get('total_pages') for info in platform_results.values() if info.get('total_pages') is not None]
+        total_pages = max(total_pages_list) if total_pages_list else 1
+        
         response_data = {
             "platform": 'all' if platform.lower() == 'all' else platform,
             "page": page,
             "has_next": has_more,
-            "total_pages": max([info.get('total_pages', 1) for info in platform_results.values()] or [1]),
+            "total_pages": total_pages,
             "videos": all_videos,
             "platform_info": platform_results
         }
@@ -597,6 +600,13 @@ def third_party_import():
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
+        
+        original_video_id = video_id
+        if '_' in video_id:
+            parts = video_id.split('_', 1)
+            if len(parts) == 2 and parts[0].upper() in ['JAVDB', 'JAVBUS']:
+                platform = parts[0].lower()
+                video_id = parts[1]
         
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType

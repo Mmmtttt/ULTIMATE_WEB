@@ -24,6 +24,7 @@ if 'utils' in sys.modules:
 import javdb_api
 
 from lib.javdb_adapter import JavdbAdapter
+from lib.javbus_adapter import JavbusAdapter
 from lib.platform import Platform, add_platform_prefix, remove_platform_prefix
 
-__all__ = ['JavdbAdapter', 'Platform', 'add_platform_prefix', 'remove_platform_prefix', 'javdb_api']
+__all__ = ['JavdbAdapter', 'JavbusAdapter', 'Platform', 'add_platform_prefix', 'remove_platform_prefix', 'javdb_api']
