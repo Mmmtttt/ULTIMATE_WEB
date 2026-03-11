@@ -298,7 +298,7 @@ async function batchTrash() {
 }
 
 async function onSortConfirm({ selectedOptions }) {
-  const sortType = selectedOptions[0].value
+  const sortType = selectedOptions?.[0]?.value
   currentStore.value.setSortType(sortType)
   await loadData(true)
   showSortPanel.value = false

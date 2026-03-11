@@ -64,6 +64,8 @@ class VideoAppService(BaseContentAppService):
                 videos = sorted(videos, key=lambda v: v.score or 0, reverse=True)
             elif sort_type == "access_time":
                 videos = sorted(videos, key=lambda v: v.last_access_time or "", reverse=True)
+            elif sort_type == "date":
+                videos = sorted(videos, key=lambda v: v.date or "", reverse=True)
             
             video_list = []
             for v in videos:

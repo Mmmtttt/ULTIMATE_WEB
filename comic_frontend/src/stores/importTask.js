@@ -2,8 +2,12 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { showSuccessToast, showFailToast } from 'vant'
 import request from '@/utils/request'
+import { useTagStore } from './tag'
+import { useCacheStore } from './cache'
 
 export const useImportTaskStore = defineStore('importTask', () => {
+  const tagStore = useTagStore()
+  const cacheStore = useCacheStore()
   // State
   const tasks = ref([])
   const loading = ref(false)
@@ -141,14 +145,31 @@ export const useImportTaskStore = defineStore('importTask', () => {
   const startPolling = () => {
     if (pollingInterval.value) return
     
+    let hadActiveTasks = hasActiveTasks.value
+    
     pollingInterval.value = setInterval(async () => {
+      const prevActiveCount = activeTaskCount.value
       await fetchTasks()
       
-      // 如果没有进行中的任务，停止轮询
+      if (!hasActiveTasks.value && prevActiveCount > 0) {
+        await refreshTagsAfterImport()
+      }
+      
       if (!hasActiveTasks.value) {
         stopPolling()
       }
-    }, 2000) // 每2秒轮询一次
+    }, 2000)
+  }
+
+  const refreshTagsAfterImport = async () => {
+    try {
+      cacheStore.clearCache('tags')
+      cacheStore.clearCache('list')
+      await tagStore.fetchTags('comic', true)
+      console.log('[ImportTask] 标签列表已刷新')
+    } catch (error) {
+      console.error('[ImportTask] 刷新标签列表失败:', error)
+    }
   }
 
   // 停止轮询

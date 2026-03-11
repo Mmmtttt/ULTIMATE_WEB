@@ -150,28 +150,19 @@ const emptyDescription = computed(() => {
 
 const normalizedResults = computed(() => {
   return results.value.map(item => {
-    // Normalize data structure for MediaGrid
     const normalized = { ...item }
     
-    // Handle video data
     if (normalized.cover_url && !normalized.cover_path) {
       normalized.cover_path = normalized.cover_url
     }
     
-    // Handle comic data
-    if (normalized.cover_url && !normalized.cover_path) {
-      normalized.cover_path = normalized.cover_url
-    }
-    
-    // Ensure id exists
     if (!normalized.id) {
       normalized.id = normalized.video_id || normalized.album_id || normalized.comic_id
     }
     
-    // Add platform information
     if (activeTab.value === 'remote') {
       if (isVideoMode.value) {
-        normalized.platform = 'JAVDB'
+        normalized.platform = normalized.platform || 'JAVDB'
       } else {
         normalized.platform = normalized.platform || 'JM'
       }

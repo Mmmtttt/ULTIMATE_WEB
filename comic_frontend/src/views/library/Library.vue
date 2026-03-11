@@ -239,6 +239,23 @@ const sortOptions = computed(() => [
   { text: '最新发布', value: 'date' }
 ])
 
+async function onSortConfirm({ selectedOptions }) {
+  showSortPanel.value = false
+  try {
+    const selectedValue = selectedOptions?.[0]?.value
+    if (!selectedValue) return
+    
+    if (isVideoMode.value) {
+      await videoStore.sortVideos(selectedValue)
+    } else {
+      await comicStore.sortComics(selectedValue)
+    }
+  } catch (e) {
+    console.error('排序失败:', e)
+    showToast('排序失败')
+  }
+}
+
 const availableTags = computed(() => {
   return isVideoMode.value ? tagStore.videoTags : tagStore.tags
 })

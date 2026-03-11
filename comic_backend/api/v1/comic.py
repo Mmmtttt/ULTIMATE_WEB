@@ -398,17 +398,17 @@ def search_third_party_comics():
             return error_response(400, "缺少参数: keyword")
         
         from third_party.external_api import search_albums
-        from core.platform import Platform, is_platform_supported, get_supported_platforms
+        from core.platform import Platform, is_platform_supported, get_comic_platforms, is_comic_platform
         
         platforms_to_search = []
         if platform == 'all':
-            platforms_to_search = get_supported_platforms()
+            platforms_to_search = get_comic_platforms()
         else:
             platform_name = platform.upper()
-            if is_platform_supported(platform_name):
+            if is_comic_platform(platform_name):
                 platforms_to_search = [platform_name]
             else:
-                return error_response(400, f"不支持的平台: {platform}，支持的平台: {get_supported_platforms()}")
+                return error_response(400, f"不支持的漫画平台: {platform}，支持的平台: {get_comic_platforms()}")
         
         platform_results = {}
         all_albums = []

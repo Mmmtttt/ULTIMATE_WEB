@@ -421,31 +421,75 @@ def get_video_adapter(platform_name="javdb", *args, **kwargs):
     if platform_name.lower() == "javdb":
         from third_party.javdb_api_scraper import JavdbAdapter
         return JavdbAdapter(*args, **kwargs)
+    elif platform_name.lower() == "javbus":
+        from third_party.javdb_api_scraper.lib.javbus_adapter import JavbusAdapter
+        return JavbusAdapter(*args, **kwargs)
     raise ValueError(f"不支持的视频平台: {platform_name}")
+
+
+def get_all_video_adapters(*args, **kwargs):
+    """获取所有视频平台适配器"""
+    adapters = {}
+    for platform in ['javdb', 'javbus']:
+        try:
+            adapters[platform] = get_video_adapter(platform, *args, **kwargs)
+        except Exception as e:
+            error_logger.error(f"获取视频平台适配器 {platform} 失败: {e}")
+    return adapters
 
 
 @video_bp.route('/third-party/search', methods=['GET'])
 def third_party_search():
     try:
         keyword = request.args.get('keyword')
-        platform = request.args.get('platform', 'javdb')
+        platform = request.args.get('platform', 'all')
         page = request.args.get('page', 1, type=int)
         
         if not keyword:
             return error_response(400, "缺少搜索关键词")
         
         app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}, 页码: {page}")
-        adapter = get_video_adapter(platform)
-        result = adapter.search_videos(keyword, page=page, max_pages=1)
         
-        app_logger.info(f"搜索完成，平台: {platform}, 页码: {page}, 找到 {len(result.get('videos', []))} 个视频")
+        all_videos = []
+        platform_results = {}
+        
+        if platform.lower() == 'all':
+            platforms_to_search = ['javdb', 'javbus']
+        else:
+            platforms_to_search = [platform.lower()]
+        
+        for plat in platforms_to_search:
+            try:
+                adapter = get_video_adapter(plat)
+                result = adapter.search_videos(keyword, page=page, max_pages=1)
+                videos = result.get('videos', [])
+                
+                for video in videos:
+                    video['platform'] = plat
+                
+                platform_results[plat] = {
+                    'page': result.get('page', page),
+                    'has_next': result.get('has_next', False),
+                    'total_pages': result.get('total_pages'),
+                    'videos': videos
+                }
+                
+                all_videos.extend(videos)
+                app_logger.info(f"搜索完成，平台: {plat}, 页码: {page}, 找到 {len(videos)} 个视频")
+                
+            except Exception as e:
+                error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                continue
+        
+        has_more = any(info.get('has_next', False) for info in platform_results.values())
         
         response_data = {
-            "platform": platform,
-            "page": result.get("page"),
-            "has_next": result.get("has_next", False),
-            "total_pages": result.get("total_pages"),
-            "videos": result.get("videos", [])
+            "platform": 'all' if platform.lower() == 'all' else platform,
+            "page": page,
+            "has_next": has_more,
+            "total_pages": max([info.get('total_pages', 1) for info in platform_results.values()] or [1]),
+            "videos": all_videos,
+            "platform_info": platform_results
         }
         
         return success_response(response_data)

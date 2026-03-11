@@ -109,8 +109,9 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
     try {
       const params = {}
-      if (options.sortType) {
-        params.sort_type = options.sortType
+      const sortTypeToUse = options.sortType || currentSort.value
+      if (sortTypeToUse) {
+        params.sort_type = sortTypeToUse
       }
       if (options.minScore !== undefined) {
         params.min_score = options.minScore

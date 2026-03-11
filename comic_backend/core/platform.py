@@ -7,37 +7,46 @@ class Platform(Enum):
     JM = "JM"
     PK = "PK"
     JAVDB = "JAVDB"
+    JAVBUS = "JAVBUS"
 
 
 PLATFORM_PREFIXES = {
     Platform.JM: "JM",
     Platform.PK: "PK",
     Platform.JAVDB: "JAVDB",
+    Platform.JAVBUS: "JAVBUS",
 }
 
 PLATFORM_NAMES = {
     Platform.JM: "JMComic",
     Platform.PK: "PK",
     Platform.JAVDB: "JAVDB",
+    Platform.JAVBUS: "JavBus",
 }
 
 PLATFORM_DOWNLOAD_DIRS = {
     Platform.JM: "JM",
     Platform.PK: "PK",
     Platform.JAVDB: "JAVDB",
+    Platform.JAVBUS: "JAVBUS",
 }
 
 PLATFORM_COVER_URLS = {
     Platform.JM: "https://cdn-msp3.18comic.vip/media/albums/{original_id}.jpg",
     Platform.PK: None,
     Platform.JAVDB: None,
+    Platform.JAVBUS: None,
 }
 
 PLATFORM_IMAGE_URLS = {
     Platform.JM: "https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp",
     Platform.PK: None,
     Platform.JAVDB: None,
+    Platform.JAVBUS: None,
 }
+
+COMIC_PLATFORMS = [Platform.JM, Platform.PK]
+VIDEO_PLATFORMS = [Platform.JAVDB, Platform.JAVBUS]
 
 
 def add_platform_prefix(platform: Platform, original_id: str) -> str:
@@ -107,3 +116,19 @@ def is_platform_supported(platform_name: str) -> bool:
 
 def get_supported_platforms() -> list:
     return [p.value for p in Platform]
+
+
+def get_comic_platforms() -> list:
+    return [p.value for p in COMIC_PLATFORMS]
+
+
+def get_video_platforms() -> list:
+    return [p.value for p in VIDEO_PLATFORMS]
+
+
+def is_comic_platform(platform_name: str) -> bool:
+    return platform_name.upper() in [p.value for p in COMIC_PLATFORMS]
+
+
+def is_video_platform(platform_name: str) -> bool:
+    return platform_name.upper() in [p.value for p in VIDEO_PLATFORMS]

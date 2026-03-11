@@ -240,6 +240,20 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
+  async function sortVideos(sortType) {
+    loading.value = true
+    try {
+      const res = await videoApi.getList({ sort_type: sortType })
+      if (res.code === 200) {
+        videos.value = res.data || []
+      }
+    } catch (e) {
+      error.value = e.message
+    } finally {
+      loading.value = false
+    }
+  }
+  
   function clearFilter() {
     isFiltering.value = false
     filteredVideos.value = []
@@ -276,6 +290,7 @@ export const useVideoStore = defineStore('video', () => {
     thirdPartyImport,
     filterByTags,
     filterMulti,
+    sortVideos,
     clearFilter,
     clearCurrentVideo
   }

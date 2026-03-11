@@ -3,6 +3,9 @@
  * 集中管理所有 Pinia Store
  */
 
+// 公共基类
+export { createContentStore } from './base/contentStore'
+
 // 模式管理
 export { useModeStore } from './mode'
 
