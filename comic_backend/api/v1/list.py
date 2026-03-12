@@ -361,3 +361,71 @@ def sync_platform_list():
     except Exception as e:
         error_logger.error(f"同步平台清单失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/import/favorites', methods=['POST'])
+def import_platform_favorites():
+    """导入平台收藏夹
+    
+    用于漫画平台（JM、PK）的收藏夹导入功能
+    将远程平台的收藏夹导入到本地默认收藏清单
+    """
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少请求体")
+        
+        platform = data.get('platform')
+        source = data.get('source', 'local')
+        
+        if not platform:
+            return error_response(400, "缺少必要参数: platform")
+        
+        platform = platform.upper()
+        
+        if platform not in ['JM', 'PK']:
+            return error_response(400, "不支持的平台，仅支持: JM, PK")
+        
+        result = list_service.import_platform_favorites(platform, source)
+        if result.success:
+            app_logger.info(f"导入平台收藏夹成功: {platform}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"导入平台收藏夹失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@list_bp.route('/sync/favorites', methods=['POST'])
+def sync_platform_favorites():
+    """同步平台收藏夹
+    
+    用于漫画平台（JM、PK）的收藏夹同步功能
+    将远程平台收藏夹的新增内容同步到本地默认收藏清单
+    """
+    try:
+        data = request.json
+        if not data:
+            return error_response(400, "缺少请求体")
+        
+        platform = data.get('platform')
+        source = data.get('source', 'local')
+        
+        if not platform:
+            return error_response(400, "缺少必要参数: platform")
+        
+        platform = platform.upper()
+        
+        if platform not in ['JM', 'PK']:
+            return error_response(400, "不支持的平台，仅支持: JM, PK")
+        
+        result = list_service.sync_platform_favorites(platform, source)
+        if result.success:
+            app_logger.info(f"同步平台收藏夹成功: {platform}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"同步平台收藏夹失败: {e}")
+        return error_response(500, "服务器内部错误")
