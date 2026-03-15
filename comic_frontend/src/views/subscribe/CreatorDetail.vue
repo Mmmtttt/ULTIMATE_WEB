@@ -30,32 +30,41 @@
         title="暂无作品" 
       />
 
-      <div v-else class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
-        <div
-          v-for="item in works"
-          :key="getItemId(item)"
-          class="remote-result-card"
-          :class="{ selected: isSelected(item) }"
-          @click="toggleSelection(item)"
-        >
-          <div class="card-cover">
-            <van-image 
-              :src="getCoverUrl(item.cover_path || item.cover_url)" 
-              fit="cover" 
-              class="cover-image"
-              lazy-load
-            />
-            <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
-            <div v-if="isSelected(item)" class="select-overlay">
-              <van-icon name="success" class="select-icon" />
+      <template v-else>
+        <div class="remote-select-bar">
+          <span class="selected-count">已选 {{ selectedIds.length }} 项</span>
+          <van-button size="small" plain type="primary" @click="toggleSelectAllWorks">
+            {{ isAllWorksSelected ? '取消全选' : '全选' }}
+          </van-button>
+        </div>
+
+        <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
+          <div
+            v-for="item in works"
+            :key="getItemId(item)"
+            class="remote-result-card"
+            :class="{ selected: isSelected(item) }"
+            @click="toggleSelection(item)"
+          >
+            <div class="card-cover">
+              <van-image 
+                :src="getCoverUrl(item.cover_path || item.cover_url)" 
+                fit="cover" 
+                class="cover-image"
+                lazy-load
+              />
+              <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
+              <div v-if="isSelected(item)" class="select-overlay">
+                <van-icon name="success" class="select-icon" />
+              </div>
+            </div>
+            <div class="card-info">
+              <div class="card-title">{{ item.title }}</div>
+              <div v-if="item.author" class="card-author">{{ item.author }}</div>
             </div>
           </div>
-          <div class="card-info">
-            <div class="card-title">{{ item.title }}</div>
-            <div v-if="item.author" class="card-author">{{ item.author }}</div>
-          </div>
         </div>
-      </div>
+      </template>
       
       <div v-if="hasMore" class="load-more">
         <van-button block plain :loading="loadingMore" @click="loadMore">
@@ -85,10 +94,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useActorStore, useImportTaskStore } from '@/stores'
 import { videoApi, actorApi, authorApi } from '@/api' // Ensure authorApi is exported
-import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
-import { getCoverUrl } from '@/utils'
+import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -110,6 +118,10 @@ const showImportSheet = ref(false)
 const isSubscribed = ref(false)
 const authorSubscriptionId = ref(null)
 const actorId = ref(null) // For video mode
+
+const isAllWorksSelected = computed(() => {
+  return isAllSelected(selectedIds.value, works.value, (item) => getItemId(item))
+})
 
 async function loadData(page = 1) {
   if (page === 1) loading.value = true
@@ -272,6 +284,10 @@ function toggleSelection(item) {
   }
 }
 
+function toggleSelectAllWorks() {
+  toggleSelectAll(selectedIds, works.value, (item) => getItemId(item))
+}
+
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
 }
@@ -378,6 +394,18 @@ onMounted(() => {
 
 .load-more {
   margin-top: 20px;
+}
+
+.remote-select-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px 8px;
+}
+
+.remote-select-bar .selected-count {
+  font-size: 13px;
+  color: #666;
 }
 
 .sheet-content {

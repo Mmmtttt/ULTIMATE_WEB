@@ -30,6 +30,13 @@
 
       <div v-else class="results-container">
         <template v-if="activeTab === 'remote'">
+          <div v-if="normalizedResults.length > 0" class="remote-select-bar">
+            <span class="selected-count">已选 {{ selectedIds.length }} 项</span>
+            <van-button size="small" plain type="primary" @click="toggleSelectAllRemote">
+              {{ isAllRemoteSelected ? '取消全选' : '全选' }}
+            </van-button>
+          </div>
+
           <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
             <div
               v-for="item in normalizedResults"
@@ -115,7 +122,7 @@ import { videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
-import { getCoverUrl } from '@/utils'
+import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -173,6 +180,10 @@ const normalizedResults = computed(() => {
   })
 })
 
+const isAllRemoteSelected = computed(() => {
+  return isAllSelected(selectedIds.value, normalizedResults.value, (item) => getItemId(item))
+})
+
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
 }
@@ -189,6 +200,10 @@ function toggleSelection(item) {
   } else {
     selectedIds.value.push(id)
   }
+}
+
+function toggleSelectAllRemote() {
+  toggleSelectAll(selectedIds, normalizedResults.value, (item) => getItemId(item))
 }
 
 function handleImport() {
@@ -433,6 +448,18 @@ onMounted(() => {
 
 .load-more {
   padding: 20px;
+}
+
+.remote-select-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px 0;
+}
+
+.remote-select-bar .selected-count {
+  font-size: 13px;
+  color: #666;
 }
 
 .pagination-info {

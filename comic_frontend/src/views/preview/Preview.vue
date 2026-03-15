@@ -14,6 +14,9 @@
         <van-button size="small" plain @click="showSortPanel = true">
           <van-icon name="sort" />
         </van-button>
+        <van-button size="small" plain @click="showViewModeSheet = true">
+          <van-icon name="apps-o" />
+        </van-button>
         <van-popover
           v-model:show="showMenu"
           :actions="menuActions"
@@ -60,6 +63,9 @@
         <div class="selection-info">已选 {{ selectedIds.length }} 项</div>
         <div class="manage-btns">
           <van-button size="small" @click="isManageMode = false">取消</van-button>
+          <van-button size="small" plain @click="toggleSelectAllItems">
+            {{ isAllItemsSelected ? '取消全选' : '全选' }}
+          </van-button>
           <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="batchSave">
             批量保存
           </van-button>
@@ -80,6 +86,22 @@
         title="排序方式"
       />
     </van-popup>
+
+    <van-action-sheet v-model:show="showViewModeSheet" title="显示模式">
+      <div class="view-mode-sheet">
+        <van-cell
+          v-for="option in viewModeOptions"
+          :key="option.value"
+          :title="option.label"
+          clickable
+          @click="setViewMode(option.value)"
+        >
+          <template #right-icon>
+            <van-icon v-if="mediaViewMode === option.value" name="success" color="#1989fa" />
+          </template>
+        </van-cell>
+      </div>
+    </van-action-sheet>
     
     <!-- 高级筛选面板 -->
     <van-popup 
@@ -123,7 +145,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
-import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, loadFromSession, saveToSession } from '@/utils'
+import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -137,6 +159,7 @@ const { isDesktop, isMobile } = useDevice()
 // State
 const showSortPanel = ref(false)
 const showMenu = ref(false)
+const showViewModeSheet = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
 const showFilterPanel = ref(false)
@@ -145,6 +168,13 @@ const tempExcludeTags = ref([])
 const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
 const tempMinScore = ref(0)
+const mediaViewMode = computed(() => modeStore.mediaViewMode)
+const viewModeOptions = [
+  { value: 'large', label: '大图标' },
+  { value: 'medium', label: '中图标' },
+  { value: 'small', label: '小图标' },
+  { value: 'list', label: '列表' }
+]
 
 function getFilterStorageKey() {
   return makeFilterStorageKey('preview_filters', isVideoMode.value)
@@ -223,6 +253,10 @@ const sortOptions = computed(() => [
   { text: '最新发布', value: 'date' }
 ])
 
+const isAllItemsSelected = computed(() => {
+  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
+})
+
 // Methods
 function goToSearch() {
   router.push('/search?source=preview')
@@ -249,6 +283,15 @@ function toggleSelection(item) {
   } else {
     selectedIds.value.push(id)
   }
+}
+
+function toggleSelectAllItems() {
+  toggleSelectAll(selectedIds, items.value, (item) => item.id)
+}
+
+function setViewMode(mode) {
+  modeStore.setMediaViewMode(mode)
+  showViewModeSheet.value = false
 }
 
 function isSaved(item) {
@@ -419,5 +462,9 @@ onMounted(() => {
 .filter-panel :deep(.advanced-filter) {
   flex: 1;
   overflow-y: auto;
+}
+
+.view-mode-sheet {
+  padding-bottom: 8px;
 }
 </style>

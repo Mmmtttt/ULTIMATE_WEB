@@ -7,6 +7,24 @@ export function toggleSelection(selectedIds, id) {
   }
 }
 
+export function isAllSelected(selectedIds = [], items = [], getId = (item) => item.id) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return false
+  }
+  return items.every(item => selectedIds.includes(getId(item)))
+}
+
+export function toggleSelectAll(selectedIdsRef, items = [], getId = (item) => item.id) {
+  if (!selectedIdsRef || !Array.isArray(items) || items.length === 0) {
+    return
+  }
+  if (isAllSelected(selectedIdsRef.value, items, getId)) {
+    selectedIdsRef.value = []
+  } else {
+    selectedIdsRef.value = items.map(item => getId(item)).filter(Boolean)
+  }
+}
+
 export function getCoverUrl(coverPath) {
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath

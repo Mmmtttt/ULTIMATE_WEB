@@ -17,6 +17,14 @@
           <div class="manage-bar">
             <span class="selected-info">已选 {{ getSelectedIds(tab.key).length }} 个</span>
             <div class="manage-actions">
+              <van-button
+                size="small"
+                plain
+                type="primary"
+                @click="toggleTabSelectAll(tab.key)"
+              >
+                {{ isAllTabSelected(tab.key) ? '取消全选' : '全选' }}
+              </van-button>
               <van-button 
                 size="small" 
                 type="primary" 
@@ -69,7 +77,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
-import { getCoverUrl, toggleSelection } from '@/utils/helpers'
+import { getCoverUrl, isAllSelected, toggleSelection } from '@/utils/helpers'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const props = defineProps({
@@ -145,6 +153,19 @@ function toggleItemSelection(tabKey, id) {
     { value: selectedIds.value[tabKey] },
     id
   )
+}
+
+function isAllTabSelected(tabKey) {
+  return isAllSelected(getSelectedIds(tabKey), getTrashList(tabKey), (item) => item.id)
+}
+
+function toggleTabSelectAll(tabKey) {
+  const list = getTrashList(tabKey)
+  if (isAllTabSelected(tabKey)) {
+    selectedIds.value[tabKey] = []
+    return
+  }
+  selectedIds.value[tabKey] = list.map(item => item.id)
 }
 
 async function fetchTrashList(key) {

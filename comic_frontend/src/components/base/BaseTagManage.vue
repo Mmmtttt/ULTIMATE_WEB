@@ -39,9 +39,14 @@
         <div class="batch-section">
           <div class="section-header">
             <span class="section-title">{{ contentLabel }}</span>
-            <span class="selected-count" v-if="selectedContentIds.length > 0">
-              已选 {{ selectedContentIds.length }} 个
-            </span>
+            <div class="section-right">
+              <span class="selected-count" v-if="selectedContentIds.length > 0">
+                已选 {{ selectedContentIds.length }} 个
+              </span>
+              <van-button size="mini" plain type="primary" @click="toggleSelectAllContent">
+                {{ isAllContentSelected ? '取消全选' : '全选' }}
+              </van-button>
+            </div>
           </div>
           
           <div class="content-select-grid">
@@ -161,7 +166,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { getCoverUrl, toggleSelection } from '@/utils/helpers'
+import { getCoverUrl, isAllSelected, toggleSelection } from '@/utils/helpers'
 
 const props = defineProps({
   contentType: {
@@ -229,6 +234,10 @@ const canBatchAdd = computed(() => {
 
 const canBatchRemove = computed(() => {
   return selectedContentIds.value.length > 0 && selectedTagIds.value.length > 0
+})
+
+const isAllContentSelected = computed(() => {
+  return isAllSelected(selectedContentIds.value, contentList.value, (item) => item.id)
 })
 
 function getTagList(tabKey) {
@@ -381,6 +390,14 @@ function toggleContentSelection(id) {
   toggleSelection(selectedContentIds, id)
 }
 
+function toggleSelectAllContent() {
+  if (isAllContentSelected.value) {
+    selectedContentIds.value = []
+    return
+  }
+  selectedContentIds.value = contentList.value.map(item => item.id)
+}
+
 function toggleTagSelection(id) {
   toggleSelection(selectedTagIds, id)
 }
@@ -508,6 +525,12 @@ onMounted(async () => {
 .selected-count {
   font-size: 12px;
   color: #1989fa;
+}
+
+.section-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .content-select-grid {
