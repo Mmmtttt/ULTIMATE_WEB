@@ -95,12 +95,28 @@ fi
 echo ""
 echo "=== Installing Dependencies ==="
 
-PIP_CMD=$(get_pip_cmd)
-if [ -z "$PIP_CMD" ]; then
-    echo "ERROR - pip is not available"
+VENV_DIR="$ROOT_DIR/comic_backend/venv"
+
+echo ""
+echo "Setting up Python virtual environment..."
+if [ ! -d "$VENV_DIR" ]; then
+    echo "  Creating virtual environment in comic_backend/venv..."
+    $PY_CMD -m venv "$VENV_DIR"
+    if [ $? -ne 0 ]; then
+        echo "  ERROR - Failed to create virtual environment"
+        exit 1
+    fi
+    echo "  OK - Virtual environment created"
+else
+    echo "  Virtual environment already exists"
+fi
+
+PIP_CMD="$VENV_DIR/bin/pip"
+if [ ! -f "$PIP_CMD" ]; then
+    echo "ERROR - pip not found in virtual environment"
     exit 1
 fi
-echo "Using pip command: $PIP_CMD"
+echo "Using pip: $PIP_CMD"
 
 echo ""
 echo "Installing backend dependencies..."

@@ -25,3 +25,5 @@ comic_backend/third_party/*/favorite_comics.txt
 
 需求迭代计划.md
 tests/test.txt
+
+comic_backend/venv
