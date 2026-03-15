@@ -1,3 +1,4 @@
 Flask==2.3.0
 Flask-CORS==4.0.0
 Pillow
+requests>=2.31.0
