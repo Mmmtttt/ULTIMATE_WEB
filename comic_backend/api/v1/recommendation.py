@@ -367,12 +367,24 @@ def download_to_cache():
                     album_detail.get('local_pages', album_detail.get('pages_count', 0)),
                     default=total_page
                 )
+                added = recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+                actual_cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+
+                # Guard against false success: download succeeded but cache path/index mismatched.
+                if not actual_cached_pages:
+                    if not added:
+                        error_logger.error(
+                            f"下载成功但缓存索引失败: {recommendation_id}, "
+                            f"local_pages={local_pages}, album_detail_pages={album_detail.get('pages_count', 0)}"
+                        )
+                    return error_response(500, "下载成功但缓存目录识别失败，请重试")
+
+                local_pages = len(actual_cached_pages)
                 recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
-                if local_pages > 0:
-                    recommendation_service.update_total_page(recommendation_id, local_pages)
-                    total_page = local_pages
+                recommendation_service.update_total_page(recommendation_id, local_pages)
+                total_page = local_pages
                 
-                cached_pages_list = list(range(1, local_pages + 1))
+                cached_pages_list = actual_cached_pages
                 
                 app_logger.info(f"下载漫画到缓存成功: {recommendation_id}, 页数: {local_pages}")
                 return success_response({

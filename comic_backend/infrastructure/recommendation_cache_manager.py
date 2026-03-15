@@ -108,6 +108,15 @@ class RecommendationCacheManager:
                         comic_dir = os.path.join(matched_author_dir, title_var)
                         if os.path.exists(comic_dir):
                             return comic_dir
+
+                    # 作者已匹配但标题可能经过路径清洗（如 / -> _），继续做标题模糊匹配
+                    try:
+                        title_dirs = os.listdir(matched_author_dir)
+                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
+                        if matched_title_dir:
+                            return os.path.join(matched_author_dir, matched_title_dir)
+                    except Exception:
+                        pass
                 
                 if not matched_author_dir:
                     author_dirs = os.listdir(pk_comics_dir)
@@ -128,8 +137,10 @@ class RecommendationCacheManager:
     
     def _generate_name_variants(self, name):
         """生成名称的变体，用于目录匹配"""
+        name = (name or "").strip().rstrip(".")
         variants = set()
         variants.add(name)
+        variants.add(self._normalize_fs_name(name))
         
         if " | " in name:
             variants.add(name.replace(" | ", " _ "))
@@ -142,6 +153,13 @@ class RecommendationCacheManager:
         variants.add(name.replace("  ", " "))
         
         return list(variants)
+
+    def _normalize_fs_name(self, name: str) -> str:
+        """按下载器规则对目录名做规范化，提升命中率"""
+        normalized = (name or "").strip().rstrip(".")
+        normalized = re.sub(r'[\\/:*?"<>|]', '_', normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized
     
     def _fuzzy_match_dir(self, dir_list, target_name):
         """模糊匹配目录名"""
@@ -261,13 +279,31 @@ class RecommendationCacheManager:
     def is_cached(self, comic_id: str) -> bool:
         """检查漫画是否已缓存"""
         with self._cache_lock:
-            if comic_id in self._cache_index:
-                comic_dir = self._get_comic_cache_dir(comic_id)
-                if not os.path.exists(comic_dir):
-                    return False
-                image_paths = self._get_all_image_paths(comic_dir)
-                return len(image_paths) > 0
-            return False
+            comic_dir = self._get_comic_cache_dir(comic_id)
+            if not os.path.exists(comic_dir):
+                return False
+
+            image_paths = self._get_all_image_paths(comic_dir)
+            if not image_paths:
+                return False
+
+            # Self-heal: if files exist but index is missing/outdated, rebuild index entry.
+            dir_size = self._calculate_dir_size(comic_dir)
+            page_count = len(image_paths)
+            info = self._cache_index.get(comic_id)
+            if (
+                info is None
+                or info.get("size", 0) != dir_size
+                or info.get("page_count", 0) != page_count
+            ):
+                self._cache_index[comic_id] = {
+                    "size": dir_size,
+                    "last_access": time.time(),
+                    "page_count": page_count
+                }
+                self._save_cache_index()
+
+            return True
     
     def get_cache_info(self, comic_id: str) -> Optional[Dict]:
         """获取漫画缓存信息"""
@@ -276,7 +312,16 @@ class RecommendationCacheManager:
                 info = self._cache_index[comic_id].copy()
                 info["comic_id"] = comic_id
                 return info
-            return None
+
+        # 尝试自动修复后再读取一次
+        if self.is_cached(comic_id):
+            with self._cache_lock:
+                info = self._cache_index.get(comic_id)
+                if info:
+                    merged = info.copy()
+                    merged["comic_id"] = comic_id
+                    return merged
+        return None
     
     def get_cache_status(self, comic_id: str) -> Dict:
         """获取漫画缓存状态
@@ -287,17 +332,13 @@ class RecommendationCacheManager:
         Returns:
             缓存状态字典，包含 is_cached 和 cached_pages
         """
-        with self._cache_lock:
-            is_cached = comic_id in self._cache_index
-            cached_pages = []
-            
-            if is_cached:
-                cached_pages = self.get_cached_pages(comic_id)
-            
-            return {
-                "is_cached": is_cached,
-                "cached_pages": cached_pages
-            }
+        is_cached = self.is_cached(comic_id)
+        cached_pages = self.get_cached_pages(comic_id) if is_cached else []
+
+        return {
+            "is_cached": is_cached,
+            "cached_pages": cached_pages
+        }
     
     def update_access_time(self, comic_id: str):
         """更新访问时间（移到队列末尾）"""

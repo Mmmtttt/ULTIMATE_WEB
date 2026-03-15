@@ -78,6 +78,12 @@ class FileParser:
                             comic_dir = os.path.join(matched_author_dir, title_var)
                             if os.path.exists(comic_dir):
                                 return comic_dir
+                        # 作者目录已命中时，也要继续做标题模糊匹配，避免 / 等字符清洗后失配
+                        title_dirs = os.listdir(matched_author_dir)
+                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
+                        if matched_title_dir:
+                            comic_dir = os.path.join(matched_author_dir, matched_title_dir)
+                            return comic_dir
                     
                     # 如果没找到精确匹配，尝试模糊匹配作者目录
                     if not matched_author_dir:
@@ -103,8 +109,10 @@ class FileParser:
     
     def _generate_name_variants(self, name):
         """生成名称的变体，用于目录匹配"""
+        name = (name or "").strip().rstrip(".")
         variants = set()
         variants.add(name)
+        variants.add(self._normalize_fs_name(name))
         
         # 替换常见分隔符
         if " | " in name:
@@ -122,6 +130,13 @@ class FileParser:
         variants.add(name.replace("\u3000", " "))
         
         return list(variants)
+
+    def _normalize_fs_name(self, name: str) -> str:
+        """按下载器规则对目录名做规范化，提升命中率"""
+        normalized = (name or "").strip().rstrip(".")
+        normalized = re.sub(r'[\\/:*?"<>|]', '_', normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized
     
     def _fuzzy_match_dir(self, dir_list, target_name):
         """在目录列表中模糊匹配目标名称"""
