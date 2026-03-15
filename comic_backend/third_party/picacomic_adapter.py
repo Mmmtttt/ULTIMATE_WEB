@@ -168,6 +168,22 @@ class PicacomicAdapter(BaseAdapter):
             "total": len(converted_albums),
             "albums": converted_albums
         }
+
+    def get_favorites_basic(self) -> Dict[str, Any]:
+        """获取收藏夹基础信息（不逐个拉详情，速度更快）"""
+        try:
+            result = self._picacomic_api_module.get_favorite_comics(option=self._option)
+            basic_albums = result.get('comics', [])
+            converted = self._convert_basic_to_meta_format(basic_albums)
+            return {
+                "collection_name": "Picacomic 导入",
+                "user": self.get_config('account', ''),
+                "total_favorites": converted.get("total", len(converted.get("albums", []))),
+                "last_updated": "",
+                "albums": converted.get("albums", [])
+            }
+        except Exception as e:
+            raise RuntimeError(f"获取收藏夹失败: {e}")
     
     def get_favorites(self) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画

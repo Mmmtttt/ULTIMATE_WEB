@@ -229,6 +229,34 @@ class JMComicAdapter(BaseAdapter):
             "total": len(converted_albums),
             "albums": converted_albums
         }
+
+    def get_favorites_basic(self) -> Dict[str, Any]:
+        """获取收藏夹基础信息（不逐个拉详情，速度更快）"""
+        try:
+            from jmcomic_api import get_favorite_comics, get_client
+
+            username = self.get_config('username')
+            password = self.get_config('password')
+            if not username or not password:
+                raise RuntimeError("JM 账号或密码未配置，请检查 third_party_config.json -> adapters -> jmcomic")
+
+            get_client(username=username, password=password)
+            result = get_favorite_comics(username=username, password=password)
+            basic_albums = result.get('comics', [])
+            converted = self._convert_basic_to_meta_format(basic_albums)
+
+            return {
+                "collection_name": "JMComic 导入",
+                "user": username,
+                "total_favorites": converted.get("total", len(converted.get("albums", []))),
+                "last_updated": "",
+                "albums": converted.get("albums", [])
+            }
+        except Exception as e:
+            error_msg = str(e)
+            if "請先登入會員" in error_msg or '"code":401' in error_msg:
+                raise RuntimeError("JM 登录状态失效，请检查账号密码后重试。")
+            raise RuntimeError(f"获取收藏夹失败: {e}")
     
     def get_favorites(self) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画

@@ -1,5 +1,6 @@
 import os
-from typing import List as ListType, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List as ListType, Optional
 from domain.list import List, ListRepository
 from domain.comic import ComicRepository
 from domain.video import VideoRepository, Video
@@ -20,6 +21,8 @@ from third_party.platform_service import get_platform_service
 class ListAppService:
     DEFAULT_COMIC_LIST_ID = "list_favorites_comic"
     DEFAULT_VIDEO_LIST_ID = "list_favorites_video"
+    DEFAULT_IMPORT_MAX_WORKERS = 10
+    DEFAULT_IMPORT_JM_MAX_WORKERS = 3
     
     def __init__(
         self,
@@ -41,6 +44,78 @@ class ListAppService:
         if content_type == ContentType.COMIC and platform_str in (Platform.JM.value, Platform.PK.value):
             return f"远程跟踪：{platform_str}{base_name}"
         return f"远程跟踪：{base_name}"
+
+    def _get_positive_int_config(self, env_name: str, default_value: int) -> int:
+        value = os.getenv(env_name)
+        if not value:
+            return default_value
+
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+
+        app_logger.warning(f"环境变量 {env_name} 配置无效: {value}，使用默认值 {default_value}")
+        return default_value
+
+    def _resolve_import_workers(self, task_count: int, platform: Optional[Platform] = None) -> int:
+        if task_count <= 0:
+            return 0
+
+        max_workers = self._get_positive_int_config(
+            "LIST_IMPORT_MAX_WORKERS",
+            self.DEFAULT_IMPORT_MAX_WORKERS
+        )
+
+        if platform == Platform.JM:
+            jm_workers = self._get_positive_int_config(
+                "LIST_IMPORT_JM_MAX_WORKERS",
+                self.DEFAULT_IMPORT_JM_MAX_WORKERS
+            )
+            max_workers = min(max_workers, jm_workers)
+
+        return max(1, min(max_workers, task_count))
+
+    def _run_detail_tasks(
+        self,
+        detail_tasks: ListType[dict],
+        fetch_detail: Callable[[dict], Dict[str, Any]],
+        handle_detail: Callable[[Dict[str, Any]], None],
+        platform: Optional[Platform] = None
+    ) -> None:
+        if not detail_tasks:
+            return
+
+        max_workers = self._resolve_import_workers(len(detail_tasks), platform)
+        platform_name = platform.value if platform else "UNKNOWN"
+        app_logger.info(f"详情导入并发数: {max_workers}, 平台: {platform_name}, 任务数: {len(detail_tasks)}")
+
+        if max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_task = {
+                    executor.submit(fetch_detail, task): task for task in detail_tasks
+                }
+                for future in as_completed(future_to_task):
+                    task = future_to_task[future]
+                    try:
+                        handle_detail(future.result())
+                    except Exception as e:
+                        handle_detail({
+                            "task": task,
+                            "error": str(e)
+                        })
+            return
+
+        for task in detail_tasks:
+            try:
+                handle_detail(fetch_detail(task))
+            except Exception as e:
+                handle_detail({
+                    "task": task,
+                    "error": str(e)
+                })
 
     def _get_or_create_tracking_list(
         self,
@@ -584,7 +659,7 @@ class ListAppService:
             platform_service = get_platform_service()
             
             if platform in [Platform.JM, Platform.PK] and list_id == "favorites":
-                favorites_result = platform_service.get_favorites(platform)
+                favorites_result = platform_service.get_favorites_basic(platform)
                 albums = favorites_result.get('albums', [])
                 
                 works = []
@@ -657,7 +732,7 @@ class ListAppService:
             target_list = tracking_list_result.data
 
             if platform in [Platform.JM, Platform.PK] and platform_list_id == "favorites":
-                favorites_result = platform_service.get_favorites(platform)
+                favorites_result = platform_service.get_favorites_basic(platform)
                 albums = favorites_result.get('albums', [])
                 works = []
                 for album in albums:
@@ -754,7 +829,7 @@ class ListAppService:
                 import_action = self._import_javdb_videos
             else:
                 if lst.platform_list_id == "favorites":
-                    favorites_result = platform_service.get_favorites(platform)
+                    favorites_result = platform_service.get_favorites_basic(platform)
                     albums = favorites_result.get('albums', [])
                     works = []
                     for album in albums:
@@ -845,9 +920,9 @@ class ListAppService:
             from domain.tag.entity import ContentType
             from core.constants import JAV_PICTURES_DIR, JAV_COVER_DIR
             from application.video_app_service import VideoAppService
+            import re
             
             repo = self._video_repo if source == "local" else self._video_rec_repo
-            entity_class = Video if source == "local" else VideoRecommendation
             video_service = VideoAppService()
             
             tag_service = TagAppService()
@@ -861,9 +936,8 @@ class ListAppService:
             skipped_count = 0
             imported_video_ids: ListType[str] = []
             
-            # 获取平台服务来获取视频详情
-            from third_party.platform_service import get_platform_service
             platform_service = get_platform_service()
+            detail_tasks: ListType[dict] = []
             
             for work in works:
                 try:
@@ -885,118 +959,153 @@ class ListAppService:
                             skipped_count += 1
                         continue
                     
-                    # 获取完整的视频详情
-                    app_logger.info(f"获取视频详情: {video_id}")
-                    detail = platform_service.get_album_by_id(Platform.JAVDB, video_id)
-                    
-                    if not detail:
-                        app_logger.warning(f"无法获取视频详情: {video_id}")
-                        skipped_count += 1
-                        continue
-                    
-                    # 从详情中提取第一个视频（因为 get_album_by_id 返回的是 videos 数组）
-                    videos = detail.get('videos', [])
-                    if not videos:
-                        app_logger.warning(f"视频详情中没有视频数据: {video_id}")
-                        skipped_count += 1
-                        continue
-                    
-                    video_detail = videos[0]
-                    
-                    # 处理标签
-                    video_tag_ids = []
-                    for tag_name in video_detail.get("tags", []):
-                        if tag_name not in tag_name_to_id:
-                            result = tag_service.create_tag(tag_name, ContentType.VIDEO)
-                            if result.success:
-                                tag_name_to_id[tag_name] = result.data["id"]
-                                app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
-                        if tag_name in tag_name_to_id:
-                            video_tag_ids.append(tag_name_to_id[tag_name])
-                    
-                    # 构建视频数据
-                    video_data = {
-                        'id': prefixed_id,
-                        'title': video_detail.get('title', ''),
-                        'code': video_detail.get('code', ''),
-                        'date': video_detail.get('date', ''),
-                        'series': video_detail.get('series', ''),
-                        'creator': video_detail.get('actors', [''])[0] if video_detail.get('actors') else '',
-                        'actors': video_detail.get('actors', []),
-                        'magnets': video_detail.get('magnets', []),
-                        'thumbnail_images': video_detail.get('thumbnail_images', []),
-                        'preview_video': video_detail.get('preview_video', ''),
-                        'tag_ids': video_tag_ids,
-                        'list_ids': [target_list_id],
-                        'create_time': get_current_time(),
-                        'last_access_time': get_current_time()
-                    }
-                    
-                    # 处理评分
-                    rating = work.get('rating', '')
-                    score = 8.0
-                    if rating:
-                        try:
-                            rating_num = float(rating.replace('分', ''))
-                            score = min(max(rating_num, 1.0), 10.0)
-                        except:
-                            pass
-                    video_data['score'] = score
-                    
-                    # 对于本地库，使用 VideoAppService 导入
-                    if source == "local":
-                        result = video_service.import_video(video_data)
-                        if result.success:
-                            imported_count += 1
-                            imported_video_ids.append(prefixed_id)
-                            # 下载封面
-                            cover_url = video_detail.get('cover_url', '')
-                            app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
-                            if cover_url:
-                                app_logger.info(f"开始下载封面: {prefixed_id}")
-                                video_service.download_cover_async(prefixed_id, cover_url)
-                                video_service.download_high_quality_thumbnail_async(
-                                    prefixed_id, cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR
-                                )
-                            else:
-                                app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
-                        else:
-                            skipped_count += 1
-                    else:
-                        # 预览库直接保存
-                        from infrastructure.persistence.json_storage import JsonStorage
-                        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-                        
-                        video_data['cover_path'] = video_detail.get('cover_url', '')
-                        
-                        db_file = VIDEO_RECOMMENDATION_JSON_FILE
-                        storage = JsonStorage(db_file)
-                        db_data = storage.read()
-                        videos_key = 'video_recommendations'
-                        
-                        if videos_key not in db_data:
-                            db_data[videos_key] = []
-                        db_data[videos_key].append(video_data)
-                        
-                        if storage.write(db_data):
-                            imported_count += 1
-                            imported_video_ids.append(prefixed_id)
-                            # 下载封面
-                            cover_url = video_detail.get('cover_url', '')
-                            app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
-                            if cover_url:
-                                app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                                video_service.download_cover_async_for_recommendation(prefixed_id, cover_url, JAV_COVER_DIR)
-                            else:
-                                app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
-                        else:
-                            skipped_count += 1
-                        
+                    detail_tasks.append({
+                        "work": work,
+                        "video_id": str(video_id),
+                        "prefixed_id": prefixed_id
+                    })
                 except Exception as e:
                     app_logger.warning(f"导入单个视频失败: {work.get('video_id', '')}, {e}")
                     import traceback
                     app_logger.warning(traceback.format_exc())
                     skipped_count += 1
+
+            def fetch_video_detail(task: dict) -> dict:
+                video_id = task.get("video_id", "")
+                app_logger.info(f"获取视频详情: {video_id}")
+                detail = platform_service.get_album_by_id(Platform.JAVDB, video_id)
+                return {
+                    "task": task,
+                    "detail": detail
+                }
+
+            def handle_video_detail(detail_result: dict):
+                nonlocal imported_count, skipped_count
+                task = detail_result.get("task", {})
+                work = task.get("work", {})
+                video_id = task.get("video_id", "")
+                prefixed_id = task.get("prefixed_id", "")
+
+                if detail_result.get("error"):
+                    app_logger.warning(f"获取视频详情失败: {video_id}, {detail_result.get('error')}")
+                    skipped_count += 1
+                    return
+
+                existing_video = repo.get_by_id(prefixed_id)
+                if existing_video:
+                    if target_list_id not in existing_video.list_ids:
+                        existing_video.add_to_list(target_list_id)
+                        repo.save(existing_video)
+                        imported_count += 1
+                        imported_video_ids.append(prefixed_id)
+                    else:
+                        skipped_count += 1
+                    return
+
+                detail = detail_result.get("detail")
+                if not detail:
+                    app_logger.warning(f"无法获取视频详情: {video_id}")
+                    skipped_count += 1
+                    return
+                
+                videos = detail.get("videos", [])
+                if not videos:
+                    app_logger.warning(f"视频详情中没有视频数据: {video_id}")
+                    skipped_count += 1
+                    return
+                
+                video_detail = videos[0]
+                
+                video_tag_ids = []
+                for tag_name in video_detail.get("tags", []):
+                    if tag_name not in tag_name_to_id:
+                        result = tag_service.create_tag(tag_name, ContentType.VIDEO)
+                        if result.success:
+                            tag_name_to_id[tag_name] = result.data["id"]
+                            app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
+                    if tag_name in tag_name_to_id:
+                        video_tag_ids.append(tag_name_to_id[tag_name])
+                
+                video_data = {
+                    "id": prefixed_id,
+                    "title": video_detail.get("title", ""),
+                    "code": video_detail.get("code", ""),
+                    "date": video_detail.get("date", ""),
+                    "series": video_detail.get("series", ""),
+                    "creator": video_detail.get("actors", [""])[0] if video_detail.get("actors") else "",
+                    "actors": video_detail.get("actors", []),
+                    "magnets": video_detail.get("magnets", []),
+                    "thumbnail_images": video_detail.get("thumbnail_images", []),
+                    "preview_video": video_detail.get("preview_video", ""),
+                    "tag_ids": video_tag_ids,
+                    "list_ids": [target_list_id],
+                    "create_time": get_current_time(),
+                    "last_access_time": get_current_time()
+                }
+                
+                score = 8.0
+                rating_text = str(work.get("rating", "") or "")
+                rating_match = re.search(r"\\d+(?:\\.\\d+)?", rating_text)
+                if rating_match:
+                    try:
+                        rating_num = float(rating_match.group(0))
+                        score = min(max(rating_num, 1.0), 10.0)
+                    except Exception:
+                        pass
+                video_data["score"] = score
+                
+                if source == "local":
+                    result = video_service.import_video(video_data)
+                    if result.success:
+                        imported_count += 1
+                        imported_video_ids.append(prefixed_id)
+                        cover_url = video_detail.get("cover_url", "")
+                        app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
+                        if cover_url:
+                            app_logger.info(f"开始下载封面: {prefixed_id}")
+                            video_service.download_cover_async(prefixed_id, cover_url)
+                            video_service.download_high_quality_thumbnail_async(
+                                prefixed_id, cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR
+                            )
+                        else:
+                            app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
+                    else:
+                        skipped_count += 1
+                else:
+                    from infrastructure.persistence.json_storage import JsonStorage
+                    from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+                    
+                    video_data["cover_path"] = video_detail.get("cover_url", "")
+                    
+                    db_file = VIDEO_RECOMMENDATION_JSON_FILE
+                    storage = JsonStorage(db_file)
+                    db_data = storage.read()
+                    videos_key = "video_recommendations"
+                    
+                    if videos_key not in db_data:
+                        db_data[videos_key] = []
+                    db_data[videos_key].append(video_data)
+                    
+                    if storage.write(db_data):
+                        imported_count += 1
+                        imported_video_ids.append(prefixed_id)
+                        cover_url = video_detail.get("cover_url", "")
+                        app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
+                        if cover_url:
+                            app_logger.info(f"开始下载推荐封面: {prefixed_id}")
+                            video_service.download_cover_async_for_recommendation(prefixed_id, cover_url, JAV_COVER_DIR)
+                        else:
+                            app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
+                    else:
+                        skipped_count += 1
+
+            if detail_tasks:
+                self._run_detail_tasks(
+                    detail_tasks=detail_tasks,
+                    fetch_detail=fetch_video_detail,
+                    handle_detail=handle_video_detail,
+                    platform=Platform.JAVDB
+                )
 
             if imported_video_ids:
                 recent_result = video_service.apply_recent_import_tags(
@@ -1008,9 +1117,9 @@ class ListAppService:
                     app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
             
             return ServiceResult.ok({
-                'imported_count': imported_count,
-                'skipped_count': skipped_count,
-                'total_count': len(works)
+                "imported_count": imported_count,
+                "skipped_count": skipped_count,
+                "total_count": len(works)
             }, f"成功导入 {imported_count} 个视频，跳过 {skipped_count} 个")
             
         except Exception as e:
@@ -1061,13 +1170,11 @@ class ListAppService:
             cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
             platform_prefix = "JM" if platform == Platform.JM else "PK"
             os.makedirs(cover_dir, exist_ok=True)
+            detail_tasks: ListType[dict] = []
             
             for work in works:
                 try:
-                    album_id = work.get('album_id', '')
-                    if not album_id:
-                        album_id = work.get('comic_id', '')
-                    
+                    album_id = work.get("album_id", "") or work.get("comic_id", "")
                     if not album_id:
                         skipped_count += 1
                         continue
@@ -1075,7 +1182,7 @@ class ListAppService:
                     prefixed_id = add_platform_prefix(platform, str(album_id))
                     static_cover_path = f"/static/cover/{platform_prefix}/{album_id}.jpg"
                     local_cover_file = os.path.join(cover_dir, f"{album_id}.jpg")
-                    cover_url_from_work = work.get('cover_url', '')
+                    cover_url_from_work = work.get("cover_url", "")
                     
                     existing_comic = repo.get_by_id(prefixed_id)
                     if existing_comic:
@@ -1114,131 +1221,173 @@ class ListAppService:
                             skipped_count += 1
                         continue
                     
-                    app_logger.info(f"获取漫画详情: {album_id}")
-                    detail_result = platform_service.get_album_by_id(platform, str(album_id))
-                    
-                    if not detail_result:
-                        app_logger.warning(f"无法获取漫画详情: {album_id}")
-                        skipped_count += 1
-                        continue
-                    
-                    albums = detail_result.get('albums', [])
-                    if not albums:
-                        app_logger.warning(f"漫画详情中没有数据: {album_id}")
-                        skipped_count += 1
-                        continue
-                    
-                    comic_detail = albums[0]
-                    
-                    video_tag_ids = []
-                    for tag_name in comic_detail.get("tags", []):
-                        if tag_name not in tag_name_to_id:
-                            result = tag_service.create_tag(tag_name, ContentType.COMIC)
-                            if result.success:
-                                tag_name_to_id[tag_name] = result.data["id"]
-                                app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
-                        if tag_name in tag_name_to_id:
-                            video_tag_ids.append(tag_name_to_id[tag_name])
-                    
-                    cover_path = static_cover_path
-                    
-                    comic_data = {
-                        'id': prefixed_id,
-                        'title': comic_detail.get('title', ''),
-                        'title_jp': comic_detail.get('title_jp', ''),
-                        'author': comic_detail.get('author', ''),
-                        'desc': '',
-                        'cover_path': cover_path,
-                        'total_page': comic_detail.get('pages', 0),
-                        'current_page': 1,
-                        'tag_ids': video_tag_ids,
-                        'list_ids': [target_list_id],
-                        'create_time': get_current_time(),
-                        'last_access_time': get_current_time()
-                    }
-                    
-                    if source == "local":
-                        comic = Comic.from_dict(comic_data)
-                        if repo.save(comic):
-                            imported_count += 1
-                            
-                            cover_url = comic_detail.get('cover_url', '')
-                            if cover_url:
-                                app_logger.info(f"开始下载封面: {prefixed_id}")
-                                try:
-                                    save_path = os.path.join(cover_dir, f"{album_id}.jpg")
-                                    os.makedirs(cover_dir, exist_ok=True)
-                                    platform_service.download_cover(platform, str(album_id), save_path, show_progress=False)
-                                except Exception as e:
-                                    app_logger.warning(f"下载封面失败: {prefixed_id}, {e}")
-                        else:
-                            skipped_count += 1
-                    else:
-                        from infrastructure.persistence.json_storage import JsonStorage
-                        from core.constants import RECOMMENDATION_JSON_FILE
-                        from core.utils import get_preview_pages
-                        
-                        cover_url = comic_detail.get('cover_url', '')
-                        if os.path.exists(local_cover_file):
-                            comic_data['cover_path'] = cover_path
-                        elif cover_url:
-                            try:
-                                platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
-                                if os.path.exists(local_cover_file):
-                                    comic_data['cover_path'] = cover_path
-                                else:
-                                    comic_data['cover_path'] = cover_url
-                            except Exception as e:
-                                app_logger.warning(f"下载推荐封面失败: {prefixed_id}, {e}")
-                                comic_data['cover_path'] = cover_url
-                        else:
-                            comic_data['cover_path'] = cover_path
-                        
-                        # 获取预览图片 URL
-                        try:
-                            total_page = comic_detail.get('pages', 0)
-                            preview_pages = get_preview_pages(total_page)
-                            
-                            preview_urls = platform_service.get_preview_image_urls(
-                                platform,
-                                str(album_id),
-                                preview_pages
-                            )
-                            
-                            comic_data['preview_image_urls'] = preview_urls
-                            comic_data['preview_pages'] = preview_pages
-                            
-                            app_logger.info(f"获取推荐页预览图片成功: {prefixed_id}, 共 {len(preview_urls)} 张")
-                        except Exception as e:
-                            from infrastructure.logger import error_logger
-                            error_logger.error(f"获取推荐页预览图片失败 {prefixed_id}: {e}")
-                            comic_data['preview_image_urls'] = []
-                            comic_data['preview_pages'] = []
-                        
-                        db_file = RECOMMENDATION_JSON_FILE
-                        storage = JsonStorage(db_file)
-                        db_data = storage.read()
-                        comics_key = 'recommendations'
-                        
-                        if comics_key not in db_data:
-                            db_data[comics_key] = []
-                        db_data[comics_key].append(comic_data)
-                        
-                        if storage.write(db_data):
-                            imported_count += 1
-                        else:
-                            skipped_count += 1
-                        
+                    detail_tasks.append({
+                        "album_id": str(album_id),
+                        "prefixed_id": prefixed_id,
+                        "static_cover_path": static_cover_path,
+                        "local_cover_file": local_cover_file
+                    })
                 except Exception as e:
                     app_logger.warning(f"导入单个漫画失败: {work.get('album_id', work.get('comic_id', ''))}, {e}")
                     import traceback
                     app_logger.warning(traceback.format_exc())
                     skipped_count += 1
+
+            def fetch_comic_detail(task: dict) -> dict:
+                album_id = task.get("album_id", "")
+                app_logger.info(f"获取漫画详情: {album_id}")
+                detail_result = platform_service.get_album_by_id(platform, str(album_id))
+                return {
+                    "task": task,
+                    "detail_result": detail_result
+                }
+
+            def handle_comic_detail(detail_result: dict):
+                nonlocal imported_count, skipped_count
+                task = detail_result.get("task", {})
+                album_id = task.get("album_id", "")
+                prefixed_id = task.get("prefixed_id", "")
+                static_cover_path = task.get("static_cover_path", "")
+                local_cover_file = task.get("local_cover_file", "")
+
+                if detail_result.get("error"):
+                    app_logger.warning(f"获取漫画详情失败: {album_id}, {detail_result.get('error')}")
+                    skipped_count += 1
+                    return
+
+                existing_comic = repo.get_by_id(prefixed_id)
+                if existing_comic:
+                    if target_list_id not in existing_comic.list_ids:
+                        existing_comic.add_to_list(target_list_id)
+                        if repo.save(existing_comic):
+                            imported_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        skipped_count += 1
+                    return
+
+                loaded_detail_result = detail_result.get("detail_result")
+                if not loaded_detail_result:
+                    app_logger.warning(f"无法获取漫画详情: {album_id}")
+                    skipped_count += 1
+                    return
+                
+                albums = loaded_detail_result.get("albums", [])
+                if not albums:
+                    app_logger.warning(f"漫画详情中没有数据: {album_id}")
+                    skipped_count += 1
+                    return
+                
+                comic_detail = albums[0]
+                
+                video_tag_ids = []
+                for tag_name in comic_detail.get("tags", []):
+                    if tag_name not in tag_name_to_id:
+                        result = tag_service.create_tag(tag_name, ContentType.COMIC)
+                        if result.success:
+                            tag_name_to_id[tag_name] = result.data["id"]
+                            app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
+                    if tag_name in tag_name_to_id:
+                        video_tag_ids.append(tag_name_to_id[tag_name])
+                
+                cover_path = static_cover_path
+                comic_data = {
+                    "id": prefixed_id,
+                    "title": comic_detail.get("title", ""),
+                    "title_jp": comic_detail.get("title_jp", ""),
+                    "author": comic_detail.get("author", ""),
+                    "desc": "",
+                    "cover_path": cover_path,
+                    "total_page": comic_detail.get("pages", 0),
+                    "current_page": 1,
+                    "tag_ids": video_tag_ids,
+                    "list_ids": [target_list_id],
+                    "create_time": get_current_time(),
+                    "last_access_time": get_current_time()
+                }
+                
+                if source == "local":
+                    comic = Comic.from_dict(comic_data)
+                    if repo.save(comic):
+                        imported_count += 1
+                        
+                        cover_url = comic_detail.get("cover_url", "")
+                        if cover_url:
+                            app_logger.info(f"开始下载封面: {prefixed_id}")
+                            try:
+                                save_path = os.path.join(cover_dir, f"{album_id}.jpg")
+                                os.makedirs(cover_dir, exist_ok=True)
+                                platform_service.download_cover(platform, str(album_id), save_path, show_progress=False)
+                            except Exception as e:
+                                app_logger.warning(f"下载封面失败: {prefixed_id}, {e}")
+                    else:
+                        skipped_count += 1
+                else:
+                    from infrastructure.persistence.json_storage import JsonStorage
+                    from core.constants import RECOMMENDATION_JSON_FILE
+                    from core.utils import get_preview_pages
+                    
+                    cover_url = comic_detail.get("cover_url", "")
+                    if os.path.exists(local_cover_file):
+                        comic_data["cover_path"] = cover_path
+                    elif cover_url:
+                        try:
+                            platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
+                            if os.path.exists(local_cover_file):
+                                comic_data["cover_path"] = cover_path
+                            else:
+                                comic_data["cover_path"] = cover_url
+                        except Exception as e:
+                            app_logger.warning(f"下载推荐封面失败: {prefixed_id}, {e}")
+                            comic_data["cover_path"] = cover_url
+                    else:
+                        comic_data["cover_path"] = cover_path
+                    
+                    try:
+                        total_page = comic_detail.get("pages", 0)
+                        preview_pages = get_preview_pages(total_page)
+                        preview_urls = platform_service.get_preview_image_urls(
+                            platform,
+                            str(album_id),
+                            preview_pages
+                        )
+                        
+                        comic_data["preview_image_urls"] = preview_urls
+                        comic_data["preview_pages"] = preview_pages
+                        app_logger.info(f"获取推荐页预览图片成功: {prefixed_id}, 共 {len(preview_urls)} 张")
+                    except Exception as e:
+                        from infrastructure.logger import error_logger
+                        error_logger.error(f"获取推荐页预览图片失败 {prefixed_id}: {e}")
+                        comic_data["preview_image_urls"] = []
+                        comic_data["preview_pages"] = []
+                    
+                    db_file = RECOMMENDATION_JSON_FILE
+                    storage = JsonStorage(db_file)
+                    db_data = storage.read()
+                    comics_key = "recommendations"
+                    
+                    if comics_key not in db_data:
+                        db_data[comics_key] = []
+                    db_data[comics_key].append(comic_data)
+                    
+                    if storage.write(db_data):
+                        imported_count += 1
+                    else:
+                        skipped_count += 1
+
+            if detail_tasks:
+                self._run_detail_tasks(
+                    detail_tasks=detail_tasks,
+                    fetch_detail=fetch_comic_detail,
+                    handle_detail=handle_comic_detail,
+                    platform=platform
+                )
             
             return ServiceResult.ok({
-                'imported_count': imported_count,
-                'skipped_count': skipped_count,
-                'total_count': len(works)
+                "imported_count": imported_count,
+                "skipped_count": skipped_count,
+                "total_count": len(works)
             }, f"成功导入 {imported_count} 个漫画，跳过 {skipped_count} 个")
             
         except Exception as e:

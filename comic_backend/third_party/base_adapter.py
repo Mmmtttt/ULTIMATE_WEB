@@ -74,6 +74,13 @@ class BaseAdapter(ABC):
             元数据 JSON 格式，必须包含 albums 字段
         """
         pass
+
+    def get_favorites_basic(self) -> Dict[str, Any]:
+        """获取收藏夹基础信息（轻量模式）
+
+        默认回退到完整收藏夹实现，子类可重写以提升清单加载速度。
+        """
+        return self.get_favorites()
     
     @abstractmethod
     def download_album(

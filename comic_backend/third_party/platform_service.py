@@ -225,6 +225,11 @@ class PlatformService:
         """
         adapter = self.get_adapter(platform)
         return adapter.get_favorites()
+
+    def get_favorites_basic(self, platform: Platform) -> Dict[str, Any]:
+        """获取收藏夹基础信息（轻量模式）"""
+        adapter = self.get_adapter(platform)
+        return adapter.get_favorites_basic()
     
     def get_user_lists(self, platform: Platform) -> Dict[str, Any]:
         """获取用户的清单列表
