@@ -4,6 +4,7 @@ from api import register_blueprints
 from infrastructure.logger import app_logger
 from application.list_app_service import ListAppService
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
+from infrastructure.persistence.json_storage import JsonStorage
 import json
 import os
 import atexit
@@ -91,6 +92,16 @@ def init_backup():
         app_logger.error(f"初始化定时备份系统失败: {e}")
 
 
+def init_temp_file_cleanup():
+    """清理残留的 json 临时文件，避免 .tmp 持续增长"""
+    try:
+        cleaned = JsonStorage().cleanup_stale_meta_temp_files()
+        if cleaned > 0:
+            app_logger.info(f"启动时已清理残留 .tmp 文件: {cleaned} 个")
+    except Exception as e:
+        app_logger.warning(f"启动清理 .tmp 文件失败: {e}")
+
+
 def success_response(data=None):
     return {
         "code": 200,
@@ -100,6 +111,7 @@ def success_response(data=None):
 
 
 if __name__ == '__main__':
+    init_temp_file_cleanup()
     init_default_data()
     init_backup()
     app_logger.info(f"启动服务器，地址: {HOST}:{PORT}")
