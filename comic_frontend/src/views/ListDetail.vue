@@ -109,7 +109,7 @@
           v-for="comic in filteredComics"
           :key="comic.id"
           class="comic-card"
-          @click="goToComic(comic.id)"
+          @click="goToComic(comic)"
         >
           <img :src="getCoverUrl(comic.cover_path)" class="comic-cover" alt="" />
           <div class="comic-info">
@@ -139,7 +139,7 @@
           v-for="video in filteredVideos"
           :key="video.id"
           class="video-card"
-          @click="goToVideo(video.id)"
+          @click="goToVideo(video)"
         >
           <img :src="getCoverUrl(video.cover_path)" class="video-cover" alt="" />
           <div class="video-info">
@@ -451,12 +451,22 @@ async function loadDetail() {
   loading.value = false
 }
 
-function goToComic(comicId) {
-  router.push(`/comic/${comicId}`)
+function goToComic(comic) {
+  if (!comic?.id) return
+  if (comic.source === 'preview') {
+    router.push(`/recommendation/${comic.id}`)
+    return
+  }
+  router.push(`/comic/${comic.id}`)
 }
 
-function goToVideo(videoId) {
-  router.push(`/video/${videoId}`)
+function goToVideo(video) {
+  if (!video?.id) return
+  if (video.source === 'preview') {
+    router.push(`/video-recommendation/${video.id}`)
+    return
+  }
+  router.push(`/video/${video.id}`)
 }
 
 async function removeComic(comicId, source = 'local') {

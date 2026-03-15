@@ -162,7 +162,7 @@
                 <van-cell title="平台" :value="getPlatformLabel(selectedPlatform)" />
                 <van-cell title="清单" :value="selectedPlatformList?.list_name || listIdInput" />
                 <van-cell title="内容数量" :value="selectedPlatformList?.video_count || '未知'" />
-                <van-cell title="目标清单" :value="`远程跟踪：${selectedPlatformList?.list_name || listIdInput}`" />
+                <van-cell title="目标清单" :value="getTargetListName()" />
               </van-cell-group>
               
               <h5 class="section-title">选择导入位置</h5>
@@ -325,6 +325,14 @@ async function confirmDelete(list) {
 function getPlatformLabel(platform) {
   const p = availablePlatforms.value.find(p => p.value === platform)
   return p ? p.label : platform
+}
+
+function getTargetListName() {
+  const baseName = selectedPlatformList.value?.list_name || listIdInput.value
+  if (currentContentType.value === 'comic' && selectedPlatform.value) {
+    return `远程跟踪：${selectedPlatform.value}${baseName}`
+  }
+  return `远程跟踪：${baseName}`
 }
 
 watch(showImportDialog, (val) => {

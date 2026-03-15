@@ -255,6 +255,15 @@ def import_video():
         
         result = video_service.import_video(data)
         if result.success:
+            video_id = result.data.get("id") if isinstance(result.data, dict) else None
+            if video_id:
+                recent_result = video_service.apply_recent_import_tags(
+                    [video_id],
+                    source="local",
+                    clear_previous=True
+                )
+                if not recent_result.success:
+                    app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
             return success_response(result.data, result.message)
         else:
             return error_response(400, result.message)
@@ -274,6 +283,15 @@ def batch_import():
         
         result = video_service.batch_import_videos(videos)
         if result.success:
+            imported_ids = result.data.get("imported_ids", []) if isinstance(result.data, dict) else []
+            if imported_ids:
+                recent_result = video_service.apply_recent_import_tags(
+                    imported_ids,
+                    source="local",
+                    clear_previous=True
+                )
+                if not recent_result.success:
+                    app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
             return success_response(result.data)
         else:
             return error_response(400, result.message)
@@ -661,6 +679,14 @@ def third_party_import():
             
             result = video_service.import_video(video_data)
             if result.success:
+                recent_result = video_service.apply_recent_import_tags(
+                    [video_data["id"]],
+                    source="local",
+                    clear_previous=True
+                )
+                if not recent_result.success:
+                    app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
+
                 cover_url = detail.get("cover_url", "")
                 if cover_url:
                     video_service.download_cover_async(video_data["id"], cover_url)
@@ -730,6 +756,14 @@ def third_party_import():
             cover_url = detail.get("cover_url", "")
             if cover_url:
                 video_service.download_cover_async_for_recommendation(video_id_full, cover_url, JAV_COVER_DIR)
+
+            recent_result = video_service.apply_recent_import_tags(
+                [video_id_full],
+                source="preview",
+                clear_previous=True
+            )
+            if not recent_result.success:
+                app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
             
             app_logger.info(f"视频导入成功: {video_id_full}, 目标: {target}")
             return success_response(video_data, "导入成功")

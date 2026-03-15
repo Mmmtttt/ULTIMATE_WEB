@@ -34,6 +34,59 @@ class ListAppService:
         self._video_repo = video_repo or VideoJsonRepository()
         self._rec_repo = rec_repo or RecommendationJsonRepository()
         self._video_rec_repo = video_rec_repo or VideoRecommendationJsonRepository()
+
+    def _build_tracking_list_name(self, platform_str: str, platform_list_name: str, content_type: ContentType) -> str:
+        base_name = (platform_list_name or "").strip() or "未命名清单"
+        # 漫画同时接入 JM/PK，名称携带平台前缀避免冲突（如：JM我的收藏）
+        if content_type == ContentType.COMIC and platform_str in (Platform.JM.value, Platform.PK.value):
+            return f"远程跟踪：{platform_str}{base_name}"
+        return f"远程跟踪：{base_name}"
+
+    def _get_or_create_tracking_list(
+        self,
+        platform_str: str,
+        platform_list_id: str,
+        platform_list_name: str,
+        content_type: ContentType,
+        source: str
+    ) -> ServiceResult:
+        tracking_name = self._build_tracking_list_name(platform_str, platform_list_name, content_type)
+        tracking_desc = f"远程清单ID：{platform_list_id}"
+
+        target_list = None
+        for lst in self._list_repo.get_all(content_type):
+            if lst.platform == platform_str and lst.platform_list_id == platform_list_id:
+                target_list = lst
+                break
+
+        if not target_list:
+            unique_name = tracking_name
+            suffix = 2
+            while self._list_repo.exists_by_name(unique_name, content_type):
+                unique_name = f"{tracking_name}({suffix})"
+                suffix += 1
+
+            target_list = self._list_repo.create(
+                name=unique_name,
+                desc=tracking_desc,
+                content_type=content_type
+            )
+            if not target_list:
+                return ServiceResult.error("创建本地清单失败")
+            app_logger.info(f"已创建本地清单: {target_list.id} - {target_list.name}")
+        else:
+            target_list.name = tracking_name
+            target_list.desc = tracking_desc
+
+        target_list.platform = platform_str
+        target_list.platform_list_id = platform_list_id
+        target_list.import_source = source
+        target_list.last_sync_time = get_current_time()
+
+        if not self._list_repo.save(target_list):
+            return ServiceResult.error("保存本地清单失败")
+
+        return ServiceResult.ok(target_list)
     
     def get_list_all(self, content_type_str: str = None) -> ServiceResult:
         try:
@@ -590,21 +643,26 @@ class ListAppService:
             
             from core.enums import ContentType
             content_type = ContentType.VIDEO if platform == Platform.JAVDB else ContentType.COMIC
-            
+
+            tracking_list_result = self._get_or_create_tracking_list(
+                platform_str=platform_str,
+                platform_list_id=platform_list_id,
+                platform_list_name=platform_list_name,
+                content_type=content_type,
+                source=source
+            )
+            if not tracking_list_result.success:
+                return ServiceResult.error(tracking_list_result.message)
+
+            target_list = tracking_list_result.data
+
             if platform in [Platform.JM, Platform.PK] and platform_list_id == "favorites":
-                self._list_repo.ensure_default_list()
-                target_list_id = self.DEFAULT_COMIC_LIST_ID
-                
                 favorites_result = platform_service.get_favorites(platform)
-                works = favorites_result.get('albums', [])
-                
-                if not works:
-                    return ServiceResult.error("收藏夹中没有内容")
-                
-                converted_works = []
-                for album in works:
+                albums = favorites_result.get('albums', [])
+                works = []
+                for album in albums:
                     album_id = album.get('album_id', '') or album.get('comic_id', '')
-                    converted_works.append({
+                    works.append({
                         'album_id': album_id,
                         'comic_id': album_id,
                         'title': album.get('title', ''),
@@ -612,57 +670,24 @@ class ListAppService:
                         'cover_url': album.get('cover_url', ''),
                         'tags': album.get('tags', [])
                     })
-                
-                result = self._import_comics(converted_works, target_list_id, source, platform)
-                
-                if result.success:
-                    lst = self._list_repo.get_by_id(target_list_id)
-                    if lst:
-                        lst.platform = platform_str
-                        lst.import_source = source
-                        lst.last_sync_time = get_current_time()
-                        self._list_repo.save(lst)
-                    result.data['list_id'] = target_list_id
-                
-                app_logger.info(f"导入平台收藏夹完成: {result.data}")
-                return result
-            
-            list_name = f"远程跟踪：{platform_list_name}"
-            list_desc = f"远程清单ID：{platform_list_id}"
-            
-            new_list = self._list_repo.create(
-                name=list_name,
-                desc=list_desc,
-                content_type=content_type
-            )
-            
-            if not new_list:
-                return ServiceResult.error("创建本地清单失败")
-            
-            new_list.platform = platform_str
-            new_list.platform_list_id = platform_list_id
-            new_list.import_source = source
-            new_list.last_sync_time = get_current_time()
-            self._list_repo.save(new_list)
-            
-            app_logger.info(f"已创建本地清单: {new_list.id} - {new_list.name}")
-            
-            list_detail = platform_service.get_list_detail(platform, platform_list_id)
-            works = list_detail.get('works', [])
-            
+            else:
+                list_detail = platform_service.get_list_detail(platform, platform_list_id)
+                works = list_detail.get('works', [])
+
             if not works:
                 return ServiceResult.error("清单中没有内容")
-            
+
             if platform == Platform.JAVDB:
-                result = self._import_javdb_videos(works, new_list.id, source)
+                result = self._import_javdb_videos(works, target_list.id, source)
             else:
-                result = self._import_comics(works, new_list.id, source, platform)
-            
-            app_logger.info(f"导入平台清单完成: {result.data}")
-            
+                result = self._import_comics(works, target_list.id, source, platform)
+
             if result.success:
-                result.data['list_id'] = new_list.id
-            
+                target_list.last_sync_time = get_current_time()
+                self._list_repo.save(target_list)
+                result.data['list_id'] = target_list.id
+
+            app_logger.info(f"导入平台清单完成: {result.data}")
             return result
         except Exception as e:
             error_logger.error(f"导入平台清单失败: {e}")
@@ -702,57 +727,94 @@ class ListAppService:
             source = lst.import_source or "local"
             
             app_logger.info(f"从平台 {lst.platform} 同步清单 {lst.platform_list_id}")
-            
-            # 获取平台最新的清单内容
-            list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
-            works = list_detail.get('works', [])
-            
-            if not works:
-                return ServiceResult.error("清单中没有内容")
-            
-            # 获取当前清单已有的视频
-            videos = self._video_repo.get_all()
-            existing_video_codes = set()
-            for video in videos:
-                if list_id in video.list_ids and not video.is_deleted:
-                    existing_video_codes.add(video.code)
-            
-            app_logger.info(f"当前清单已有 {len(existing_video_codes)} 个视频")
-            
-            # 筛选出新增的视频
-            new_works = []
-            for work in works:
-                code = work.get('code', '')
-                if code and code not in existing_video_codes:
-                    new_works.append(work)
-                    app_logger.info(f"发现新视频: {code}")
-            
-            app_logger.info(f"需要导入 {len(new_works)} 个新视频")
-            
+
+            if platform == Platform.JAVDB:
+                list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
+                works = list_detail.get('works', [])
+                if not works:
+                    return ServiceResult.error("清单中没有内容")
+
+                repo = self._video_repo if source == "local" else self._video_rec_repo
+                existing_video_codes = set()
+                for video in repo.get_all():
+                    if list_id in video.list_ids and not video.is_deleted:
+                        existing_video_codes.add(video.code)
+
+                app_logger.info(f"当前清单已有 {len(existing_video_codes)} 个视频")
+
+                new_works = []
+                for work in works:
+                    code = work.get('code', '')
+                    if code and code not in existing_video_codes:
+                        new_works.append(work)
+                        app_logger.info(f"发现新视频: {code}")
+
+                app_logger.info(f"需要导入 {len(new_works)} 个新视频")
+                total_count = len(works)
+                import_action = self._import_javdb_videos
+            else:
+                if lst.platform_list_id == "favorites":
+                    favorites_result = platform_service.get_favorites(platform)
+                    albums = favorites_result.get('albums', [])
+                    works = []
+                    for album in albums:
+                        album_id = album.get('album_id', '') or album.get('comic_id', '')
+                        works.append({
+                            'album_id': album_id,
+                            'comic_id': album_id,
+                            'title': album.get('title', ''),
+                            'author': album.get('author', ''),
+                            'cover_url': album.get('cover_url', ''),
+                            'tags': album.get('tags', [])
+                        })
+                else:
+                    list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
+                    works = list_detail.get('works', [])
+
+                if not works:
+                    return ServiceResult.error("清单中没有内容")
+
+                from core.platform import add_platform_prefix
+                repo = self._comic_repo if source == "local" else self._rec_repo
+                existing_comic_ids = set()
+                for comic in repo.get_all():
+                    if list_id in comic.list_ids and not comic.is_deleted:
+                        existing_comic_ids.add(comic.id)
+
+                app_logger.info(f"当前清单已有 {len(existing_comic_ids)} 个漫画")
+
+                new_works = []
+                for work in works:
+                    album_id = work.get('album_id', '') or work.get('comic_id', '')
+                    if not album_id:
+                        continue
+                    prefixed_id = add_platform_prefix(platform, str(album_id))
+                    if prefixed_id not in existing_comic_ids:
+                        new_works.append(work)
+                        app_logger.info(f"发现新漫画: {prefixed_id}")
+
+                app_logger.info(f"需要导入 {len(new_works)} 个新漫画")
+                total_count = len(works)
+                import_action = lambda items, target_list_id, import_source: self._import_comics(items, target_list_id, import_source, platform)
+
             if not new_works:
-                # 更新最后同步时间
                 lst.last_sync_time = get_current_time()
                 self._list_repo.save(lst)
-                
+
                 return ServiceResult.ok({
                     'imported_count': 0,
                     'skipped_count': 0,
-                    'total_count': len(works),
+                    'total_count': total_count,
                     'list_id': list_id
                 }, "清单已是最新，无需同步")
-            
-            # 导入新增的视频
-            if platform == Platform.JAVDB:
-                result = self._import_javdb_videos(new_works, list_id, source)
-            else:
-                result = self._import_comics(new_works, list_id, source, platform)
-            
-            # 更新最后同步时间
+
+            result = import_action(new_works, list_id, source)
+
             if result.success:
                 lst.last_sync_time = get_current_time()
                 self._list_repo.save(lst)
                 result.data['list_id'] = list_id
-            
+
             app_logger.info(f"同步清单完成: {result.data}")
             return result
         except Exception as e:
@@ -797,6 +859,7 @@ class ListAppService:
             
             imported_count = 0
             skipped_count = 0
+            imported_video_ids: ListType[str] = []
             
             # 获取平台服务来获取视频详情
             from third_party.platform_service import get_platform_service
@@ -817,6 +880,7 @@ class ListAppService:
                             existing_video.add_to_list(target_list_id)
                             repo.save(existing_video)
                             imported_count += 1
+                            imported_video_ids.append(prefixed_id)
                         else:
                             skipped_count += 1
                         continue
@@ -884,6 +948,7 @@ class ListAppService:
                         result = video_service.import_video(video_data)
                         if result.success:
                             imported_count += 1
+                            imported_video_ids.append(prefixed_id)
                             # 下载封面
                             cover_url = video_detail.get('cover_url', '')
                             app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
@@ -915,6 +980,7 @@ class ListAppService:
                         
                         if storage.write(db_data):
                             imported_count += 1
+                            imported_video_ids.append(prefixed_id)
                             # 下载封面
                             cover_url = video_detail.get('cover_url', '')
                             app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
@@ -931,6 +997,15 @@ class ListAppService:
                     import traceback
                     app_logger.warning(traceback.format_exc())
                     skipped_count += 1
+
+            if imported_video_ids:
+                recent_result = video_service.apply_recent_import_tags(
+                    imported_video_ids,
+                    source=source,
+                    clear_previous=True
+                )
+                if not recent_result.success:
+                    app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
             
             return ServiceResult.ok({
                 'imported_count': imported_count,
@@ -967,11 +1042,9 @@ class ListAppService:
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
             from domain.comic import Comic
-            from domain.recommendation import Recommendation
-            from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, JM_COVER_DIR, PK_COVER_DIR
+            from core.constants import JM_COVER_DIR, PK_COVER_DIR
             
             repo = self._comic_repo if source == "local" else self._rec_repo
-            entity_class = Comic if source == "local" else Recommendation
             
             tag_service = TagAppService()
             existing_tags = tag_service.get_tag_list(ContentType.COMIC).data or []
@@ -985,8 +1058,9 @@ class ListAppService:
             
             platform_service = get_platform_service()
             
-            download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
             cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
+            platform_prefix = "JM" if platform == Platform.JM else "PK"
+            os.makedirs(cover_dir, exist_ok=True)
             
             for work in works:
                 try:
@@ -999,14 +1073,44 @@ class ListAppService:
                         continue
                     
                     prefixed_id = add_platform_prefix(platform, str(album_id))
+                    static_cover_path = f"/static/cover/{platform_prefix}/{album_id}.jpg"
+                    local_cover_file = os.path.join(cover_dir, f"{album_id}.jpg")
+                    cover_url_from_work = work.get('cover_url', '')
                     
                     existing_comic = repo.get_by_id(prefixed_id)
                     if existing_comic:
+                        updated = False
+
+                        # 已存在记录时也尝试将封面纠正为本地路径（若本地封面已存在/可下载）
+                        resolved_cover_path = existing_comic.cover_path or ""
+                        if os.path.exists(local_cover_file):
+                            resolved_cover_path = static_cover_path
+                        elif cover_url_from_work:
+                            try:
+                                platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
+                                if os.path.exists(local_cover_file):
+                                    resolved_cover_path = static_cover_path
+                                elif source != "local":
+                                    resolved_cover_path = cover_url_from_work
+                            except Exception as e:
+                                app_logger.warning(f"更新已有漫画封面失败: {prefixed_id}, {e}")
+                                if source != "local":
+                                    resolved_cover_path = cover_url_from_work
+
+                        if resolved_cover_path and existing_comic.cover_path != resolved_cover_path:
+                            existing_comic.cover_path = resolved_cover_path
+                            updated = True
+
                         if target_list_id not in existing_comic.list_ids:
                             existing_comic.add_to_list(target_list_id)
-                            repo.save(existing_comic)
+                            updated = True
+                            if not repo.save(existing_comic):
+                                skipped_count += 1
+                                continue
                             imported_count += 1
                         else:
+                            if updated:
+                                repo.save(existing_comic)
                             skipped_count += 1
                         continue
                     
@@ -1036,8 +1140,7 @@ class ListAppService:
                         if tag_name in tag_name_to_id:
                             video_tag_ids.append(tag_name_to_id[tag_name])
                     
-                    platform_prefix = "JM" if platform == Platform.JM else "PK"
-                    cover_path = f"/static/cover/{platform_prefix}/{album_id}.jpg"
+                    cover_path = static_cover_path
                     
                     comic_data = {
                         'id': prefixed_id,
@@ -1075,7 +1178,21 @@ class ListAppService:
                         from core.constants import RECOMMENDATION_JSON_FILE
                         from core.utils import get_preview_pages
                         
-                        comic_data['cover_path'] = comic_detail.get('cover_url', '') or cover_path
+                        cover_url = comic_detail.get('cover_url', '')
+                        if os.path.exists(local_cover_file):
+                            comic_data['cover_path'] = cover_path
+                        elif cover_url:
+                            try:
+                                platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
+                                if os.path.exists(local_cover_file):
+                                    comic_data['cover_path'] = cover_path
+                                else:
+                                    comic_data['cover_path'] = cover_url
+                            except Exception as e:
+                                app_logger.warning(f"下载推荐封面失败: {prefixed_id}, {e}")
+                                comic_data['cover_path'] = cover_url
+                        else:
+                            comic_data['cover_path'] = cover_path
                         
                         # 获取预览图片 URL
                         try:
@@ -1109,16 +1226,6 @@ class ListAppService:
                         
                         if storage.write(db_data):
                             imported_count += 1
-                            
-                            cover_url = comic_detail.get('cover_url', '')
-                            if cover_url:
-                                app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                                try:
-                                    save_path = os.path.join(cover_dir, f"{album_id}.jpg")
-                                    os.makedirs(cover_dir, exist_ok=True)
-                                    platform_service.download_cover(platform, str(album_id), save_path, show_progress=False)
-                                except Exception as e:
-                                    app_logger.warning(f"下载推荐封面失败: {prefixed_id}, {e}")
                         else:
                             skipped_count += 1
                         
@@ -1141,7 +1248,7 @@ class ListAppService:
             return ServiceResult.error(f"导入漫画失败: {e}")
     
     def import_platform_favorites(self, platform_str: str, source: str = "local") -> ServiceResult:
-        """导入平台收藏夹到本地默认收藏清单
+        """导入平台收藏夹到平台对应的远程跟踪清单
         
         Args:
             platform_str: 平台字符串 (JM 或 PK)
@@ -1152,40 +1259,12 @@ class ListAppService:
         """
         try:
             app_logger.info(f"开始导入平台收藏夹: {platform_str}, source={source}")
-            
-            platform = Platform(platform_str)
-            platform_service = get_platform_service()
-            
-            self._list_repo.ensure_default_list()
-            
-            target_list_id = self.DEFAULT_COMIC_LIST_ID
-            
-            app_logger.info(f"从平台 {platform_str} 获取收藏夹")
-            
-            favorites_result = platform_service.get_favorites(platform)
-            
-            if not favorites_result:
-                return ServiceResult.error("获取收藏夹失败")
-            
-            works = favorites_result.get('albums', [])
-            
-            if not works:
-                return ServiceResult.error("收藏夹中没有内容")
-            
-            app_logger.info(f"获取到 {len(works)} 个收藏漫画")
-            
-            result = self._import_comics(works, target_list_id, source, platform)
-            
-            if result.success:
-                lst = self._list_repo.get_by_id(target_list_id)
-                if lst:
-                    lst.platform = platform_str
-                    lst.import_source = source
-                    lst.last_sync_time = get_current_time()
-                    self._list_repo.save(lst)
-            
-            app_logger.info(f"导入平台收藏夹完成: {result.data}")
-            return result
+            return self.import_platform_list(
+                platform_str=platform_str,
+                platform_list_id="favorites",
+                platform_list_name="我的收藏",
+                source=source
+            )
             
         except Exception as e:
             error_logger.error(f"导入平台收藏夹失败: {e}")
@@ -1207,76 +1286,19 @@ class ListAppService:
         """
         try:
             app_logger.info(f"开始同步平台收藏夹: {platform_str}, source={source}")
-            
-            platform = Platform(platform_str)
-            platform_service = get_platform_service()
-            
-            self._list_repo.ensure_default_list()
-            
-            target_list_id = self.DEFAULT_COMIC_LIST_ID
-            
-            app_logger.info(f"从平台 {platform_str} 获取收藏夹")
-            
-            favorites_result = platform_service.get_favorites(platform)
-            
-            if not favorites_result:
-                return ServiceResult.error("获取收藏夹失败")
-            
-            works = favorites_result.get('albums', [])
-            
-            if not works:
-                return ServiceResult.ok({
-                    'imported_count': 0,
-                    'skipped_count': 0,
-                    'total_count': 0
-                }, "收藏夹中没有内容")
-            
-            app_logger.info(f"获取到 {len(works)} 个收藏漫画")
-            
-            from core.platform import add_platform_prefix
-            repo = self._comic_repo if source == "local" else self._rec_repo
-            
-            existing_ids = set()
-            comics = repo.get_all()
-            for comic in comics:
-                if target_list_id in comic.list_ids and not comic.is_deleted:
-                    existing_ids.add(comic.id)
-            
-            app_logger.info(f"当前收藏清单已有 {len(existing_ids)} 个漫画")
-            
-            new_works = []
-            for work in works:
-                album_id = work.get('album_id', '') or work.get('comic_id', '')
-                if album_id:
-                    prefixed_id = add_platform_prefix(platform, str(album_id))
-                    if prefixed_id not in existing_ids:
-                        new_works.append(work)
-                        app_logger.info(f"发现新漫画: {prefixed_id}")
-            
-            app_logger.info(f"需要导入 {len(new_works)} 个新漫画")
-            
-            if not new_works:
-                lst = self._list_repo.get_by_id(target_list_id)
-                if lst:
-                    lst.last_sync_time = get_current_time()
-                    self._list_repo.save(lst)
-                
-                return ServiceResult.ok({
-                    'imported_count': 0,
-                    'skipped_count': 0,
-                    'total_count': len(works)
-                }, "收藏夹已是最新，无需同步")
-            
-            result = self._import_comics(new_works, target_list_id, source, platform)
-            
-            if result.success:
-                lst = self._list_repo.get_by_id(target_list_id)
-                if lst:
-                    lst.last_sync_time = get_current_time()
-                    self._list_repo.save(lst)
-            
-            app_logger.info(f"同步平台收藏夹完成: {result.data}")
-            return result
+
+            tracking_list_result = self._get_or_create_tracking_list(
+                platform_str=platform_str,
+                platform_list_id="favorites",
+                platform_list_name="我的收藏",
+                content_type=ContentType.COMIC,
+                source=source
+            )
+            if not tracking_list_result.success:
+                return ServiceResult.error(tracking_list_result.message)
+
+            target_list = tracking_list_result.data
+            return self.sync_platform_list(target_list.id)
             
         except Exception as e:
             error_logger.error(f"同步平台收藏夹失败: {e}")

@@ -368,7 +368,7 @@ def import_platform_favorites():
     """导入平台收藏夹
     
     用于漫画平台（JM、PK）的收藏夹导入功能
-    将远程平台的收藏夹导入到本地默认收藏清单
+    将远程平台收藏夹导入到对应的“远程跟踪”清单
     """
     try:
         data = request.json
@@ -402,7 +402,7 @@ def sync_platform_favorites():
     """同步平台收藏夹
     
     用于漫画平台（JM、PK）的收藏夹同步功能
-    将远程平台收藏夹的新增内容同步到本地默认收藏清单
+    将远程平台收藏夹的新增内容同步到对应的“远程跟踪”清单
     """
     try:
         data = request.json

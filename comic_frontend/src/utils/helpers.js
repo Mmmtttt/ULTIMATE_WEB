@@ -47,7 +47,7 @@ export function loadFromSession(key) {
 }
 
 export function hasActiveFilters(filters) {
-  return Object.values(filters).some(v => 
+  return Object.values(filters).some(v =>
     Array.isArray(v) ? v.length > 0 : Boolean(v)
   )
 }
@@ -82,4 +82,61 @@ export const FAVORITES_VIDEO_LIST_ID = 'list_favorites_video'
 export function isFavorited(item, isVideo = false) {
   const listId = isVideo ? FAVORITES_VIDEO_LIST_ID : FAVORITES_COMIC_LIST_ID
   return item?.list_ids?.includes(listId) || false
+}
+
+/**
+ * Apply list membership changes for a single item.
+ * Returns how many list operations succeeded.
+ */
+export async function applyListMembershipChanges({
+  listStore,
+  contentType = 'comic',
+  selectedListIds = [],
+  currentListIds = [],
+  itemId,
+  source = 'local'
+}) {
+  const toAdd = selectedListIds.filter(id => !currentListIds.includes(id))
+  const toRemove = currentListIds.filter(id => !selectedListIds.includes(id))
+
+  const bindAction = contentType === 'video'
+    ? listStore.bindVideos.bind(listStore)
+    : listStore.bindComics.bind(listStore)
+  const removeAction = contentType === 'video'
+    ? listStore.removeVideos.bind(listStore)
+    : listStore.removeComics.bind(listStore)
+
+  let addCount = 0
+  let removeCount = 0
+
+  for (const listId of toAdd) {
+    const result = await bindAction(listId, [itemId], source)
+    if (result) {
+      addCount++
+    }
+  }
+
+  for (const listId of toRemove) {
+    const result = await removeAction(listId, [itemId], source)
+    if (result) {
+      removeCount++
+    }
+  }
+
+  return {
+    addCount,
+    removeCount,
+    unchanged: toAdd.length === 0 && toRemove.length === 0
+  }
+}
+
+export function buildListChangeMessage(addCount, removeCount) {
+  let message = ''
+  if (addCount > 0) {
+    message += `加入${addCount}个清单 `
+  }
+  if (removeCount > 0) {
+    message += `移出${removeCount}个清单`
+  }
+  return message.trim() || '清单无变化'
 }

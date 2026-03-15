@@ -256,6 +256,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { recommendationApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
+import { applyListMembershipChanges, buildListChangeMessage } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -549,22 +550,14 @@ async function addToLists() {
   }
 
   try {
-    const currentListIds = recommendation.value.list_ids || []
-    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
-    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
-
-    let addCount = 0
-    let removeCount = 0
-
-    for (const listId of toAdd) {
-      const result = await listStore.bindComics(listId, [recommendation.value.id], 'preview')
-      if (result) addCount++
-    }
-
-    for (const listId of toRemove) {
-      const result = await listStore.removeComics(listId, [recommendation.value.id], 'preview')
-      if (result) removeCount++
-    }
+    const { addCount, removeCount, unchanged } = await applyListMembershipChanges({
+      listStore,
+      contentType: 'comic',
+      selectedListIds: selectedListIds.value,
+      currentListIds: recommendation.value.list_ids || [],
+      itemId: recommendation.value.id,
+      source: 'preview'
+    })
 
     if (addCount > 0 || removeCount > 0) {
       showListPopup.value = false
@@ -573,11 +566,8 @@ async function addToLists() {
       await fetchDetail()
       await listStore.fetchLists('comic')
 
-      let message = ''
-      if (addCount > 0) message += `加入${addCount}个清单 `
-      if (removeCount > 0) message += `移出${removeCount}个清单`
-      showSuccessToast(message.trim())
-    } else if (toAdd.length === 0 && toRemove.length === 0) {
+      showSuccessToast(buildListChangeMessage(addCount, removeCount))
+    } else if (unchanged) {
       showSuccessToast('清单无变化')
       showListPopup.value = false
     }

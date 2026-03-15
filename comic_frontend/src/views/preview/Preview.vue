@@ -122,6 +122,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
+import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, loadFromSession, saveToSession } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -144,7 +145,7 @@ const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
 
 function getFilterStorageKey() {
-  return isVideoMode.value ? 'preview_filters_video' : 'preview_filters_comic'
+  return makeFilterStorageKey('preview_filters', isVideoMode.value)
 }
 
 function saveFilterState() {
@@ -154,28 +155,24 @@ function saveFilterState() {
     selectedAuthors: tempSelectedAuthors.value,
     selectedListIds: tempSelectedListIds.value
   }
-  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+  saveToSession(getFilterStorageKey(), payload)
 }
 
 async function restoreFilterState() {
-  const raw = sessionStorage.getItem(getFilterStorageKey())
-  if (!raw) {
+  const parsed = loadFromSession(getFilterStorageKey())
+  if (!parsed) {
     return
   }
-  try {
-    const parsed = JSON.parse(raw)
-    tempIncludeTags.value = parsed.includeTags || []
-    tempExcludeTags.value = parsed.excludeTags || []
-    tempSelectedAuthors.value = parsed.selectedAuthors || []
-    tempSelectedListIds.value = parsed.selectedListIds || []
-    await currentStore.value.filterMulti(
-      tempIncludeTags.value,
-      tempExcludeTags.value,
-      tempSelectedAuthors.value,
-      tempSelectedListIds.value
-    )
-  } catch {
-  }
+  tempIncludeTags.value = parsed.includeTags || []
+  tempExcludeTags.value = parsed.excludeTags || []
+  tempSelectedAuthors.value = parsed.selectedAuthors || []
+  tempSelectedListIds.value = parsed.selectedListIds || []
+  await currentStore.value.filterMulti(
+    tempIncludeTags.value,
+    tempExcludeTags.value,
+    tempSelectedAuthors.value,
+    tempSelectedListIds.value
+  )
 }
 
 // Computed
@@ -200,12 +197,7 @@ const availableTags = computed(() => isVideoMode.value ? tagStore.videoTags : ta
 
 const availableAuthors = computed(() => {
   const items = isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
-  const authors = new Set()
-  items.forEach(item => {
-    if (item.author) authors.add(item.author)
-    if (item.creator) authors.add(item.creator)
-  })
-  return Array.from(authors).sort()
+  return extractAuthors(items)
 })
 
 const availableLists = computed(() => {

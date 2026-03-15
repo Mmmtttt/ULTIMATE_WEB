@@ -57,6 +57,7 @@
 
 <script setup>
 import { useDevice } from '@/composables/useDevice'
+import { getCoverUrl as resolveCoverUrl } from '@/utils'
 
 const props = defineProps({
   items: {
@@ -89,12 +90,7 @@ const emit = defineEmits(['click', 'toggle-favorite', 'select'])
 const { isMobile, isDesktop } = useDevice()
 
 function getCoverUrl(item) {
-  const coverPath = item.cover_path || item.cover_url
-  if (!coverPath) return ''
-  if (coverPath.startsWith('http')) return coverPath
-  if (coverPath.startsWith('/static/')) return coverPath
-  if (coverPath.startsWith('/')) return coverPath
-  return `/${coverPath}`
+  return resolveCoverUrl(item.cover_path || item.cover_url)
 }
 
 function isSelected(item) {

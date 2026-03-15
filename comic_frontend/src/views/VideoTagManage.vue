@@ -8,7 +8,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { useTagStore, useModeStore } from '@/stores'
 import { tagApi } from '@/api'
 import { BaseTagManage } from '@/components/base'
@@ -16,7 +16,7 @@ import { BaseTagManage } from '@/components/base'
 const tagStore = useTagStore()
 const modeStore = useModeStore()
 
-const homePath = computed(() => modeStore.isVideoMode ? '/video-home' : '/')
+const homePath = '/library'
 
 onMounted(() => {
   modeStore.setMode('video')

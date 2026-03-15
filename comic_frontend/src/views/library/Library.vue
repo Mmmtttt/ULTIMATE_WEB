@@ -133,6 +133,7 @@ import MediaGrid from '@/components/common/MediaGrid.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
+import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, loadFromSession, saveToSession } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -156,7 +157,7 @@ const selectedAuthors = ref([])
 const selectedListIds = ref([])
 
 function getFilterStorageKey() {
-  return isVideoMode.value ? 'library_filters_video' : 'library_filters_comic'
+  return makeFilterStorageKey('library_filters', isVideoMode.value)
 }
 
 function saveFilterState() {
@@ -166,24 +167,19 @@ function saveFilterState() {
     selectedAuthors: selectedAuthors.value,
     selectedListIds: selectedListIds.value
   }
-  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+  saveToSession(getFilterStorageKey(), payload)
 }
 
 function restoreFilterState() {
-  const raw = sessionStorage.getItem(getFilterStorageKey())
-  if (!raw) {
+  const parsed = loadFromSession(getFilterStorageKey())
+  if (!parsed) {
     return false
   }
-  try {
-    const parsed = JSON.parse(raw)
-    includeTags.value = parsed.includeTags || []
-    excludeTags.value = parsed.excludeTags || []
-    selectedAuthors.value = parsed.selectedAuthors || []
-    selectedListIds.value = parsed.selectedListIds || []
-    return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0
-  } catch {
-    return false
-  }
+  includeTags.value = parsed.includeTags || []
+  excludeTags.value = parsed.excludeTags || []
+  selectedAuthors.value = parsed.selectedAuthors || []
+  selectedListIds.value = parsed.selectedListIds || []
+  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0
 }
 
 // Computed
@@ -262,12 +258,7 @@ const availableTags = computed(() => {
 
 const availableAuthors = computed(() => {
   const items = isVideoMode.value ? videoStore.videos : comicStore.comics
-  const authors = new Set()
-  items.forEach(item => {
-    if (item.author) authors.add(item.author)
-    if (item.creator) authors.add(item.creator)
-  })
-  return Array.from(authors).sort()
+  return extractAuthors(items)
 })
 
 const availableLists = computed(() => {

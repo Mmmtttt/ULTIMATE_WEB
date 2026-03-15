@@ -268,6 +268,7 @@ import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stor
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -315,14 +316,6 @@ const isFavoritedVideo = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
-
-function getCoverUrl(coverPath) {
-  if (!coverPath) return ''
-  if (coverPath.startsWith('http')) return coverPath
-  if (coverPath.startsWith('/static/')) return coverPath
-  if (coverPath.startsWith('/')) return coverPath
-  return `/${coverPath}`
-}
 
 async function loadVideo() {
   loading.value = true
@@ -390,59 +383,33 @@ function toggleListItem(listId) {
 }
 
 async function addToLists() {
-  console.log('[VideoRecommendationDetail] addToLists called')
-  console.log('[VideoRecommendationDetail] selectedListIds:', selectedListIds.value)
-  console.log('[VideoRecommendationDetail] recommendation.value:', recommendation.value)
-  
   if (selectedListIds.value.length === 0 && (!recommendation.value.list_ids || recommendation.value.list_ids.length === 0)) {
     showFailToast('请选择清单')
     return
   }
   
   try {
-    const currentListIds = recommendation.value.list_ids || []
-    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
-    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
-    
-    console.log('[VideoRecommendationDetail] currentListIds:', currentListIds)
-    console.log('[VideoRecommendationDetail] toAdd:', toAdd)
-    console.log('[VideoRecommendationDetail] toRemove:', toRemove)
-    
-    let addCount = 0
-    let removeCount = 0
-    const source = 'preview'
-    
-    for (const listId of toAdd) {
-      console.log('[VideoRecommendationDetail] 绑定清单:', listId, '视频ID:', recommendationId.value, 'source:', source)
-      const result = await listStore.bindVideos(listId, [recommendationId.value], source)
-      console.log('[VideoRecommendationDetail] 绑定结果:', result)
-      if (result) addCount++
-    }
-    
-    for (const listId of toRemove) {
-      console.log('[VideoRecommendationDetail] 移除清单:', listId, '视频ID:', recommendationId.value, 'source:', source)
-      const result = await listStore.removeVideos(listId, [recommendationId.value], source)
-      console.log('[VideoRecommendationDetail] 移除结果:', result)
-      if (result) removeCount++
-    }
-    
-    console.log('[VideoRecommendationDetail] addCount:', addCount, 'removeCount:', removeCount)
-    
+    const { addCount, removeCount, unchanged } = await applyListMembershipChanges({
+      listStore,
+      contentType: 'video',
+      selectedListIds: selectedListIds.value,
+      currentListIds: recommendation.value.list_ids || [],
+      itemId: recommendationId.value,
+      source: 'preview'
+    })
+
     if (addCount > 0 || removeCount > 0) {
       showListPopup.value = false
       selectedListIds.value = []
       await loadVideo()
       await listStore.fetchLists('video')
-      
-      let message = ''
-      if (addCount > 0) message += `加入${addCount}个清单 `
-      if (removeCount > 0) message += `移出${removeCount}个清单`
-      showSuccessToast(message.trim())
-    } else if (toAdd.length === 0 && toRemove.length === 0) {
+
+      showSuccessToast(buildListChangeMessage(addCount, removeCount))
+    } else if (unchanged) {
       showSuccessToast('清单无变化')
     }
   } catch (error) {
-    console.error('[VideoRecommendationDetail] addToLists error:', error)
+    console.error('addToLists error:', error)
     showFailToast('操作失败')
   }
 }

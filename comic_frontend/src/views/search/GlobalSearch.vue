@@ -40,7 +40,7 @@
             >
               <div class="card-cover">
                 <van-image 
-                  :src="getCoverUrl(item)" 
+                  :src="getCoverUrl(item.cover_path || item.cover_url)" 
                   fit="cover" 
                   class="cover-image"
                   lazy-load
@@ -115,6 +115,7 @@ import { videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
+import { getCoverUrl } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -174,15 +175,6 @@ const normalizedResults = computed(() => {
 
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
-}
-
-function getCoverUrl(item) {
-  const coverPath = item.cover_path || item.cover_url
-  if (!coverPath) return ''
-  if (coverPath.startsWith('http')) return coverPath
-  if (coverPath.startsWith('/static/')) return coverPath
-  if (coverPath.startsWith('/')) return coverPath
-  return `/${coverPath}`
 }
 
 function isSelected(item) {

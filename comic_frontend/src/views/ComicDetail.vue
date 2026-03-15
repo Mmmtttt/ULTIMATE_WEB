@@ -300,6 +300,7 @@ import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { comicApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
+import { applyListMembershipChanges, buildListChangeMessage } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -612,61 +613,35 @@ function toggleListItem(listId) {
 }
 
 async function addToLists() {
-  console.log('[Detail] addToLists called')
-  console.log('[Detail] selectedListIds:', selectedListIds.value)
-  console.log('[Detail] comic.value:', comic.value)
-  
   if (selectedListIds.value.length === 0 && (!comic.value.list_ids || comic.value.list_ids.length === 0)) {
     showFailToast('请选择清单')
     return
   }
   
   try {
-    const currentListIds = comic.value.list_ids || []
-    const toAdd = selectedListIds.value.filter(id => !currentListIds.includes(id))
-    const toRemove = currentListIds.filter(id => !selectedListIds.value.includes(id))
-    
-    console.log('[Detail] currentListIds:', currentListIds)
-    console.log('[Detail] toAdd:', toAdd)
-    console.log('[Detail] toRemove:', toRemove)
-    
-    let addCount = 0
-    let removeCount = 0
-    const source = comic.value.source || 'local'
-    
-    for (const listId of toAdd) {
-      console.log('[Detail] 绑定清单:', listId, '漫画ID:', comic.value.id, 'source:', source)
-      const result = await listStore.bindComics(listId, [comic.value.id], source)
-      console.log('[Detail] 绑定结果:', result)
-      if (result) addCount++
-    }
-    
-    for (const listId of toRemove) {
-      console.log('[Detail] 移除清单:', listId, '漫画ID:', comic.value.id, 'source:', source)
-      const result = await listStore.removeComics(listId, [comic.value.id], source)
-      console.log('[Detail] 移除结果:', result)
-      if (result) removeCount++
-    }
-    
-    console.log('[Detail] addCount:', addCount, 'removeCount:', removeCount)
-    
+    const { addCount, removeCount, unchanged } = await applyListMembershipChanges({
+      listStore,
+      contentType: 'comic',
+      selectedListIds: selectedListIds.value,
+      currentListIds: comic.value.list_ids || [],
+      itemId: comic.value.id,
+      source: comic.value.source || 'local'
+    })
+
     if (addCount > 0 || removeCount > 0) {
       showListPopup.value = false
       selectedListIds.value = []
       comicStore.clearCache('detail', comic.value.id)
       await fetchComicDetail()
       await listStore.fetchLists('comic')
-      
-      let message = ''
-      if (addCount > 0) message += `加入${addCount}个清单 `
-      if (removeCount > 0) message += `移出${removeCount}个清单`
-      showSuccessToast(message.trim())
-    } else if (toAdd.length === 0 && toRemove.length === 0) {
+
+      showSuccessToast(buildListChangeMessage(addCount, removeCount))
+    } else if (unchanged) {
       showSuccessToast('清单无变化')
       showListPopup.value = false
     }
   } catch (error) {
-    console.error('[Detail] addToLists error:', error)
+    console.error('addToLists error:', error)
     showFailToast('操作失败')
   }
 }

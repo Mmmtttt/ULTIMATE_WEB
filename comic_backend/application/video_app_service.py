@@ -11,9 +11,11 @@ from io import BytesIO
 from PIL import Image
 
 from domain.video import Video, VideoRepository
+from domain.video_recommendation import VideoRecommendationRepository
 from domain.tag import Tag, TagRepository
 from domain.actor import ActorSubscription, ActorRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
+from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
 from infrastructure.persistence.cache import CacheManager
@@ -21,22 +23,109 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
 from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR, JAV_PICTURES_DIR, JAV_COVER_DIR
+from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
 
 
 class VideoAppService(BaseContentAppService):
     _entity_name = "视频"
     _cache_manager = CacheManager()
+    RECENT_IMPORT_TAG_ID = "tag_video_recent_import"
+    RECENT_IMPORT_TAG_NAME = "最近导入"
     
     def __init__(
         self,
         video_repo: VideoRepository = None,
+        video_rec_repo: VideoRecommendationRepository = None,
         tag_repo: TagRepository = None,
         actor_repo: ActorRepository = None
     ):
         self._video_repo = video_repo or VideoJsonRepository()
+        self._video_rec_repo = video_rec_repo or VideoRecommendationJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
         self._actor_repo = actor_repo or ActorJsonRepository()
+
+    def _get_repo_by_source(self, source: str = "local"):
+        return self._video_rec_repo if source == "preview" else self._video_repo
+
+    def _ensure_recent_import_tag_id(self) -> Optional[str]:
+        configured_tag = self._tag_repo.get_by_id(self.RECENT_IMPORT_TAG_ID)
+        if configured_tag and configured_tag.content_type == ContentType.VIDEO:
+            if configured_tag.name != self.RECENT_IMPORT_TAG_NAME:
+                configured_tag.name = self.RECENT_IMPORT_TAG_NAME
+                self._tag_repo.save(configured_tag)
+            return configured_tag.id
+
+        for tag in self._tag_repo.get_all(ContentType.VIDEO):
+            if tag.name == self.RECENT_IMPORT_TAG_NAME:
+                return tag.id
+
+        new_tag_id = self.RECENT_IMPORT_TAG_ID if configured_tag is None else generate_id("tag")
+        new_tag = Tag(
+            id=new_tag_id,
+            name=self.RECENT_IMPORT_TAG_NAME,
+            content_type=ContentType.VIDEO,
+            create_time=get_current_time()
+        )
+        if self._tag_repo.save(new_tag):
+            app_logger.info(f"创建视频系统标签: {self.RECENT_IMPORT_TAG_NAME} ({new_tag.id})")
+            return new_tag.id
+
+        error_logger.error("创建视频最近导入标签失败")
+        return None
+
+    def apply_recent_import_tags(
+        self,
+        video_ids: List[str],
+        source: str = "local",
+        clear_previous: bool = True
+    ) -> ServiceResult:
+        try:
+            target_ids = [video_id for video_id in dict.fromkeys(video_ids or []) if video_id]
+            if not target_ids:
+                return ServiceResult.ok({
+                    "tag_id": None,
+                    "updated_count": 0,
+                    "cleared_count": 0
+                }, "无需更新最近导入标签")
+
+            tag_id = self._ensure_recent_import_tag_id()
+            if not tag_id:
+                return ServiceResult.error("创建最近导入标签失败")
+
+            repo = self._get_repo_by_source(source)
+
+            cleared_count = 0
+            if clear_previous:
+                for video in repo.get_all():
+                    if tag_id in (video.tag_ids or []):
+                        video.remove_tags([tag_id])
+                        if repo.save(video):
+                            cleared_count += 1
+
+            updated_count = 0
+            for video_id in target_ids:
+                video = repo.get_by_id(video_id)
+                if not video:
+                    continue
+                if tag_id in (video.tag_ids or []):
+                    continue
+                video.add_tags([tag_id])
+                if repo.save(video):
+                    updated_count += 1
+
+            app_logger.info(
+                f"更新视频最近导入标签完成: source={source}, tag_id={tag_id}, "
+                f"cleared={cleared_count}, updated={updated_count}"
+            )
+            return ServiceResult.ok({
+                "tag_id": tag_id,
+                "updated_count": updated_count,
+                "cleared_count": cleared_count
+            }, "更新最近导入标签成功")
+        except Exception as e:
+            error_logger.error(f"更新视频最近导入标签失败: {e}")
+            return ServiceResult.error("更新最近导入标签失败")
     
     def get_video_list(
         self,
@@ -535,6 +624,7 @@ class VideoAppService(BaseContentAppService):
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:
             imported = []
+            imported_ids = []
             skipped = []
             
             for video_data in videos_data:
@@ -546,9 +636,12 @@ class VideoAppService(BaseContentAppService):
                 result = self.import_video(video_data)
                 if result.success:
                     imported.append(code)
+                    if result.data and result.data.get("id"):
+                        imported_ids.append(result.data["id"])
             
             return ServiceResult.ok({
                 "imported": imported,
+                "imported_ids": imported_ids,
                 "skipped": skipped,
                 "imported_count": len(imported),
                 "skipped_count": len(skipped)

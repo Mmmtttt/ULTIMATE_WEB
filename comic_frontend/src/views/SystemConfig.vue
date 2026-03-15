@@ -104,7 +104,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useConfigStore } from '@/stores'
-import { showConfirmDialog, showSuccessToast } from 'vant'
+import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import { comicApi } from '@/api/comic'
 
 const configStore = useConfigStore()
@@ -215,7 +215,7 @@ async function organizeDatabase() {
         const response = await comicApi.organizeDatabase()
         showSuccessToast('数据库整理完成')
       } catch (error) {
-        showErrorToast(error.message || '数据库整理失败')
+        showFailToast(error.message || '数据库整理失败')
       }
     })
     .catch(() => {})
