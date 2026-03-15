@@ -63,6 +63,16 @@
           </span>
         </div>
       </div>
+
+      <div v-if="normalizedMinScore > 0" class="selected-section">
+        <span class="section-label">最低评分:</span>
+        <div class="items-list">
+          <span class="selected-badge info">
+            {{ normalizedMinScore }}
+            <span class="close-btn" @click="removeMinScore">×</span>
+          </span>
+        </div>
+      </div>
     </div>
 
     <div class="filter-tabs">
@@ -132,6 +142,20 @@
           </span>
         </div>
       </div>
+
+      <div v-show="activeTab === 'score'" class="score-panel">
+        <div class="score-row">
+          <span class="score-label">最低评分</span>
+          <van-stepper
+            :model-value="normalizedMinScore"
+            :min="minScoreMin"
+            :max="minScoreMax"
+            :step="minScoreStep"
+            @update:model-value="updateMinScore"
+          />
+        </div>
+        <div class="score-hint">只显示评分不低于该值的内容</div>
+      </div>
     </div>
   </div>
 </template>
@@ -168,6 +192,22 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  minScore: {
+    type: Number,
+    default: 0
+  },
+  minScoreMin: {
+    type: Number,
+    default: 0
+  },
+  minScoreMax: {
+    type: Number,
+    default: 10
+  },
+  minScoreStep: {
+    type: Number,
+    default: 0.5
+  },
   showTagCount: {
     type: Boolean,
     default: true
@@ -183,6 +223,7 @@ const emit = defineEmits([
   'update:excludeTags',
   'update:selectedAuthors',
   'update:selectedListIds',
+  'update:minScore',
   'change'
 ])
 
@@ -192,7 +233,8 @@ const authorSearch = ref('')
 const tabs = [
   { id: 'tags', name: '标签' },
   { id: 'authors', name: '作者' },
-  { id: 'lists', name: '清单' }
+  { id: 'lists', name: '清单' },
+  { id: 'score', name: '最低评分' }
 ]
 
 const hasSelection = computed(() => {
@@ -200,9 +242,12 @@ const hasSelection = computed(() => {
     props.includeTags.length > 0 ||
     props.excludeTags.length > 0 ||
     props.selectedAuthors.length > 0 ||
-    props.selectedListIds.length > 0
+    props.selectedListIds.length > 0 ||
+    normalizedMinScore.value > 0
   )
 })
+
+const normalizedMinScore = computed(() => normalizeMinScoreValue(props.minScore))
 
 const tagCountKey = computed(() => {
   return props.isVideoMode ? 'video_count' : 'comic_count'
@@ -319,12 +364,32 @@ function removeList(listId) {
   emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, newListIds)
 }
 
-function emitChange(includeTags, excludeTags, authors = props.selectedAuthors, listIds = props.selectedListIds) {
+function normalizeMinScoreValue(value) {
+  const score = Number(value)
+  if (!Number.isFinite(score) || score <= 0) {
+    return 0
+  }
+  return score
+}
+
+function updateMinScore(value) {
+  const nextScore = normalizeMinScoreValue(value)
+  emit('update:minScore', nextScore)
+  emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, props.selectedListIds, nextScore)
+}
+
+function removeMinScore() {
+  emit('update:minScore', 0)
+  emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, props.selectedListIds, 0)
+}
+
+function emitChange(includeTags, excludeTags, authors = props.selectedAuthors, listIds = props.selectedListIds, minScore = props.minScore) {
   emit('change', {
     includeTags,
     excludeTags,
     authors,
-    listIds
+    listIds,
+    minScore: normalizeMinScoreValue(minScore)
   })
 }
 
@@ -333,11 +398,13 @@ function handleClear() {
   emit('update:excludeTags', [])
   emit('update:selectedAuthors', [])
   emit('update:selectedListIds', [])
+  emit('update:minScore', 0)
   emit('change', {
     includeTags: [],
     excludeTags: [],
     authors: [],
-    listIds: []
+    listIds: [],
+    minScore: 0
   })
 }
 </script>
@@ -440,6 +507,11 @@ function handleClear() {
   color: #faad14;
 }
 
+.selected-badge.info {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
 .close-btn {
   cursor: pointer;
   font-size: 16px;
@@ -480,10 +552,28 @@ function handleClear() {
 
 .tag-panel,
 .author-panel,
-.list-panel {
+.list-panel,
+.score-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.score-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.score-label {
+  font-size: 14px;
+  color: #333;
+}
+
+.score-hint {
+  font-size: 12px;
+  color: #999;
 }
 
 .tags-grid,

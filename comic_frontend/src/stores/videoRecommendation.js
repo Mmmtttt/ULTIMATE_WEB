@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '@/api/video'
 import { showSuccessToast, showFailToast } from 'vant'
+import { filterItemsByMinScore, normalizeMinScore } from '@/utils'
 
 export const useVideoRecommendationStore = defineStore('videoRecommendation', () => {
   // State
@@ -233,10 +234,14 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
-    console.log('[Video Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds })
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+    const scoreThreshold = normalizeMinScore(minScore)
+    const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
+    const hasScoreFilter = scoreThreshold > 0
+
+    console.log('[Video Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold })
     
-    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+    if (!hasMultiFilter && !hasScoreFilter) {
       isFiltering.value = false
       return recommendations.value
     }
@@ -245,16 +250,22 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     error.value = null
     
     try {
-      const response = await videoApi.filterVideoRecommendations(includeTags, excludeTags, authors, listIds)
-      
-      if (response.code === 200) {
-        filteredRecommendations.value = response.data || []
-        isFiltering.value = true
-        return response.data
+      let result = []
+
+      if (hasMultiFilter) {
+        const response = await videoApi.filterVideoRecommendations(includeTags, excludeTags, authors, listIds)
+        if (response.code !== 200) {
+          error.value = response.msg || '筛选失败'
+          return []
+        }
+        result = response.data || []
       } else {
-        error.value = response.msg || '筛选失败'
-        return []
+        result = recommendations.value
       }
+      
+      filteredRecommendations.value = filterItemsByMinScore(result, scoreThreshold)
+      isFiltering.value = true
+      return filteredRecommendations.value
     } catch (err) {
       console.error('[Video Recommendation] 综合筛选失败:', err)
       error.value = '筛选失败'

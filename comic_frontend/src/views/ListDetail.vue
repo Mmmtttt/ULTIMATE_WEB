@@ -98,6 +98,26 @@
         >
           排除: {{ tag.name }}
         </van-tag>
+        <van-tag
+          v-for="author in selectedAuthorsDisplay"
+          :key="`author-${author}`"
+          type="success"
+          closeable
+          @close="removeAuthor(author)"
+          class="filter-tag"
+        >
+          作者: {{ author }}
+        </van-tag>
+        <van-tag
+          v-for="list in selectedLists"
+          :key="`list-${list.id}`"
+          type="warning"
+          closeable
+          @close="removeList(list.id)"
+          class="filter-tag"
+        >
+          清单: {{ list.name }}
+        </van-tag>
         <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
       </div>
       
@@ -226,26 +246,18 @@
             <van-button type="primary" size="small" @click="applyFilterAndClose">确定</van-button>
           </template>
         </van-nav-bar>
-        
-        <div class="filter-content">
-          <div class="score-filter-section">
-            <div class="section-title">评分筛选</div>
-            <div class="score-input">
-              <span class="label">最低评分</span>
-              <van-stepper v-model="tempMinScore" :min="0" :max="10" :step="0.5" />
-            </div>
-          </div>
-          
-          <div class="tag-filter-section">
-            <TagFilter
-              v-model:include-tags="tempIncludeTags"
-              v-model:exclude-tags="tempExcludeTags"
-              :tags="allTags"
-              show-count
-              :is-video-mode="activeContentType === 'video'"
-            />
-          </div>
-        </div>
+
+        <AdvancedFilter
+          v-model:include-tags="tempIncludeTags"
+          v-model:exclude-tags="tempExcludeTags"
+          v-model:selected-authors="tempSelectedAuthors"
+          v-model:selected-list-ids="tempSelectedListIds"
+          v-model:min-score="tempMinScore"
+          :tags="allTags"
+          :authors="availableAuthors"
+          :lists="availableLists"
+          :is-video-mode="activeContentType === 'video'"
+        />
       </div>
     </van-popup>
   </div>
@@ -258,7 +270,8 @@ import { useListStore, useTagStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
-import { TagFilter } from '@/components'
+import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
+import { extractAuthors, extractItemAuthors } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -274,13 +287,16 @@ const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
 const currentSortType = ref('')
 const minScore = ref(null)
-const maxScore = ref(null)
 const includeTags = ref([])
 const excludeTags = ref([])
+const selectedAuthors = ref([])
+const selectedListIds = ref([])
 
 const tempMinScore = ref(0)
 const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
+const tempSelectedAuthors = ref([])
+const tempSelectedListIds = ref([])
 const downloadLoading = ref(false)
 
 function getFilterStorageKey() {
@@ -292,7 +308,9 @@ function saveFilterState() {
     currentSortType: currentSortType.value,
     minScore: minScore.value,
     includeTags: includeTags.value,
-    excludeTags: excludeTags.value
+    excludeTags: excludeTags.value,
+    selectedAuthors: selectedAuthors.value,
+    selectedListIds: selectedListIds.value
   }
   sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
 }
@@ -308,9 +326,13 @@ function restoreFilterState() {
     minScore.value = parsed.minScore ?? null
     includeTags.value = parsed.includeTags || []
     excludeTags.value = parsed.excludeTags || []
+    selectedAuthors.value = parsed.selectedAuthors || []
+    selectedListIds.value = parsed.selectedListIds || []
     tempMinScore.value = minScore.value || 0
     tempIncludeTags.value = [...includeTags.value]
     tempExcludeTags.value = [...excludeTags.value]
+    tempSelectedAuthors.value = [...selectedAuthors.value]
+    tempSelectedListIds.value = [...selectedListIds.value]
   } catch {
   }
 }
@@ -318,11 +340,21 @@ function restoreFilterState() {
 const comics = computed(() => listInfo.value?.comics || [])
 const videos = computed(() => listInfo.value?.videos || [])
 const allTags = computed(() => {
-    if (activeContentType.value === 'video') {
-      return tagStore.videoTags
-    }
-    return tagStore.tags
-  })
+  if (activeContentType.value === 'video') {
+    return tagStore.videoTags
+  }
+  return tagStore.tags
+})
+const currentItems = computed(() => activeContentType.value === 'video' ? videos.value : comics.value)
+const availableAuthors = computed(() => extractAuthors(currentItems.value))
+const availableLists = computed(() => {
+  return listStore.lists
+    .filter(list => list.content_type === activeContentType.value)
+    .map(list => ({
+      ...list,
+      item_count: list.item_ids?.length || 0
+    }))
+})
 
 const sortLabel = computed(() => {
   const labels = {
@@ -346,12 +378,38 @@ const selectedExcludeTags = computed(() => {
     .filter(Boolean)
 })
 
+const selectedAuthorsDisplay = computed(() => selectedAuthors.value)
+
+const selectedLists = computed(() => {
+  return selectedListIds.value
+    .map(id => availableLists.value.find(list => list.id === id))
+    .filter(Boolean)
+})
+
 const hasActiveFilter = computed(() => {
   return currentSortType.value || 
          (minScore.value !== null && minScore.value > 0) || 
          includeTags.value.length > 0 || 
-         excludeTags.value.length > 0
+         excludeTags.value.length > 0 ||
+         selectedAuthors.value.length > 0 ||
+         selectedListIds.value.length > 0
 })
+
+function hasAnySelectedAuthor(item) {
+  if (selectedAuthors.value.length === 0) {
+    return true
+  }
+  const itemAuthors = extractItemAuthors(item)
+  return selectedAuthors.value.some(author => itemAuthors.includes(author))
+}
+
+function belongsToSelectedLists(item) {
+  if (selectedListIds.value.length === 0) {
+    return true
+  }
+  const listIds = Array.isArray(item?.list_ids) ? item.list_ids : []
+  return selectedListIds.value.some(listId => listIds.includes(listId))
+}
 
 const filteredComics = computed(() => {
   let result = [...comics.value]
@@ -376,6 +434,8 @@ const filteredComics = computed(() => {
       return !excludeTags.value.some(tagId => comicTags.includes(tagId))
     })
   }
+
+  result = result.filter(c => hasAnySelectedAuthor(c) && belongsToSelectedLists(c))
   
   if (currentSortType.value) {
     switch (currentSortType.value) {
@@ -425,6 +485,8 @@ const filteredVideos = computed(() => {
       return !excludeTags.value.some(tagId => videoTags.includes(tagId))
     })
   }
+
+  result = result.filter(v => hasAnySelectedAuthor(v) && belongsToSelectedLists(v))
   
   if (currentSortType.value) {
     switch (currentSortType.value) {
@@ -532,6 +594,16 @@ function removeExcludeTag(tagId) {
   saveFilterState()
 }
 
+function removeAuthor(author) {
+  selectedAuthors.value = selectedAuthors.value.filter(item => item !== author)
+  saveFilterState()
+}
+
+function removeList(listId) {
+  selectedListIds.value = selectedListIds.value.filter(id => id !== listId)
+  saveFilterState()
+}
+
 function clearScoreFilter() {
   minScore.value = null
   tempMinScore.value = 0
@@ -544,8 +616,12 @@ function clearAllFilters() {
   tempMinScore.value = 0
   includeTags.value = []
   excludeTags.value = []
+  selectedAuthors.value = []
+  selectedListIds.value = []
   tempIncludeTags.value = []
   tempExcludeTags.value = []
+  tempSelectedAuthors.value = []
+  tempSelectedListIds.value = []
   saveFilterState()
 }
 
@@ -553,6 +629,8 @@ function applyFilterAndClose() {
   minScore.value = tempMinScore.value > 0 ? tempMinScore.value : null
   includeTags.value = [...tempIncludeTags.value]
   excludeTags.value = [...tempExcludeTags.value]
+  selectedAuthors.value = [...tempSelectedAuthors.value]
+  selectedListIds.value = [...tempSelectedListIds.value]
   saveFilterState()
   showFilterPanel.value = false
 }
@@ -581,6 +659,8 @@ watch(showFilterPanel, (val) => {
     tempMinScore.value = minScore.value || 0
     tempIncludeTags.value = [...includeTags.value]
     tempExcludeTags.value = [...excludeTags.value]
+    tempSelectedAuthors.value = [...selectedAuthors.value]
+    tempSelectedListIds.value = [...selectedListIds.value]
   }
 })
 
@@ -591,10 +671,16 @@ watch(activeContentType, async (newContentType) => {
 })
 
 onMounted(async () => {
+  if (listStore.lists.length === 0) {
+    await listStore.fetchLists()
+  }
   if (tagStore.tags.length === 0) {
     await tagStore.fetchTags()
   }
   await loadDetail()
+  if (activeContentType.value === 'video' && tagStore.videoTags.length === 0) {
+    await tagStore.fetchTags('video')
+  }
   restoreFilterState()
 })
 </script>
@@ -785,38 +871,11 @@ onMounted(async () => {
   flex-direction: column;
 }
 
-.filter-content {
+.filter-panel :deep(.advanced-filter) {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-}
-
-.score-filter-section {
-  margin-bottom: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #eee;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 12px;
-}
-
-.score-input {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.score-input .label {
-  font-size: 14px;
-  color: #666;
-}
-
-.tag-filter-section {
-  margin-top: 8px;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 @media (min-width: 768px) {

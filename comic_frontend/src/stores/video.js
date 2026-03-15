@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '../api/video'
+import { filterItemsByMinScore, normalizeMinScore } from '@/utils'
 
 export const useVideoStore = defineStore('video', () => {
   const videos = ref([])
@@ -215,8 +216,12 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
-    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+    const scoreThreshold = normalizeMinScore(minScore)
+    const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
+    const hasScoreFilter = scoreThreshold > 0
+
+    if (!hasMultiFilter && !hasScoreFilter) {
       isFiltering.value = false
       return videos.value
     }
@@ -224,14 +229,22 @@ export const useVideoStore = defineStore('video', () => {
     loading.value = true
     
     try {
-      console.log('[Video] 综合筛选:', { includeTags, excludeTags, authors, listIds })
-      const response = await videoApi.filter(includeTags, excludeTags, authors, listIds)
-      if (response.code === 200) {
-        filteredVideos.value = response.data || []
-        isFiltering.value = true
-        return filteredVideos.value
+      console.log('[Video] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold })
+      let result = []
+
+      if (hasMultiFilter) {
+        const response = await videoApi.filter(includeTags, excludeTags, authors, listIds)
+        if (response.code !== 200) {
+          return []
+        }
+        result = response.data || []
+      } else {
+        result = videos.value
       }
-      return []
+
+      filteredVideos.value = filterItemsByMinScore(result, scoreThreshold)
+      isFiltering.value = true
+      return filteredVideos.value
     } catch (err) {
       console.error('[Video] 综合筛选视频失败:', err)
       return []

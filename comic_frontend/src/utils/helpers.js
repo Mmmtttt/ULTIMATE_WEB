@@ -18,10 +18,54 @@ export function getCoverUrl(coverPath) {
 export function extractAuthors(items) {
   const authors = new Set()
   items.forEach(item => {
-    if (item.author) authors.add(item.author)
-    if (item.creator) authors.add(item.creator)
+    extractItemAuthors(item).forEach(name => authors.add(name))
   })
   return Array.from(authors).sort()
+}
+
+export function extractItemAuthors(item = {}) {
+  const target = item && typeof item === 'object' ? item : {}
+  const values = []
+
+  const pushValue = (value) => {
+    if (typeof value === 'string' && value.trim()) {
+      values.push(value.trim())
+    }
+  }
+
+  pushValue(target.author)
+  pushValue(target.creator)
+  pushValue(target.actor)
+
+  if (Array.isArray(target.actors)) {
+    target.actors.forEach(pushValue)
+  }
+
+  if (Array.isArray(target.authors)) {
+    target.authors.forEach(pushValue)
+  }
+
+  return Array.from(new Set(values))
+}
+
+export function normalizeMinScore(minScore) {
+  const score = Number(minScore)
+  if (!Number.isFinite(score) || score <= 0) {
+    return 0
+  }
+  return score
+}
+
+export function filterItemsByMinScore(items = [], minScore = 0) {
+  const safeItems = Array.isArray(items) ? items : []
+  const threshold = normalizeMinScore(minScore)
+  if (threshold <= 0) {
+    return [...safeItems]
+  }
+  return safeItems.filter(item => {
+    const score = Number(item?.score ?? 0)
+    return Number.isFinite(score) && score >= threshold
+  })
 }
 
 export function getFilterStorageKey(baseKey, isVideoMode) {

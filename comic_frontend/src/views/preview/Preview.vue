@@ -102,6 +102,7 @@
           v-model:exclude-tags="tempExcludeTags"
           v-model:selected-authors="tempSelectedAuthors"
           v-model:selected-list-ids="tempSelectedListIds"
+          v-model:min-score="tempMinScore"
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
@@ -143,6 +144,7 @@ const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
 const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
+const tempMinScore = ref(0)
 
 function getFilterStorageKey() {
   return makeFilterStorageKey('preview_filters', isVideoMode.value)
@@ -153,7 +155,8 @@ function saveFilterState() {
     includeTags: tempIncludeTags.value,
     excludeTags: tempExcludeTags.value,
     selectedAuthors: tempSelectedAuthors.value,
-    selectedListIds: tempSelectedListIds.value
+    selectedListIds: tempSelectedListIds.value,
+    minScore: tempMinScore.value
   }
   saveToSession(getFilterStorageKey(), payload)
 }
@@ -167,11 +170,13 @@ async function restoreFilterState() {
   tempExcludeTags.value = parsed.excludeTags || []
   tempSelectedAuthors.value = parsed.selectedAuthors || []
   tempSelectedListIds.value = parsed.selectedListIds || []
+  tempMinScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
   await currentStore.value.filterMulti(
     tempIncludeTags.value,
     tempExcludeTags.value,
     tempSelectedAuthors.value,
-    tempSelectedListIds.value
+    tempSelectedListIds.value,
+    tempMinScore.value
   )
 }
 
@@ -301,7 +306,8 @@ async function applyFilterAndClose() {
     tempIncludeTags.value,
     tempExcludeTags.value,
     tempSelectedAuthors.value,
-    tempSelectedListIds.value
+    tempSelectedListIds.value,
+    tempMinScore.value
   )
   saveFilterState()
   showFilterPanel.value = false

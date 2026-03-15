@@ -100,11 +100,11 @@
           v-model:exclude-tags="excludeTags"
           v-model:selected-authors="selectedAuthors"
           v-model:selected-list-ids="selectedListIds"
+          v-model:min-score="minScore"
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
           :is-video-mode="isVideoMode"
-          @change="onFilterChange"
         />
         <div class="filter-actions">
           <van-button block type="primary" @click="applyFilters">应用</van-button>
@@ -155,6 +155,7 @@ const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
 const selectedListIds = ref([])
+const minScore = ref(0)
 
 function getFilterStorageKey() {
   return makeFilterStorageKey('library_filters', isVideoMode.value)
@@ -165,7 +166,8 @@ function saveFilterState() {
     includeTags: includeTags.value,
     excludeTags: excludeTags.value,
     selectedAuthors: selectedAuthors.value,
-    selectedListIds: selectedListIds.value
+    selectedListIds: selectedListIds.value,
+    minScore: minScore.value
   }
   saveToSession(getFilterStorageKey(), payload)
 }
@@ -179,7 +181,8 @@ function restoreFilterState() {
   excludeTags.value = parsed.excludeTags || []
   selectedAuthors.value = parsed.selectedAuthors || []
   selectedListIds.value = parsed.selectedListIds || []
-  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0
+  minScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
+  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0 || minScore.value > 0
 }
 
 // Computed
@@ -190,23 +193,22 @@ const items = computed(() => {
   return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
-function onFilterChange(filterData) {
-}
-
 async function applyFilters() {
   if (isVideoMode.value) {
     await videoStore.filterMulti(
       includeTags.value,
       excludeTags.value,
       selectedAuthors.value,
-      selectedListIds.value
+      selectedListIds.value,
+      minScore.value
     )
   } else {
     await comicStore.filterMulti(
       includeTags.value,
       excludeTags.value,
       selectedAuthors.value,
-      selectedListIds.value
+      selectedListIds.value,
+      minScore.value
     )
   }
   saveFilterState()
@@ -270,9 +272,55 @@ const availableLists = computed(() => {
 
 const activeFilters = computed(() => {
   const filters = []
-  if (currentStore.value.currentSort) {
-    // simplified
+
+  includeTags.value.forEach(tagId => {
+    const tag = availableTags.value.find(item => item.id === tagId)
+    filters.push({
+      id: `include-${tagId}`,
+      type: 'includeTag',
+      value: tagId,
+      label: `包含: ${tag?.name || tagId}`
+    })
+  })
+
+  excludeTags.value.forEach(tagId => {
+    const tag = availableTags.value.find(item => item.id === tagId)
+    filters.push({
+      id: `exclude-${tagId}`,
+      type: 'excludeTag',
+      value: tagId,
+      label: `排除: ${tag?.name || tagId}`
+    })
+  })
+
+  selectedAuthors.value.forEach(author => {
+    filters.push({
+      id: `author-${author}`,
+      type: 'author',
+      value: author,
+      label: `作者: ${author}`
+    })
+  })
+
+  selectedListIds.value.forEach(listId => {
+    const list = availableLists.value.find(item => item.id === listId)
+    filters.push({
+      id: `list-${listId}`,
+      type: 'list',
+      value: listId,
+      label: `清单: ${list?.name || listId}`
+    })
+  })
+
+  if (minScore.value > 0) {
+    filters.push({
+      id: 'min-score',
+      type: 'minScore',
+      value: minScore.value,
+      label: `评分 ≥ ${minScore.value}`
+    })
   }
+
   return filters
 })
 
@@ -359,8 +407,25 @@ function clearAllFilters() {
   excludeTags.value = []
   selectedAuthors.value = []
   selectedListIds.value = []
+  minScore.value = 0
   currentStore.value.clearFilter()
   saveFilterState()
+}
+
+async function removeFilter(filter) {
+  if (filter.type === 'includeTag') {
+    includeTags.value = includeTags.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'excludeTag') {
+    excludeTags.value = excludeTags.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'author') {
+    selectedAuthors.value = selectedAuthors.value.filter(author => author !== filter.value)
+  } else if (filter.type === 'list') {
+    selectedListIds.value = selectedListIds.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'minScore') {
+    minScore.value = 0
+  }
+
+  await applyFilters()
 }
 
 async function loadData(force = false) {

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { comicApi } from '@/api'
 import { useCacheStore } from './cache'
-import { SORT_TYPE } from '@/utils'
+import { SORT_TYPE, filterItemsByMinScore, normalizeMinScore } from '@/utils'
 
 /**
  * 漫画管理 Store
@@ -319,10 +319,15 @@ export const useComicStore = defineStore('comic', () => {
    * @param {string[]} excludeTags - 排除的标签ID
    * @param {string[]} authors - 作者名称
    * @param {string[]} listIds - 清单ID
+   * @param {number} minScore - 最低评分
    * @returns {Array} 筛选结果
    */
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = []) {
-    if (includeTags.length === 0 && excludeTags.length === 0 && authors.length === 0 && listIds.length === 0) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+    const scoreThreshold = normalizeMinScore(minScore)
+    const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
+    const hasScoreFilter = scoreThreshold > 0
+
+    if (!hasMultiFilter && !hasScoreFilter) {
       isFiltering.value = false
       return comics.value
     }
@@ -330,9 +335,17 @@ export const useComicStore = defineStore('comic', () => {
     loading.value = true
     
     try {
-      console.log('[Comic] 综合筛选:', { includeTags, excludeTags, authors, listIds })
-      const response = await comicApi.filter(includeTags, excludeTags, authors, listIds)
-      filteredComics.value = response.data || []
+      console.log('[Comic] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold })
+      let result = []
+
+      if (hasMultiFilter) {
+        const response = await comicApi.filter(includeTags, excludeTags, authors, listIds)
+        result = response.data || []
+      } else {
+        result = comics.value
+      }
+
+      filteredComics.value = filterItemsByMinScore(result, scoreThreshold)
       isFiltering.value = true
       return filteredComics.value
     } catch (err) {
