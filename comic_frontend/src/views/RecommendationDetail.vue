@@ -256,7 +256,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { recommendationApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -306,7 +306,7 @@ const customLists = computed(() => listStore.lists || [])
 
 const isRead = computed(() => {
   if (!recommendation.value) return false
-  return recommendation.value.current_page >= recommendation.value.total_page
+  return isReadByProgress(recommendation.value.current_page)
 })
 
 // ============ Methods ============

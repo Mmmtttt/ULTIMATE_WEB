@@ -123,6 +123,7 @@
           v-model:selected-authors="selectedAuthors"
           v-model:selected-list-ids="selectedListIds"
           v-model:min-score="minScore"
+          v-model:unread-only="unreadOnly"
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
@@ -179,6 +180,7 @@ const excludeTags = ref([])
 const selectedAuthors = ref([])
 const selectedListIds = ref([])
 const minScore = ref(0)
+const unreadOnly = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const viewModeOptions = [
   { value: 'large', label: '大图标' },
@@ -197,7 +199,8 @@ function saveFilterState() {
     excludeTags: excludeTags.value,
     selectedAuthors: selectedAuthors.value,
     selectedListIds: selectedListIds.value,
-    minScore: minScore.value
+    minScore: minScore.value,
+    unreadOnly: unreadOnly.value
   }
   saveToSession(getFilterStorageKey(), payload)
 }
@@ -212,7 +215,8 @@ function restoreFilterState() {
   selectedAuthors.value = parsed.selectedAuthors || []
   selectedListIds.value = parsed.selectedListIds || []
   minScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
-  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0 || minScore.value > 0
+  unreadOnly.value = Boolean(parsed.unreadOnly)
+  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0 || minScore.value > 0 || unreadOnly.value
 }
 
 // Computed
@@ -238,7 +242,8 @@ async function applyFilters() {
       excludeTags.value,
       selectedAuthors.value,
       selectedListIds.value,
-      minScore.value
+      minScore.value,
+      unreadOnly.value
     )
   }
   saveFilterState()
@@ -351,6 +356,15 @@ const activeFilters = computed(() => {
     })
   }
 
+  if (!isVideoMode.value && unreadOnly.value) {
+    filters.push({
+      id: 'unread-only',
+      type: 'unreadOnly',
+      value: true,
+      label: '仅未读'
+    })
+  }
+
   return filters
 })
 
@@ -451,6 +465,7 @@ function clearAllFilters() {
   selectedAuthors.value = []
   selectedListIds.value = []
   minScore.value = 0
+  unreadOnly.value = false
   currentStore.value.clearFilter()
   saveFilterState()
 }
@@ -466,6 +481,8 @@ async function removeFilter(filter) {
     selectedListIds.value = selectedListIds.value.filter(id => id !== filter.value)
   } else if (filter.type === 'minScore') {
     minScore.value = 0
+  } else if (filter.type === 'unreadOnly') {
+    unreadOnly.value = false
   }
 
   await applyFilters()

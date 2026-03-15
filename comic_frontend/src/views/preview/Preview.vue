@@ -125,6 +125,7 @@
           v-model:selected-authors="tempSelectedAuthors"
           v-model:selected-list-ids="tempSelectedListIds"
           v-model:min-score="tempMinScore"
+          v-model:unread-only="tempUnreadOnly"
           :tags="availableTags"
           :authors="availableAuthors"
           :lists="availableLists"
@@ -168,6 +169,7 @@ const tempExcludeTags = ref([])
 const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
 const tempMinScore = ref(0)
+const tempUnreadOnly = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const viewModeOptions = [
   { value: 'large', label: '大图标' },
@@ -186,7 +188,8 @@ function saveFilterState() {
     excludeTags: tempExcludeTags.value,
     selectedAuthors: tempSelectedAuthors.value,
     selectedListIds: tempSelectedListIds.value,
-    minScore: tempMinScore.value
+    minScore: tempMinScore.value,
+    unreadOnly: tempUnreadOnly.value
   }
   saveToSession(getFilterStorageKey(), payload)
 }
@@ -201,12 +204,14 @@ async function restoreFilterState() {
   tempSelectedAuthors.value = parsed.selectedAuthors || []
   tempSelectedListIds.value = parsed.selectedListIds || []
   tempMinScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
+  tempUnreadOnly.value = Boolean(parsed.unreadOnly)
   await currentStore.value.filterMulti(
     tempIncludeTags.value,
     tempExcludeTags.value,
     tempSelectedAuthors.value,
     tempSelectedListIds.value,
-    tempMinScore.value
+    tempMinScore.value,
+    tempUnreadOnly.value
   )
 }
 
@@ -350,7 +355,8 @@ async function applyFilterAndClose() {
     tempExcludeTags.value,
     tempSelectedAuthors.value,
     tempSelectedListIds.value,
-    tempMinScore.value
+    tempMinScore.value,
+    tempUnreadOnly.value
   )
   saveFilterState()
   showFilterPanel.value = false

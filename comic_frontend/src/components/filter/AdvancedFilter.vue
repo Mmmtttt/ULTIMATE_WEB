@@ -73,6 +73,16 @@
           </span>
         </div>
       </div>
+
+      <div v-if="showUnreadFilter && unreadOnly" class="selected-section">
+        <span class="section-label">阅读状态:</span>
+        <div class="items-list">
+          <span class="selected-badge danger">
+            仅未读
+            <span class="close-btn" @click="removeUnreadOnly">×</span>
+          </span>
+        </div>
+      </div>
     </div>
 
     <div class="filter-tabs">
@@ -156,12 +166,20 @@
         </div>
         <div class="score-hint">只显示评分不低于该值的内容</div>
       </div>
+
+      <div v-if="showUnreadFilter" v-show="activeTab === 'unread'" class="unread-panel">
+        <div class="score-row">
+          <span class="score-label">仅显示未读漫画</span>
+          <van-switch :model-value="unreadOnly" @update:model-value="updateUnreadOnly" />
+        </div>
+        <div class="score-hint">阅读进度为 1 判定为未读</div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
   tags: {
@@ -208,6 +226,10 @@ const props = defineProps({
     type: Number,
     default: 0.5
   },
+  unreadOnly: {
+    type: Boolean,
+    default: false
+  },
   showTagCount: {
     type: Boolean,
     default: true
@@ -224,18 +246,34 @@ const emit = defineEmits([
   'update:selectedAuthors',
   'update:selectedListIds',
   'update:minScore',
+  'update:unreadOnly',
   'change'
 ])
 
 const activeTab = ref('tags')
 const authorSearch = ref('')
 
-const tabs = [
-  { id: 'tags', name: '标签' },
-  { id: 'authors', name: '作者' },
-  { id: 'lists', name: '清单' },
-  { id: 'score', name: '最低评分' }
-]
+const showUnreadFilter = computed(() => !props.isVideoMode)
+
+const tabs = computed(() => {
+  const baseTabs = [
+    { id: 'tags', name: '标签' },
+    { id: 'authors', name: '作者' },
+    { id: 'lists', name: '清单' },
+    { id: 'score', name: '最低评分' }
+  ]
+  if (showUnreadFilter.value) {
+    baseTabs.push({ id: 'unread', name: '未读' })
+  }
+  return baseTabs
+})
+
+watch(tabs, (value) => {
+  const hasActive = value.some(tab => tab.id === activeTab.value)
+  if (!hasActive) {
+    activeTab.value = 'tags'
+  }
+})
 
 const hasSelection = computed(() => {
   return (
@@ -243,7 +281,8 @@ const hasSelection = computed(() => {
     props.excludeTags.length > 0 ||
     props.selectedAuthors.length > 0 ||
     props.selectedListIds.length > 0 ||
-    normalizedMinScore.value > 0
+    normalizedMinScore.value > 0 ||
+    (showUnreadFilter.value && props.unreadOnly)
   )
 })
 
@@ -383,13 +422,32 @@ function removeMinScore() {
   emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, props.selectedListIds, 0)
 }
 
-function emitChange(includeTags, excludeTags, authors = props.selectedAuthors, listIds = props.selectedListIds, minScore = props.minScore) {
+function updateUnreadOnly(value) {
+  const unreadOnly = Boolean(value)
+  emit('update:unreadOnly', unreadOnly)
+  emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, props.selectedListIds, props.minScore, unreadOnly)
+}
+
+function removeUnreadOnly() {
+  emit('update:unreadOnly', false)
+  emitChange(props.includeTags, props.excludeTags, props.selectedAuthors, props.selectedListIds, props.minScore, false)
+}
+
+function emitChange(
+  includeTags,
+  excludeTags,
+  authors = props.selectedAuthors,
+  listIds = props.selectedListIds,
+  minScore = props.minScore,
+  unreadOnly = props.unreadOnly
+) {
   emit('change', {
     includeTags,
     excludeTags,
     authors,
     listIds,
-    minScore: normalizeMinScoreValue(minScore)
+    minScore: normalizeMinScoreValue(minScore),
+    unreadOnly: Boolean(unreadOnly)
   })
 }
 
@@ -399,12 +457,14 @@ function handleClear() {
   emit('update:selectedAuthors', [])
   emit('update:selectedListIds', [])
   emit('update:minScore', 0)
+  emit('update:unreadOnly', false)
   emit('change', {
     includeTags: [],
     excludeTags: [],
     authors: [],
     listIds: [],
-    minScore: 0
+    minScore: 0,
+    unreadOnly: false
   })
 }
 </script>
@@ -553,7 +613,8 @@ function handleClear() {
 .tag-panel,
 .author-panel,
 .list-panel,
-.score-panel {
+.score-panel,
+.unread-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;

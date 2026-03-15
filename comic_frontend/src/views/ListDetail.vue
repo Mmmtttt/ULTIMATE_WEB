@@ -118,6 +118,15 @@
         >
           清单: {{ list.name }}
         </van-tag>
+        <van-tag
+          v-if="activeContentType === 'comic' && unreadOnly"
+          type="danger"
+          closeable
+          @close="removeUnreadOnly"
+          class="filter-tag"
+        >
+          仅未读
+        </van-tag>
         <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
       </div>
       
@@ -253,6 +262,7 @@
           v-model:selected-authors="tempSelectedAuthors"
           v-model:selected-list-ids="tempSelectedListIds"
           v-model:min-score="tempMinScore"
+          v-model:unread-only="tempUnreadOnly"
           :tags="allTags"
           :authors="availableAuthors"
           :lists="availableLists"
@@ -271,7 +281,7 @@ import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
-import { extractAuthors, extractItemAuthors } from '@/utils'
+import { extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -291,12 +301,14 @@ const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
 const selectedListIds = ref([])
+const unreadOnly = ref(false)
 
 const tempMinScore = ref(0)
 const tempIncludeTags = ref([])
 const tempExcludeTags = ref([])
 const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
+const tempUnreadOnly = ref(false)
 const downloadLoading = ref(false)
 
 function getFilterStorageKey() {
@@ -310,7 +322,8 @@ function saveFilterState() {
     includeTags: includeTags.value,
     excludeTags: excludeTags.value,
     selectedAuthors: selectedAuthors.value,
-    selectedListIds: selectedListIds.value
+    selectedListIds: selectedListIds.value,
+    unreadOnly: unreadOnly.value
   }
   sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
 }
@@ -328,11 +341,13 @@ function restoreFilterState() {
     excludeTags.value = parsed.excludeTags || []
     selectedAuthors.value = parsed.selectedAuthors || []
     selectedListIds.value = parsed.selectedListIds || []
+    unreadOnly.value = Boolean(parsed.unreadOnly)
     tempMinScore.value = minScore.value || 0
     tempIncludeTags.value = [...includeTags.value]
     tempExcludeTags.value = [...excludeTags.value]
     tempSelectedAuthors.value = [...selectedAuthors.value]
     tempSelectedListIds.value = [...selectedListIds.value]
+    tempUnreadOnly.value = unreadOnly.value
   } catch {
   }
 }
@@ -392,7 +407,8 @@ const hasActiveFilter = computed(() => {
          includeTags.value.length > 0 || 
          excludeTags.value.length > 0 ||
          selectedAuthors.value.length > 0 ||
-         selectedListIds.value.length > 0
+         selectedListIds.value.length > 0 ||
+         (activeContentType.value === 'comic' && unreadOnly.value)
 })
 
 function hasAnySelectedAuthor(item) {
@@ -435,6 +451,10 @@ const filteredComics = computed(() => {
     })
   }
 
+  if (unreadOnly.value) {
+    result = result.filter(c => isUnreadByProgress(c.current_page))
+  }
+
   result = result.filter(c => hasAnySelectedAuthor(c) && belongsToSelectedLists(c))
   
   if (currentSortType.value) {
@@ -450,8 +470,8 @@ const filteredComics = computed(() => {
         break
       case 'read_status':
         result.sort((a, b) => {
-          const aRead = a.current_page >= a.total_page
-          const bRead = b.current_page >= b.total_page
+          const aRead = isReadByProgress(a.current_page)
+          const bRead = isReadByProgress(b.current_page)
           if (aRead !== bRead) return aRead ? 1 : -1
           return (b.score || 0) - (a.score || 0)
         })
@@ -604,6 +624,12 @@ function removeList(listId) {
   saveFilterState()
 }
 
+function removeUnreadOnly() {
+  unreadOnly.value = false
+  tempUnreadOnly.value = false
+  saveFilterState()
+}
+
 function clearScoreFilter() {
   minScore.value = null
   tempMinScore.value = 0
@@ -618,10 +644,12 @@ function clearAllFilters() {
   excludeTags.value = []
   selectedAuthors.value = []
   selectedListIds.value = []
+  unreadOnly.value = false
   tempIncludeTags.value = []
   tempExcludeTags.value = []
   tempSelectedAuthors.value = []
   tempSelectedListIds.value = []
+  tempUnreadOnly.value = false
   saveFilterState()
 }
 
@@ -631,6 +659,7 @@ function applyFilterAndClose() {
   excludeTags.value = [...tempExcludeTags.value]
   selectedAuthors.value = [...tempSelectedAuthors.value]
   selectedListIds.value = [...tempSelectedListIds.value]
+  unreadOnly.value = Boolean(tempUnreadOnly.value)
   saveFilterState()
   showFilterPanel.value = false
 }
@@ -661,6 +690,7 @@ watch(showFilterPanel, (val) => {
     tempExcludeTags.value = [...excludeTags.value]
     tempSelectedAuthors.value = [...selectedAuthors.value]
     tempSelectedListIds.value = [...selectedListIds.value]
+    tempUnreadOnly.value = unreadOnly.value
   }
 })
 

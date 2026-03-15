@@ -300,7 +300,7 @@ import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { comicApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -360,7 +360,7 @@ const customLists = computed(() => listStore.lists || [])
 
 const isRead = computed(() => {
   if (!comic.value) return false
-  return comic.value.current_page >= comic.value.total_page
+  return isReadByProgress(comic.value.current_page)
 })
 
 // 方法

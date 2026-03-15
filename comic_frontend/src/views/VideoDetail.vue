@@ -185,10 +185,10 @@
           <van-cell 
             v-for="(magnet, index) in video.magnets" 
             :key="index"
-            :title="magnet.size_text || '未知大小'"
-            :label="magnet.magnet.substring(0, 50) + '...'"
+            :title="getMagnetSizeText(magnet)"
+            :label="getMagnetPreview(magnet)"
             clickable
-            @click="copyMagnet(magnet.magnet)"
+            @click="copyMagnet(magnet)"
           >
             <template #right-icon>
               <van-icon name="description" />
@@ -447,12 +447,62 @@ function filterByTag(tagId) {
   }
 }
 
-function copyMagnet(magnet) {
-  navigator.clipboard.writeText(magnet).then(() => {
-    showSuccessToast('已复制到剪贴板')
-  }).catch(() => {
-    showFailToast('复制失败')
-  })
+function getMagnetText(magnet) {
+  if (typeof magnet === 'string') {
+    return magnet
+  }
+  if (!magnet || typeof magnet !== 'object') {
+    return ''
+  }
+  return magnet.magnet || magnet.url || magnet.link || ''
+}
+
+function getMagnetSizeText(magnet) {
+  if (magnet && typeof magnet === 'object') {
+    return magnet.size_text || magnet.size || '未知大小'
+  }
+  return '未知大小'
+}
+
+function getMagnetPreview(magnet) {
+  const text = getMagnetText(magnet)
+  if (!text) {
+    return '磁力链接为空'
+  }
+  return text.length > 50 ? `${text.slice(0, 50)}...` : text
+}
+
+async function copyMagnet(magnet) {
+  const text = getMagnetText(magnet)
+  if (!text) {
+    showFailToast('磁力链接为空')
+    return
+  }
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.setAttribute('readonly', 'readonly')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      textarea.style.pointerEvents = 'none'
+      document.body.appendChild(textarea)
+      textarea.select()
+      textarea.setSelectionRange(0, text.length)
+      const copied = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      if (!copied) {
+        throw new Error('execCommand copy failed')
+      }
+    }
+    showSuccessToast('已复制磁力链接')
+  } catch (error) {
+    console.error('复制磁力链接失败:', error)
+    showFailToast('复制失败，请手动复制')
+  }
 }
 
 function previewImages(index) {

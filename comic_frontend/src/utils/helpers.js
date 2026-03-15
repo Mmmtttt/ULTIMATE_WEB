@@ -86,6 +86,30 @@ export function filterItemsByMinScore(items = [], minScore = 0) {
   })
 }
 
+export function normalizeReadPage(currentPage) {
+  const page = Number(currentPage)
+  if (!Number.isFinite(page)) {
+    return 1
+  }
+  return page
+}
+
+export function isUnreadByProgress(currentPage) {
+  return normalizeReadPage(currentPage) === 1
+}
+
+export function isReadByProgress(currentPage) {
+  return !isUnreadByProgress(currentPage)
+}
+
+export function filterItemsByUnread(items = [], unreadOnly = false) {
+  const safeItems = Array.isArray(items) ? items : []
+  if (!unreadOnly) {
+    return [...safeItems]
+  }
+  return safeItems.filter(item => isUnreadByProgress(item?.current_page))
+}
+
 export function getFilterStorageKey(baseKey, isVideoMode) {
   return `${baseKey}_${isVideoMode ? 'video' : 'comic'}`
 }

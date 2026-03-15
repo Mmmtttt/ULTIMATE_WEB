@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { recommendationApi } from '@/api'
 import { useCacheStore } from './cache'
-import { SORT_TYPE, filterItemsByMinScore, normalizeMinScore } from '@/utils'
+import { SORT_TYPE, filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore } from '@/utils'
 
 /**
  * 推荐漫画管理 Store
@@ -71,7 +71,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    * 已读推荐漫画数量
    */
   const readCount = computed(() => {
-    return recommendations.value.filter(rec => rec.current_page > 0).length
+    return recommendations.value.filter(rec => isReadByProgress(rec.current_page)).length
   })
 
   /**
@@ -347,16 +347,18 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    * @param {string[]} authors - 作者名称
    * @param {string[]} listIds - 清单ID
    * @param {number} minScore - 最低评分
+   * @param {boolean} unreadOnly - 仅未读
    * @returns {Array} 筛选结果
    */
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, unreadOnly = false) {
     const scoreThreshold = normalizeMinScore(minScore)
     const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
     const hasScoreFilter = scoreThreshold > 0
+    const hasUnreadFilter = Boolean(unreadOnly)
 
-    console.log('[Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold })
+    console.log('[Recommendation] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold, unreadOnly: hasUnreadFilter })
     
-    if (!hasMultiFilter && !hasScoreFilter) {
+    if (!hasMultiFilter && !hasScoreFilter && !hasUnreadFilter) {
       isFiltering.value = false
       return recommendations.value
     }
@@ -378,7 +380,8 @@ export const useRecommendationStore = defineStore('recommendation', () => {
         result = recommendations.value
       }
       
-      filteredRecommendations.value = filterItemsByMinScore(result, scoreThreshold)
+      result = filterItemsByMinScore(result, scoreThreshold)
+      filteredRecommendations.value = filterItemsByUnread(result, hasUnreadFilter)
       isFiltering.value = true
       return filteredRecommendations.value
     } catch (err) {
