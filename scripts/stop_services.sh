@@ -15,7 +15,7 @@ else
 fi
 
 echo "Stopping frontend service..."
-pkill -f "npm.*dev" 2>/dev/null
+pkill -f "npm.*dev|vite" 2>/dev/null
 if [ $? -eq 0 ]; then
     echo "Frontend service stopped"
 else

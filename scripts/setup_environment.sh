@@ -76,7 +76,7 @@ else
     exit 1
 fi
 
-NODE_MAJOR=$(node -c 'console.log(process.version.match(/^v(\d+)/)[1])')
+NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]")
 if [ "$NODE_MAJOR" -lt 16 ]; then
     echo "ERROR - Node.js version 16 or higher is required"
     exit 1

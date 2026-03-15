@@ -79,7 +79,7 @@ npm install
 #### Linux/Mac (Bash)
 ```bash
 chmod +x scripts/*.sh
-./scripts/start_project.sh
+./start_project.sh
 ```
 
 #### 单独启动后端/前端

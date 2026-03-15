@@ -4,9 +4,11 @@ JMComic API 适配器实现
 """
 import sys
 import os
+import time
 from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
 from core.platform import Platform
+from infrastructure.logger import app_logger, error_logger
 
 
 class JMComicAdapter(BaseAdapter):
@@ -26,6 +28,8 @@ class JMComicAdapter(BaseAdapter):
         """
         super().__init__(config)
         self._jmcomic_api = None
+        self._html_search_probe_ok: Optional[bool] = None
+        self._html_search_probe_ts: float = 0.0
         self._load_jmcomic_api()
     
     @property
@@ -35,6 +39,14 @@ class JMComicAdapter(BaseAdapter):
     @property
     def platform_prefix(self) -> str:
         return "JM"
+
+    @staticmethod
+    def _mask_username(username: str) -> str:
+        if not username:
+            return ""
+        if len(username) <= 2:
+            return "*" * len(username)
+        return f"{username[:1]}***{username[-1:]}"
     
     def _load_jmcomic_api(self):
         """动态加载 JMComic API 模块并写入配置"""
@@ -97,14 +109,190 @@ class JMComicAdapter(BaseAdapter):
             password = self.get_config('password')
             
             if username and password:
-                self._jmcomic_api = get_client(username=username, password=password)
+                try:
+                    self._jmcomic_api = get_client(username=username, password=password)
+                    app_logger.info(
+                        f"JM adapter init login success, user={self._mask_username(username)}"
+                    )
+                except Exception as e:
+                    error_logger.error(
+                        f"JM adapter init login failed, fallback to guest. "
+                        f"user={self._mask_username(username)}, error={e}"
+                    )
+                    self._jmcomic_api = get_client(username='', password='')
             else:
-                self._jmcomic_api = get_client()
+                app_logger.info("JM adapter init in guest mode (no credentials configured)")
+                self._jmcomic_api = get_client(username='', password='')
                 
         except ImportError as e:
             raise ImportError(f"JMComic API 模块未找到: {e}")
         except Exception as e:
             raise RuntimeError(f"JMComic API 初始化失败: {e}")
+
+    def _get_search_client(self) -> Tuple[Any, bool]:
+        """
+        Build search client with login-first strategy.
+        Returns:
+            (client, is_logged_in_search)
+        """
+        from jmcomic_api import get_client
+
+        username = self.get_config('username')
+        password = self.get_config('password')
+
+        if username and password:
+            now_ts = time.time()
+            html_cooldown_seconds = 300
+            html_on_cooldown = (
+                self._html_search_probe_ok is False
+                and (now_ts - self._html_search_probe_ts) < html_cooldown_seconds
+            )
+
+            if html_on_cooldown:
+                app_logger.info(
+                    f"JM search html probe skipped (cooldown), "
+                    f"user={self._mask_username(username)}"
+                )
+            else:
+                html_client = self._build_html_search_client(username, password)
+                self._html_search_probe_ts = now_ts
+                if html_client is not None:
+                    self._html_search_probe_ok = True
+                    return html_client, True
+                self._html_search_probe_ok = False
+
+            try:
+                client = get_client(username=username, password=password)
+                client_key = getattr(client, 'client_key', type(client).__name__)
+                app_logger.info(
+                    f"JM search api login success, user={self._mask_username(username)}, client={client_key}"
+                )
+
+                if self._is_login_session_valid(client, username):
+                    app_logger.info(
+                        f"JM search api login verified, user={self._mask_username(username)}"
+                    )
+                    return client, True
+
+                error_logger.error(
+                    f"JM search api login invalid session, fallback to guest. "
+                    f"user={self._mask_username(username)}"
+                )
+                guest = get_client(username='', password='')
+                guest_key = getattr(guest, 'client_key', type(guest).__name__)
+                app_logger.info(f"JM search fallback client=guest({guest_key})")
+                return guest, False
+            except Exception as e:
+                error_logger.error(
+                    f"JM search api login failed, fallback to guest. "
+                    f"user={self._mask_username(username)}, error={e}"
+                )
+                guest = get_client(username='', password='')
+                guest_key = getattr(guest, 'client_key', type(guest).__name__)
+                app_logger.info(f"JM search fallback client=guest({guest_key})")
+                return guest, False
+
+        app_logger.info("JM search using guest mode (missing credentials)")
+        guest = get_client(username='', password='')
+        guest_key = getattr(guest, 'client_key', type(guest).__name__)
+        app_logger.info(f"JM search client=guest({guest_key})")
+        return guest, False
+
+    def _build_html_search_client(self, username: str, password: str) -> Optional[Any]:
+        """
+        Build a login session using JM html client (web endpoint semantics).
+        Fallback to api client when html client cannot be used.
+        """
+        try:
+            import jmcomic
+
+            option = jmcomic.JmOption.construct({
+                'download': {
+                    'dir': self.get_config('download_dir', '../../data/pictures'),
+                    'image': {
+                        'suffix': '.jpg'
+                    }
+                },
+                'dir_rule': {
+                    'base_dir': self.get_config('download_dir', '../../data/pictures'),
+                    'rule': 'Bd_Aid_Pindex'
+                },
+                'client': {
+                    'impl': 'html',
+                    # Prefer the same host family as browser search URL.
+                    'domain': ['18comic.vip'],
+                }
+            })
+            client = option.build_jm_client()
+            client.login(username, password)
+
+            client_key = getattr(client, 'client_key', type(client).__name__)
+            app_logger.info(
+                f"JM search html login success, user={self._mask_username(username)}, client={client_key}"
+            )
+
+            if not self._is_login_session_valid(client, username):
+                error_logger.error(
+                    f"JM search html login invalid session, fallback to api. "
+                    f"user={self._mask_username(username)}"
+                )
+                return None
+
+            if not self._is_search_endpoint_valid(client):
+                error_logger.error(
+                    f"JM search html endpoint probe failed, fallback to api. "
+                    f"user={self._mask_username(username)}"
+                )
+                return None
+
+            app_logger.info(
+                f"JM search html login verified, user={self._mask_username(username)}"
+            )
+            return client
+        except Exception as e:
+            error_logger.error(
+                f"JM search html login failed, fallback to api. "
+                f"user={self._mask_username(username)}, error={e}"
+            )
+            return None
+
+    def _is_login_session_valid(self, client: Any, username: str) -> bool:
+        """
+        Validate that the JM session is truly authenticated.
+        We probe a login-required endpoint; success means the session is usable.
+        """
+        try:
+            kwargs = {
+                'page': 1,
+                'folder_id': '0',
+            }
+            if username:
+                kwargs['username'] = username
+
+            favorite_page = client.favorite_folder(**kwargs)
+            total = getattr(favorite_page, 'total', None)
+            app_logger.info(
+                f"JM search login probe passed, user={self._mask_username(username)}, favorites_total={total}"
+            )
+            return True
+        except Exception as e:
+            error_logger.error(
+                f"JM search login probe failed, user={self._mask_username(username)}, error={e}"
+            )
+            return False
+
+    def _is_search_endpoint_valid(self, client: Any) -> bool:
+        """
+        Probe search endpoint availability (especially useful for html client anti-bot issues).
+        """
+        try:
+            probe_page = client.search_site(search_query='jmcomic', page=1)
+            total = getattr(probe_page, 'total', None)
+            app_logger.info(f"JM search endpoint probe passed, total={total}")
+            return True
+        except Exception as e:
+            error_logger.error(f"JM search endpoint probe failed, error={e}")
+            return False
     
     def get_album_by_id(self, album_id: str) -> Dict[str, Any]:
         """根据 ID 获取专辑信息
@@ -155,41 +343,85 @@ class JMComicAdapter(BaseAdapter):
         """
         try:
             from jmcomic_api import search_comics_full, search_comics
+            search_client, is_logged_in_search = self._get_search_client()
+            search_user = self.get_config('username', '') if is_logged_in_search else ''
+            client_key = getattr(search_client, 'client_key', type(search_client).__name__)
+            app_logger.info(
+                f"JM search start: mode={'login' if is_logged_in_search else 'guest'}, "
+                f"keyword={keyword}, keyword_repr={keyword!r}, page={page}, "
+                f"max_pages={max_pages}, fast_mode={fast_mode}, client={client_key}"
+            )
             
             if fast_mode:
-                result = search_comics(keyword, page=page, max_pages=max_pages)
+                result = search_comics(
+                    keyword,
+                    page=page,
+                    max_pages=max_pages,
+                    client=search_client,
+                    enable_query_fallback=False
+                )
                 albums = result.get('results', [])
                 total_pages = result.get('page_count')
+                total = result.get('total')
+                effective_query = result.get('query', keyword)
                 has_next = page < total_pages if total_pages else len(albums) > 0
                 converted = self._convert_basic_to_meta_format(albums)
+                if effective_query != keyword:
+                    app_logger.info(
+                        f"JM search query adjusted: original={keyword!r}, effective={effective_query!r}"
+                    )
+                app_logger.info(
+                    f"JM search done: mode={'login' if is_logged_in_search else 'guest'}, "
+                    f"count={len(albums)}, total={total}, total_pages={total_pages}, has_next={has_next}"
+                )
                 return {
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
                     'albums': converted.get('albums', []),
                     'collection_name': 'JMComic 导入',
-                    'user': self.get_config('username', ''),
+                    'user': search_user,
                     'total_favorites': len(albums),
                     'last_updated': ''
                 }
             else:
-                result = search_comics_full(keyword, page=page, max_pages=max_pages)
+                result = search_comics_full(
+                    keyword,
+                    page=page,
+                    max_pages=max_pages,
+                    client=search_client,
+                    enable_query_fallback=False
+                )
                 albums = result.get('results', [])
                 total_pages = result.get('page_count')
+                total = result.get('total')
+                effective_query = result.get('query', keyword)
                 has_next = page < total_pages if total_pages else len(albums) > 0
                 converted = self._convert_to_meta_format(albums)
+                if effective_query != keyword:
+                    app_logger.info(
+                        f"JM search query adjusted: original={keyword!r}, effective={effective_query!r}"
+                    )
+                app_logger.info(
+                    f"JM search done: mode={'login' if is_logged_in_search else 'guest'}, "
+                    f"count={len(albums)}, total={total}, total_pages={total_pages}, has_next={has_next}"
+                )
                 return {
                     'page': page,
                     'has_next': has_next,
                     'total_pages': total_pages,
                     'albums': converted.get('albums', []),
                     'collection_name': converted.get('collection_name', 'JMComic 导入'),
-                    'user': converted.get('user', ''),
+                    'user': search_user,
                     'total_favorites': converted.get('total_favorites', len(albums)),
                     'last_updated': converted.get('last_updated', '')
                 }
             
         except Exception as e:
+            error_logger.error(
+                f"JM search failed: keyword={keyword}, page={page}, "
+                f"max_pages={max_pages}, fast_mode={fast_mode}, error={e}"
+            )
             error_msg = str(e)
             if "Could not connect to mysql" in error_msg or "conn2" in error_msg:
                 raise RuntimeError(f"第三方API服务器暂时不可用（数据库错误），请稍后重试。关键词: {keyword}")
