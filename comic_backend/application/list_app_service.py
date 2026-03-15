@@ -12,7 +12,7 @@ from infrastructure.persistence.repositories.recommendation_repository_impl impo
 from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.utils import get_current_time, generate_id, generate_uuid
+from core.utils import get_current_time, generate_id, generate_uuid, normalize_total_page
 from core.enums import ContentType
 from core.platform import Platform
 from third_party.platform_service import get_platform_service
@@ -1319,7 +1319,7 @@ class ListAppService:
                     "author": comic_detail.get("author", ""),
                     "desc": "",
                     "cover_path": cover_path,
-                    "total_page": comic_detail.get("pages", 0),
+                    "total_page": normalize_total_page(comic_detail.get("pages", 0)),
                     "current_page": 1,
                     "tag_ids": video_tag_ids,
                     "list_ids": [target_list_id],
@@ -1365,7 +1365,7 @@ class ListAppService:
                         comic_data["cover_path"] = cover_path
                     
                     try:
-                        total_page = comic_detail.get("pages", 0)
+                        total_page = normalize_total_page(comic_detail.get("pages", 0))
                         preview_pages = get_preview_pages(total_page)
                         preview_urls = platform_service.get_preview_image_urls(
                             platform,

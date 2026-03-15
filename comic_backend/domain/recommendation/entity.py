@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+from core.utils import normalize_total_page
 
 
 @dataclass
@@ -24,6 +25,18 @@ class Recommendation:
     
     @classmethod
     def from_dict(cls, data: dict) -> "Recommendation":
+        total_page = normalize_total_page(data.get("total_page", 0))
+        current_page = data.get("current_page", 1)
+        try:
+            current_page = int(current_page)
+        except (TypeError, ValueError):
+            current_page = 1
+
+        if total_page > 0:
+            current_page = min(max(1, current_page), total_page)
+        else:
+            current_page = max(1, current_page)
+
         return cls(
             id=data.get("id", ""),
             title=data.get("title", ""),
@@ -31,8 +44,8 @@ class Recommendation:
             author=data.get("author", ""),
             desc=data.get("desc", ""),
             cover_path=data.get("cover_path", ""),
-            total_page=data.get("total_page", 0),
-            current_page=data.get("current_page", 1),
+            total_page=total_page,
+            current_page=current_page,
             score=data.get("score") if data.get("score") is not None else 8.0,
             tag_ids=data.get("tag_ids") or [],
             list_ids=data.get("list_ids") or [],

@@ -5,6 +5,7 @@ from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
 from core.constants import CACHE_MAX_AGE, PICTURES_DIR, SUPPORTED_FORMATS, RECOMMENDATION_JSON_FILE
+from core.utils import normalize_total_page
 import os
 import time
 
@@ -978,7 +979,10 @@ def import_online():
                         
                         if success:
                             downloaded_comics.append(comic['id'])
-                            comic['total_page'] = detail.get('local_pages', detail.get('pages_count', comic['total_page']))
+                            comic['total_page'] = normalize_total_page(
+                                detail.get('local_pages', detail.get('pages_count', comic['total_page'])),
+                                default=normalize_total_page(comic.get('total_page', 0))
+                            )
                         else:
                             failed_downloads.append(comic['id'])
                     except Exception as e:
@@ -1073,7 +1077,7 @@ def import_online():
                     
                     # 获取预览图片 URL
                     try:
-                        total_page = comic.get('total_page', 0)
+                        total_page = normalize_total_page(comic.get('total_page', 0))
                         preview_pages = get_preview_pages(total_page)
                         
                         preview_urls = platform_service.get_preview_image_urls(

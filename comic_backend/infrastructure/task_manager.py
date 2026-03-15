@@ -246,6 +246,7 @@ class TaskManager:
         from core.platform import Platform
         from infrastructure.persistence.json_storage import JsonStorage
         from core.constants import TAGS_JSON_FILE
+        from core.utils import normalize_total_page
         
         try:
             platform = Platform(task.platform)
@@ -260,6 +261,7 @@ class TaskManager:
             db_file = 'data/meta_data/comics_database.json' if task.target == 'home' else 'data/meta_data/recommendations_database.json'
             storage = JsonStorage(db_file)
             db_data = storage.read()
+            from core.utils import normalize_total_page
             
             # 使用 PlatformService 获取数据
             # 搜索或获取详情
@@ -303,7 +305,7 @@ class TaskManager:
                 # 更新任务信息
                 album = albums[0]
                 task.title = album.get('title', '未知漫画')
-                task.total_pages = album.get('pages', 0)
+                task.total_pages = normalize_total_page(album.get('pages', 0))
                 self._save_tasks()
             
             # 转换数据
@@ -337,7 +339,10 @@ class TaskManager:
                         )
                         
                         if success:
-                            comic['total_page'] = detail.get('local_pages', detail.get('pages_count', comic['total_page']))
+                            comic['total_page'] = normalize_total_page(
+                                detail.get('local_pages', detail.get('pages_count', comic['total_page'])),
+                                default=normalize_total_page(comic.get('total_page', 0))
+                            )
                         
                     except Exception as e:
                         error_logger.error(f"下载漫画失败: {e}")
@@ -364,7 +369,7 @@ class TaskManager:
         from PIL import Image
         from io import BytesIO
         from core.constants import JM_COVER_DIR, PK_COVER_DIR
-        from core.utils import get_preview_pages
+        from core.utils import get_preview_pages, normalize_total_page
         
         tag_name_to_id = {}
         existing_tag_ids = set()
@@ -425,7 +430,7 @@ class TaskManager:
                 "author": album.get("author", ""),
                 "desc": album.get("desc", ""),
                 "cover_path": local_cover_path if local_cover_path else cover_url,
-                "total_page": album.get("pages", 0),
+                "total_page": normalize_total_page(album.get("pages", 0)),
                 "current_page": 1,
                 "score": None,
                 "tag_ids": comic_tag_ids,
@@ -439,7 +444,7 @@ class TaskManager:
             
             # 使用 PlatformService 获取预览图片 URL
             try:
-                total_page = comic.get('total_page', 0)
+                total_page = normalize_total_page(comic.get('total_page', 0))
                 preview_pages = get_preview_pages(total_page)
                 
                 # 获取预览图片 URL
@@ -514,6 +519,7 @@ class TaskManager:
         from infrastructure.persistence.json_storage import JsonStorage
         from datetime import datetime
         from core.constants import TAGS_JSON_FILE
+        from core.utils import normalize_total_page
         
         RECENT_IMPORT_TAG_ID = "tag_recent_import"
         RECENT_IMPORT_TAG_NAME = "最近导入"
@@ -559,6 +565,7 @@ class TaskManager:
         
         # 添加新漫画并设置最近导入tag
         for comic in actual_new_comics:
+            comic['total_page'] = normalize_total_page(comic.get('total_page', 0))
             if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
                 comic.setdefault('tag_ids', []).append(RECENT_IMPORT_TAG_ID)
             

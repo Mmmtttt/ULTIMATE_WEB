@@ -2,6 +2,7 @@ import json
 import time
 from typing import Dict, List, Any, Optional, Tuple
 from core.platform import Platform, add_platform_prefix, PLATFORM_PREFIXES
+from core.utils import normalize_total_page
 
 
 class MetaDataAdapter:
@@ -129,7 +130,7 @@ class MetaDataAdapter:
             "author": album.get("author", ""),
             "desc": "",
             "cover_path": cover_path,
-            "total_page": album.get("pages", 0),
+            "total_page": normalize_total_page(album.get("pages", 0)),
             "current_page": 1,
             "score": None,
             "tag_ids": tag_ids,

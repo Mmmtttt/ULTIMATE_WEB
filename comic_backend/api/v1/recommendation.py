@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, send_file
 from application.recommendation_app_service import RecommendationAppService
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
+from core.utils import normalize_total_page
 import os
 import sys
 
@@ -297,7 +298,7 @@ def get_recommendation_images():
             return error_response(404, result.message)
         
         detail = result.data
-        total_page = detail.get('total_page', 0)
+        total_page = normalize_total_page(detail.get('total_page', 0))
         
         image_urls = []
         for i in range(1, total_page + 1):
@@ -323,11 +324,15 @@ def download_to_cache():
         
         if recommendation_cache_manager.is_cached(recommendation_id):
             cache_info = recommendation_cache_manager.get_cache_info(recommendation_id)
+            cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            if cached_pages:
+                recommendation_service.update_total_page(recommendation_id, len(cached_pages))
             app_logger.info(f"漫画已在缓存中: {recommendation_id}")
             return success_response({
                 "status": "cached",
                 "message": "漫画已在缓存中",
-                "cache_info": cache_info
+                "cache_info": cache_info,
+                "cached_pages": cached_pages
             })
         
         result = recommendation_service.get_recommendation_detail(recommendation_id)
@@ -335,7 +340,7 @@ def download_to_cache():
             return error_response(404, result.message)
         
         detail = result.data
-        total_page = detail.get('total_page', 0)
+        total_page = normalize_total_page(detail.get('total_page', 0))
         
         from core.platform import get_platform_from_id, get_original_id, Platform
         from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
@@ -358,8 +363,14 @@ def download_to_cache():
             )
             
             if success:
-                local_pages = album_detail.get('local_pages', album_detail.get('pages_count', 0))
+                local_pages = normalize_total_page(
+                    album_detail.get('local_pages', album_detail.get('pages_count', 0)),
+                    default=total_page
+                )
                 recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+                if local_pages > 0:
+                    recommendation_service.update_total_page(recommendation_id, local_pages)
+                    total_page = local_pages
                 
                 cached_pages_list = list(range(1, local_pages + 1))
                 

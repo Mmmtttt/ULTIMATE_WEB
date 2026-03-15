@@ -6,7 +6,7 @@ from infrastructure.persistence.repositories import RecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
-from core.utils import get_current_time, get_preview_pages
+from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.platform import get_platform_from_id, get_original_id, Platform, get_platform_image_url
 from third_party.adapter_factory import AdapterFactory, AdapterConfig
 
@@ -72,7 +72,7 @@ class RecommendationAppService:
                     "author": r.author,
                     "desc": r.desc,
                     "cover_path": r.cover_path,  # 图床 URL
-                    "total_page": r.total_page,
+                    "total_page": normalize_total_page(r.total_page),
                     "current_page": r.current_page,
                     "score": r.score,
                     "tag_ids": r.tag_ids,
@@ -95,19 +95,26 @@ class RecommendationAppService:
             recommendation = self._recommendation_repo.get_by_id(recommendation_id)
             if not recommendation:
                 return ServiceResult.error("推荐漫画不存在")
-            
+
+            normalized_total_page = normalize_total_page(recommendation.total_page)
+            if normalized_total_page != recommendation.total_page:
+                recommendation.total_page = normalized_total_page
+                if normalized_total_page > 0:
+                    recommendation.current_page = min(max(1, recommendation.current_page), normalized_total_page)
+                self._recommendation_repo.save(recommendation)
+
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
-            
-            preview_pages = get_preview_pages(recommendation.total_page)
+
+            preview_pages = get_preview_pages(normalized_total_page)
             is_favorited = FAVORITES_LIST_ID in recommendation.list_ids
-            
+
             cache_status = recommendation_cache_manager.get_cache_status(recommendation_id)
             is_cached = cache_status.get("is_cached", False)
-            
+
             platform = get_platform_from_id(recommendation_id)
             original_id = get_original_id(recommendation_id)
-            
+
             preview_image_urls = []
             if is_cached:
                 for page in preview_pages:
@@ -115,18 +122,34 @@ class RecommendationAppService:
                     preview_image_urls.append(image_url)
             else:
                 if platform == Platform.PK:
-                    # 对于 PK 平台，使用预存的预览图片 URL
-                    preview_image_urls = recommendation.preview_image_urls
-                    preview_pages = recommendation.preview_pages
+                    # 对于 PK 平台，优先使用预存预览图，缺失时动态补取。
+                    preview_image_urls = recommendation.preview_image_urls or []
+                    preview_pages = recommendation.preview_pages or preview_pages
+
+                    if not preview_image_urls and preview_pages:
+                        try:
+                            from third_party.platform_service import get_platform_service
+                            platform_service = get_platform_service()
+                            preview_image_urls = platform_service.get_preview_image_urls(
+                                platform,
+                                original_id,
+                                preview_pages
+                            )
+                            if preview_image_urls:
+                                recommendation.preview_image_urls = preview_image_urls
+                                recommendation.preview_pages = preview_pages
+                                self._recommendation_repo.save(recommendation)
+                        except Exception as e:
+                            error_logger.warning(f"获取 PK 预览图片失败: {recommendation_id}, {e}")
                 else:
-                    # 对于 JM 平台，使用原有的逻辑
+                    # 对于 JM 平台，使用原有逻辑
                     for page in preview_pages:
                         image_url = get_platform_image_url(platform, original_id, page)
                         if not image_url:
                             image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp"
                         if image_url:
                             preview_image_urls.append(image_url)
-            
+
             detail = {
                 "id": recommendation.id,
                 "title": recommendation.title,
@@ -134,7 +157,7 @@ class RecommendationAppService:
                 "author": recommendation.author,
                 "desc": recommendation.desc,
                 "cover_path": recommendation.cover_path,
-                "total_page": recommendation.total_page,
+                "total_page": normalized_total_page,
                 "current_page": recommendation.current_page,
                 "score": recommendation.score,
                 "tag_ids": recommendation.tag_ids,
@@ -148,35 +171,65 @@ class RecommendationAppService:
                 "is_favorited": is_favorited,
                 "source": "preview"
             }
-            
+
             app_logger.info(f"获取推荐详情成功: {recommendation_id}, 平台: {platform}, 缓存状态: {is_cached}")
             return ServiceResult.ok(detail)
         except Exception as e:
             error_logger.error(f"获取推荐详情失败: {e}")
             return ServiceResult.error("获取推荐详情失败")
-    
+
     def update_progress(self, recommendation_id: str, current_page: int) -> ServiceResult:
         """更新阅读进度"""
         try:
             recommendation = self._recommendation_repo.get_by_id(recommendation_id)
             if not recommendation:
                 return ServiceResult.error("推荐漫画不存在")
-            
-            if not (1 <= current_page <= recommendation.total_page):
-                return ServiceResult.error(f"页码超出范围: 1-{recommendation.total_page}")
-            
+
+            total_page = normalize_total_page(recommendation.total_page)
+            if total_page != recommendation.total_page:
+                recommendation.total_page = total_page
+
+            if total_page <= 0:
+                return ServiceResult.error("页数信息无效，请先下载缓存后重试")
+
+            if not (1 <= current_page <= total_page):
+                return ServiceResult.error(f"页码超出范围: 1-{total_page}")
+
             recommendation.current_page = current_page
             recommendation.last_read_time = get_current_time()
-            
+
             if self._recommendation_repo.save(recommendation):
-                app_logger.info(f"更新阅读进度成功: {recommendation_id}, 第 {current_page} 页")
+                app_logger.info(f"更新阅读进度成功: {recommendation_id}, 第{current_page}页")
                 return ServiceResult.ok({"current_page": current_page})
             else:
                 return ServiceResult.error("保存失败")
         except Exception as e:
             error_logger.error(f"更新阅读进度失败: {e}")
             return ServiceResult.error("更新阅读进度失败")
-    
+
+    def update_total_page(self, recommendation_id: str, total_page: int) -> ServiceResult:
+        """更新推荐漫画总页数"""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation:
+                return ServiceResult.error("推荐漫画不存在")
+
+            fallback_total = normalize_total_page(recommendation.total_page)
+            normalized_total = normalize_total_page(total_page, default=fallback_total)
+            if normalized_total <= 0:
+                return ServiceResult.error("总页数无效")
+
+            recommendation.total_page = normalized_total
+            recommendation.current_page = min(max(1, recommendation.current_page), normalized_total)
+
+            if self._recommendation_repo.save(recommendation):
+                app_logger.info(f"更新推荐总页数成功: {recommendation_id}, total_page={normalized_total}")
+                return ServiceResult.ok({"id": recommendation_id, "total_page": normalized_total})
+            return ServiceResult.error("保存失败")
+        except Exception as e:
+            error_logger.error(f"更新推荐总页数失败: {e}")
+            return ServiceResult.error("更新推荐总页数失败")
+
     def update_score(self, recommendation_id: str, score: float) -> ServiceResult:
         """更新评分"""
         try:
@@ -262,7 +315,7 @@ class RecommendationAppService:
                     "title": r.title,
                     "author": r.author,
                     "cover_path": r.cover_path,
-                    "total_page": r.total_page,
+                    "total_page": normalize_total_page(r.total_page),
                     "current_page": r.current_page,
                     "score": r.score,
                     "tag_ids": r.tag_ids,
@@ -291,7 +344,7 @@ class RecommendationAppService:
                     "title": r.title,
                     "author": r.author,
                     "cover_path": r.cover_path,
-                    "total_page": r.total_page,
+                    "total_page": normalize_total_page(r.total_page),
                     "current_page": r.current_page,
                     "score": r.score,
                     "tag_ids": r.tag_ids,
@@ -320,7 +373,7 @@ class RecommendationAppService:
                     "title": r.title,
                     "author": r.author,
                     "cover_path": r.cover_path,
-                    "total_page": r.total_page,
+                    "total_page": normalize_total_page(r.total_page),
                     "current_page": r.current_page,
                     "score": r.score,
                     "tag_ids": r.tag_ids,
@@ -393,7 +446,7 @@ class RecommendationAppService:
                 author=data.get("author", ""),
                 desc=data.get("desc", ""),
                 cover_path=data.get("cover_path", ""),  # 图床 URL
-                total_page=data.get("total_page", 0),
+                total_page=normalize_total_page(data.get("total_page", 0)),
                 current_page=data.get("current_page", 1),
                 score=data.get("score", 8.0),
                 tag_ids=data.get("tag_ids", []),
@@ -446,7 +499,7 @@ class RecommendationAppService:
                     "title": r.title,
                     "author": r.author,
                     "cover_path": r.cover_path,
-                    "total_page": r.total_page,
+                    "total_page": normalize_total_page(r.total_page),
                     "score": r.score,
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
                     "create_time": r.create_time
@@ -592,3 +645,4 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"批量永久删除失败: {e}")
             return ServiceResult.error("批量永久删除失败")
+

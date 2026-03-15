@@ -171,6 +171,24 @@ const sliderPage = ref(1)
 const downloadProgress = ref('')
 const isCached = ref(false)
 
+const normalizePageCount = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.abs(Math.trunc(numeric))
+}
+
+const normalizePageList = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((page) => normalizePageCount(page))
+      .filter((page) => page > 0)
+  }
+
+  const total = normalizePageCount(value)
+  if (total <= 0) return []
+  return Array.from({ length: total }, (_, index) => index + 1)
+}
+
 // 图片加载队列控制
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
@@ -354,13 +372,16 @@ const loadImages = async () => {
       currentPage.value = recommendation.current_page
       sliderPage.value = recommendation.current_page
     }
-    totalPage.value = recommendation?.total_page || 0
+    totalPage.value = normalizePageCount(recommendation?.total_page || 0)
     
     const cacheStatus = await recommendationApi.getCacheStatus(recommendationId.value)
     
     if (cacheStatus.code === 200 && cacheStatus.data.is_cached) {
       isCached.value = true
-      const cachedPages = cacheStatus.data.cached_pages || []
+      const cachedPages = normalizePageList(cacheStatus.data.cached_pages || [])
+      if (cachedPages.length > 0) {
+        totalPage.value = cachedPages.length
+      }
       
       images.value = cachedPages.map(pageNum => 
         recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
@@ -385,21 +406,13 @@ const loadImages = async () => {
         downloadProgress.value = `下载完成，正在加载...`
         
         isCached.value = true
-        const cachedPages = result.data.cached_pages || result.data.total_pages || []
-        
-        if (typeof cachedPages === 'number') {
-          const pages = []
-          for (let i = 1; i <= cachedPages; i++) {
-            pages.push(i)
-          }
-          images.value = pages.map(pageNum => 
-            recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
-          )
-        } else {
-          images.value = cachedPages.map(pageNum => 
-            recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
-          )
+        const cachedPages = normalizePageList(result.data.cached_pages || result.data.total_pages || [])
+        if (cachedPages.length > 0) {
+          totalPage.value = cachedPages.length
         }
+        images.value = cachedPages.map(pageNum => 
+          recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
+        )
         
         if (images.value.length > 0) {
           preloadImages(currentPage.value)

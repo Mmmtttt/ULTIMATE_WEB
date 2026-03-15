@@ -20,6 +20,20 @@ def get_current_date() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def normalize_total_page(total_page, default: int = 0) -> int:
+    """Normalize total page count to a usable non-negative integer."""
+    try:
+        normalized = int(total_page)
+    except (TypeError, ValueError):
+        return default
+
+    # PK occasionally returns negative values for pages_count.
+    if normalized < 0:
+        normalized = abs(normalized)
+
+    return normalized
+
+
 def validate_score(score) -> tuple:
     if not isinstance(score, (int, float)):
         return False, "评分必须是数字"
