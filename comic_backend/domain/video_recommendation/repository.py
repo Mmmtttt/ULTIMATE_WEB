@@ -30,6 +30,11 @@ class VideoRecommendationRepository(ABC):
     def search(self, keyword: str) -> List[VideoRecommendation]:
         """搜索推荐视频"""
         pass
+
+    @abstractmethod
+    def get_by_code(self, code: str) -> Optional[VideoRecommendation]:
+        """根据番号获取推荐视频"""
+        pass
     
     @abstractmethod
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> List[VideoRecommendation]:

@@ -343,11 +343,11 @@ class TaskManager:
                         error_logger.error(f"下载漫画失败: {e}")
             
             # 保存到数据库
-            self._save_to_database(converted_data, task.target)
+            actual_imported_count = self._save_to_database(converted_data, task.target)
             
             return {
                 'success': True,
-                'imported_count': len(converted_data.get('comics', [])),
+                'imported_count': actual_imported_count,
                 'title': task.title
             }
             
@@ -509,7 +509,7 @@ class TaskManager:
             error_logger.error(f"下载封面失败 {album_id}: {e}")
             return ""
     
-    def _save_to_database(self, converted_data: Dict, target: str):
+    def _save_to_database(self, converted_data: Dict, target: str) -> int:
         """保存到数据库"""
         from infrastructure.persistence.json_storage import JsonStorage
         from datetime import datetime
@@ -533,13 +533,14 @@ class TaskManager:
         # 保存漫画/推荐漫画数据
         new_comics = converted_data.get('comics', [])
         existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
+        actual_new_comics = [comic for comic in new_comics if comic['id'] not in existing_ids]
         
         # 处理tag保存到独立的标签数据库
         tag_storage = JsonStorage(TAGS_JSON_FILE)
         tag_db_data = tag_storage.read()
         
         # 确保最近导入tag
-        if new_comics:
+        if actual_new_comics:
             existing_tag_ids = {t['id'] for t in tag_db_data.get('tags', [])}
             if RECENT_IMPORT_TAG_ID not in existing_tag_ids:
                 tag_db_data.setdefault('tags', []).append({
@@ -557,16 +558,15 @@ class TaskManager:
             app_logger.info(f"清除旧漫画的'{RECENT_IMPORT_TAG_NAME}'标签")
         
         # 添加新漫画并设置最近导入tag
-        for comic in new_comics:
-            if comic['id'] not in existing_ids:
-                if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
-                    comic.setdefault('tag_ids', []).append(RECENT_IMPORT_TAG_ID)
-                
-                db_data.setdefault(comics_key, []).append(comic)
-                existing_ids.add(comic['id'])
+        for comic in actual_new_comics:
+            if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
+                comic.setdefault('tag_ids', []).append(RECENT_IMPORT_TAG_ID)
+            
+            db_data.setdefault(comics_key, []).append(comic)
+            existing_ids.add(comic['id'])
         
-        if new_comics:
-            app_logger.info(f"为 {len(new_comics)} 个新漫画添加'{RECENT_IMPORT_TAG_NAME}'标签")
+        if actual_new_comics:
+            app_logger.info(f"为 {len(actual_new_comics)} 个新漫画添加'{RECENT_IMPORT_TAG_NAME}'标签")
         
         # 保存新tag到主数据库
         new_tags = converted_data.get('tags', [])
@@ -585,6 +585,7 @@ class TaskManager:
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
         storage.write(db_data)
+        return len(actual_new_comics)
     
     def create_task(
         self,

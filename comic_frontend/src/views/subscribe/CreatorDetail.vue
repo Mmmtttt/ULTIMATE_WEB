@@ -297,7 +297,8 @@ async function confirmImport(target) {
       let successCount = 0
       for (const item of selectedItems) {
         const id = getItemId(item)
-        await videoApi.thirdPartyImport(id, target)
+        const platform = (item.platform || 'javdb').toLowerCase()
+        await videoApi.thirdPartyImport(id, target, platform)
         successCount++
       }
       showToast(`已导入 ${successCount} 个视频`)

@@ -65,8 +65,8 @@ export const videoApi = {
     return request.get(`/v1/video/actor/${encodeURIComponent(actorName)}`)
   },
   
-  thirdPartySearch(keyword, page = 1) {
-    return request.get('/v1/video/third-party/search', { params: { keyword, page } })
+  thirdPartySearch(keyword, page = 1, platform = 'all') {
+    return request.get('/v1/video/third-party/search', { params: { keyword, page, platform } })
   },
   
   thirdPartyDetail(videoId) {

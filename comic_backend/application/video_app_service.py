@@ -459,18 +459,46 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"批量移除标签失败: {e}")
             return ServiceResult.error("批量移除标签失败")
+
+    def _build_image_request_headers(self, image_url: str, video_id: str = "") -> Dict[str, str]:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+        }
+
+        if image_url and "javbus.com" in image_url.lower():
+            from core.platform import remove_platform_prefix
+            _, raw_id = remove_platform_prefix(str(video_id or ""))
+            referer_id = (raw_id or video_id or "").strip()
+            headers["Referer"] = f"https://www.javbus.com/{referer_id}" if referer_id else "https://www.javbus.com/"
+
+        return headers
+
+    def _download_image_content(self, image_url: str, video_id: str = "") -> Optional[bytes]:
+        headers = self._build_image_request_headers(image_url, video_id)
+        response = requests.get(image_url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            app_logger.warning(f"下载图片失败: url={image_url}, status={response.status_code}")
+            return None
+
+        content_type = (response.headers.get("content-type", "") or "").lower()
+        if "image" not in content_type:
+            app_logger.warning(f"下载内容不是图片: url={image_url}, content-type={content_type}")
+            return None
+
+        return response.content
     
     def download_cover_async(self, video_id: str, cover_url: str):
         def download():
             try:
                 if not cover_url:
                     return
-                
-                response = requests.get(cover_url, timeout=30)
-                if response.status_code != 200:
+
+                image_content = self._download_image_content(cover_url, video_id)
+                if not image_content:
                     return
-                
-                image = Image.open(BytesIO(response.content))
+
+                image = Image.open(BytesIO(image_content))
                 os.makedirs(VIDEO_COVER_DIR, exist_ok=True)
                 
                 cover_path = os.path.join(VIDEO_COVER_DIR, f"{video_id}.jpg")
@@ -496,13 +524,12 @@ class VideoAppService(BaseContentAppService):
                     return
                 
                 app_logger.info(f"开始下载高清缩略图: {video_id}")
-                
-                response = requests.get(cover_url, timeout=30)
-                if response.status_code != 200:
-                    app_logger.warning(f"下载高清缩略图失败: HTTP {response.status_code}")
+
+                image_content = self._download_image_content(cover_url, video_id)
+                if not image_content:
                     return
-                
-                image = Image.open(BytesIO(response.content))
+
+                image = Image.open(BytesIO(image_content))
                 
                 os.makedirs(jav_pictures_dir, exist_ok=True)
                 os.makedirs(jav_cover_dir, exist_ok=True)
@@ -534,12 +561,12 @@ class VideoAppService(BaseContentAppService):
             try:
                 if not cover_url:
                     return
-                
-                response = requests.get(cover_url, timeout=30)
-                if response.status_code != 200:
+
+                image_content = self._download_image_content(cover_url, video_id)
+                if not image_content:
                     return
-                
-                image = Image.open(BytesIO(response.content))
+
+                image = Image.open(BytesIO(image_content))
                 os.makedirs(jav_cover_dir, exist_ok=True)
                 
                 cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")

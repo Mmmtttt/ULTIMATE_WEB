@@ -102,7 +102,6 @@
             <van-radio name="by_id">通过 ID</van-radio>
             <van-radio name="by_search">通过搜索</van-radio>
             <van-radio name="by_list">批量文件</van-radio>
-            <van-radio v-if="!isVideoMode" name="by_favorite">从收藏夹</van-radio>
           </div>
         </van-radio-group>
         
@@ -205,7 +204,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
-import { comicApi, authorApi, recommendationApi } from '@/api'
+import { comicApi, authorApi, recommendationApi, videoApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
@@ -295,23 +294,138 @@ function handleImportFileSelect(event) {
   if (file) importFile.value = file
 }
 
+function normalizeImportId(rawId, platform = '') {
+  let id = String(rawId || '').trim()
+  if (!id) return ''
+
+  const normalizedPlatform = String(platform || '').toUpperCase()
+  if (normalizedPlatform) {
+    const platformPrefixRegex = new RegExp(`^${normalizedPlatform}_?`, 'i')
+    id = id.replace(platformPrefixRegex, '')
+  }
+
+  return id.trim()
+}
+
+async function parseIdsFromFile(file, platform = '') {
+  if (!file) {
+    throw new Error('请先选择导入文件')
+  }
+
+  const content = await file.text()
+  const ids = content
+    .split(/[\r\n,\s]+/)
+    .map(item => normalizeImportId(item, platform))
+    .filter(Boolean)
+
+  return Array.from(new Set(ids))
+}
+
+async function handleComicImport() {
+  const params = {
+    import_type: importType.value,
+    target: importTarget.value,
+    platform: importPlatform.value,
+    comic_id: normalizeImportId(importId.value, importPlatform.value),
+    keyword: (importKeyword.value || '').trim()
+  }
+
+  if (importType.value === 'by_id' && !params.comic_id) {
+    throw new Error('请输入漫画ID')
+  }
+
+  if (importType.value === 'by_search' && !params.keyword) {
+    throw new Error('请输入搜索关键词')
+  }
+
+  if (importType.value === 'by_list') {
+    const comicIds = await parseIdsFromFile(importFile.value, importPlatform.value)
+    if (comicIds.length === 0) {
+      throw new Error('文件中没有可导入的ID')
+    }
+    params.comic_ids = comicIds
+    params.comic_id = ''
+    params.keyword = ''
+  }
+
+  await importTaskStore.createImportTask(params)
+  showSuccessToast('任务已创建')
+}
+
+async function handleVideoImport() {
+  const target = importTarget.value
+  const defaultPlatform = (importPlatform.value || 'JAVDB').toLowerCase()
+  let successCount = 0
+  let failedCount = 0
+
+  if (importType.value === 'by_id') {
+    const videoId = normalizeImportId(importId.value, importPlatform.value)
+    if (!videoId) {
+      throw new Error('请输入视频ID')
+    }
+    await videoApi.thirdPartyImport(videoId, target, defaultPlatform)
+    showSuccessToast('导入成功')
+    return
+  }
+
+  if (importType.value === 'by_search') {
+    const keyword = (importKeyword.value || '').trim()
+    if (!keyword) {
+      throw new Error('请输入搜索关键词')
+    }
+
+    const searchRes = await videoApi.thirdPartySearch(keyword, 1, defaultPlatform)
+    const videos = searchRes?.data?.videos || []
+    if (videos.length === 0) {
+      throw new Error('未找到可导入的视频')
+    }
+
+    for (const item of videos) {
+      const itemId = normalizeImportId(item.video_id || item.id || '', item.platform || importPlatform.value)
+      if (!itemId) continue
+      const itemPlatform = (item.platform || defaultPlatform).toLowerCase()
+      try {
+        await videoApi.thirdPartyImport(itemId, target, itemPlatform)
+        successCount += 1
+      } catch (e) {
+        failedCount += 1
+      }
+    }
+  } else if (importType.value === 'by_list') {
+    const videoIds = await parseIdsFromFile(importFile.value, importPlatform.value)
+    if (videoIds.length === 0) {
+      throw new Error('文件中没有可导入的ID')
+    }
+
+    for (const videoId of videoIds) {
+      try {
+        await videoApi.thirdPartyImport(videoId, target, defaultPlatform)
+        successCount += 1
+      } catch (e) {
+        failedCount += 1
+      }
+    }
+  } else {
+    throw new Error('当前模式不支持该导入方式')
+  }
+
+  if (successCount === 0) {
+    throw new Error('导入失败')
+  }
+  showSuccessToast(`导入完成：成功 ${successCount}，失败 ${failedCount}`)
+}
+
 async function handleOnlineImport() {
   importing.value = true
   try {
-    const params = {
-      import_type: importType.value,
-      target: importTarget.value,
-      platform: importPlatform.value,
-      comic_id: importId.value,
-      keyword: importKeyword.value
+    if (isVideoMode.value) {
+      await handleVideoImport()
+    } else {
+      await handleComicImport()
     }
-    
-    // Add file logic if needed (omitted for brevity)
-    await importTaskStore.createImportTask(params)
-    showSuccessToast('任务已创建')
     showImportDialog.value = false
   } catch (e) {
-    showFailToast('操作失败')
+    showFailToast(e?.message || '操作失败')
   } finally {
     importing.value = false
   }

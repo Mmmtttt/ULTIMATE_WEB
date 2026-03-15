@@ -456,6 +456,20 @@ def get_all_video_adapters(*args, **kwargs):
     return adapters
 
 
+def to_proxy_image_url(url: str) -> str:
+    """将防盗链图片地址转换为本地代理地址，避免前端直连403。"""
+    if not url:
+        return url
+
+    lower_url = url.lower()
+    if 'javbus.com/pics/' not in lower_url:
+        return url
+
+    import base64
+    encoded_url = base64.b64encode(url.encode('utf-8')).decode('utf-8')
+    return f"/api/v1/video/proxy2?url={encoded_url}"
+
+
 @video_bp.route('/third-party/search', methods=['GET'])
 def third_party_search():
     try:
@@ -484,6 +498,10 @@ def third_party_search():
                 
                 for video in videos:
                     video['platform'] = plat
+                    if video.get('cover_url'):
+                        video['cover_url'] = to_proxy_image_url(video.get('cover_url'))
+                    if video.get('thumbnail_url'):
+                        video['thumbnail_url'] = to_proxy_image_url(video.get('thumbnail_url'))
                 
                 platform_results[plat] = {
                     'page': result.get('page', page),
@@ -587,6 +605,8 @@ def third_party_actor_works():
                         if local_cover:
                             # 覆盖为本地封面路径，实现“先本地缓存，否则图床”
                             work["cover_url"] = local_cover
+                if work.get("cover_url") and not str(work.get("cover_url")).startswith("/static/"):
+                    work["cover_url"] = to_proxy_image_url(work.get("cover_url"))
             except Exception as e:
                 error_logger.error(f"为演员作品匹配本地封面失败: {e}")
             enhanced_works.append(work)
@@ -618,13 +638,19 @@ def third_party_import():
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
-        
-        original_video_id = video_id
+
+        from core.platform import Platform as CorePlatform, add_platform_prefix, remove_platform_prefix
+
         if '_' in video_id:
             parts = video_id.split('_', 1)
             if len(parts) == 2 and parts[0].upper() in ['JAVDB', 'JAVBUS']:
                 platform = parts[0].lower()
                 video_id = parts[1]
+        else:
+            parsed_platform, original_id = remove_platform_prefix(video_id)
+            if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS] and original_id and original_id != video_id:
+                platform = parsed_platform.value.lower()
+                video_id = original_id
         
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
@@ -638,12 +664,13 @@ def third_party_import():
         
         if not detail:
             return error_response(404, "视频不存在")
-        
-        platform_prefix = platform.upper() if platform == 'javdb' else platform.upper()
-        video_id_full = f"{platform_prefix}_{video_id}"
+
+        platform_enum = CorePlatform.JAVBUS if platform == 'javbus' else CorePlatform.JAVDB
+        video_id_full = add_platform_prefix(platform_enum, video_id)
+        video_code = (detail.get("code", "") or "").strip()
         
         if target == 'home':
-            existing = video_service.get_video_by_code(detail.get("code", ""))
+            existing = video_service.get_video_by_code(video_code)
             if existing.success and existing.data:
                 return error_response(400, f"视频 {video_id_full} 已存在")
             
@@ -665,7 +692,7 @@ def third_party_import():
             video_data = {
                 "id": video_id_full,
                 "title": detail.get("title", ""),
-                "code": detail.get("code", ""),
+                "code": video_code,
                 "date": detail.get("date", ""),
                 "series": detail.get("series", ""),
                 "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
@@ -723,15 +750,18 @@ def third_party_import():
             storage = JsonStorage(db_file)
             db_data = storage.read()
             videos_key = 'video_recommendations'
-            
-            existing_ids = {v['id'] for v in db_data.get(videos_key, [])}
-            if video_id_full in existing_ids:
+
+            existing_codes = {
+                (v.get('code', '') or '').strip().upper()
+                for v in db_data.get(videos_key, [])
+            }
+            if video_code and video_code.upper() in existing_codes:
                 return error_response(400, f"视频 {video_id_full} 已存在")
             
             video_data = {
                 "id": video_id_full,
                 "title": detail.get("title", ""),
-                "code": detail.get("code", ""),
+                "code": video_code,
                 "date": detail.get("date", ""),
                 "series": detail.get("series", ""),
                 "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
@@ -1508,6 +1538,8 @@ def proxy_video_request2():
         
         referer = request.headers.get('Referer', '')
         if 'jable' in parsed.netloc:
+            referer = f'https://{parsed.netloc}/'
+        elif 'javbus' in parsed.netloc:
             referer = f'https://{parsed.netloc}/'
         elif 'missav' in parsed.netloc or 'surrit' in parsed.netloc or 'mushroom' in parsed.netloc:
             referer = 'https://missav.ai/'

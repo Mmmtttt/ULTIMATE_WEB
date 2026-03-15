@@ -57,29 +57,49 @@ class ActorAppService(BaseCreatorAppService):
         has_more = False
         
         try:
-            adapter = get_video_adapter("javdb")
-            result = adapter.search_videos(creator_name, page=page, max_pages=max_pages)
-            videos = result.get("videos", [])
-            has_more = result.get("has_next", False)
+            platforms_to_search = ["javdb", "javbus"]
+            platform_videos = {}
+            max_result_count = 0
             
-            for video in videos:
-                work_id = str(video.get("video_id", ""))
-                cover_url = video.get("cover_url", "")
-                local_cover = f"/static/cover/video/actor_cache/{work_id}.jpg"
-                if os.path.exists(f"static/cover/video/actor_cache/{work_id}.jpg"):
-                    cover_url = local_cover
-                
-                works.append({
-                    "id": work_id,
-                    "title": video.get("title", ""),
-                    "actor": creator_name,
-                    "cover_url": cover_url,
-                    "duration": video.get("duration", 0),
-                    "has_detail": False,
-                    "is_new": True,
-                    "platform": "javdb"
-                })
-                
+            for plat in platforms_to_search:
+                try:
+                    adapter = get_video_adapter(plat)
+                    result = adapter.search_videos(creator_name, page=page, max_pages=max_pages)
+                    videos = result.get("videos", [])
+                    has_more = has_more or result.get("has_next", False)
+                    
+                    if videos:
+                        platform_videos[plat] = videos
+                        max_result_count = max(max_result_count, len(videos))
+                except Exception as e:
+                    error_logger.error(f"搜索演员 {creator_name} 在平台 {plat} 的作品失败: {e}")
+                    continue
+            
+            for i in range(max_result_count):
+                for plat in platforms_to_search:
+                    if plat not in platform_videos or i >= len(platform_videos[plat]):
+                        continue
+                    
+                    video = platform_videos[plat][i]
+                    work_id = str(video.get("video_id") or video.get("code") or "")
+                    if not work_id:
+                        continue
+                    
+                    cover_url = video.get("cover_url", "")
+                    local_cover = f"/static/cover/video/actor_cache/{work_id}.jpg"
+                    if os.path.exists(f"static/cover/video/actor_cache/{work_id}.jpg"):
+                        cover_url = local_cover
+                    
+                    works.append({
+                        "id": work_id,
+                        "title": video.get("title", ""),
+                        "actor": creator_name,
+                        "cover_url": cover_url,
+                        "duration": video.get("duration", 0),
+                        "has_detail": False,
+                        "is_new": True,
+                        "platform": plat
+                    })
         except Exception as e:
             error_logger.error(f"搜索演员 {creator_name} 作品失败: {e}")
         
@@ -116,7 +136,7 @@ class ActorAppService(BaseCreatorAppService):
         if not cover_url:
             return ""
         
-        cache_dir = JAV_ACTOR_COVER_CACHE_DIR if platform == 'JAVDB' else VIDEO_ACTOR_COVER_CACHE_DIR
+        cache_dir = VIDEO_ACTOR_COVER_CACHE_DIR
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
         
         if os.path.exists(local_path):
@@ -126,7 +146,14 @@ class ActorAppService(BaseCreatorAppService):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
+            if 'javbus.com' in cover_url.lower():
+                headers['Referer'] = f"https://www.javbus.com/{content_id}"
+            
             response = requests.get(cover_url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                return cover_url
+            if "image" not in (response.headers.get("content-type", "") or "").lower():
+                return cover_url
             response.raise_for_status()
             
             os.makedirs(cache_dir, exist_ok=True)
@@ -303,9 +330,6 @@ class ActorAppService(BaseCreatorAppService):
             return ServiceResult.error("检查演员更新失败")
     
     def get_actor_new_works(self, actor_id: str) -> ServiceResult:
-        from core.platform import get_supported_platforms
-        from third_party import external_api
-        
         try:
             actor = self._actor_repo.get_by_id(actor_id)
             if not actor:
@@ -313,37 +337,8 @@ class ActorAppService(BaseCreatorAppService):
             
             works = []
             try:
-                platforms_to_search = get_supported_platforms()
-                platform_videos = {}
-                max_result_count = 0
-                
-                for plat in platforms_to_search:
-                    try:
-                        adapter_name = 'javdb'
-                        result = external_api.search_videos(actor.name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
-                        videos = result.get("videos", [])
-                        
-                        if videos:
-                            platform_videos[plat] = videos
-                            if len(videos) > max_result_count:
-                                max_result_count = len(videos)
-                    except Exception as e:
-                        error_logger.error(f"搜索演员 {actor.name} 在平台 {plat} 的作品失败: {e}")
-                        continue
-                
-                for i in range(max_result_count):
-                    for plat in platforms_to_search:
-                        if plat in platform_videos and i < len(platform_videos[plat]):
-                            video = platform_videos[plat][i]
-                            works.append({
-                                "id": str(video.get("video_id", "")),
-                                "title": video.get("title", ""),
-                                "actor": actor.name,
-                                "cover_url": video.get("cover_url", ""),
-                                "duration": video.get("duration", 0),
-                                "platform": plat
-                            })
-                
+                search_result = self._search_works(actor.name, page=1, max_pages=3)
+                works = search_result.get("works", [])
             except Exception as e:
                 error_logger.error(f"搜索演员 {actor.name} 作品失败: {e}")
             

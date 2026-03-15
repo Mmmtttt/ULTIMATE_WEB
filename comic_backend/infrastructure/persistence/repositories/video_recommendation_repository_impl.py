@@ -17,6 +17,15 @@ class VideoRecommendationJsonRepository(BaseContentJsonRepository[VideoRecommend
     
     def _get_entity_class(self):
         return VideoRecommendation
+
+    def get_by_code(self, code: str) -> Optional[VideoRecommendation]:
+        data = self._storage.read()
+        entities = data.get(self._data_key, [])
+        entity_data = next(
+            (e for e in entities if e.get("code", "").upper() == code.upper()),
+            None
+        )
+        return VideoRecommendation.from_dict(entity_data) if entity_data else None
     
     def search(self, keyword: str) -> List[VideoRecommendation]:
         data = self._storage.read()

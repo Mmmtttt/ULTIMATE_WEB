@@ -813,16 +813,18 @@ class ListAppService:
                 existing_video_codes = set()
                 for video in repo.get_all():
                     if list_id in video.list_ids and not video.is_deleted:
-                        existing_video_codes.add(video.code)
+                        normalized_code = (video.code or "").strip().upper()
+                        if normalized_code:
+                            existing_video_codes.add(normalized_code)
 
                 app_logger.info(f"当前清单已有 {len(existing_video_codes)} 个视频")
 
                 new_works = []
                 for work in works:
-                    code = work.get('code', '')
-                    if code and code not in existing_video_codes:
+                    code = (work.get('code', '') or '').strip().upper()
+                    if not code or code not in existing_video_codes:
                         new_works.append(work)
-                        app_logger.info(f"发现新视频: {code}")
+                        app_logger.info(f"发现新视频: {code or work.get('video_id', '')}")
 
                 app_logger.info(f"需要导入 {len(new_works)} 个新视频")
                 total_count = len(works)
@@ -938,6 +940,15 @@ class ListAppService:
             
             platform_service = get_platform_service()
             detail_tasks: ListType[dict] = []
+
+            def find_existing_video_by_code(code: str):
+                normalized_code = (code or "").strip()
+                if not normalized_code or not hasattr(repo, "get_by_code"):
+                    return None
+                try:
+                    return repo.get_by_code(normalized_code)
+                except Exception:
+                    return None
             
             for work in works:
                 try:
@@ -946,18 +957,19 @@ class ListAppService:
                         skipped_count += 1
                         continue
                     
-                    prefixed_id = add_platform_prefix(Platform.JAVDB, video_id)
-                    
-                    existing_video = repo.get_by_id(prefixed_id)
+                    work_code = (work.get("code", "") or "").strip()
+                    existing_video = find_existing_video_by_code(work_code)
                     if existing_video:
                         if target_list_id not in existing_video.list_ids:
                             existing_video.add_to_list(target_list_id)
                             repo.save(existing_video)
                             imported_count += 1
-                            imported_video_ids.append(prefixed_id)
+                            imported_video_ids.append(existing_video.id)
                         else:
                             skipped_count += 1
                         continue
+
+                    prefixed_id = add_platform_prefix(Platform.JAVDB, video_id)
                     
                     detail_tasks.append({
                         "work": work,
@@ -991,17 +1003,6 @@ class ListAppService:
                     skipped_count += 1
                     return
 
-                existing_video = repo.get_by_id(prefixed_id)
-                if existing_video:
-                    if target_list_id not in existing_video.list_ids:
-                        existing_video.add_to_list(target_list_id)
-                        repo.save(existing_video)
-                        imported_count += 1
-                        imported_video_ids.append(prefixed_id)
-                    else:
-                        skipped_count += 1
-                    return
-
                 detail = detail_result.get("detail")
                 if not detail:
                     app_logger.warning(f"无法获取视频详情: {video_id}")
@@ -1015,6 +1016,17 @@ class ListAppService:
                     return
                 
                 video_detail = videos[0]
+                video_code = (video_detail.get("code", "") or work.get("code", "")).strip()
+                existing_video = find_existing_video_by_code(video_code)
+                if existing_video:
+                    if target_list_id not in existing_video.list_ids:
+                        existing_video.add_to_list(target_list_id)
+                        repo.save(existing_video)
+                        imported_count += 1
+                        imported_video_ids.append(existing_video.id)
+                    else:
+                        skipped_count += 1
+                    return
                 
                 video_tag_ids = []
                 for tag_name in video_detail.get("tags", []):
@@ -1029,7 +1041,7 @@ class ListAppService:
                 video_data = {
                     "id": prefixed_id,
                     "title": video_detail.get("title", ""),
-                    "code": video_detail.get("code", ""),
+                    "code": video_code,
                     "date": video_detail.get("date", ""),
                     "series": video_detail.get("series", ""),
                     "creator": video_detail.get("actors", [""])[0] if video_detail.get("actors") else "",
@@ -1081,6 +1093,14 @@ class ListAppService:
                     storage = JsonStorage(db_file)
                     db_data = storage.read()
                     videos_key = "video_recommendations"
+                    existing_codes = {
+                        (v.get("code", "") or "").strip().upper()
+                        for v in db_data.get(videos_key, [])
+                    }
+
+                    if video_code and video_code.upper() in existing_codes:
+                        skipped_count += 1
+                        return
                     
                     if videos_key not in db_data:
                         db_data[videos_key] = []
