@@ -50,8 +50,11 @@ class AdapterFactory:
         if name not in cls._adapters:
             raise ValueError(f"未知的适配器: {name}，可用适配器: {list(cls._adapters.keys())}")
         
+        adapter_class = cls._adapters[name]
         if name not in cls._instances:
-            adapter_class = cls._adapters[name]
+            cls._instances[name] = adapter_class(config)
+        elif config is not None and getattr(cls._instances[name], 'config', {}) != config:
+            # 配置变更时重建实例，确保新账号/密码等配置即时生效
             cls._instances[name] = adapter_class(config)
         
         return cls._instances[name]
@@ -88,7 +91,13 @@ class AdapterConfig:
         Args:
             config_path: 配置文件路径
         """
-        self.config_path = config_path or 'third_party_config.json'
+        import os
+        default_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__),
+            '..',
+            'third_party_config.json'
+        ))
+        self.config_path = config_path or default_path
         self._config: Dict[str, Any] = {}
         self._load_config()
     
@@ -107,6 +116,10 @@ class AdapterConfig:
         else:
             self._config = self._get_default_config()
             self._save_config()
+
+    def reload_config(self):
+        """重新加载配置文件（用于运行时热更新配置）"""
+        self._load_config()
     
     def _save_config(self):
         """保存配置文件"""

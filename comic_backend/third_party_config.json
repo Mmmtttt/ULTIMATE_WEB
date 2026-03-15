@@ -4,8 +4,8 @@
     "jmcomic": {
       "enabled": true,
       "config_path": "JMComic-Crawler-Python/config.json",
-      "username": "",
-      "password": "",
+      "username": "REDACTED_USERNAME",
+      "password": "REDACTED_PASSWORD",
       "download_dir": "data/pictures",
       "output_json": "comics_database.json",
       "progress_file": "download_progress.json",

@@ -39,9 +39,13 @@ class PlatformService:
         Returns:
             平台适配器实例
         """
-        if platform not in self._adapters:
-            adapter_name = self._get_adapter_name(platform)
-            config = self._config_manager.get_adapter_config(adapter_name)
+        adapter_name = self._get_adapter_name(platform)
+        # 每次获取适配器都刷新配置，确保 third_party_config.json 的改动可立即生效
+        self._config_manager.reload_config()
+        config = self._config_manager.get_adapter_config(adapter_name)
+        cached = self._adapters.get(platform)
+        if cached is None or getattr(cached, 'config', {}) != config:
+            AdapterFactory.reset_instance(adapter_name)
             self._adapters[platform] = AdapterFactory.get_adapter(adapter_name, config)
         
         return self._adapters[platform]

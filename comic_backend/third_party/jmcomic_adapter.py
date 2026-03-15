@@ -237,9 +237,16 @@ class JMComicAdapter(BaseAdapter):
             元数据 JSON 格式
         """
         try:
-            from jmcomic_api import get_favorite_comics_full
-            
-            result = get_favorite_comics_full()
+            from jmcomic_api import get_favorite_comics_full, get_client
+
+            username = self.get_config('username')
+            password = self.get_config('password')
+            if not username or not password:
+                raise RuntimeError("JM 账号或密码未配置，请检查 third_party_config.json -> adapters -> jmcomic")
+
+            # 每次收藏请求前用配置账号刷新登录态，避免会话过期导致 401
+            get_client(username=username, password=password)
+            result = get_favorite_comics_full(username=username, password=password)
             albums = result.get('comics', [])
             
             return self._convert_to_meta_format(albums)
@@ -248,6 +255,8 @@ class JMComicAdapter(BaseAdapter):
             error_msg = str(e)
             if "Could not connect to mysql" in error_msg or "conn2" in error_msg:
                 raise RuntimeError("第三方API服务器暂时不可用（数据库错误），请稍后重试。")
+            elif "請先登入會員" in error_msg or '"code":401' in error_msg:
+                raise RuntimeError("JM 登录状态失效，请检查账号密码后重试。")
             else:
                 raise RuntimeError(f"获取收藏夹失败: {e}")
     
