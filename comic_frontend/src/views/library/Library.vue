@@ -8,13 +8,13 @@
       </div>
       
       <div class="actions">
-        <van-button size="small" plain @click="showSortPanel = true">
+        <van-button size="small" plain class="toolbar-action-btn" @click="showSortPanel = true">
           <van-icon name="sort" />
         </van-button>
-        <van-button size="small" plain @click="showFilterPanel = true">
+        <van-button size="small" plain class="toolbar-action-btn" @click="showFilterPanel = true">
           <van-icon name="filter-o" />
         </van-button>
-        <van-button size="small" plain @click="showViewModeSheet = true">
+        <van-button size="small" plain class="toolbar-action-btn" @click="showViewModeSheet = true">
           <van-icon name="apps-o" />
         </van-button>
         <van-popover
@@ -24,7 +24,7 @@
           @select="onMenuSelect"
         >
           <template #reference>
-            <van-button size="small" plain>
+            <van-button size="small" plain class="toolbar-action-btn">
               <van-icon name="ellipsis" />
             </van-button>
           </template>
@@ -547,76 +547,157 @@ onMounted(() => {
 
 <style scoped>
 .library-page {
-  padding-bottom: 80px; /* Space for manage bar or tabbar */
+  padding-bottom: 96px;
 }
 
 .toolbar {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
-  background: #fff;
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 12px;
   position: sticky;
-  top: 0;
-  z-index: 10;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  top: 10px;
+  z-index: 12;
 }
 
 .search-trigger {
   flex: 1;
-  background: #f7f8fa;
-  height: 36px;
-  border-radius: 18px;
+  min-width: 0;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  color: #969799;
-  font-size: 14px;
   gap: 8px;
-  margin-right: 12px;
-  cursor: pointer;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.search-trigger .van-icon {
+  color: var(--text-tertiary);
 }
 
 .actions {
+  flex-shrink: 0;
+}
+
+.active-filters {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 2px 10px;
+}
+
+.active-filters :deep(.van-tag) {
+  border-radius: 999px;
+  border: 1px solid rgba(47, 116, 255, 0.24);
+  background: rgba(47, 116, 255, 0.08);
+  color: var(--brand-700);
+}
+
+.content-area {
+  min-height: 200px;
 }
 
 .loading-center {
-  padding: 40px;
+  padding: 54px 0;
   text-align: center;
 }
 
 .manage-bar {
   position: fixed;
-  bottom: 0; /* Adjust if tabbar exists */
-  left: 0;
-  right: 0;
-  background: #fff;
-  padding: 12px 24px;
+  left: 12px;
+  right: 12px;
+  bottom: 62px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  padding: 10px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
-  z-index: 100;
+  gap: 14px;
+  box-shadow: 0 14px 26px rgba(17, 27, 45, 0.14);
+  backdrop-filter: blur(12px);
+  z-index: 101;
 }
 
-/* Video Mode Adjustments */
+.selection-info {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.manage-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .video-mode :deep(.media-cover) {
-  aspect-ratio: 16/9;
+  aspect-ratio: 16 / 9;
 }
 
 .filter-panel-content {
-  padding: 20px;
+  padding: 18px 16px 16px;
   height: 100%;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.filter-panel-content h3 {
+  font-size: 17px;
+  color: var(--text-strong);
+  margin: 0;
 }
 
 .filter-actions {
   margin-top: auto;
+  padding-top: 10px;
+}
+
+.filter-actions :deep(.van-button) {
+  height: 42px;
 }
 
 .view-mode-sheet {
-  padding-bottom: 8px;
+  padding-bottom: 10px;
+}
+
+@media (max-width: 767px) {
+  .library-page {
+    padding-bottom: 110px;
+  }
+
+  .toolbar {
+    top: 8px;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .search-trigger {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  .manage-bar {
+    bottom: 58px;
+    padding: 10px 12px;
+  }
+
+  .manage-btns :deep(.van-button) {
+    min-width: 64px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .manage-bar {
+    left: calc(var(--sidebar-width) + 22px);
+    right: 22px;
+    bottom: 18px;
+  }
 }
 </style>

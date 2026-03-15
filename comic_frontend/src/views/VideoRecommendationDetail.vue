@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="video-detail" :class="{ 'video-detail-desktop': isDesktop, 'video-detail-mobile': isMobile }">
     <van-nav-bar
       :title="recommendation?.title || '视频详情'"
@@ -118,15 +118,17 @@
           <span class="value">{{ recommendation.series }}</span>
         </div>
         
-        <div class="info-row">
+        <div class="info-row score-row">
           <span class="label">评分:</span>
-          <van-rate 
-            v-model="scoreValue" 
-            :count="10" 
-            allow-half 
-            @change="updateScore"
-          />
-          <span class="score-text">{{ recommendation.score || '未评分' }}</span>
+          <div class="score-controls">
+            <van-rate 
+              v-model="scoreValue" 
+              :count="10" 
+              allow-half 
+              @change="updateScore"
+            />
+            <span class="score-chip" :class="{ 'is-empty': !recommendation.score }">{{ recommendation.score || '未评分' }}</span>
+          </div>
         </div>
         
         <div v-if="recommendation.tags && recommendation.tags.length > 0" class="info-row">
@@ -666,21 +668,26 @@ onUnmounted(() => {
 <style scoped>
 .video-detail {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .loading-center {
   display: flex;
   justify-content: center;
-  padding-top: 100px;
+  padding-top: 92px;
 }
 
 .detail-content {
-  padding-bottom: 20px;
+  padding-bottom: 24px;
 }
 
 .video-preview {
-  background: #000;
+  background: #071126;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.18);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -697,48 +704,51 @@ onUnmounted(() => {
 
 .source-tag {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 10px;
+  left: 10px;
   z-index: 2;
 }
 
 .cover-image {
   width: 100%;
-  max-height: 300px;
+  max-height: 340px;
   object-fit: cover;
 }
 
 .play-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-  transition: background 0.3s;
+  background: linear-gradient(180deg, rgba(8, 15, 30, 0.16) 0%, rgba(6, 13, 24, 0.62) 100%);
+  transition: background var(--motion-base) var(--ease-standard);
 }
 
 .video-preview:hover .play-overlay {
-  background: rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, rgba(8, 15, 30, 0.08) 0%, rgba(6, 13, 24, 0.44) 100%);
 }
 
 .play-icon {
-  font-size: 60px;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 64px;
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
 }
 
 .play-text {
-  margin-top: 10px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 16px;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .video-player-section {
-  background: #000;
+  background: #0e1628;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.16);
 }
 
 .video-wrapper {
@@ -750,25 +760,26 @@ onUnmounted(() => {
 
 .video-element {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
 }
 
 .player-controls {
   padding: 12px 16px;
-  background: #1a1a1a;
+  background: #151f35;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .source-selector {
   display: flex;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .resolution-badge {
@@ -786,39 +797,44 @@ onUnmounted(() => {
 }
 
 .quality-label {
-  color: #999;
+  color: rgba(255, 255, 255, 0.72);
   font-size: 14px;
 }
 
 .video-info {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(17, 27, 45, 0.08);
   padding: 16px;
+  margin-top: 12px;
   margin-bottom: 12px;
 }
 
 .video-title {
   font-size: 18px;
-  font-weight: 500;
-  color: #333;
-  margin-bottom: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin-bottom: 14px;
 }
 
 .info-row {
   display: flex;
   align-items: flex-start;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .info-row .label {
   width: 70px;
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
+  font-weight: 600;
   flex-shrink: 0;
 }
 
 .info-row .value {
   font-size: 14px;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .actor-tags {
@@ -837,18 +853,41 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.subscribe-button {
-  flex-shrink: 0;
-}
-
+.subscribe-button,
 .subscribed-tag {
   flex-shrink: 0;
 }
 
-.score-text {
-  margin-left: 10px;
-  font-size: 14px;
-  color: #666;
+.score-row {
+  align-items: center;
+}
+
+.score-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.score-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffc657 0%, #f78a1d 70%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 6px 12px rgba(245, 154, 34, 0.34);
+}
+
+.score-chip.is-empty {
+  background: rgba(80, 107, 156, 0.16);
+  color: var(--text-secondary);
+  box-shadow: none;
 }
 
 .tag-list {
@@ -862,55 +901,59 @@ onUnmounted(() => {
 }
 
 .action-buttons {
-  display: flex;
-  gap: 12px;
-  padding: 0 16px 16px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 0 2px;
 }
 
 .magnets-section {
   margin-bottom: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 .thumbnails-section {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 .thumbnail-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 10px;
   padding: 12px;
 }
 
 .thumbnail-item {
   aspect-ratio: 16/9;
-  border-radius: 4px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
-/* 电脑端样式优化 */
 .video-detail-desktop .detail-content {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 20px 20px 28px;
 }
 
 .video-detail-desktop .video-preview {
-  border-radius: 12px;
-  overflow: hidden;
+  border-radius: 16px;
 }
 
 .video-detail-desktop .cover-container {
-  max-width: 700px;
+  max-width: 760px;
 }
 
 .video-detail-desktop .cover-image {
-  max-height: 450px;
-  border-radius: 8px;
+  max-height: 460px;
 }
 
 .video-detail-desktop .play-icon {
-  font-size: 80px;
+  font-size: 82px;
 }
 
 .video-detail-desktop .play-text {
@@ -926,11 +969,11 @@ onUnmounted(() => {
 .video-detail-desktop .player-controls {
   max-width: 1000px;
   margin: 0 auto;
-  border-radius: 0 0 12px 12px;
+  border-radius: 0 0 16px 16px;
 }
 
 .video-detail-desktop .video-info {
-  border-radius: 12px;
+  border-radius: 16px;
   margin-top: 20px;
   padding: 24px;
 }
@@ -946,6 +989,11 @@ onUnmounted(() => {
 
 .video-detail-desktop .info-row .value {
   font-size: 15px;
+}
+
+.video-detail-desktop .action-buttons {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .video-detail-desktop .thumbnail-grid {
@@ -973,4 +1021,43 @@ onUnmounted(() => {
 .list-action {
   padding: 16px;
 }
+
+@media (max-width: 767px) {
+  .video-detail-mobile .detail-content {
+    padding: 10px 10px 76px;
+  }
+
+  .video-preview,
+  .video-player-section,
+  .video-info,
+  .magnets-section,
+  .thumbnails-section {
+    border-radius: 12px;
+  }
+
+  .cover-image {
+    max-height: 250px;
+  }
+
+  .play-icon {
+    font-size: 54px;
+  }
+
+  .action-buttons {
+    position: sticky;
+    bottom: 62px;
+    z-index: 8;
+    padding: 10px;
+    background: rgba(238, 244, 252, 0.92);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    box-shadow: 0 10px 22px rgba(17, 27, 45, 0.14);
+  }
+
+  .thumbnail-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 </style>
+

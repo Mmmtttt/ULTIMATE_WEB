@@ -53,7 +53,7 @@
                   lazy-load
                 />
                 <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
-                <div v-if="item.score" class="card-score">{{ item.score }}</div>
+                <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
                 <div v-if="isSelected(item)" class="select-overlay">
                   <van-icon name="success" class="select-icon" />
                 </div>
@@ -186,6 +186,14 @@ const isAllRemoteSelected = computed(() => {
 
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
+}
+
+function formatScore(score) {
+  const value = Number(score)
+  if (!Number.isFinite(value)) {
+    return score
+  }
+  return value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)
 }
 
 function isSelected(item) {
@@ -405,30 +413,35 @@ onMounted(() => {
 <style scoped>
 .search-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: transparent;
   display: flex;
   flex-direction: column;
+  color: var(--text-primary);
 }
 
 .search-header {
-  background: #fff;
-  padding-top: 10px;
+  margin: 10px 10px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  padding-top: 8px;
   position: sticky;
-  top: 0;
-  z-index: 10;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  top: 10px;
+  z-index: 14;
+  box-shadow: 0 10px 24px rgba(17, 27, 45, 0.08);
 }
 
 .search-input-wrapper {
   display: flex;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 10px 8px;
 }
 
 .back-icon {
   font-size: 20px;
   padding: 10px;
-  color: #333;
+  color: var(--text-primary);
 }
 
 .search-input-wrapper .van-search {
@@ -439,6 +452,7 @@ onMounted(() => {
 .search-content {
   flex: 1;
   overflow-y: auto;
+  padding: 8px 0 20px;
 }
 
 .loading-center {
@@ -454,12 +468,13 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px 0;
+  padding: 8px 12px 0;
 }
 
 .remote-select-bar .selected-count {
   font-size: 13px;
-  color: #666;
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .pagination-info {
@@ -467,59 +482,63 @@ onMounted(() => {
   justify-content: center;
   gap: 12px;
   margin-bottom: 12px;
-  padding: 8px 16px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(17, 27, 45, 0.08);
   flex-wrap: wrap;
 }
 
 .platform-item {
   display: flex;
   gap: 8px;
-  padding: 4px 8px;
-  background: #f5f5f5;
-  border-radius: 4px;
+  padding: 5px 10px;
+  background: rgba(47, 116, 255, 0.08);
+  border-radius: 999px;
 }
 
 .platform-info,
 .page-info,
 .total-pages {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .platform-info {
   font-weight: 600;
-  color: #1989fa;
+  color: var(--brand-600);
 }
 
 .page-info {
   font-weight: 500;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .floating-import-bar {
   position: fixed;
-  bottom: 20px;
+  bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--border-soft);
   padding: 12px 20px;
-  border-radius: 24px;
+  border-radius: 999px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.16);
   max-width: 90%;
   width: auto;
+  backdrop-filter: blur(12px);
 }
 
 .floating-selection-info {
   font-size: 14px;
-  color: #333;
+  color: var(--text-primary);
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -531,27 +550,33 @@ onMounted(() => {
 }
 
 .remote-result-card {
-  background: #fff;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(78, 104, 155, 0.14);
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 8px 18px rgba(17, 27, 45, 0.08);
   cursor: pointer;
-  transition: transform 0.2s;
+  transition:
+    transform var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard);
   position: relative;
 }
 
 .remote-result-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  border-color: rgba(47, 116, 255, 0.32);
+  box-shadow: 0 18px 34px rgba(22, 44, 84, 0.16);
 }
 
 .remote-result-card.selected {
-  box-shadow: 0 0 0 2px #1989fa;
+  box-shadow: 0 0 0 2px rgba(47, 116, 255, 0.6);
 }
 
 .card-cover {
   position: relative;
-  aspect-ratio: 2/3;
-  background: #f0f2f5;
+  aspect-ratio: 2 / 3;
+  background: linear-gradient(145deg, #eff4ff 0%, #dfe9ff 100%);
 }
 
 .remote-results-grid.video-mode .card-cover {
@@ -565,26 +590,23 @@ onMounted(() => {
 
 .platform-badge {
   position: absolute;
-  top: 6px;
-  left: 6px;
-  background: rgba(0,0,0,0.7);
+  top: 8px;
+  left: 8px;
+  background: rgba(18, 31, 58, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
+  backdrop-filter: blur(4px);
 }
 
 .card-score {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  background: #ff9500;
-  color: #fff;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 700;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
 }
 
 .select-overlay {
@@ -608,13 +630,13 @@ onMounted(() => {
 }
 
 .card-info {
-  padding: 10px;
+  padding: 10px 10px 11px;
 }
 
 .card-title {
   font-size: 14px;
-  font-weight: 600;
-  color: #333;
+  font-weight: 700;
+  color: var(--text-strong);
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -626,7 +648,7 @@ onMounted(() => {
 
 .card-author {
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -640,10 +662,35 @@ onMounted(() => {
 }
 
 @media (min-width: 768px) {
+  .search-header {
+    margin-inline: 14px;
+  }
+
   .remote-results-grid {
     grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
-    padding: 20px;
+    gap: 16px;
+    padding: 14px;
+  }
+}
+
+@media (max-width: 767px) {
+  .search-header {
+    top: 8px;
+    margin: 8px 8px 0;
+    border-radius: 14px;
+  }
+
+  .remote-results-grid {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .floating-import-bar {
+    bottom: 64px;
+  }
+
+  .pagination-info {
+    margin-inline: 10px;
   }
 }
 </style>

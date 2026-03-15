@@ -53,8 +53,10 @@
           <div class="score-section">
             <div class="score-display">
               <span class="score-label">评分:</span>
-              <span class="score-value" v-if="recommendation.score">{{ recommendation.score }}</span>
-              <span class="score-value no-score" v-else>未评分</span>
+              <van-icon name="star" class="score-star" />
+              <span class="score-chip" :class="{ 'is-empty': !recommendation.score }">
+                {{ recommendation.score || '未评分' }}
+              </span>
             </div>
             <van-slider
               v-model="scoreValue"
@@ -621,7 +623,7 @@ watch(showListPopup, async (val) => {
 .recommendation-detail {
   padding-bottom: 20px;
   min-height: 100vh;
-  background: #f5f5f5;
+  background: transparent;
 }
 
 .empty {
@@ -629,15 +631,19 @@ watch(showListPopup, async (val) => {
 }
 
 .detail-content {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.1);
 }
 
 .cover-section {
   display: flex;
   padding: 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
   gap: 16px;
+  background: linear-gradient(125deg, #2f74ff 0%, #1c49ad 65%, #12316f 100%);
+  color: #fff;
 }
 
 .cover {
@@ -679,13 +685,13 @@ watch(showListPopup, async (val) => {
 }
 
 .author-link {
-  color: #1989fa;
+  color: #d7e8ff;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 
 .author-link:hover {
-  opacity: 0.8;
+  opacity: 0.86;
 }
 
 .stats {
@@ -697,35 +703,56 @@ watch(showListPopup, async (val) => {
 
 .stat-item {
   font-size: 12px;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
 }
 
 .score-section {
   margin-top: auto;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 10px 12px;
 }
 
 .score-display {
   display: flex;
   align-items: center;
+  gap: 6px;
   margin-bottom: 8px;
 }
 
 .score-label {
   font-size: 14px;
-  margin-right: 8px;
+  color: rgba(255, 255, 255, 0.9);
 }
 
-.score-value {
-  font-size: 20px;
-  font-weight: bold;
-  color: #ff9900;
+.score-star {
+  color: #ffd36a;
+  font-size: 15px;
 }
 
-.score-value.no-score {
-  font-size: 14px;
-  color: #ccc;
+.score-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffc657 0%, #f78a1d 70%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 6px 12px rgba(245, 154, 34, 0.34);
+}
+
+.score-chip.is-empty {
+  background: rgba(255, 255, 255, 0.24);
+  color: rgba(255, 255, 255, 0.88);
+  box-shadow: none;
 }
 
 .score-slider {
@@ -736,21 +763,21 @@ watch(showListPopup, async (val) => {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  opacity: 0.7;
+  opacity: 0.86;
 }
 
 .tags-section,
 .desc-section,
 .preview-section {
   padding: 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid rgba(73, 98, 146, 0.15);
 }
 
 .section-title {
   margin: 0 0 12px 0;
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .tags-container {
@@ -767,7 +794,7 @@ watch(showListPopup, async (val) => {
   margin: 0;
   font-size: 14px;
   line-height: 1.6;
-  color: #666;
+  color: var(--text-secondary);
   white-space: pre-wrap;
 }
 
@@ -798,9 +825,9 @@ watch(showListPopup, async (val) => {
 .preview-item {
   position: relative;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
-  background: #f0f0f0;
+  background: #ecf2ff;
 }
 
 .preview-image {
@@ -811,13 +838,14 @@ watch(showListPopup, async (val) => {
 
 .preview-page {
   position: absolute;
-  bottom: 4px;
-  left: 4px;
-  background: rgba(0, 0, 0, 0.7);
+  bottom: 8px;
+  left: 8px;
+  background: rgba(16, 29, 57, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   color: #fff;
   font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 
 .action-section {
@@ -828,7 +856,7 @@ watch(showListPopup, async (val) => {
 .action-buttons {
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
@@ -863,5 +891,40 @@ watch(showListPopup, async (val) => {
 .list-action {
   padding: 12px 16px;
   border-top: 1px solid #eee;
+}
+
+@media (max-width: 767px) {
+  .recommendation-detail {
+    padding-bottom: 70px;
+  }
+
+  .detail-content {
+    border-radius: 16px;
+  }
+
+  .cover-section {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .cover {
+    width: 110px;
+    height: 148px;
+  }
+
+  .score-section {
+    padding: 8px 10px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .recommendation-detail {
+    padding: 16px;
+  }
+
+  .detail-content {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
 }
 </style>
