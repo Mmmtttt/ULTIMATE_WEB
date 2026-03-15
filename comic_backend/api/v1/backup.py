@@ -6,9 +6,16 @@
 from flask import Blueprint, request, jsonify
 from infrastructure.backup_manager import backup_factory
 from infrastructure.logger import app_logger, error_logger
-from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
+from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
 
 backup_bp = Blueprint('backup', __name__)
+
+TARGET_TO_FILE = {
+    "home": JSON_FILE,
+    "recommendation": RECOMMENDATION_JSON_FILE,
+    "video": VIDEO_JSON_FILE,
+    "video_recommendation": VIDEO_RECOMMENDATION_JSON_FILE,
+}
 
 
 def success_response(data=None):
@@ -45,7 +52,7 @@ def restore_backup():
     
     请求参数:
     {
-        "target": "home" | "recommendation",
+        "target": "home" | "recommendation" | "video" | "video_recommendation",
         "tier": 1 | 2 | 3
     }
     """
@@ -57,14 +64,15 @@ def restore_backup():
         target = data.get('target')
         tier = data.get('tier')
         
-        if target not in ['home', 'recommendation']:
-            return error_response(400, "target 必须是 'home' 或 'recommendation'")
+        if target not in TARGET_TO_FILE:
+            valid_targets = ", ".join(TARGET_TO_FILE.keys())
+            return error_response(400, f"target 无效，可选: {valid_targets}")
         
         if tier not in [1, 2, 3]:
             return error_response(400, "tier 必须是 1, 2 或 3")
         
         # 确定目标文件
-        json_file = RECOMMENDATION_JSON_FILE if target == 'recommendation' else JSON_FILE
+        json_file = TARGET_TO_FILE[target]
         
         # 获取备份管理器
         manager = backup_factory.get_manager(json_file)
@@ -91,24 +99,23 @@ def trigger_backup():
     
     请求参数:
     {
-        "target": "home" | "recommendation" | "all"  # 可选，默认 all
+        "target": "home" | "recommendation" | "video" | "video_recommendation" | "all"  # 可选，默认 all
     }
     """
     try:
         data = request.get_json() or {}
         target = data.get('target', 'all')
+        if target != 'all' and target not in TARGET_TO_FILE:
+            valid_targets = ", ".join(list(TARGET_TO_FILE.keys()) + ['all'])
+            return error_response(400, f"target 无效，可选: {valid_targets}")
         
         results = {}
         
-        if target in ['home', 'all']:
-            manager = backup_factory.get_manager(JSON_FILE)
+        targets = list(TARGET_TO_FILE.keys()) if target == 'all' else [target]
+        for t in targets:
+            manager = backup_factory.get_manager(TARGET_TO_FILE[t])
             manager.perform_backup()
-            results['home'] = manager.get_backup_info()
-        
-        if target in ['recommendation', 'all']:
-            manager = backup_factory.get_manager(RECOMMENDATION_JSON_FILE)
-            manager.perform_backup()
-            results['recommendation'] = manager.get_backup_info()
+            results[t] = manager.get_backup_info()
         
         return success_response(results)
         

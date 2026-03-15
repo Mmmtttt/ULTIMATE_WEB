@@ -16,7 +16,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE, LISTS_JSON_FILE, BACKUP_SUFFIX
+from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE, LISTS_JSON_FILE, BACKUP_SUFFIX
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -305,6 +305,12 @@ class BackupManagerFactory:
         # 推荐页数据库
         rec_manager = self.get_manager(RECOMMENDATION_JSON_FILE)
         rec_manager.start()
+
+        video_manager = self.get_manager(VIDEO_JSON_FILE)
+        video_manager.start()
+
+        video_rec_manager = self.get_manager(VIDEO_RECOMMENDATION_JSON_FILE)
+        video_rec_manager.start()
         
         # 标签库数据库
         tags_manager = self.get_manager(TAGS_JSON_FILE)
