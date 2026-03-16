@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="library-page">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
@@ -138,7 +138,7 @@
     <!-- Import Modal -->
     <van-dialog 
       v-model:show="showImportDialog" 
-      title="快速导入" 
+      title="快速导入"
       show-cancel-button
       @confirm="handleQuickImport"
     >
@@ -183,9 +183,9 @@ const minScore = ref(0)
 const unreadOnly = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const viewModeOptions = [
-  { value: 'large', label: '大图标' },
-  { value: 'medium', label: '中图标' },
-  { value: 'small', label: '小图标' },
+  { value: 'large', label: '大图' },
+  { value: 'medium', label: '中图' },
+  { value: 'small', label: '小图' },
   { value: 'list', label: '列表' }
 ]
 
@@ -352,7 +352,7 @@ const activeFilters = computed(() => {
       id: 'min-score',
       type: 'minScore',
       value: minScore.value,
-      label: `评分 ≥ ${minScore.value}`
+      label: `评分 >= ${minScore.value}`
     })
   }
 
@@ -608,7 +608,7 @@ onMounted(() => {
   left: 12px;
   right: 12px;
   bottom: 62px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   padding: 10px 14px;

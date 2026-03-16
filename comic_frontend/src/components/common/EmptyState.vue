@@ -59,7 +59,7 @@ defineProps({
   margin: 0 0 8px;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .empty-state.compact .empty-title {
@@ -69,7 +69,7 @@ defineProps({
 .empty-description {
   margin: 0;
   font-size: 14px;
-  color: #999;
+  color: var(--text-tertiary);
   max-width: 300px;
   line-height: 1.6;
 }

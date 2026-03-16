@@ -91,7 +91,7 @@ const pageTitle = computed(() => {
 
 .sidebar {
   width: var(--sidebar-width);
-  background: rgba(255, 255, 255, 0.76);
+  background: var(--layout-sidebar-bg);
   backdrop-filter: blur(14px);
   height: 100vh;
   position: fixed;
@@ -100,7 +100,7 @@ const pageTitle = computed(() => {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border-soft);
-  box-shadow: 6px 0 24px rgba(22, 39, 68, 0.06);
+  box-shadow: var(--layout-sidebar-shadow);
   z-index: 100;
 }
 
@@ -149,16 +149,16 @@ const pageTitle = computed(() => {
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--text-strong);
+  background: var(--layout-nav-hover-bg);
+  color: var(--layout-nav-hover-text);
   transform: translateX(2px);
-  box-shadow: 0 4px 14px rgba(17, 27, 45, 0.08);
+  box-shadow: var(--layout-nav-hover-shadow);
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(47, 116, 255, 0.16), rgba(47, 116, 255, 0.08));
-  color: var(--brand-600);
-  box-shadow: inset 0 0 0 1px rgba(47, 116, 255, 0.24);
+  background: var(--layout-nav-active-bg);
+  color: var(--layout-nav-active-text);
+  box-shadow: inset 0 0 0 1px var(--layout-nav-active-border);
 }
 
 .nav-item .van-icon {
@@ -172,8 +172,8 @@ const pageTitle = computed(() => {
 
 .search-btn {
   margin: 0;
-  background: rgba(255, 255, 255, 0.84);
-  border: 1px solid rgba(73, 98, 146, 0.18);
+  background: var(--layout-search-btn-bg);
+  border: 1px solid var(--layout-search-btn-border);
   border-radius: 11px;
   justify-content: center;
 }
@@ -183,11 +183,11 @@ const pageTitle = computed(() => {
   top: 0;
   left: 0;
   right: 0;
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--layout-header-bg);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-soft);
   z-index: 99;
-  box-shadow: 0 8px 20px rgba(17, 27, 45, 0.06);
+  box-shadow: var(--layout-header-shadow);
   height: 58px;
 }
 
@@ -243,7 +243,7 @@ const pageTitle = computed(() => {
 }
 
 :deep(.van-tabbar) {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--layout-tabbar-bg);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-soft);
 }

@@ -209,10 +209,13 @@ onMounted(() => {
   display: flex;
   align-items: center;
   padding: 10px 16px;
-  background: #fff;
+  background: var(--surface-2);
   position: sticky;
   top: 0;
   z-index: 10;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  margin: 10px 10px 0;
 }
 
 .header-actions .van-search {
@@ -240,14 +243,15 @@ onMounted(() => {
 }
 
 .actor-card {
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 12px;
   padding: 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 8px 18px rgba(2, 8, 18, 0.34);
   cursor: pointer;
 }
 
@@ -271,13 +275,13 @@ onMounted(() => {
 .actor-name {
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
   margin-bottom: 4px;
 }
 
 .actor-update {
   font-size: 11px;
-  color: #999;
+  color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

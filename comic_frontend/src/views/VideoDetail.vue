@@ -954,7 +954,7 @@ onUnmounted(() => {
 }
 
 .video-preview {
-  background: #071126;
+  background: var(--surface-3);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   overflow: hidden;
@@ -1015,7 +1015,7 @@ onUnmounted(() => {
 }
 
 .video-player-section {
-  background: #0e1628;
+  background: var(--surface-3);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   overflow: hidden;
@@ -1038,13 +1038,13 @@ onUnmounted(() => {
 
 .player-controls {
   padding: 12px 16px;
-  background: #151f35;
+  background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-soft);
 }
 
 .source-selector {
@@ -1057,7 +1057,9 @@ onUnmounted(() => {
   margin-left: 4px;
   font-size: 10px;
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
   border-radius: 4px;
 }
 
@@ -1068,12 +1070,12 @@ onUnmounted(() => {
 }
 
 .quality-label {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
 .video-info {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   box-shadow: 0 10px 24px rgba(17, 27, 45, 0.08);
@@ -1186,7 +1188,7 @@ onUnmounted(() => {
 }
 
 .thumbnails-section {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   overflow: hidden;
@@ -1294,7 +1296,7 @@ onUnmounted(() => {
 .tag-count,
 .list-count {
   font-size: 12px;
-  color: #999;
+  color: var(--text-tertiary);
   margin-left: 4px;
 }
 
@@ -1328,7 +1330,7 @@ onUnmounted(() => {
     bottom: 62px;
     z-index: 8;
     padding: 10px;
-    background: rgba(238, 244, 252, 0.92);
+    background: var(--surface-2);
     backdrop-filter: blur(10px);
     border: 1px solid var(--border-soft);
     border-radius: 14px;

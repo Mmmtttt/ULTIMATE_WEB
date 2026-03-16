@@ -194,10 +194,11 @@ function handleClear() {
 
 <style scoped>
 .tag-filter {
-  background: #fff;
+  background: var(--surface-2);
   border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 8px 20px rgba(2, 8, 18, 0.32);
 }
 
 .filter-header {
@@ -210,29 +211,29 @@ function handleClear() {
 .filter-title {
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .btn-clear {
   padding: 4px 12px;
   border: none;
   border-radius: 6px;
-  background: #f5f5f5;
-  color: #666;
+  background: rgba(27, 43, 70, 0.9);
+  color: var(--text-secondary);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .btn-clear:hover {
-  background: #e0e0e0;
-  color: #333;
+  background: rgba(37, 56, 88, 0.96);
+  color: var(--text-primary);
 }
 
 .selected-tags {
   margin-bottom: 16px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .selected-section {
@@ -248,7 +249,7 @@ function handleClear() {
 
 .section-label {
   font-size: 13px;
-  color: #999;
+  color: var(--text-tertiary);
   white-space: nowrap;
   padding-top: 4px;
 }
@@ -274,12 +275,12 @@ function handleClear() {
 .filter-hint {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border-soft);
 }
 
 .hint-text {
   font-size: 12px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 /* 滚动条样式 */
@@ -292,7 +293,7 @@ function handleClear() {
 }
 
 .all-tags::-webkit-scrollbar-thumb {
-  background: #ddd;
+  background: rgba(122, 148, 205, 0.4);
   border-radius: 2px;
 }
 

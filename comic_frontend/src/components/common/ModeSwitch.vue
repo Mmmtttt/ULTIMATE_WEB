@@ -37,17 +37,18 @@ function toggle() {
 .switch-track {
   position: relative;
   display: flex;
-  background: #f0f2f5;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
   border-radius: 20px;
   padding: 4px;
   width: 160px;
   height: 40px;
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
-  transition: background-color 0.3s ease;
+  box-shadow: inset 0 2px 4px rgba(2, 8, 18, 0.18);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 .mode-switch.is-video .switch-track {
-  background: #e8f3ff;
+  background: var(--surface-2);
 }
 
 .switch-indicator {
@@ -56,9 +57,10 @@ function toggle() {
   left: 4px;
   width: calc(50% - 4px);
   height: calc(100% - 8px);
-  background: #fff;
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
   border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 10px rgba(2, 8, 18, 0.2);
   transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
   z-index: 1;
 }
@@ -77,12 +79,12 @@ function toggle() {
   z-index: 2;
   font-size: 14px;
   font-weight: 600;
-  color: #8c9fa5;
+  color: var(--text-tertiary);
   transition: color 0.3s;
 }
 
 .switch-option.active {
-  color: #333;
+  color: var(--text-strong);
 }
 
 .option-comic.active {

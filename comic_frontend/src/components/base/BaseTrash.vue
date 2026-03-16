@@ -327,7 +327,7 @@ onMounted(async () => {
 <style scoped>
 .base-trash {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
 }
 
 .loading-center {
@@ -341,13 +341,13 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #fff;
-  border-bottom: 1px solid #eee;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .selected-info {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .manage-actions {
@@ -364,7 +364,7 @@ onMounted(async () => {
 
 .media-item {
   position: relative;
-  background: #fff;
+  background: var(--surface-2);
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid transparent;

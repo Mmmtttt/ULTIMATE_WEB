@@ -718,7 +718,7 @@ onMounted(async () => {
 <style scoped>
 .list-detail {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
   padding-bottom: 20px;
 }
 
@@ -730,19 +730,21 @@ onMounted(async () => {
 
 .list-header {
   padding: 16px;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
   margin-bottom: 12px;
 }
 
 .list-desc {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
 .list-count {
   font-size: 12px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .list-stats {
@@ -752,12 +754,14 @@ onMounted(async () => {
 .tab-count {
   margin-left: 4px;
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .action-bar {
   padding: 8px 16px;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
@@ -769,12 +773,15 @@ onMounted(async () => {
 
 .active-filter-bar {
   padding: 8px 16px;
-  background: #fff;
+  background: var(--surface-2);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-soft);
+  border-left: 1px solid var(--border-soft);
+  border-right: 1px solid var(--border-soft);
+  border-radius: 12px;
 }
 
 .filter-tag {
@@ -797,14 +804,16 @@ onMounted(async () => {
 
 .comic-card {
   position: relative;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .video-card {
   position: relative;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -855,14 +864,14 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .video-meta {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .comic-score {
@@ -874,7 +883,7 @@ onMounted(async () => {
 }
 
 .video-code {
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .remove-btn {

@@ -357,7 +357,7 @@ onMounted(() => {
 
 <style scoped>
 .creator-detail-page {
-  background: #fff;
+  background: transparent;
   min-height: 100vh;
 }
 
@@ -366,7 +366,10 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 20px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  border-radius: 16px;
+  margin: 10px 10px 0;
 }
 
 .info h1 {
@@ -375,7 +378,7 @@ onMounted(() => {
 }
 
 .info p {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 14px;
 }
 
@@ -405,7 +408,7 @@ onMounted(() => {
 
 .remote-select-bar .selected-count {
   font-size: 13px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .sheet-content {
@@ -421,7 +424,8 @@ onMounted(() => {
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   padding: 12px 20px;
   border-radius: 24px;
   display: flex;
@@ -435,7 +439,7 @@ onMounted(() => {
 
 .floating-selection-info {
   font-size: 14px;
-  color: #333;
+  color: var(--text-primary);
   white-space: nowrap;
 }
 
@@ -447,10 +451,11 @@ onMounted(() => {
 }
 
 .remote-result-card {
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  box-shadow: 0 10px 22px rgba(2, 8, 18, 0.34);
   cursor: pointer;
   transition: transform 0.2s;
   position: relative;
@@ -467,7 +472,7 @@ onMounted(() => {
 .card-cover {
   position: relative;
   aspect-ratio: 2/3;
-  background: #f0f2f5;
+  background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
 }
 
 .remote-results-grid.video-mode .card-cover {
@@ -483,8 +488,9 @@ onMounted(() => {
   position: absolute;
   top: 6px;
   left: 6px;
-  background: rgba(0,0,0,0.7);
-  color: #fff;
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border: 1px solid var(--border-soft);
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 10px;
@@ -506,7 +512,7 @@ onMounted(() => {
 .select-icon {
   font-size: 32px;
   color: #fff;
-  background: #1989fa;
+  background: var(--brand-500);
   border-radius: 50%;
   padding: 8px;
 }
@@ -518,7 +524,7 @@ onMounted(() => {
 .card-title {
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
   margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -530,7 +536,7 @@ onMounted(() => {
 
 .card-author {
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

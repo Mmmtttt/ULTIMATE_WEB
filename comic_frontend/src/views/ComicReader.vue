@@ -146,11 +146,14 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { useComicStore } from '@/stores'
+import { useComicStore, useConfigStore } from '@/stores'
 import { buildImageUrl } from '@/api/image'
 
 const route = useRoute()
 const comicStore = useComicStore()
+const configStore = useConfigStore()
+
+const resolvePageMode = (mode) => (mode === 'left_right' || mode === 'up_down' ? mode : 'up_down')
 
 // 状态
 const images = ref([])
@@ -159,7 +162,7 @@ const totalPage = ref(0)
 const loading = ref(true)
 const error = ref(false)
 const showMenu = ref(false)
-const pageMode = ref('up_down')
+const pageMode = ref(resolvePageMode(configStore.defaultPageMode))
 const background = ref('#000')
 const leftRightContainer = ref(null)
 const upDownContainer = ref(null)

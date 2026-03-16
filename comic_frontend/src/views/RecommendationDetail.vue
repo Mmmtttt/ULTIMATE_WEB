@@ -640,11 +640,11 @@ watch(showListPopup, async (val) => {
 }
 
 .detail-content {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.1);
+  box-shadow: 0 16px 30px rgba(2, 8, 18, 0.38);
 }
 
 .cover-section {
@@ -836,7 +836,7 @@ watch(showListPopup, async (val) => {
   cursor: pointer;
   border-radius: 10px;
   overflow: hidden;
-  background: #ecf2ff;
+  background: linear-gradient(145deg, #15243f 0%, #203659 100%);
 }
 
 .preview-image {
@@ -893,13 +893,13 @@ watch(showListPopup, async (val) => {
 .tag-count,
 .list-count {
   margin-left: 4px;
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
 .list-action {
   padding: 12px 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border-soft);
 }
 
 @media (max-width: 767px) {

@@ -478,14 +478,34 @@ watch(() => modeStore.currentMode, () => {
 }
 
 .stats-overview {
-  background: #fff;
+  background: var(--surface-2);
   padding: 20px 0;
   margin-bottom: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+}
+
+.stats-overview :deep(.van-grid-item__content) {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.stats-overview :deep(.van-grid-item__text) {
+  color: var(--text-secondary);
+}
+
+.stats-overview :deep(.van-icon) {
+  color: var(--brand-600);
+}
+
+.stats-overview :deep(.van-grid-item__icon) {
+  color: var(--brand-600);
 }
 
 .mine-menu {
   margin-bottom: 12px;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -493,7 +513,7 @@ watch(() => modeStore.currentMode, () => {
 .about {
   text-align: center;
   padding: 40px 0;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .version {
@@ -534,7 +554,7 @@ watch(() => modeStore.currentMode, () => {
 
 .option-title {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
@@ -546,7 +566,7 @@ watch(() => modeStore.currentMode, () => {
 }
 
 .upload-area {
-  border: 2px dashed #ddd;
+  border: 2px dashed var(--border-soft);
   border-radius: 8px;
   padding: 40px;
   text-align: center;

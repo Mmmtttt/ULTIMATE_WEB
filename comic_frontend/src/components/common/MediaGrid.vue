@@ -224,7 +224,7 @@ function displaySubtitle(item) {
 }
 
 .media-card {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--surface-2);
   border: 1px solid rgba(78, 104, 155, 0.14);
   border-radius: 14px;
   overflow: hidden;
@@ -242,7 +242,7 @@ function displaySubtitle(item) {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(130deg, rgba(255, 255, 255, 0.22), transparent 55%);
+  background: linear-gradient(130deg, rgba(122, 160, 223, 0.12), transparent 55%);
   opacity: 0;
   transition: opacity var(--motion-base) var(--ease-standard);
   pointer-events: none;
@@ -268,7 +268,7 @@ function displaySubtitle(item) {
 .media-cover {
   position: relative;
   aspect-ratio: 2 / 3;
-  background: linear-gradient(145deg, #eff4ff 0%, #dfe9ff 100%);
+  background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
 }
 
 .cover-image {
@@ -280,9 +280,9 @@ function displaySubtitle(item) {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(18, 31, 58, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  color: var(--text-primary);
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10px;
@@ -295,9 +295,9 @@ function displaySubtitle(item) {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(18, 31, 58, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #fff;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  color: var(--text-primary);
   padding: 2px 6px;
   border-radius: 999px;
   font-size: 10px;
@@ -316,10 +316,10 @@ function displaySubtitle(item) {
   position: absolute;
   bottom: 8px;
   left: 8px;
-  background: rgba(16, 29, 57, 0.76);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
   backdrop-filter: blur(4px);
-  color: #fff;
+  color: var(--text-primary);
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
@@ -331,8 +331,8 @@ function displaySubtitle(item) {
   bottom: 8px;
   right: 8px;
   padding: 4px;
-  background: rgba(17, 30, 57, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(20, 31, 49, 0.18);
+  border: 1px solid var(--border-soft);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -459,7 +459,7 @@ function displaySubtitle(item) {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(17, 30, 57, 0.24);
+  background: rgba(20, 31, 49, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;

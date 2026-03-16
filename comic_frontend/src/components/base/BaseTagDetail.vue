@@ -230,7 +230,7 @@ onMounted(() => {
 <style scoped>
 .base-tag-detail {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
 }
 
 .loading-center {
@@ -247,7 +247,9 @@ onMounted(() => {
   display: flex;
   justify-content: space-around;
   padding: 20px;
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
   margin-bottom: 10px;
 }
 
@@ -265,7 +267,7 @@ onMounted(() => {
 
 .stat-label {
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 

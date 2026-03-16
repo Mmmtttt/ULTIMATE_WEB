@@ -149,11 +149,14 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { useRecommendationStore } from '@/stores'
+import { useRecommendationStore, useConfigStore } from '@/stores'
 import { recommendationApi } from '@/api/recommendation'
 
 const route = useRoute()
 const recommendationStore = useRecommendationStore()
+const configStore = useConfigStore()
+
+const resolvePageMode = (mode) => (mode === 'left_right' || mode === 'up_down' ? mode : 'up_down')
 
 const images = ref([])
 const currentPage = ref(1)
@@ -161,7 +164,7 @@ const totalPage = ref(0)
 const loading = ref(true)
 const error = ref(false)
 const showMenu = ref(false)
-const pageMode = ref('up_down')
+const pageMode = ref(resolvePageMode(configStore.defaultPageMode))
 const background = ref('#000')
 const leftRightContainer = ref(null)
 const upDownContainer = ref(null)

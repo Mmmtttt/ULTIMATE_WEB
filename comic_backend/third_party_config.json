@@ -6,7 +6,7 @@
       "config_path": "JMComic-Crawler-Python/config.json",
       "username": "REDACTED_USERNAME",
       "password": "REDACTED_PASSWORD",
-      "download_dir": "data/pictures",
+      "download_dir": "D:\\code\\临时并行开发目录\\ULTIMATE_WEB\\comic_backend\\data\\pictures",
       "output_json": "comics_database.json",
       "progress_file": "download_progress.json",
       "favorite_list_file": "favorite_comics.txt",
@@ -17,7 +17,7 @@
       "enabled": true,
       "account": "REDACTED_USERNAME",
       "password": "REDACTED_PASSWORD",
-      "base_dir": "data/pictures/PK"
+      "base_dir": "D:\\code\\临时并行开发目录\\ULTIMATE_WEB\\comic_backend\\data\\pictures\\PK"
     },
     "javdb": {
       "enabled": true,

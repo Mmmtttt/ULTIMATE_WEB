@@ -219,7 +219,7 @@ onUnmounted(() => {
 <style scoped>
 .import-tasks-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
   padding-bottom: 60px;
 }
 
@@ -237,7 +237,7 @@ onUnmounted(() => {
   gap: 6px;
   font-size: 15px;
   font-weight: 500;
-  color: #323233;
+  color: var(--text-strong);
   margin-bottom: 12px;
 }
 
@@ -259,10 +259,11 @@ onUnmounted(() => {
 }
 
 .task-card {
-  background: #fff;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 8px 18px rgba(2, 8, 18, 0.34);
 }
 
 .task-card.active {
@@ -291,7 +292,7 @@ onUnmounted(() => {
 .task-title {
   font-size: 15px;
   font-weight: 500;
-  color: #323233;
+  color: var(--text-strong);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -310,18 +311,18 @@ onUnmounted(() => {
 }
 
 .info-row .label {
-  color: #969799;
+  color: var(--text-tertiary);
   width: 70px;
 }
 
 .info-row .value {
-  color: #323233;
+  color: var(--text-primary);
 }
 
 .progress-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #f5f5f5;
+  border-top: 1px solid var(--border-soft);
 }
 
 .progress-header {
@@ -333,7 +334,7 @@ onUnmounted(() => {
 
 .progress-text {
   font-size: 13px;
-  color: #646566;
+  color: var(--text-secondary);
 }
 
 .progress-percent {
@@ -345,7 +346,7 @@ onUnmounted(() => {
 .page-info {
   margin-top: 8px;
   font-size: 12px;
-  color: #969799;
+  color: var(--text-tertiary);
   text-align: center;
 }
 
@@ -361,7 +362,7 @@ onUnmounted(() => {
   gap: 6px;
   margin-top: 12px;
   padding: 10px;
-  background: #fff5f5;
+  background: rgba(222, 91, 109, 0.18);
   border-radius: 4px;
   font-size: 13px;
   color: #ee0a24;
@@ -373,7 +374,7 @@ onUnmounted(() => {
   gap: 6px;
   margin-top: 12px;
   padding: 10px;
-  background: #f0f9ff;
+  background: rgba(0, 168, 117, 0.16);
   border-radius: 4px;
   font-size: 13px;
   color: #07c160;
@@ -393,9 +394,10 @@ onUnmounted(() => {
   justify-content: center;
   gap: 6px;
   padding: 12px;
-  background: #fff;
-  border-top: 1px solid #ebedf0;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-soft);
   font-size: 12px;
-  color: #969799;
+  color: var(--text-tertiary);
+  backdrop-filter: blur(10px);
 }
 </style>

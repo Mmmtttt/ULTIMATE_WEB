@@ -13,6 +13,8 @@ export const PAGE_MODE = {
 export const BACKGROUND = {
   WHITE: 'white',
   DARK: 'dark',
+  SEPIA: 'sepia',
+  // Legacy value kept for backward compatibility with old local data.
   EYE_PROTECTION: 'eye_protection'
 }
 
@@ -20,6 +22,7 @@ export const BACKGROUND = {
 export const BACKGROUND_COLORS = {
   [BACKGROUND.WHITE]: '#ffffff',
   [BACKGROUND.DARK]: '#1a1a1a',
+  [BACKGROUND.SEPIA]: '#c7edcc',
   [BACKGROUND.EYE_PROTECTION]: '#c7edcc'
 }
 

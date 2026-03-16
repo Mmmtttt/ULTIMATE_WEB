@@ -9,15 +9,15 @@
 
   --surface-0: #eef2f8;
   --surface-1: #f7faff;
-  --surface-2: rgba(255, 255, 255, 0.86);
+  --surface-2: rgba(255, 255, 255, 0.88);
   --surface-3: #ffffff;
   --surface-dark: #20283a;
   --border-soft: rgba(79, 104, 156, 0.14);
   --border-strong: rgba(69, 95, 153, 0.28);
 
-  --brand-500: #2f74ff;
-  --brand-600: #235dd1;
-  --brand-700: #1c49ad;
+  --brand-500: #59a0ff;
+  --brand-600: #3f84ea;
+  --brand-700: #2b6fd5;
   --success-500: #00a875;
   --warning-500: #f59a22;
   --danger-500: #de5b6d;
@@ -25,6 +25,53 @@
   --shadow-xs: 0 1px 2px rgba(17, 27, 45, 0.06);
   --shadow-sm: 0 6px 20px rgba(22, 39, 68, 0.08);
   --shadow-md: 0 14px 34px rgba(20, 42, 81, 0.14);
+
+  --body-grad-1: rgba(91, 132, 255, 0.22);
+  --body-grad-2: rgba(0, 168, 117, 0.17);
+  --body-grad-3: rgba(245, 154, 34, 0.14);
+  --body-grad-base: linear-gradient(160deg, #eff4fc 0%, #e9eef7 52%, #edf2fb 100%);
+  --body-overlay-1: rgba(47, 116, 255, 0.25);
+  --body-overlay-2: rgba(245, 154, 34, 0.22);
+  --body-overlay-line: rgba(255, 255, 255, 0.3);
+  --body-overlay-opacity: 0.22;
+
+  --action-hover-bg: #ffffff;
+  --plain-btn-bg: rgba(255, 255, 255, 0.88);
+  --nav-bg: rgba(255, 255, 255, 0.9);
+  --popup-bg: rgba(250, 252, 255, 0.95);
+  --sheet-bg: rgba(249, 252, 255, 0.95);
+  --dialog-bg: linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 250, 255, 0.97) 100%);
+  --picker-mask-top: rgba(249, 252, 255, 0.95);
+  --picker-mask-bottom: rgba(249, 252, 255, 0.55);
+  --picker-frame-bg: rgba(219, 230, 250, 0.46);
+  --overlay-bg: rgba(20, 31, 49, 0.35);
+  --toast-bg: rgba(255, 255, 255, 0.96);
+  --toast-text: #2d3a52;
+  --notify-bg: #3b7de0;
+  --notify-text: #eef5ff;
+
+  --layout-sidebar-bg: rgba(255, 255, 255, 0.78);
+  --layout-sidebar-shadow: 6px 0 24px rgba(22, 39, 68, 0.08);
+  --layout-nav-hover-bg: rgba(255, 255, 255, 0.92);
+  --layout-nav-hover-text: var(--text-strong);
+  --layout-nav-hover-shadow: 0 8px 18px rgba(22, 39, 68, 0.1);
+  --layout-nav-active-bg: linear-gradient(135deg, rgba(89, 160, 255, 0.16), rgba(74, 136, 230, 0.08));
+  --layout-nav-active-text: var(--brand-700);
+  --layout-nav-active-border: rgba(89, 160, 255, 0.32);
+  --layout-search-btn-bg: rgba(255, 255, 255, 0.9);
+  --layout-search-btn-border: rgba(79, 104, 156, 0.22);
+  --layout-header-bg: rgba(255, 255, 255, 0.88);
+  --layout-header-shadow: 0 10px 20px rgba(22, 39, 68, 0.12);
+  --layout-tabbar-bg: rgba(255, 255, 255, 0.92);
+
+  --plain-primary-text: var(--brand-600);
+  --plain-primary-border: rgba(89, 160, 255, 0.42);
+  --plain-danger-text: var(--danger-500);
+  --plain-danger-border: rgba(222, 91, 109, 0.42);
+  --plain-warning-text: var(--warning-500);
+  --plain-warning-border: rgba(245, 154, 34, 0.44);
+  --plain-success-text: var(--success-500);
+  --plain-success-border: rgba(0, 168, 117, 0.42);
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -39,6 +86,72 @@
   --page-gutter: clamp(10px, 1.6vw, 24px);
   --toolbar-height: 56px;
   --sidebar-width: 248px;
+}
+
+html[data-theme='dark'] {
+  --text-strong: #f2f6ff;
+  --text-primary: #d4deef;
+  --text-secondary: #9aa8c3;
+  --text-tertiary: #6e7b98;
+
+  --surface-0: #070c16;
+  --surface-1: #101a2c;
+  --surface-2: rgba(19, 28, 46, 0.9);
+  --surface-3: #16233c;
+  --surface-dark: #090f1c;
+  --border-soft: rgba(122, 148, 205, 0.2);
+  --border-strong: rgba(129, 162, 224, 0.42);
+
+  --shadow-xs: 0 1px 2px rgba(3, 6, 14, 0.32);
+  --shadow-sm: 0 10px 24px rgba(2, 5, 13, 0.42);
+  --shadow-md: 0 20px 44px rgba(2, 5, 12, 0.54);
+
+  --body-grad-1: rgba(77, 128, 228, 0.24);
+  --body-grad-2: rgba(28, 188, 151, 0.15);
+  --body-grad-3: rgba(255, 157, 59, 0.14);
+  --body-grad-base: linear-gradient(165deg, #060b14 0%, #0a1221 52%, #091120 100%);
+  --body-overlay-1: rgba(65, 123, 227, 0.28);
+  --body-overlay-2: rgba(250, 157, 43, 0.22);
+  --body-overlay-line: rgba(255, 255, 255, 0.08);
+  --body-overlay-opacity: 0.2;
+
+  --action-hover-bg: #1b2a45;
+  --plain-btn-bg: rgba(22, 36, 61, 0.88);
+  --nav-bg: rgba(15, 24, 40, 0.92);
+  --popup-bg: rgba(16, 25, 41, 0.96);
+  --sheet-bg: rgba(15, 24, 40, 0.97);
+  --dialog-bg: linear-gradient(165deg, rgba(16, 25, 42, 0.98) 0%, rgba(11, 18, 32, 0.98) 100%);
+  --picker-mask-top: rgba(14, 21, 35, 0.95);
+  --picker-mask-bottom: rgba(14, 21, 35, 0.55);
+  --picker-frame-bg: rgba(36, 49, 77, 0.42);
+  --overlay-bg: rgba(3, 8, 16, 0.74);
+  --toast-bg: rgba(20, 30, 49, 0.96);
+  --toast-text: #e9f0ff;
+  --notify-bg: #1f314f;
+  --notify-text: #eaf1ff;
+
+  --layout-sidebar-bg: rgba(12, 20, 34, 0.84);
+  --layout-sidebar-shadow: 6px 0 24px rgba(2, 6, 14, 0.42);
+  --layout-nav-hover-bg: rgba(24, 37, 60, 0.96);
+  --layout-nav-hover-text: #f4f7ff;
+  --layout-nav-hover-shadow: 0 8px 18px rgba(2, 8, 18, 0.44);
+  --layout-nav-active-bg: linear-gradient(135deg, rgba(89, 160, 255, 0.2), rgba(74, 136, 230, 0.1));
+  --layout-nav-active-text: #a7ccff;
+  --layout-nav-active-border: rgba(89, 160, 255, 0.34);
+  --layout-search-btn-bg: rgba(22, 35, 58, 0.92);
+  --layout-search-btn-border: rgba(111, 143, 201, 0.26);
+  --layout-header-bg: rgba(11, 19, 33, 0.9);
+  --layout-header-shadow: 0 10px 20px rgba(2, 8, 18, 0.45);
+  --layout-tabbar-bg: rgba(11, 19, 33, 0.94);
+
+  --plain-primary-text: #a8ccff;
+  --plain-primary-border: rgba(89, 160, 255, 0.5);
+  --plain-danger-text: #ff9dac;
+  --plain-danger-border: rgba(222, 91, 109, 0.5);
+  --plain-warning-text: #ffcd85;
+  --plain-warning-border: rgba(245, 154, 34, 0.5);
+  --plain-success-text: #77e4be;
+  --plain-success-border: rgba(0, 168, 117, 0.48);
 }
 
 *,
@@ -67,10 +180,10 @@ body {
   font-family: var(--font-sans);
   background-color: var(--surface-0);
   background-image:
-    radial-gradient(circle at 15% 20%, rgba(91, 132, 255, 0.22) 0%, transparent 34%),
-    radial-gradient(circle at 88% 10%, rgba(0, 168, 117, 0.17) 0%, transparent 30%),
-    radial-gradient(circle at 78% 76%, rgba(245, 154, 34, 0.14) 0%, transparent 36%),
-    linear-gradient(160deg, #eff4fc 0%, #e9eef7 52%, #edf2fb 100%);
+    radial-gradient(circle at 14% 16%, var(--body-grad-1) 0%, transparent 34%),
+    radial-gradient(circle at 88% 10%, var(--body-grad-2) 0%, transparent 28%),
+    radial-gradient(circle at 76% 78%, var(--body-grad-3) 0%, transparent 34%),
+    var(--body-grad-base);
   background-attachment: fixed;
 }
 
@@ -80,16 +193,16 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0.22;
+  opacity: var(--body-overlay-opacity);
   background-image:
-    radial-gradient(circle at 18% 12%, rgba(47, 116, 255, 0.25), transparent 32%),
-    radial-gradient(circle at 83% 66%, rgba(245, 154, 34, 0.22), transparent 28%),
+    radial-gradient(circle at 18% 12%, var(--body-overlay-1), transparent 34%),
+    radial-gradient(circle at 84% 66%, var(--body-overlay-2), transparent 28%),
     repeating-linear-gradient(
       132deg,
-      rgba(255, 255, 255, 0.32) 0,
-      rgba(255, 255, 255, 0.32) 2px,
+      var(--body-overlay-line) 0,
+      var(--body-overlay-line) 1px,
       transparent 2px,
-      transparent 13px
+      transparent 14px
     );
   animation: fieldShift 30s ease-in-out infinite alternate;
 }
@@ -137,9 +250,9 @@ a {
 
 .search-trigger {
   height: 38px;
-  border: 1px solid rgba(79, 104, 156, 0.1);
+  border: 1px solid rgba(122, 148, 205, 0.24);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-3);
   color: var(--text-tertiary);
   transition:
     border-color var(--motion-fast) var(--ease-standard),
@@ -149,8 +262,8 @@ a {
 
 .search-trigger:hover {
   transform: translateY(-1px);
-  border-color: rgba(79, 104, 156, 0.24);
-  box-shadow: 0 8px 24px rgba(20, 42, 81, 0.1);
+  border-color: rgba(132, 166, 230, 0.44);
+  box-shadow: 0 10px 24px rgba(2, 8, 22, 0.42);
 }
 
 .actions {
@@ -163,9 +276,9 @@ a {
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid rgba(73, 98, 146, 0.2);
+  border: 1px solid rgba(109, 138, 196, 0.3);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-3);
   color: var(--text-secondary);
   transition:
     transform var(--motion-fast) var(--ease-standard),
@@ -180,9 +293,9 @@ a {
 
 .toolbar-action-btn:hover {
   color: var(--brand-600);
-  border-color: rgba(47, 116, 255, 0.4);
-  box-shadow: 0 6px 14px rgba(47, 116, 255, 0.2);
-  background: #fff;
+  border-color: rgba(89, 160, 255, 0.52);
+  box-shadow: 0 10px 20px rgba(8, 25, 56, 0.45);
+  background: var(--action-hover-bg);
 }
 
 .score-badge,
@@ -222,38 +335,39 @@ a {
 }
 
 .van-button--plain {
-  border-color: rgba(74, 100, 149, 0.22);
-  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(106, 138, 195, 0.3);
+  background: var(--plain-btn-bg);
+  color: var(--text-primary);
 }
 
 .van-button--plain.van-button--primary {
-  color: var(--brand-600);
-  border-color: rgba(47, 116, 255, 0.36);
+  color: var(--plain-primary-text);
+  border-color: var(--plain-primary-border);
   box-shadow: none;
 }
 
 .van-button--plain.van-button--danger {
-  color: var(--danger-500);
-  border-color: rgba(222, 91, 109, 0.34);
+  color: var(--plain-danger-text);
+  border-color: var(--plain-danger-border);
   box-shadow: none;
 }
 
 .van-button--plain.van-button--warning {
-  color: var(--warning-500);
-  border-color: rgba(245, 154, 34, 0.36);
+  color: var(--plain-warning-text);
+  border-color: var(--plain-warning-border);
   box-shadow: none;
 }
 
 .van-button--plain.van-button--success {
-  color: var(--success-500);
-  border-color: rgba(0, 168, 117, 0.34);
+  color: var(--plain-success-text);
+  border-color: var(--plain-success-border);
   box-shadow: none;
 }
 
 .van-button--primary:not(.van-button--plain) {
   border: none;
   background: linear-gradient(130deg, var(--brand-500) 0%, var(--brand-600) 75%);
-  box-shadow: 0 10px 20px rgba(35, 93, 209, 0.24);
+  box-shadow: 0 12px 22px rgba(16, 66, 139, 0.38);
   color: #fff;
 }
 
@@ -277,7 +391,7 @@ a {
 
 .van-nav-bar {
   border-bottom: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--nav-bg);
 }
 
 .van-nav-bar .van-icon {
@@ -301,19 +415,19 @@ a {
 
 .van-popup {
   border-radius: var(--radius-lg);
-  background: rgba(250, 252, 255, 0.95);
+  background: var(--popup-bg);
 }
 
 .van-action-sheet {
-  background: rgba(249, 252, 255, 0.95);
+  background: var(--sheet-bg);
 }
 
 .van-dialog {
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-soft);
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 250, 255, 0.97) 100%);
-  box-shadow: 0 16px 38px rgba(20, 42, 81, 0.18);
+  background: var(--dialog-bg);
+  box-shadow: 0 18px 38px rgba(1, 5, 12, 0.56);
   color: var(--text-primary);
 }
 
@@ -334,6 +448,88 @@ a {
 
 .van-dialog__cancel {
   color: var(--text-secondary);
+}
+
+.van-cell,
+.van-cell-group,
+.van-field,
+.van-search,
+.van-search__content,
+.van-dropdown-menu,
+.van-dropdown-item__content,
+.van-action-sheet__item,
+.van-action-sheet__cancel,
+.van-popover__content {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.van-cell::after,
+.van-cell-group::after,
+.van-cell-group--inset,
+.van-dropdown-menu__bar,
+.van-field::after {
+  border-color: var(--border-soft);
+}
+
+.van-field__label,
+.van-field__control,
+.van-cell__title,
+.van-cell__value,
+.van-search__content .van-field__control {
+  color: var(--text-primary);
+}
+
+.van-picker-column__item,
+.van-picker__cancel,
+.van-picker__confirm,
+.van-picker__title {
+  color: var(--text-primary);
+}
+
+.van-picker__mask {
+  background-image:
+    linear-gradient(180deg, var(--picker-mask-top), var(--picker-mask-bottom)),
+    linear-gradient(0deg, var(--picker-mask-top), var(--picker-mask-bottom));
+}
+
+.van-picker__frame {
+  background: var(--picker-frame-bg);
+}
+
+.van-tabs__nav,
+.van-tab {
+  background: transparent;
+}
+
+.van-tab {
+  color: var(--text-secondary);
+}
+
+.van-tab--active,
+.van-tabs__line {
+  color: var(--brand-500);
+}
+
+.van-overlay {
+  background: var(--overlay-bg);
+}
+
+.van-toast {
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  border: 1px solid var(--border-soft);
+}
+
+.van-toast--success,
+.van-toast--fail,
+.van-toast--loading {
+  color: var(--toast-text);
+}
+
+.van-notify {
+  background: var(--notify-bg);
+  color: var(--notify-text);
 }
 
 .media-card,

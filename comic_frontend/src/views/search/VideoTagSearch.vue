@@ -538,7 +538,7 @@ onMounted(async () => {
 .results-card {
   border: 1px solid var(--border-soft);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2);
   backdrop-filter: blur(10px);
   box-shadow: 0 10px 22px rgba(17, 27, 45, 0.08);
 }
@@ -587,7 +587,7 @@ onMounted(async () => {
 .tag-pill {
   border: 1px solid var(--border-soft);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--surface-3);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.3;
@@ -599,7 +599,7 @@ onMounted(async () => {
 
 .tag-pill.selected {
   border-color: rgba(47, 116, 255, 0.5);
-  background: rgba(47, 116, 255, 0.12);
+  background: rgba(89, 160, 255, 0.18);
   color: var(--brand-700);
   font-weight: 600;
 }
@@ -654,7 +654,7 @@ onMounted(async () => {
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-2);
   transition: all 0.16s ease;
 }
 
@@ -677,8 +677,9 @@ onMounted(async () => {
   position: absolute;
   left: 8px;
   top: 8px;
-  background: rgba(10, 20, 40, 0.7);
-  color: #fff;
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border: 1px solid var(--border-soft);
   border-radius: 999px;
   font-size: 11px;
   padding: 2px 8px;
@@ -688,8 +689,9 @@ onMounted(async () => {
   position: absolute;
   right: 8px;
   top: 8px;
-  background: rgba(20, 30, 55, 0.75);
-  color: #fff;
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border: 1px solid var(--border-soft);
   border-radius: 999px;
   font-size: 11px;
   padding: 2px 7px;
@@ -752,7 +754,7 @@ onMounted(async () => {
   bottom: 14px;
   border: 1px solid var(--border-soft);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.93);
+  background: var(--surface-2);
   backdrop-filter: blur(10px);
   box-shadow: 0 12px 24px rgba(17, 27, 45, 0.16);
   padding: 10px 12px;

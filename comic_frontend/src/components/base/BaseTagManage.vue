@@ -471,7 +471,7 @@ onMounted(async () => {
 .base-tag-manage {
   padding-bottom: 50px;
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
 }
 
 .tag-list {
@@ -520,7 +520,7 @@ onMounted(async () => {
 .section-title {
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-strong);
 }
 
 .selected-count {
@@ -543,7 +543,7 @@ onMounted(async () => {
 
 .content-select-item {
   position: relative;
-  background: #fff;
+  background: var(--surface-2);
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid transparent;
@@ -577,7 +577,7 @@ onMounted(async () => {
 .content-code-line {
   padding: 0 6px 4px;
   font-size: 10px;
-  color: #999;
+  color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

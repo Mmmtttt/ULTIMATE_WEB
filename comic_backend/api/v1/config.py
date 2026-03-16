@@ -23,6 +23,12 @@ _STATIC_PAGE_DIR = os.path.abspath(
 _JAVDB_PLAYER_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'player')
 )
+_JAVDB_STATIC_SCREENSHOTS_DIR = os.path.abspath(
+    os.path.join(_STATIC_PAGE_DIR, 'screenshots')
+)
+_JAVDB_LIB_SCREENSHOTS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots')
+)
 
 
 def success_response(data=None, msg="成功"):
@@ -360,6 +366,15 @@ def javdb_cookie_guide():
     except Exception as e:
         error_logger.error(f"打开 JAVDB Cookie 教学页面失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/javdb-cookie-guide/screenshots/<path:filename>', methods=['GET'])
+def javdb_cookie_guide_screenshot(filename):
+    for base_dir in (_JAVDB_STATIC_SCREENSHOTS_DIR, _JAVDB_LIB_SCREENSHOTS_DIR):
+        file_path = os.path.join(base_dir, filename)
+        if os.path.isfile(file_path):
+            return send_from_directory(base_dir, filename)
+    return error_response(404, 'JAVDB teaching screenshot not found')
 
 
 @config_bp.route('/cache/stats', methods=['GET'])

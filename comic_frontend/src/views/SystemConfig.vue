@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="system-config">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
@@ -6,12 +6,12 @@
       <van-cell title="默认翻页模式" />
       <van-radio-group v-model="pageModeValue" @change="updatePageMode">
         <van-cell-group inset>
-          <van-cell title="左右翻页" clickable @click="pageModeValue = 'left_right'">
+          <van-cell title="左右翻页" clickable @click="selectPageMode('left_right')">
             <template #right-icon>
               <van-radio name="left_right" />
             </template>
           </van-cell>
-          <van-cell title="上下翻页" clickable @click="pageModeValue = 'up_down'">
+          <van-cell title="上下翻页" clickable @click="selectPageMode('up_down')">
             <template #right-icon>
               <van-radio name="up_down" />
             </template>
@@ -24,36 +24,23 @@
       <van-cell title="默认背景色" />
       <van-radio-group v-model="backgroundValue" @change="updateBackground">
         <van-cell-group inset>
-          <van-cell title="白色背景" clickable @click="backgroundValue = 'white'">
+          <van-cell title="白色背景" clickable @click="selectBackground('white')">
             <template #right-icon>
               <van-radio name="white" />
             </template>
           </van-cell>
-          <van-cell title="深色背景" clickable @click="backgroundValue = 'dark'">
+          <van-cell title="深色背景" clickable @click="selectBackground('dark')">
             <template #right-icon>
               <van-radio name="dark" />
             </template>
           </van-cell>
-          <van-cell title="护眼色背景" clickable @click="backgroundValue = 'sepia'">
+          <van-cell title="护眼色背景" clickable @click="selectBackground('sepia')">
             <template #right-icon>
               <van-radio name="sepia" />
             </template>
           </van-cell>
         </van-cell-group>
       </van-radio-group>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell title="自动隐藏工具栏">
-        <template #right-icon>
-          <van-switch v-model="autoHideValue" @change="updateAutoHide" />
-        </template>
-      </van-cell>
-      <van-cell title="显示页码">
-        <template #right-icon>
-          <van-switch v-model="showPageNumValue" @change="updateShowPageNum" />
-        </template>
-      </van-cell>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -168,8 +155,6 @@ const configStore = useConfigStore()
 
 const pageModeValue = ref('left_right')
 const backgroundValue = ref('white')
-const autoHideValue = ref(true)
-const showPageNumValue = ref(true)
 
 const showThirdPartyConfig = ref(false)
 const savingAdapterMap = ref({})
@@ -178,7 +163,6 @@ const activeAdapter = ref('')
 const thirdPartySchema = ref({})
 const thirdPartyAdapters = ref({})
 const thirdPartyAdapterOrder = ref([])
-const thirdPartyHelperUrls = ref({})
 const adapterForms = ref({})
 
 const systemDataDir = ref('')
@@ -212,8 +196,6 @@ const runtimeDataDirLabel = computed(() => {
 function initValues() {
   pageModeValue.value = configStore.defaultPageMode
   backgroundValue.value = configStore.defaultBackground
-  autoHideValue.value = configStore.autoHideToolbar
-  showPageNumValue.value = configStore.showPageNumber
 }
 
 function adapterLabel(adapterName) {
@@ -262,7 +244,6 @@ async function loadThirdPartyConfig() {
     const data = response.data || {}
     thirdPartySchema.value = data.schema || {}
     thirdPartyAdapterOrder.value = data.adapter_order || []
-    thirdPartyHelperUrls.value = data.helper_urls || {}
 
     const adapters = data.adapters || {
       jmcomic: data.jmcomic || {},
@@ -294,22 +275,34 @@ async function loadSystemConfig() {
 
 async function updatePageMode() {
   configStore.setPageMode(pageModeValue.value)
-  await configStore.saveConfigToServer()
+  const ok = await configStore.saveConfigToServer()
+  if (!ok) {
+    showFailToast('默认翻页模式保存失败')
+  }
+}
+
+async function selectPageMode(mode) {
+  if (pageModeValue.value === mode) {
+    return
+  }
+  pageModeValue.value = mode
+  await updatePageMode()
 }
 
 async function updateBackground() {
   configStore.setBackground(backgroundValue.value)
-  await configStore.saveConfigToServer()
+  const ok = await configStore.saveConfigToServer()
+  if (!ok) {
+    showFailToast('默认背景色保存失败')
+  }
 }
 
-async function updateAutoHide() {
-  configStore.setAutoHideToolbar(autoHideValue.value)
-  await configStore.saveConfigToServer()
-}
-
-async function updateShowPageNum() {
-  configStore.setShowPageNumber(showPageNumValue.value)
-  await configStore.saveConfigToServer()
+async function selectBackground(background) {
+  if (backgroundValue.value === background) {
+    return
+  }
+  backgroundValue.value = background
+  await updateBackground()
 }
 
 async function saveAdapterConfig(adapterName) {
@@ -407,7 +400,7 @@ async function saveSystemDataDir() {
 }
 
 function openJavdbCookieGuide() {
-  const url = thirdPartyHelperUrls.value?.javdb_cookie_guide || configApi.getJavdbCookieGuideUrl()
+  const url = configApi.getJavdbCookieGuideUrl()
   const win = window.open(url, '_blank')
   if (!win) {
     showFailToast('浏览器拦截了弹窗，请允许后重试')
@@ -491,8 +484,9 @@ onMounted(async () => {
   margin: 12px 16px 0;
   padding: 14px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-xs);
 }
 
 .cookie-guide-text {

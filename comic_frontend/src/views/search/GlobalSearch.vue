@@ -454,7 +454,7 @@ onMounted(() => {
   margin: 10px 10px 0;
   border: 1px solid var(--border-soft);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-2);
   backdrop-filter: blur(12px);
   padding-top: 8px;
   position: sticky;
@@ -520,7 +520,7 @@ onMounted(() => {
   gap: 12px;
   margin-bottom: 12px;
   padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   box-shadow: 0 8px 20px rgba(17, 27, 45, 0.08);
@@ -531,7 +531,7 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   padding: 5px 10px;
-  background: rgba(47, 116, 255, 0.08);
+  background: rgba(89, 160, 255, 0.16);
   border-radius: 999px;
 }
 
@@ -558,7 +558,7 @@ onMounted(() => {
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   padding: 12px 20px;
   border-radius: 999px;
@@ -587,7 +587,7 @@ onMounted(() => {
 }
 
 .remote-result-card {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--surface-2);
   border: 1px solid rgba(78, 104, 155, 0.14);
   border-radius: 14px;
   overflow: hidden;
@@ -613,7 +613,7 @@ onMounted(() => {
 .card-cover {
   position: relative;
   aspect-ratio: 2 / 3;
-  background: linear-gradient(145deg, #eff4ff 0%, #dfe9ff 100%);
+  background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
 }
 
 .remote-results-grid.video-mode .card-cover {
@@ -629,9 +629,9 @@ onMounted(() => {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(18, 31, 58, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  color: var(--text-primary);
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10px;
@@ -661,7 +661,7 @@ onMounted(() => {
 .select-icon {
   font-size: 32px;
   color: #fff;
-  background: #1989fa;
+  background: var(--brand-500);
   border-radius: 50%;
   padding: 8px;
 }

@@ -467,7 +467,7 @@ onMounted(() => {
 <style scoped>
 .list-manage {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--surface-0);
 }
 
 .loading-center {
@@ -536,7 +536,7 @@ onMounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f5f5f5;
+  background: var(--surface-0);
 }
 
 .import-header {
@@ -544,8 +544,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .import-header h3 {
@@ -598,7 +598,7 @@ onMounted(() => {
 
 .section-title {
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
   margin: 20px 0 12px;
   padding-left: 12px;
 }

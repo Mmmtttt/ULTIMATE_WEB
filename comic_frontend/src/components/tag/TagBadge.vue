@@ -136,8 +136,8 @@ function handleClose() {
 
 /* 类型 */
 .type-default {
-  background: #f0f0f0;
-  color: #666;
+  background: rgba(27, 43, 70, 0.9);
+  color: var(--text-secondary);
 }
 
 .type-primary {
