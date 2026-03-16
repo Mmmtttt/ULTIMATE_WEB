@@ -3,7 +3,14 @@ import os
 import time
 import shutil
 import uuid
-from core.constants import JSON_FILE, BACKUP_SUFFIX, TAGS_JSON_FILE, LISTS_JSON_FILE, META_DIR
+from core.constants import (
+    BACKUP_SUFFIX,
+    JSON_FILE,
+    LISTS_JSON_FILE,
+    META_DIR,
+    TAGS_JSON_FILE,
+    USER_CONFIG_JSON_FILE,
+)
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -219,6 +226,22 @@ class JsonStorage:
             return 0
     
     def _create_empty_data(self) -> dict:
+        file_basename = os.path.basename(self.json_file).lower()
+        if os.path.abspath(self.json_file) == os.path.abspath(USER_CONFIG_JSON_FILE) or file_basename == "user_config.json":
+            return {
+                "user_config": {
+                    "default_page_mode": "left_right",
+                    "default_background": "white",
+                    "auto_hide_toolbar": True,
+                    "show_page_number": True,
+                    "cache_config": {
+                        "recommendation_cache_max_size_mb": 5120,
+                        "cache_ttl_seconds": 3600
+                    }
+                },
+                "last_updated": time.strftime("%Y-%m-%d")
+            }
+
         if "tags" in self.json_file:
             return {
                 "collection_name": "标签库",

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JAVDB Cookie 获取指引</title>
+  <style>
+    :root {
+      --bg-1: #eef2f8;
+      --bg-2: #f7faff;
+      --card: rgba(255, 255, 255, 0.92);
+      --text-1: #1f2e4d;
+      --text-2: #4d5f82;
+      --line: rgba(79, 104, 156, 0.2);
+      --brand: #2f74ff;
+      --brand-2: #235dd1;
+      --ok: #00a875;
+      --warn: #de5b6d;
+      --shadow: 0 14px 34px rgba(20, 42, 81, 0.12);
+      --radius: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      color: var(--text-1);
+      background:
+        radial-gradient(circle at 10% 15%, rgba(47, 116, 255, 0.18), transparent 34%),
+        radial-gradient(circle at 88% 8%, rgba(0, 168, 117, 0.15), transparent 30%),
+        linear-gradient(155deg, var(--bg-1) 0%, var(--bg-2) 100%);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      color: var(--text-1);
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      color: var(--text-1);
+    }
+
+    p, li {
+      color: var(--text-2);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    ol {
+      margin: 0;
+      padding-left: 20px;
+      display: grid;
+      gap: 8px;
+    }
+
+    code {
+      background: rgba(47, 116, 255, 0.12);
+      color: var(--brand-2);
+      border-radius: 8px;
+      padding: 2px 6px;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .tip {
+      border-left: 4px solid var(--ok);
+      padding-left: 12px;
+    }
+
+    .warn {
+      border-left: 4px solid var(--warn);
+      padding-left: 12px;
+    }
+
+    .example {
+      font-family: Consolas, "Courier New", monospace;
+      background: #f5f9ff;
+      border: 1px dashed rgba(47, 116, 255, 0.38);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #214f9f;
+      word-break: break-all;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      display: inline-block;
+      text-decoration: none;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(130deg, var(--brand) 0%, var(--brand-2) 75%);
+      box-shadow: 0 10px 20px rgba(35, 93, 209, 0.2);
+    }
+
+    .btn.secondary {
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--brand-2);
+      border: 1px solid rgba(47, 116, 255, 0.4);
+      box-shadow: none;
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 14px; }
+      h1 { font-size: 22px; }
+      .card { padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="card">
+      <h1>JAVDB Cookie 获取指引</h1>
+      <p>按下面步骤获取浏览器中的 JAVDB Cookie，然后回到系统设置页粘贴即可。</p>
+      <div class="actions">
+        <a class="btn" href="https://javdb.com" target="_blank" rel="noopener noreferrer">打开 JAVDB</a>
+        <button class="btn secondary" type="button" onclick="window.close()">关闭本页</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>步骤（Chrome / Edge）</h2>
+      <ol>
+        <li>先在浏览器中登录 <code>javdb.com</code>。</li>
+        <li>按 <code>F12</code> 打开开发者工具，切到 <code>Application</code>（应用）面板。</li>
+        <li>左侧进入 <code>Cookies</code>，选择 <code>https://javdb.com</code>。</li>
+        <li>至少找到以下键值：<code>_jdb_session</code>、<code>over18</code>、<code>locale</code>（建议一并复制所有 Cookie）。</li>
+        <li>拼成一行字符串：<code>key1=value1; key2=value2; ...</code>。</li>
+        <li>回到系统设置，打开 <code>JAVDB</code> 平台配置，将 Cookie 字符串粘贴到 <code>cookie_string</code> 字段后保存。</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>Cookie 示例</h2>
+      <div class="example">_jdb_session=xxxxxx; over18=1; locale=zh; theme=auto; list_mode=h</div>
+      <p class="tip">保存后可去“视频模式 -> 全网搜索 -> 标签搜索”验证是否能正常拉取标签与结果。</p>
+      <p class="warn">请勿把 Cookie 分享给他人；Cookie 失效后需要重新获取并更新。</p>
+    </section>
+  </div>
+</body>
+</html>

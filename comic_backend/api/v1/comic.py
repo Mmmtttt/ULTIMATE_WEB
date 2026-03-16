@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+﻿from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
@@ -92,34 +92,133 @@ def comic_init():
         return error_response(500, "服务器内部错误")
 
 
+def _parse_cookie_string(cookie_string: str) -> dict:
+    cookies = {}
+    raw = str(cookie_string or "").strip()
+    if not raw:
+        return cookies
+
+    for part in raw.split(";"):
+        pair = part.strip()
+        if not pair or "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            cookies[key] = value
+    return cookies
+
+
+def _build_third_party_schema() -> dict:
+    return {
+        "jmcomic": {
+            "label": "JMComic",
+            "fields": [
+                {"key": "enabled", "label": "启用", "type": "boolean"},
+                {"key": "username", "label": "账号", "type": "text", "placeholder": "JM 用户名"},
+                {"key": "password", "label": "密码", "type": "password", "placeholder": "JM 密码", "secret": True},
+                {"key": "download_dir", "label": "下载目录", "type": "text", "placeholder": JM_PICTURES_DIR},
+                {"key": "collection_name", "label": "收藏夹名称", "type": "text", "placeholder": "我的最爱"},
+            ],
+        },
+        "picacomic": {
+            "label": "Picacomic",
+            "fields": [
+                {"key": "enabled", "label": "启用", "type": "boolean"},
+                {"key": "account", "label": "账号", "type": "text", "placeholder": "Picacomic 账号"},
+                {"key": "password", "label": "密码", "type": "password", "placeholder": "Picacomic 密码", "secret": True},
+                {"key": "base_dir", "label": "下载目录", "type": "text", "placeholder": PK_PICTURES_DIR},
+            ],
+        },
+        "javdb": {
+            "label": "JAVDB",
+            "fields": [
+                {"key": "enabled", "label": "启用", "type": "boolean"},
+                {"key": "domain_index", "label": "域名索引", "type": "number", "placeholder": "0"},
+                {
+                    "key": "cookie_string",
+                    "label": "Cookie 字符串",
+                    "type": "textarea",
+                    "placeholder": "_jdb_session=...; over18=1; locale=zh",
+                    "secret": True,
+                },
+            ],
+        },
+    }
+
+
+def _build_third_party_config_response(config_manager) -> dict:
+    from third_party.adapter_factory import AdapterFactory
+
+    adapters = {}
+    for adapter_name in AdapterFactory.list_adapters():
+        config = config_manager.get_adapter_config(adapter_name) or {}
+        normalized_config = dict(config)
+
+        if adapter_name == "javdb":
+            cookies = normalized_config.get("cookies", {})
+            if isinstance(cookies, dict) and cookies:
+                normalized_config["cookie_string"] = "; ".join(
+                    f"{key}={value}" for key, value in cookies.items() if str(key).strip()
+                )
+            else:
+                normalized_config["cookie_string"] = ""
+
+        adapters[adapter_name] = normalized_config
+
+    response = {
+        "default_adapter": config_manager.get_default_adapter(),
+        "adapter_order": ["jmcomic", "picacomic", "javdb"],
+        "schema": _build_third_party_schema(),
+        "adapters": adapters,
+        "helper_urls": {
+            "javdb_cookie_guide": "/api/v1/config/javdb-cookie-guide",
+        },
+    }
+
+    # Backward compatibility for old frontend payload shape.
+    response.update(adapters)
+    return response
+
+
+def _normalize_adapter_payload(adapter_name: str, payload: dict) -> dict:
+    adapter_payload = dict(payload or {})
+
+    # Keep old frontend compatibility: /third-party/config POST body may place fields at root.
+    if isinstance(adapter_payload.get("config"), dict):
+        adapter_payload = dict(adapter_payload["config"])
+    else:
+        adapter_payload.pop("adapter", None)
+
+    if adapter_name == "jmcomic":
+        adapter_payload.setdefault("enabled", True)
+        adapter_payload.setdefault("config_path", "JMComic-Crawler-Python/config.json")
+    elif adapter_name == "picacomic":
+        adapter_payload.setdefault("enabled", True)
+    elif adapter_name == "javdb":
+        adapter_payload.setdefault("enabled", True)
+        cookie_string = adapter_payload.pop("cookie_string", None)
+        if cookie_string is not None:
+            parsed = _parse_cookie_string(cookie_string)
+            current_cookies = adapter_payload.get("cookies", {})
+            if not isinstance(current_cookies, dict):
+                current_cookies = {}
+            current_cookies.update(parsed)
+            adapter_payload["cookies"] = current_cookies
+        elif isinstance(adapter_payload.get("cookies"), str):
+            adapter_payload["cookies"] = _parse_cookie_string(adapter_payload.get("cookies"))
+
+    return adapter_payload
+
+
 @comic_bp.route('/third-party/config', methods=['GET'])
 def get_third_party_config():
     try:
         from third_party.adapter_factory import AdapterConfig
-        
+
         config_manager = AdapterConfig()
-        
-        jmcomic_config = config_manager.get_adapter_config('jmcomic')
-        picacomic_config = config_manager.get_adapter_config('picacomic')
-        
-        return success_response({
-            "jmcomic": {
-                "username": jmcomic_config.get('username', ''),
-                "password": jmcomic_config.get('password', ''),
-                "download_dir": jmcomic_config.get('download_dir', JM_PICTURES_DIR),
-                "output_json": jmcomic_config.get('output_json', 'comics_database.json'),
-                "progress_file": jmcomic_config.get('progress_file', 'download_progress.json'),
-                "favorite_list_file": jmcomic_config.get('favorite_list_file', 'favorite_comics.txt'),
-                "consecutive_hit_threshold": jmcomic_config.get('consecutive_hit_threshold', 10),
-                "collection_name": jmcomic_config.get('collection_name', '我的最爱')
-            },
-            "picacomic": {
-                "account": picacomic_config.get('account', ''),
-                "password": picacomic_config.get('password', ''),
-                "base_dir": picacomic_config.get('base_dir', PK_PICTURES_DIR)
-            }
-        })
-        
+        return success_response(_build_third_party_config_response(config_manager))
     except Exception as e:
         error_logger.error(f"获取第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
@@ -131,62 +230,43 @@ def save_third_party_config():
         data = request.json
         if not data:
             return error_response(400, "缺少参数")
-        
-        adapter = data.get('adapter')
-        
-        from third_party.adapter_factory import AdapterConfig
-        
-        config_manager = AdapterConfig()
-        
-        if adapter == 'jmcomic':
-            username = data.get('username', '')
-            password = data.get('password', '')
-            download_dir = data.get('download_dir', JM_PICTURES_DIR)
-            output_json = data.get('output_json', 'comics_database.json')
-            progress_file = data.get('progress_file', 'download_progress.json')
-            favorite_list_file = data.get('favorite_list_file', 'favorite_comics.txt')
-            consecutive_hit_threshold = data.get('consecutive_hit_threshold', 10)
-            collection_name = data.get('collection_name', '我的最爱')
-            
-            config_manager.set_adapter_config(adapter, {
-                "enabled": True,
-                "config_path": "JMComic-Crawler-Python/config.json",
-                "username": username,
-                "password": password,
-                "download_dir": download_dir,
-                "output_json": output_json,
-                "progress_file": progress_file,
-                "favorite_list_file": favorite_list_file,
-                "consecutive_hit_threshold": consecutive_hit_threshold,
-                "collection_name": collection_name
-            })
-        elif adapter == 'picacomic':
-            account = data.get('account', '')
-            password = data.get('password', '')
-            base_dir = data.get('base_dir', PK_PICTURES_DIR)
-            
-            config_manager.set_adapter_config(adapter, {
-                "enabled": True,
-                "account": account,
-                "password": password,
-                "base_dir": base_dir
-            })
-        else:
-            return error_response(400, "不支持的适配器")
-        
-        from third_party.adapter_factory import AdapterFactory
+
+        from third_party.adapter_factory import AdapterConfig, AdapterFactory
         from third_party.external_api import reset_config_manager
-        AdapterFactory.reset_instance(adapter)
+
+        config_manager = AdapterConfig()
+        supported_adapters = set(AdapterFactory.list_adapters())
+
+        updates = {}
+        if isinstance(data.get("adapters"), dict):
+            updates = data.get("adapters", {})
+        else:
+            adapter = str(data.get("adapter", "")).strip()
+            if not adapter:
+                return error_response(400, "缺少参数: adapter")
+            updates = {adapter: data}
+
+        updated_adapter_names = []
+        for adapter_name, adapter_payload in updates.items():
+            adapter_name = str(adapter_name).strip()
+            if adapter_name not in supported_adapters:
+                return error_response(400, f"不支持的适配器: {adapter_name}")
+
+            normalized_payload = _normalize_adapter_payload(adapter_name, adapter_payload)
+            config_manager.set_adapter_config(adapter_name, normalized_payload)
+            AdapterFactory.reset_instance(adapter_name)
+            updated_adapter_names.append(adapter_name)
+
         reset_config_manager()
-        
-        app_logger.info(f"保存第三方库配置成功: 适配器={adapter}")
-        
-        return success_response({"message": "配置保存成功"})
-        
+        app_logger.info(f"保存第三方库配置成功: {updated_adapter_names}")
+
+        return success_response({
+            "updated_adapters": updated_adapter_names,
+            "message": "配置保存成功",
+        })
     except Exception as e:
         error_logger.error(f"保存第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
-
 
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
@@ -1354,6 +1434,7 @@ def import_async():
             
             # 检查是否已存在
             from infrastructure.persistence.json_storage import JsonStorage
+            db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
             db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
             storage = JsonStorage(db_file)
             db_data = storage.read()

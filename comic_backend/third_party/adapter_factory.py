@@ -111,7 +111,8 @@ class AdapterConfig:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self._config = json.load(f)
-                self._normalize_storage_config_paths()
+                if self._normalize_storage_config_paths():
+                    self._save_config()
             except Exception as e:
                 print(f"加载配置文件失败: {e}")
                 self._config = {}
@@ -209,7 +210,9 @@ class AdapterConfig:
         if 'adapters' not in self._config:
             self._config['adapters'] = {}
         
-        normalized_config = dict(config or {})
+        existing_config = self._config['adapters'].get(adapter_name, {})
+        normalized_config = dict(existing_config or {})
+        normalized_config.update(dict(config or {}))
         if adapter_name == "jmcomic":
             normalized_config["download_dir"] = normalize_to_data_dir(
                 normalized_config.get("download_dir"),
