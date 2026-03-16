@@ -198,7 +198,7 @@
             <van-image 
               v-for="(img, index) in recommendation.thumbnail_images" 
               :key="index"
-              :src="img"
+              :src="getCoverUrl(img)"
               fit="cover"
               class="thumbnail-item"
               @click="previewImages(index)"
@@ -443,7 +443,7 @@ function copyMagnet(magnet) {
 
 function previewImages(index) {
   showImagePreview({
-    images: recommendation.value.thumbnail_images,
+    images: (recommendation.value.thumbnail_images || []).map(img => getCoverUrl(img)),
     startPosition: index,
     closeable: true,
     closeIcon: 'close'

@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 import hashlib
 import json
 import os
+from core.constants import CACHE_ROOT_DIR
 
 
-CACHE_DIR = 'data/cache'
+CACHE_DIR = CACHE_ROOT_DIR
 
 
 class CacheManager:

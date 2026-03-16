@@ -6,6 +6,7 @@ import sys
 import os
 from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
+from core.constants import PK_PICTURES_DIR
 
 
 class PicacomicAdapter(BaseAdapter):
@@ -46,7 +47,7 @@ class PicacomicAdapter(BaseAdapter):
             # 设置配置并创建 option
             account = self.get_config('account')
             password = self.get_config('password')
-            base_dir = self.get_config('base_dir', '../../data/pictures/PK')
+            base_dir = self.get_config('base_dir', PK_PICTURES_DIR)
             
             # 直接创建 option 而不是修改配置
             from picacomic import PicaOption

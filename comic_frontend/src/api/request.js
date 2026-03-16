@@ -1,7 +1,23 @@
 import axios from 'axios'
 
+const getBaseURL = () => {
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL
+  }
+
+  // 开发环境直连后端，避免本机代理目标端口被其他进程占用导致误路由
+  if (import.meta.env.DEV) {
+    const protocol = window.location.protocol
+    const hostname = window.location.hostname
+    const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
+    return `${protocol}//${hostname}:${backendPort}/api`
+  }
+
+  return '/api'
+}
+
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: getBaseURL(),
   timeout: 30000
 })
 

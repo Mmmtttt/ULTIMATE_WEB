@@ -2,6 +2,7 @@
  * 图片相关 API
  */
 import request from './request'
+import { toBackendApiUrl, toBackendUrl } from '@/utils/url'
 
 /**
  * 构建图片 URL
@@ -17,7 +18,7 @@ export function buildImageUrl(comicId, pageNum, source = 'local') {
   if (source !== 'local') {
     params.append('source', source)
   }
-  return `/api/v1/comic/image?${params.toString()}`
+  return toBackendApiUrl(`/v1/comic/image?${params.toString()}`)
 }
 
 /**
@@ -31,8 +32,8 @@ export function buildCoverUrl(coverPath) {
   }
   
   // 如果是本地路径，直接返回
-  if (coverPath.startsWith('/static/') || coverPath.startsWith('/')) {
-    return coverPath
+  if (coverPath.startsWith('/')) {
+    return toBackendUrl(coverPath)
   }
   
   // 如果是图床URL，提取ID并构建本地路径
@@ -43,14 +44,14 @@ export function buildCoverUrl(coverPath) {
     if (match) {
       const comicId = match[1]
       // 返回本地路径
-      return `/static/cover/JM/${comicId}.jpg`
+      return toBackendUrl(`/static/cover/JM/${comicId}.jpg`)
     }
     // 如果无法提取ID，返回原图床URL
     return coverPath
   }
   
   // 其他情况，作为本地路径处理
-  return coverPath.startsWith('/') ? coverPath : `/${coverPath}`
+  return toBackendUrl(coverPath)
 }
 
 /**
@@ -60,7 +61,7 @@ export function buildCoverUrl(coverPath) {
  * @returns {string} 缩略图URL
  */
 export function buildThumbnailUrl(comicId, pageNum) {
-  return `/api/v1/comic/thumbnail?comic_id=${comicId}&page_num=${pageNum}`
+  return toBackendApiUrl(`/v1/comic/thumbnail?comic_id=${comicId}&page_num=${pageNum}`)
 }
 
 export const imageApi = {

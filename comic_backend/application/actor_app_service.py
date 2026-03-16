@@ -87,7 +87,7 @@ class ActorAppService(BaseCreatorAppService):
                     
                     cover_url = video.get("cover_url", "")
                     local_cover = f"/static/cover/video/actor_cache/{work_id}.jpg"
-                    if os.path.exists(f"static/cover/video/actor_cache/{work_id}.jpg"):
+                    if os.path.exists(os.path.join(VIDEO_ACTOR_COVER_CACHE_DIR, f"{work_id}.jpg")):
                         cover_url = local_cover
                     
                     works.append({

@@ -3,6 +3,7 @@
  * 与 comicApi 功能一致，但操作推荐页数据
  */
 import request from './request'
+import { toBackendApiUrl } from '@/utils/url'
 
 export const recommendationApi = {
   /**
@@ -263,7 +264,7 @@ export const recommendationApi = {
    * @returns {string} 图片URL
    */
   getCachedImageUrl: (recommendationId, pageNum) => {
-    return `/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=${pageNum}`
+    return toBackendApiUrl(`/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=${pageNum}`)
   },
   
   /**

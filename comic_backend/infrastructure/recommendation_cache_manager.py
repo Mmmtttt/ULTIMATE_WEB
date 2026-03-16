@@ -11,7 +11,13 @@ from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
 from core.platform import get_platform_from_id, get_original_id, Platform
-from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR, RECOMMENDATION_JSON_FILE
+from core.constants import (
+    JM_RECOMMENDATION_CACHE_DIR,
+    PK_RECOMMENDATION_CACHE_DIR,
+    RECOMMENDATION_CACHE_DIR,
+    RECOMMENDATION_CACHE_INDEX_FILE,
+    RECOMMENDATION_JSON_FILE,
+)
 from infrastructure.persistence.json_storage import JsonStorage
 
 
@@ -33,16 +39,16 @@ class RecommendationCacheManager:
     
     def __init__(
         self,
-        cache_dir: str = "data/recommendation_cache",
+        cache_dir: Optional[str] = None,
         max_size_mb: int = 5120,
-        cache_index_file: str = "data/meta_data/recommendation_cache_index.json"
+        cache_index_file: Optional[str] = None
     ):
         if hasattr(self, '_initialized') and self._initialized:
             return
             
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or RECOMMENDATION_CACHE_DIR
         self.max_size_bytes = max_size_mb * 1024 * 1024
-        self.cache_index_file = cache_index_file
+        self.cache_index_file = cache_index_file or RECOMMENDATION_CACHE_INDEX_FILE
         
         self._cache_lock = threading.Lock()
         self._cache_index: OrderedDict = OrderedDict()

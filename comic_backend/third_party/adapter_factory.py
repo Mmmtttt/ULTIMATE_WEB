@@ -7,6 +7,7 @@ from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
 from .picacomic_adapter import PicacomicAdapter
 from .javdb_adapter import JavdbAdapter
+from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, normalize_to_data_dir
 
 
 class AdapterFactory:
@@ -110,6 +111,7 @@ class AdapterConfig:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self._config = json.load(f)
+                self._normalize_storage_config_paths()
             except Exception as e:
                 print(f"加载配置文件失败: {e}")
                 self._config = {}
@@ -140,7 +142,7 @@ class AdapterConfig:
                     "config_path": "JMComic-Crawler-Python/config.json",
                     "username": "",
                     "password": "",
-                    "download_dir": "../../data/pictures/JM",
+                    "download_dir": JM_PICTURES_DIR,
                     "output_json": "comics_database.json",
                     "progress_file": "download_progress.json",
                     "favorite_list_file": "favorite_comics.txt",
@@ -151,7 +153,7 @@ class AdapterConfig:
                     "enabled": True,
                     "account": "",
                     "password": "",
-                    "base_dir": "../../data/pictures/PK"
+                    "base_dir": PK_PICTURES_DIR
                 },
                 "javdb": {
                     "enabled": True,
@@ -159,6 +161,32 @@ class AdapterConfig:
                 }
             }
         }
+
+    def _normalize_storage_config_paths(self) -> bool:
+        changed = False
+        adapters = self._config.get("adapters", {})
+
+        jm_config = adapters.get("jmcomic")
+        if isinstance(jm_config, dict):
+            normalized_download_dir = normalize_to_data_dir(
+                jm_config.get("download_dir"),
+                "pictures/JM"
+            )
+            if jm_config.get("download_dir") != normalized_download_dir:
+                jm_config["download_dir"] = normalized_download_dir
+                changed = True
+
+        pk_config = adapters.get("picacomic")
+        if isinstance(pk_config, dict):
+            normalized_base_dir = normalize_to_data_dir(
+                pk_config.get("base_dir"),
+                "pictures/PK"
+            )
+            if pk_config.get("base_dir") != normalized_base_dir:
+                pk_config["base_dir"] = normalized_base_dir
+                changed = True
+
+        return changed
     
     def get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
         """获取指定适配器的配置
@@ -181,7 +209,19 @@ class AdapterConfig:
         if 'adapters' not in self._config:
             self._config['adapters'] = {}
         
-        self._config['adapters'][adapter_name] = config
+        normalized_config = dict(config or {})
+        if adapter_name == "jmcomic":
+            normalized_config["download_dir"] = normalize_to_data_dir(
+                normalized_config.get("download_dir"),
+                "pictures/JM"
+            )
+        elif adapter_name == "picacomic":
+            normalized_config["base_dir"] = normalize_to_data_dir(
+                normalized_config.get("base_dir"),
+                "pictures/PK"
+            )
+
+        self._config['adapters'][adapter_name] = normalized_config
         self._save_config()
     
     def get_default_adapter(self) -> str:

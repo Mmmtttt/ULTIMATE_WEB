@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useConfigStore } from './config'
 import { comicApi } from '@/api'
-import { validatePage, formatProgress } from '@/utils'
+import { validatePage, formatProgress, toBackendApiUrl } from '@/utils'
 
 /**
  * 阅读器 Store
@@ -71,7 +71,7 @@ export const useReaderStore = defineStore('reader', () => {
    */
   const currentImageUrl = computed(() => {
     if (!currentComicId.value) return ''
-    return `/api/v1/comic/image?comic_id=${currentComicId.value}&page_num=${currentPage.value}`
+    return toBackendApiUrl(`/v1/comic/image?comic_id=${currentComicId.value}&page_num=${currentPage.value}`)
   })
   
   /**
@@ -254,7 +254,7 @@ export const useReaderStore = defineStore('reader', () => {
   function preloadImage(page) {
     if (preloadedImages.value.has(page)) return
     
-    const url = `/api/v1/comic/image?comic_id=${currentComicId.value}&page_num=${page}`
+    const url = toBackendApiUrl(`/v1/comic/image?comic_id=${currentComicId.value}&page_num=${page}`)
     
     const img = new Image()
     img.onload = () => {

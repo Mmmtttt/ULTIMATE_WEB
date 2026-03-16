@@ -4,12 +4,13 @@ from domain.author import AuthorSubscription, AuthorRepository
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.repositories.base_repository_impl import BaseCreatorJsonRepository
 from infrastructure.logger import error_logger
+from core.constants import AUTHOR_JSON_FILE
 from core.utils import get_current_time, generate_id
 
 
 class AuthorJsonRepository(AuthorRepository):
     def __init__(self, storage: JsonStorage = None):
-        self._file_path = "data/meta_data/authors_database.json"
+        self._file_path = AUTHOR_JSON_FILE
         self._storage = storage or JsonStorage(self._file_path)
         self._ensure_file_exists()
     
@@ -94,7 +95,7 @@ class AuthorJsonRepositoryV2(BaseCreatorJsonRepository):
     _data_key = "authors"
     
     def __init__(self, storage: JsonStorage = None):
-        self._file_path = "data/meta_data/authors_database.json"
+        self._file_path = AUTHOR_JSON_FILE
         self._storage = storage or JsonStorage(self._file_path)
         self._ensure_file_exists()
     

@@ -11,6 +11,11 @@ import uuid
 from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
 from dataclasses import dataclass, asdict
+from core.constants import (
+    IMPORT_TASKS_JSON_FILE,
+    JSON_FILE,
+    RECOMMENDATION_JSON_FILE,
+)
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -65,11 +70,11 @@ class TaskManager:
                     cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, task_file: str = "data/meta_data/import_tasks.json"):
+    def __init__(self, task_file: str = None):
         if hasattr(self, '_initialized') and self._initialized:
             return
         
-        self.task_file = task_file
+        self.task_file = task_file or IMPORT_TASKS_JSON_FILE
         self._tasks: Dict[str, ImportTask] = {}
         self._task_lock = threading.Lock()
         self._worker_thread: Optional[threading.Thread] = None
@@ -258,7 +263,7 @@ class TaskManager:
             existing_tags = tag_db_data.get('tags', [])
             
             # 获取漫画/推荐漫画数据库文件
-            db_file = 'data/meta_data/comics_database.json' if task.target == 'home' else 'data/meta_data/recommendations_database.json'
+            db_file = JSON_FILE if task.target == 'home' else RECOMMENDATION_JSON_FILE
             storage = JsonStorage(db_file)
             db_data = storage.read()
             from core.utils import normalize_total_page
@@ -525,11 +530,11 @@ class TaskManager:
         RECENT_IMPORT_TAG_NAME = "最近导入"
         
         if target == 'home':
-            json_file = 'data/meta_data/comics_database.json'
+            json_file = JSON_FILE
             comics_key = 'comics'
             total_key = 'total_comics'
         else:
-            json_file = 'data/meta_data/recommendations_database.json'
+            json_file = RECOMMENDATION_JSON_FILE
             comics_key = 'recommendations'
             total_key = 'total_recommendations'
         

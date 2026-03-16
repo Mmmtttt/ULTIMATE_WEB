@@ -4,7 +4,15 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
-from core.constants import CACHE_MAX_AGE, PICTURES_DIR, SUPPORTED_FORMATS, RECOMMENDATION_JSON_FILE
+from core.constants import (
+    CACHE_MAX_AGE,
+    JM_PICTURES_DIR,
+    JSON_FILE,
+    PICTURES_DIR,
+    PK_PICTURES_DIR,
+    RECOMMENDATION_JSON_FILE,
+    SUPPORTED_FORMATS,
+)
 from core.utils import normalize_total_page
 import os
 import time
@@ -98,7 +106,7 @@ def get_third_party_config():
             "jmcomic": {
                 "username": jmcomic_config.get('username', ''),
                 "password": jmcomic_config.get('password', ''),
-                "download_dir": jmcomic_config.get('download_dir', '../../data/pictures/JM'),
+                "download_dir": jmcomic_config.get('download_dir', JM_PICTURES_DIR),
                 "output_json": jmcomic_config.get('output_json', 'comics_database.json'),
                 "progress_file": jmcomic_config.get('progress_file', 'download_progress.json'),
                 "favorite_list_file": jmcomic_config.get('favorite_list_file', 'favorite_comics.txt'),
@@ -108,7 +116,7 @@ def get_third_party_config():
             "picacomic": {
                 "account": picacomic_config.get('account', ''),
                 "password": picacomic_config.get('password', ''),
-                "base_dir": picacomic_config.get('base_dir', '../../data/pictures/PK')
+                "base_dir": picacomic_config.get('base_dir', PK_PICTURES_DIR)
             }
         })
         
@@ -133,7 +141,7 @@ def save_third_party_config():
         if adapter == 'jmcomic':
             username = data.get('username', '')
             password = data.get('password', '')
-            download_dir = data.get('download_dir', '../../data/pictures/JM')
+            download_dir = data.get('download_dir', JM_PICTURES_DIR)
             output_json = data.get('output_json', 'comics_database.json')
             progress_file = data.get('progress_file', 'download_progress.json')
             favorite_list_file = data.get('favorite_list_file', 'favorite_comics.txt')
@@ -155,7 +163,7 @@ def save_third_party_config():
         elif adapter == 'picacomic':
             account = data.get('account', '')
             password = data.get('password', '')
-            base_dir = data.get('base_dir', '../../data/pictures/PK')
+            base_dir = data.get('base_dir', PK_PICTURES_DIR)
             
             config_manager.set_adapter_config(adapter, {
                 "enabled": True,
@@ -1346,7 +1354,7 @@ def import_async():
             
             # 检查是否已存在
             from infrastructure.persistence.json_storage import JsonStorage
-            db_file = 'data/meta_data/comics_database.json' if target == 'home' else 'data/meta_data/recommendations_database.json'
+            db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
             storage = JsonStorage(db_file)
             db_data = storage.read()
             comics_key = 'comics' if target == 'home' else 'recommendations'

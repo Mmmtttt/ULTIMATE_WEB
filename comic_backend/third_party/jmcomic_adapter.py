@@ -7,6 +7,7 @@ import os
 import time
 from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
+from core.constants import JM_PICTURES_DIR
 from core.platform import Platform
 from infrastructure.logger import app_logger, error_logger
 
@@ -78,7 +79,7 @@ class JMComicAdapter(BaseAdapter):
                 
                 username = self.get_config('username')
                 password = self.get_config('password')
-                download_dir = self.get_config('download_dir', '../../data/pictures')
+                download_dir = self.get_config('download_dir', JM_PICTURES_DIR)
                 output_json = self.get_config('output_json', 'comics_database.json')
                 progress_file = self.get_config('progress_file', 'download_progress.json')
                 favorite_list_file = self.get_config('favorite_list_file', 'favorite_comics.txt')
@@ -208,13 +209,13 @@ class JMComicAdapter(BaseAdapter):
 
             option = jmcomic.JmOption.construct({
                 'download': {
-                    'dir': self.get_config('download_dir', '../../data/pictures'),
+                    'dir': self.get_config('download_dir', JM_PICTURES_DIR),
                     'image': {
                         'suffix': '.jpg'
                     }
                 },
                 'dir_rule': {
-                    'base_dir': self.get_config('download_dir', '../../data/pictures'),
+                    'base_dir': self.get_config('download_dir', JM_PICTURES_DIR),
                     'rule': 'Bd_Aid_Pindex'
                 },
                 'client': {

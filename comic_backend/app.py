@@ -1,13 +1,20 @@
-from flask import Flask, send_from_directory, make_response
-from flask_cors import CORS
-from api import register_blueprints
-from infrastructure.logger import app_logger
-from application.list_app_service import ListAppService
-from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
-from infrastructure.persistence.json_storage import JsonStorage
+import atexit
 import json
 import os
-import atexit
+
+from flask import Flask, make_response, send_from_directory
+from flask_cors import CORS
+
+from api import register_blueprints
+from application.list_app_service import ListAppService
+from core.constants import (
+    COVER_DIR,
+    STATIC_DIR,
+    ensure_storage_layout,
+)
+from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
+from infrastructure.logger import app_logger
+from infrastructure.persistence.json_storage import JsonStorage
 
 
 def load_server_config():
@@ -20,7 +27,8 @@ def load_server_config():
             pass
     return {
         "backend": {"host": "0.0.0.0", "port": 5000},
-        "frontend": {"host": "0.0.0.0", "port": 5173}
+        "frontend": {"host": "0.0.0.0", "port": 5173},
+        "storage": {"data_dir": "./comic_backend/data"}
     }
 
 
@@ -34,9 +42,10 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300
 
 CORS(app)
 
+ensure_storage_layout()
 register_blueprints(app)
 
-app.static_folder = 'static'
+app.static_folder = STATIC_DIR
 
 
 @app.route('/')
@@ -51,7 +60,7 @@ def health():
 @app.route('/static/cover/<path:filename>')
 def serve_cover(filename):
     """提供封面图片，并设置正确的 Content-Type"""
-    response = make_response(send_from_directory('static/cover', filename))
+    response = make_response(send_from_directory(COVER_DIR, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'
     elif filename.endswith('.png'):
@@ -63,7 +72,7 @@ def serve_cover(filename):
 @app.route('/static/cover/<platform>/author_cache/<filename>')
 def serve_author_cover(platform, filename):
     """提供作者更新作品的封面图片"""
-    cache_dir = f'static/cover/{platform}/author_cache'
+    cache_dir = os.path.join(COVER_DIR, platform, 'author_cache')
     response = make_response(send_from_directory(cache_dir, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'

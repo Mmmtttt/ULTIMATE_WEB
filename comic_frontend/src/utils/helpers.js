@@ -1,3 +1,5 @@
+import { toBackendUrl } from './url'
+
 export function toggleSelection(selectedIds, id) {
   const index = selectedIds.value.indexOf(id)
   if (index > -1) {
@@ -28,9 +30,7 @@ export function toggleSelectAll(selectedIdsRef, items = [], getId = (item) => it
 export function getCoverUrl(coverPath) {
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
-  if (coverPath.startsWith('/static/')) return coverPath
-  if (coverPath.startsWith('/')) return coverPath
-  return `/${coverPath}`
+  return toBackendUrl(coverPath)
 }
 
 export function extractAuthors(items) {

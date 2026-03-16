@@ -15,7 +15,7 @@
     <div v-else class="detail-content">
       <div class="cover-section">
         <van-image
-          :src="recommendation.cover_path"
+          :src="recommendationCoverUrl"
           fit="cover"
           class="cover"
           lazy-load
@@ -114,7 +114,7 @@
             @click="previewImage(index)"
           >
             <img
-              :src="url"
+              :src="resolvePreviewUrl(url)"
               class="preview-image"
             />
             <span class="preview-page">第{{ recommendation.preview_pages[index] }}页</span>
@@ -258,7 +258,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { recommendationApi, authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -297,7 +297,12 @@ const progressPercent = computed(() => {
 
 const previewImages = computed(() => {
   if (!recommendation.value || !recommendation.value.preview_image_urls) return []
-  return recommendation.value.preview_image_urls
+  return recommendation.value.preview_image_urls.map(url => getCoverUrl(url))
+})
+
+const recommendationCoverUrl = computed(() => {
+  if (!recommendation.value) return ''
+  return getCoverUrl(recommendation.value.cover_path)
 })
 
 const isFavorited = computed(() => {
@@ -397,6 +402,10 @@ function startReading() {
 function previewImage(index) {
   previewIndex.value = index
   showPreview.value = true
+}
+
+function resolvePreviewUrl(url) {
+  return getCoverUrl(url)
 }
 
 /**

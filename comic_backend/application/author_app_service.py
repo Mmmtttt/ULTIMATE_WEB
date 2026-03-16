@@ -71,7 +71,8 @@ class AuthorAppService(BaseCreatorAppService):
                         work_id = str(album.get("album_id", ""))
                         cover_url = album.get("cover_url", "")
                         local_cover = f"/static/cover/{plat}/author_cache/{work_id}.jpg"
-                        if os.path.exists(f"static/cover/{plat}/author_cache/{work_id}.jpg"):
+                        cache_dir = JM_AUTHOR_COVER_CACHE_DIR if plat == "JM" else PK_AUTHOR_COVER_CACHE_DIR
+                        if os.path.exists(os.path.join(cache_dir, f"{work_id}.jpg")):
                             cover_url = local_cover
                         
                         works.append({
