@@ -41,6 +41,12 @@ const routes = [
     meta: { title: '搜索' }
   },
   {
+    path: '/video-tag-search',
+    name: 'VideoTagSearch',
+    component: () => import('@/views/search/VideoTagSearch.vue'),
+    meta: { title: 'JAVDB标签搜索' }
+  },
+  {
     path: '/creator/:name',
     name: 'CreatorDetail',
     component: () => import('@/views/subscribe/CreatorDetail.vue'),

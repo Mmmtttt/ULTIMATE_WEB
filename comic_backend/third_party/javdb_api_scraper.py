@@ -5,6 +5,7 @@ JAVDB API Scraper 包装器
 import sys
 import os
 import re
+import json
 from typing import List
 import requests
 
@@ -29,6 +30,49 @@ import javdb_api
 from lib.javdb_adapter import JavdbAdapter as _JavdbAdapter
 from lib.javbus_adapter import JavbusAdapter as _JavbusAdapter
 from lib.platform import Platform, add_platform_prefix, remove_platform_prefix
+
+
+def _load_javdb_cookies_from_third_party_config() -> dict:
+    """从 comic_backend/third_party_config.json 读取 JAVDB cookies。"""
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'third_party_config.json')
+        if not os.path.exists(config_path):
+            return {}
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+
+        cookies = (
+            config_data.get('adapters', {})
+            .get('javdb', {})
+            .get('cookies', {})
+        )
+
+        if not isinstance(cookies, dict):
+            return {}
+
+        normalized = {}
+        for key, value in cookies.items():
+            key_str = str(key or '').strip()
+            if not key_str:
+                continue
+            normalized[key_str] = str(value or '')
+
+        return normalized
+    except Exception:
+        return {}
+
+
+def _apply_javdb_cookies(session) -> int:
+    """将 third_party_config.json 中的 JAVDB cookies 写入当前 session。"""
+    cookies = _load_javdb_cookies_from_third_party_config()
+    if not cookies:
+        return 0
+
+    for key, value in cookies.items():
+        session.cookies.set(key, value)
+
+    return len(cookies)
 
 
 def _sanitize_javbus_thumbnails(urls: List[str]) -> List[str]:
@@ -95,7 +139,12 @@ def _guess_dmm_thumbnails_from_code(code: str, count: int) -> List[str]:
 
 
 class JavdbAdapter(_JavdbAdapter):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            _apply_javdb_cookies(self.api.session)
+        except Exception:
+            pass
 
 
 class JavbusAdapter(_JavbusAdapter):

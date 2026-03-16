@@ -17,6 +17,12 @@
         <van-tab title="预览库" name="preview" />
         <van-tab title="全网搜" name="remote" />
       </van-tabs>
+
+      <div v-if="isVideoMode && activeTab === 'remote'" class="tag-search-entry">
+        <van-button size="small" plain type="primary" icon="filter-o" @click="goToVideoTagSearch">
+          标签搜索
+        </van-button>
+      </div>
     </div>
 
     <div class="search-content">
@@ -212,6 +218,10 @@ function toggleSelection(item) {
 
 function toggleSelectAllRemote() {
   toggleSelectAll(selectedIds, normalizedResults.value, (item) => getItemId(item))
+}
+
+function goToVideoTagSearch() {
+  router.push('/video-tag-search')
 }
 
 function handleImport() {
@@ -447,6 +457,12 @@ onMounted(() => {
 .search-input-wrapper .van-search {
   flex: 1;
   padding: 0;
+}
+
+.tag-search-entry {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 10px;
 }
 
 .search-content {

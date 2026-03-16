@@ -68,6 +68,22 @@ export const videoApi = {
   thirdPartySearch(keyword, page = 1, platform = 'all') {
     return request.get('/v1/video/third-party/search', { params: { keyword, page, platform } })
   },
+
+  thirdPartyJavdbTags(keyword = '', category = '') {
+    return request.get('/v1/video/third-party/javdb/tags', {
+      params: {
+        keyword,
+        category
+      }
+    })
+  },
+
+  thirdPartyJavdbSearchByTags(tagIds = [], page = 1) {
+    const params = new URLSearchParams()
+    tagIds.forEach(tagId => params.append('tag_ids', tagId))
+    params.append('page', String(page))
+    return request.get(`/v1/video/third-party/javdb/search-by-tags?${params.toString()}`)
+  },
   
   thirdPartyDetail(videoId) {
     return request.get('/v1/video/third-party/detail', { params: { video_id: videoId } })

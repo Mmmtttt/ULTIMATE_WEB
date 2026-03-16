@@ -9,6 +9,8 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
 from domain.tag.entity import ContentType
+from bs4 import BeautifulSoup
+import re
 import threading
 import time
 
@@ -470,6 +472,147 @@ def to_proxy_image_url(url: str) -> str:
     return f"/api/v1/video/proxy2?url={encoded_url}"
 
 
+def _parse_javdb_tag_ids(tag_ids):
+    """
+    解析前端传入的 JAVDB tag id（格式如 c1=23 或 c4=22,19）。
+    支持同一分类多标签组合，并保留用户选择顺序。
+    """
+    tag_params = {}
+    invalid_tag_ids = []
+
+    for raw_tag_id in tag_ids or []:
+        normalized = str(raw_tag_id or "").strip().lower()
+        if not normalized:
+            continue
+
+        category, sep, value = normalized.partition("=")
+        category = category.strip()
+        raw_values = value.strip()
+
+        if not sep or not re.fullmatch(r"c\d+", category):
+            invalid_tag_ids.append(str(raw_tag_id))
+            continue
+
+        values = []
+        for part in raw_values.split(","):
+            value_part = part.strip()
+            if not value_part:
+                continue
+            if not value_part.isdigit():
+                continue
+            values.append(int(value_part))
+
+        if not values:
+            invalid_tag_ids.append(str(raw_tag_id))
+            continue
+
+        tag_params.setdefault(category, [])
+        for parsed_value in values:
+            if parsed_value not in tag_params[category]:
+                tag_params[category].append(parsed_value)
+
+    def _category_sort_key(category_key: str):
+        suffix = category_key[1:]
+        return int(suffix) if suffix.isdigit() else 999
+
+    effective_tag_ids = []
+    for category_key in sorted(tag_params.keys(), key=_category_sort_key):
+        for value_item in tag_params[category_key]:
+            effective_tag_ids.append(f"{category_key}={value_item}")
+
+    return tag_params, effective_tag_ids, invalid_tag_ids, []
+
+
+def _build_javdb_tag_query(tag_params):
+    """构建 JAVDB 标签查询字符串，支持同分类多值（如 c4=22,19）。"""
+    query_parts = []
+
+    def _category_sort_key(category_key: str):
+        suffix = category_key[1:]
+        return int(suffix) if suffix.isdigit() else 999
+
+    for category_key in sorted(tag_params.keys(), key=_category_sort_key):
+        values = tag_params.get(category_key) or []
+        if not values:
+            continue
+        joined_values = ",".join(str(v) for v in values)
+        query_parts.append(f"{category_key}={joined_values}")
+
+    return "&".join(query_parts)
+
+
+def _search_javdb_by_tag_params(adapter, page: int, tag_params):
+    """
+    使用原站 /tags 查询，支持同一分类多标签组合（c4=22,19）。
+    """
+    query_string = _build_javdb_tag_query(tag_params)
+    if not query_string:
+        raise ValueError("empty tag query")
+
+    if page <= 1:
+        path = f"/tags?{query_string}"
+    else:
+        path = f"/tags?{query_string}&page={page}"
+
+    response = adapter.api.get(path)
+    html_text = response.text or ""
+    if _is_javdb_login_page(html_text):
+        raise PermissionError("JAVDB 标签搜索需要登录")
+
+    soup = BeautifulSoup(html_text, "lxml")
+    items = soup.select('div.item a')
+
+    parse_work = getattr(adapter.api, "_parse_work_item", None)
+    works = []
+    if callable(parse_work):
+        for item in items:
+            try:
+                work = parse_work(item)
+                if work:
+                    works.append(work)
+            except Exception:
+                continue
+
+    has_next = soup.select_one('nav.pagination a[rel="next"]') is not None
+
+    return {
+        "page": page,
+        "has_next": has_next,
+        "works": works,
+        "query": query_string
+    }
+
+
+def _is_javdb_login_page(html_text: str) -> bool:
+    """判断返回页面是否为 JAVDB 登录页。"""
+    if not html_text:
+        return False
+
+    lower_html = html_text.lower()
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", lower_html, re.DOTALL)
+    title_text = title_match.group(1).strip() if title_match else ""
+
+    if "登入 | javdb" in title_text:
+        return True
+    if "login | javdb" in title_text:
+        return True
+
+    return False
+
+
+def _is_javdb_tag_search_available(adapter) -> bool:
+    """
+    检查 JAVDB 标签页是否可访问。
+    若 cookies 失效通常会跳转登录页，返回 False。
+    """
+    try:
+        response = adapter.api.get('/tags')
+        return not _is_javdb_login_page(response.text)
+    except Exception as e:
+        app_logger.warning(f"检查 JAVDB 标签页可用性失败，默认放行: {e}")
+        return True
+
+
 @video_bp.route('/third-party/search', methods=['GET'])
 def third_party_search():
     try:
@@ -537,6 +680,137 @@ def third_party_search():
         error_logger.error(f"第三方搜索失败: {e}")
         error_logger.error(traceback.format_exc())
         return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/third-party/javdb/tags', methods=['GET'])
+def third_party_javdb_tags():
+    """获取 JAVDB 内置标签（来自 javdb-api-scraper 的 TagManager）"""
+    try:
+        keyword = (request.args.get('keyword') or '').strip().lower()
+        category_filter = (request.args.get('category') or '').strip().lower()
+
+        adapter = get_video_adapter('javdb')
+        tag_manager = adapter.api.tag_manager
+        tag_search_available = _is_javdb_tag_search_available(adapter)
+
+        all_tags = tag_manager.get_all_tags() or {}
+        categories = tag_manager.get_categories() or {}
+
+        if not all_tags:
+            app_logger.warning("JAVDB 内置标签库为空，可能缺少 tags_database.enc")
+            return success_response({
+                "categories": [],
+                "tags": [],
+                "total": 0,
+                "source_ready": False,
+                "tag_search_available": tag_search_available,
+                "message": "JAVDB 内置标签库未初始化（缺少 tags_database.enc）"
+            })
+
+        tags = []
+        category_counts = {}
+
+        for tag_id, tag_info in all_tags.items():
+            category = str(tag_info.get('category') or '').strip().lower()
+            category_name = tag_info.get('category_name') or categories.get(category, '')
+            tag_name = str(tag_info.get('name') or '').strip()
+
+            if category_filter and category != category_filter:
+                continue
+
+            searchable_text = f"{tag_name} {tag_id}".lower()
+            if keyword and keyword not in searchable_text:
+                continue
+
+            category_counts[category] = category_counts.get(category, 0) + 1
+
+            tags.append({
+                "id": str(tag_id),
+                "name": tag_name,
+                "category": category,
+                "category_name": category_name,
+                "tag_id": str(tag_info.get('tag_id') or ''),
+                "value": str(tag_info.get('value') or '')
+            })
+
+        tags.sort(key=lambda item: (item.get('category', ''), item.get('name', '')))
+
+        response_categories = []
+        for category_key, category_name in sorted(categories.items(), key=lambda x: x[0]):
+            if category_filter and category_key != category_filter:
+                continue
+            count = category_counts.get(category_key, 0)
+            if keyword and count == 0:
+                continue
+            response_categories.append({
+                "key": category_key,
+                "name": category_name,
+                "count": count
+            })
+
+        return success_response({
+            "categories": response_categories,
+            "tags": tags,
+            "total": len(tags),
+            "source_ready": True,
+            "tag_search_available": tag_search_available
+        })
+    except Exception as e:
+        error_logger.error(f"获取 JAVDB 内置标签失败: {e}")
+        return error_response(500, "server error")
+
+
+@video_bp.route('/third-party/javdb/search-by-tags', methods=['GET'])
+def third_party_javdb_search_by_tags():
+    """通过 JAVDB 内置标签组合搜索视频"""
+    try:
+        page = request.args.get('page', 1, type=int) or 1
+        page = max(page, 1)
+
+        requested_tag_ids = request.args.getlist('tag_ids')
+        if not requested_tag_ids:
+            csv_tag_ids = (request.args.get('tag_ids') or '').strip()
+            if csv_tag_ids:
+                requested_tag_ids = [part.strip() for part in csv_tag_ids.split(',') if part.strip()]
+
+        tag_params, effective_tag_ids, invalid_tag_ids, overridden_tag_ids = _parse_javdb_tag_ids(requested_tag_ids)
+
+        if not tag_params:
+            return error_response(400, "请至少提供一个有效 tag_id（格式如 c1=23）")
+
+        adapter = get_video_adapter('javdb')
+        if not _is_javdb_tag_search_available(adapter):
+            return error_response(401, "JAVDB 标签搜索需要登录，请更新 cookies 后重试")
+
+        result = _search_javdb_by_tag_params(adapter, page=page, tag_params=tag_params)
+
+        works = result.get('works', []) or []
+        videos = []
+
+        for work in works:
+            video = dict(work or {})
+            video['platform'] = 'javdb'
+            if video.get('cover_url'):
+                video['cover_url'] = to_proxy_image_url(video.get('cover_url'))
+            if video.get('thumbnail_url'):
+                video['thumbnail_url'] = to_proxy_image_url(video.get('thumbnail_url'))
+            videos.append(video)
+
+        return success_response({
+            "platform": "javdb",
+            "page": result.get('page', page),
+            "has_next": result.get('has_next', False),
+            "total_pages": result.get('total_pages'),
+            "videos": videos,
+            "query": result.get('query'),
+            "requested_tag_ids": requested_tag_ids,
+            "effective_tag_ids": effective_tag_ids,
+            "invalid_tag_ids": invalid_tag_ids,
+            "overridden_tag_ids": overridden_tag_ids
+        })
+    except Exception as e:
+        error_logger.error(f"JAVDB 标签搜索失败: {e}")
+        return error_response(500, "server error")
 
 
 @video_bp.route('/third-party/detail', methods=['GET'])
