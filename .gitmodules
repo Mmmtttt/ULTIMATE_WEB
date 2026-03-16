@@ -9,4 +9,4 @@
 	url = https://github.com/Mmmtttt/Picacomic-Crawler.git
 [submodule "comic_backend/third_party/Missav"]
 	path = comic_backend/third_party/Missav
-	url = ./comic_backend/third_party/Missav
+	url = https://github.com/Mmmtttt/Missav.git
