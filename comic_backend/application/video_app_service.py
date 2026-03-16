@@ -381,6 +381,68 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"绑定视频标签失败: {e}")
             return ServiceResult.error("绑定标签失败")
     
+    def update_meta(self, video_id: str, meta: Dict) -> ServiceResult:
+        try:
+            video = self._video_repo.get_by_id(video_id)
+            if not video:
+                return ServiceResult.error("video not found")
+
+            target_code = meta.get("code")
+            if target_code is not None:
+                target_code = str(target_code).strip()
+                if target_code:
+                    existing = self._video_repo.get_by_code(target_code)
+                    if existing and existing.id != video_id:
+                        return ServiceResult.error("code already exists")
+                video.code = target_code
+
+            if "title" in meta and meta.get("title") is not None:
+                video.title = str(meta.get("title")).strip()
+
+            if "date" in meta and meta.get("date") is not None:
+                video.date = str(meta.get("date")).strip()
+
+            if "series" in meta and meta.get("series") is not None:
+                video.series = str(meta.get("series")).strip()
+
+            if "desc" in meta and meta.get("desc") is not None:
+                video.desc = str(meta.get("desc")).strip()
+
+            if "cover_path" in meta and meta.get("cover_path"):
+                video.cover_path = meta.get("cover_path")
+
+            actors = meta.get("actors")
+            if actors is not None:
+                if isinstance(actors, str):
+                    actors = actors.replace(chr(65292), ",").split(",")
+                if isinstance(actors, list):
+                    normalized_actors = []
+                    for actor in actors:
+                        actor_name = str(actor).strip()
+                        if actor_name and actor_name not in normalized_actors:
+                            normalized_actors.append(actor_name)
+                    video.actors = normalized_actors
+                else:
+                    video.actors = []
+
+            if "creator" in meta and meta.get("creator") is not None:
+                video.creator = str(meta.get("creator")).strip()
+            elif "author" in meta and meta.get("author") is not None:
+                video.creator = str(meta.get("author")).strip()
+            elif video.actors:
+                video.creator = video.actors[0]
+            else:
+                video.creator = ""
+
+            if not self._video_repo.save(video):
+                return ServiceResult.error("failed to save video")
+
+            app_logger.info(f"update video meta success: {video_id}")
+            return ServiceResult.ok(video.to_dict(), "updated")
+        except Exception as e:
+            error_logger.error(f"update video meta failed: {e}")
+            return ServiceResult.error("update failed")
+
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
         try:
             videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)

@@ -81,6 +81,24 @@ export const useVideoStore = defineStore('video', () => {
       return false
     }
   }
+
+  async function bindTags(videoId, tagIdList) {
+    try {
+      const response = await videoApi.bindTags(videoId, tagIdList)
+      return response
+    } catch (e) {
+      throw e
+    }
+  }
+
+  async function editVideo(videoId, data) {
+    try {
+      const response = await videoApi.editVideo(videoId, data)
+      return response
+    } catch (e) {
+      throw e
+    }
+  }
   
   async function moveToTrash(videoId) {
     try {
@@ -292,6 +310,8 @@ export const useVideoStore = defineStore('video', () => {
     search,
     updateScore,
     updateProgress,
+    bindTags,
+    editVideo,
     moveToTrash,
     batchMoveToTrash,
     restoreFromTrash,

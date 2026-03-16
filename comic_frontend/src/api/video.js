@@ -120,6 +120,13 @@ export const videoApi = {
   bindTags(videoId, tagIdList) {
     return request.put('/v1/video/tag/bind', { video_id: videoId, tag_id_list: tagIdList })
   },
+
+  editVideo(videoId, data) {
+    return request.put('/v1/video/edit', {
+      video_id: videoId,
+      ...data
+    })
+  },
   
   filter(includeTags = [], excludeTags = [], authors = [], listIds = []) {
     const params = new URLSearchParams()

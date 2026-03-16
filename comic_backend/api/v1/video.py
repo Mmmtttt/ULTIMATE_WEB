@@ -353,6 +353,38 @@ def bind_tags():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/edit', methods=['PUT'])
+def edit_video():
+    try:
+        data = request.json
+        if not data or 'video_id' not in data:
+            return error_response(400, "missing parameter: video_id")
+
+        video_id = data['video_id']
+        meta = {
+            'title': data.get('title'),
+            'code': data.get('code'),
+            'date': data.get('date'),
+            'series': data.get('series'),
+            'creator': data.get('creator'),
+            'author': data.get('author'),
+            'actors': data.get('actors'),
+            'desc': data.get('desc'),
+            'cover_path': data.get('cover_path')
+        }
+        meta = {k: v for k, v in meta.items() if v is not None}
+
+        result = video_service.update_meta(video_id, meta)
+        if result.success:
+            app_logger.info(f"edit video success: {video_id}")
+            return success_response(result.data)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"edit video failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @video_bp.route('/filter', methods=['GET'])
 def filter_videos():
     try:

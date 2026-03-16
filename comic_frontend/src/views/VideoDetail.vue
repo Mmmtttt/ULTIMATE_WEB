@@ -227,6 +227,76 @@
       :actions="actions" 
       @select="handleAction"
     />
+
+    <van-popup 
+      v-model:show="showEditPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '60%' }"
+    >
+      <div class="edit-popup">
+        <van-nav-bar title="编辑视频信息">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveEdit">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <van-cell-group inset>
+          <van-field v-model="editForm.title" label="标题" placeholder="请输入标题" />
+          <van-field v-model="editForm.code" label="番号" placeholder="请输入番号" />
+          <van-field v-model="editForm.date" label="日期" placeholder="请输入发布日期" />
+          <van-field v-model="editForm.series" label="系列" placeholder="请输入系列名称" />
+          <van-field
+            v-model="editForm.actors"
+            label="演员"
+            placeholder="多个演员请用逗号分隔"
+          />
+          <van-field
+            v-model="editForm.desc"
+            label="简介"
+            type="textarea"
+            rows="3"
+            placeholder="请输入简介"
+          />
+        </van-cell-group>
+      </div>
+    </van-popup>
+
+    <van-popup 
+      v-model:show="showTagPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '60%' }"
+    >
+      <div class="tag-popup">
+        <van-nav-bar title="绑定标签">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveTags">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <div class="tag-select-list">
+          <van-checkbox-group v-model="selectedTagIds">
+            <van-cell-group inset>
+              <van-cell
+                v-for="tag in allTags"
+                :key="tag.id"
+                clickable
+                @click="toggleTag(tag.id)"
+              >
+                <template #title>
+                  <span>{{ tag.name }}</span>
+                  <span class="tag-count">({{ tag.video_count || 0 }})</span>
+                </template>
+                <template #right-icon>
+                  <van-checkbox :name="tag.id" />
+                </template>
+              </van-cell>
+            </van-cell-group>
+          </van-checkbox-group>
+        </div>
+      </div>
+    </van-popup>
     
     <!-- 清单选择弹窗 -->
     <van-popup 
@@ -274,7 +344,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
-import { useVideoStore, useListStore, useActorStore } from '@/stores'
+import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
@@ -286,15 +356,29 @@ const router = useRouter()
 const videoStore = useVideoStore()
 const listStore = useListStore()
 const actorStore = useActorStore()
+const tagStore = useTagStore()
 const { isDesktop, isMobile } = useDevice()
 
 const video = ref(null)
 const loading = ref(true)
 const showActions = ref(false)
+const showEditPopup = ref(false)
+const showTagPopup = ref(false)
 const showListPopup = ref(false)
+const allTags = ref([])
+const selectedTagIds = ref([])
 const selectedListIds = ref([])
 const scoreValue = ref(0)
 const subscribingActors = ref([])
+
+const editForm = ref({
+  title: '',
+  code: '',
+  date: '',
+  series: '',
+  actors: '',
+  desc: ''
+})
 
 // 播放器相关
 const showPlayer = ref(false)
@@ -306,6 +390,9 @@ const currentQuality = ref(0)
 
 const hls = ref(null)
 
+const videoId = computed(() => route.params.id)
+const isLocalVideo = computed(() => video.value?.source !== 'preview')
+
 const actions = computed(() => {
   if (video.value?.is_deleted) {
     return [
@@ -313,19 +400,50 @@ const actions = computed(() => {
       { name: '分享', value: 'share' }
     ]
   }
-  return [
+
+  const menuActions = []
+  if (isLocalVideo.value) {
+    menuActions.push(
+      { name: '编辑信息', value: 'edit' },
+      { name: '绑定标签', value: 'tags' }
+    )
+  }
+  menuActions.push(
     { name: '移入回收站', value: 'trash', color: '#ee0a24' },
     { name: '分享', value: 'share' }
-  ]
+  )
+  return menuActions
 })
-
-const videoId = computed(() => route.params.id)
 
 const isFavoritedVideo = computed(() => {
   return listStore.isFavoritedVideo(video.value)
 })
 
 const customLists = computed(() => listStore.lists || [])
+
+function syncEditFormFromVideo(detail) {
+  if (!detail) {
+    return
+  }
+  editForm.value = {
+    title: detail.title || '',
+    code: detail.code || '',
+    date: detail.date || '',
+    series: detail.series || '',
+    actors: Array.isArray(detail.actors) ? detail.actors.join(', ') : '',
+    desc: detail.desc || ''
+  }
+}
+
+async function fetchAllTags() {
+  try {
+    const tags = await tagStore.fetchTags('video')
+    allTags.value = tags || []
+  } catch (error) {
+    console.error('获取视频标签失败:', error)
+    allTags.value = []
+  }
+}
 
 async function loadVideo() {
   loading.value = true
@@ -337,6 +455,8 @@ async function loadVideo() {
   if (data?.list_ids) {
     selectedListIds.value = [...data.list_ids]
   }
+  selectedTagIds.value = [...(data?.tag_ids || [])]
+  syncEditFormFromVideo(data)
   await listStore.fetchLists('video')
   await actorStore.fetchList()
   loading.value = false
@@ -516,6 +636,73 @@ function previewImages(index) {
   })
 }
 
+function toggleTag(tagId) {
+  const index = selectedTagIds.value.indexOf(tagId)
+  if (index > -1) {
+    selectedTagIds.value.splice(index, 1)
+  } else {
+    selectedTagIds.value.push(tagId)
+  }
+}
+
+async function saveTags() {
+  if (!video.value || !isLocalVideo.value) {
+    showFailToast('仅本地库视频支持绑定标签')
+    return
+  }
+
+  try {
+    const response = await videoStore.bindTags(videoId.value, selectedTagIds.value)
+    if (response.code === 200) {
+      showTagPopup.value = false
+      await loadVideo()
+      showSuccessToast('标签绑定成功')
+    } else {
+      showFailToast(response.msg || '标签绑定失败')
+    }
+  } catch (error) {
+    console.error('绑定标签失败:', error)
+    showFailToast('标签绑定失败')
+  }
+}
+
+async function saveEdit() {
+  if (!video.value || !isLocalVideo.value) {
+    showFailToast('仅本地库视频支持编辑')
+    return
+  }
+
+  try {
+    const actorList = (editForm.value.actors || '')
+      .replace(/，/g, ',')
+      .split(',')
+      .map(actor => actor.trim())
+      .filter(Boolean)
+
+    const payload = {
+      title: editForm.value.title?.trim(),
+      code: editForm.value.code?.trim(),
+      date: editForm.value.date?.trim(),
+      series: editForm.value.series?.trim(),
+      actors: actorList,
+      creator: actorList[0] || '',
+      desc: editForm.value.desc?.trim()
+    }
+
+    const response = await videoStore.editVideo(videoId.value, payload)
+    if (response.code === 200) {
+      showEditPopup.value = false
+      await loadVideo()
+      showSuccessToast('保存成功')
+    } else {
+      showFailToast(response.msg || '保存失败')
+    }
+  } catch (error) {
+    console.error('保存视频信息失败:', error)
+    showFailToast('保存失败')
+  }
+}
+
 async function handleMoveToTrash() {
   try {
     await showConfirmDialog({
@@ -538,7 +725,14 @@ async function handleMoveToTrash() {
 async function handleAction(action) {
   showActions.value = false
   
-  if (action.value === 'trash') {
+  if (action.value === 'edit') {
+    syncEditFormFromVideo(video.value)
+    showEditPopup.value = true
+  } else if (action.value === 'tags') {
+    selectedTagIds.value = [...(video.value?.tag_ids || [])]
+    await fetchAllTags()
+    showTagPopup.value = true
+  } else if (action.value === 'trash') {
     await handleMoveToTrash()
   } else if (action.value === 'delete') {
     try {
@@ -720,6 +914,15 @@ watch(showListPopup, async (val) => {
     await listStore.fetchLists('video')
     if (video.value) {
       selectedListIds.value = [...(video.value.list_ids || [])]
+    }
+  }
+})
+
+watch(showTagPopup, async (val) => {
+  if (val) {
+    selectedTagIds.value = [...(video.value?.tag_ids || [])]
+    if (allTags.value.length === 0) {
+      await fetchAllTags()
     }
   }
 })
@@ -1074,12 +1277,21 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
+.edit-popup,
+.tag-popup,
 .list-popup {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
+.tag-select-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0 16px;
+}
+
+.tag-count,
 .list-count {
   font-size: 12px;
   color: #999;
