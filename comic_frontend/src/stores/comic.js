@@ -257,6 +257,50 @@ export const useComicStore = defineStore('comic', () => {
       return { success: false, message: err.message }
     }
   }
+
+  /**
+   * 绑定标签
+   * @param {string} id - 漫画ID
+   * @param {string[]} tagIdList - 标签ID列表
+   * @returns {Object} 接口原始响应
+   */
+  async function bindTags(id, tagIdList) {
+    try {
+      console.log('[Comic] 绑定标签:', id, tagIdList)
+      const response = await comicApi.bindTags(id, tagIdList)
+
+      if (response.code === 200) {
+        cacheStore.clearCache('detail', id)
+        cacheStore.clearCache('list')
+      }
+      return response
+    } catch (err) {
+      console.error('[Comic] 绑定标签失败:', err)
+      throw err
+    }
+  }
+
+  /**
+   * 编辑漫画信息
+   * @param {string} id - 漫画ID
+   * @param {object} data - 编辑数据
+   * @returns {Object} 接口原始响应
+   */
+  async function editComic(id, data) {
+    try {
+      console.log('[Comic] 编辑漫画:', id, data)
+      const response = await comicApi.editComic(id, data)
+
+      if (response.code === 200) {
+        cacheStore.clearCache('detail', id)
+        cacheStore.clearCache('list')
+      }
+      return response
+    } catch (err) {
+      console.error('[Comic] 编辑漫画失败:', err)
+      throw err
+    }
+  }
   
   /**
    * 搜索漫画
@@ -494,6 +538,8 @@ export const useComicStore = defineStore('comic', () => {
     fetchImages,
     updateScore,
     saveProgress,
+    bindTags,
+    editComic,
     searchComics,
     filterByTags,
     filterMulti,

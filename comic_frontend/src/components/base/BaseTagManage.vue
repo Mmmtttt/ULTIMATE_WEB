@@ -223,9 +223,10 @@ const tabs = computed(() => {
 })
 
 const allTags = computed(() => {
-  const currentTab = tabs.value[activeTab.value]
-  if (!currentTab) return []
-  return getTagList(currentTab.key)
+  // 批量操作标签始终按当前页面内容类型展示，避免切到“批量操作”页时无标签可选
+  return isVideo.value
+    ? sortTags(props.tagStore.videoTags || [], 'video_count')
+    : sortTags(props.tagStore.tags || [], 'comic_count')
 })
 
 const canBatchAdd = computed(() => {

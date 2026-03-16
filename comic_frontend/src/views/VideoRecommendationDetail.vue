@@ -444,7 +444,9 @@ function copyMagnet(magnet) {
 function previewImages(index) {
   showImagePreview({
     images: recommendation.value.thumbnail_images,
-    startPosition: index
+    startPosition: index,
+    closeable: true,
+    closeIcon: 'close'
   })
 }
 

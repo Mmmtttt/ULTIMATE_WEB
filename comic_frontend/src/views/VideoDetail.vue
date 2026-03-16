@@ -510,7 +510,9 @@ async function copyMagnet(magnet) {
 function previewImages(index) {
   showImagePreview({
     images: video.value.thumbnail_images,
-    startPosition: index
+    startPosition: index,
+    closeable: true,
+    closeIcon: 'close'
   })
 }
 
