@@ -236,6 +236,30 @@ export const comicApi = {
   organizeDatabase: () => {
     return request.post('/v1/comic/organize')
   },
+
+  /**
+   * 检查漫画是否有可下载更新
+   * @param {string} comicId - 漫画ID
+   * @returns {Promise}
+   */
+  checkUpdate: (comicId) => {
+    return request.post('/v1/comic/update/check', {
+      comic_id: comicId
+    })
+  },
+
+  /**
+   * 下载漫画更新并回写本地页数
+   * @param {string} comicId - 漫画ID
+   * @param {boolean} force - 是否强制下载
+   * @returns {Promise}
+   */
+  downloadUpdate: (comicId, force = false) => {
+    return request.post('/v1/comic/update/download', {
+      comic_id: comicId,
+      force
+    })
+  },
   
   batchDownload: async (comicIds) => {
     const response = await fetch('/api/v1/comic/batch-download', {

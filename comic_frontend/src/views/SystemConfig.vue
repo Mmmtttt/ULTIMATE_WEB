@@ -204,23 +204,23 @@ async function confirmReset() {
     })
     .catch(() => {})
 }
-
 async function organizeDatabase() {
   showConfirmDialog({
     title: '整理数据库',
-    message: '确定要整理数据库吗？这将下载缺失的封面并重新下载不完整的漫画。',
+    message: '这将补全缺失封面，并把本地库漫画总页数回写为本地实际图片页数，是否继续？',
   })
     .then(async () => {
       try {
         const response = await comicApi.organizeDatabase()
-        showSuccessToast('数据库整理完成')
+        const rewritten = response?.data?.home?.rewritten_total_pages ?? 0
+        const downloaded = (response?.data?.home?.downloaded_covers ?? 0) + (response?.data?.recommendation?.downloaded_covers ?? 0)
+        showSuccessToast(`整理完成：封面补全 ${downloaded} 项，页数回写 ${rewritten} 项`)
       } catch (error) {
         showFailToast(error.message || '数据库整理失败')
       }
     })
     .catch(() => {})
 }
-
 onMounted(async () => {
   await configStore.loadConfigFromServer()
   await loadThirdPartyConfig()

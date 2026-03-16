@@ -1173,7 +1173,7 @@ def move_to_trash():
 def organize_database():
     """整理数据库"""
     try:
-        result = comic_service.organize_database()
+        result = comic_service.organize_database_v2()
         if result.success:
             return success_response(result.data, result.message)
         else:
@@ -1181,6 +1181,45 @@ def organize_database():
     except Exception as e:
         error_logger.error(f"整理数据库失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/update/check', methods=['POST'])
+def check_comic_update():
+    """Check whether a comic has online updates."""
+    try:
+        data = request.json or {}
+        comic_id = data.get('comic_id')
+        if not comic_id:
+            return error_response(400, "missing parameter: comic_id")
+
+        result = comic_service.check_comic_update(comic_id)
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"Check comic update api failed: {e}")
+        return error_response(500, "internal server error")
+
+
+@comic_bp.route('/update/download', methods=['POST'])
+def download_comic_update():
+    """Download online updates for a comic and sync local page count."""
+    try:
+        data = request.json or {}
+        comic_id = data.get('comic_id')
+        force = bool(data.get('force', False))
+        if not comic_id:
+            return error_response(400, "missing parameter: comic_id")
+
+        result = comic_service.download_comic_update(comic_id, force=force)
+        if result.success:
+            return success_response(result.data, result.message)
+        else:
+            return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"Download comic update api failed: {e}")
+        return error_response(500, "internal server error")
 
 
 @comic_bp.route('/trash/restore', methods=['PUT'])

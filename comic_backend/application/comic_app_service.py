@@ -5,7 +5,7 @@ from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.utils import get_current_time, get_preview_pages
+from core.utils import get_current_time, get_preview_pages, normalize_total_page
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
@@ -558,6 +558,287 @@ class ComicAppService:
         if new_cover_path and comic.cover_path != new_cover_path:
             comic.cover_path = new_cover_path
             self._comic_repo.save(comic)
+
+    def _get_local_page_count(self, comic_id: str) -> int:
+        """Count local downloaded image pages."""
+        try:
+            from utils.file_parser import file_parser
+            return normalize_total_page(len(file_parser.parse_comic_images(comic_id)), default=0)
+        except Exception as e:
+            error_logger.error(f"Count local pages failed: {comic_id}, {e}")
+            return 0
+
+    def _extract_remote_total_page(self, meta_data: dict) -> int:
+        """Extract remote total pages from adapter meta response."""
+        if not isinstance(meta_data, dict):
+            return 0
+
+        albums = meta_data.get("albums") or []
+        if not albums:
+            return 0
+
+        first_album = albums[0] if isinstance(albums[0], dict) else {}
+        for value in (
+            first_album.get("pages"),
+            first_album.get("pages_count"),
+            first_album.get("page_count"),
+            first_album.get("total_page"),
+        ):
+            pages = normalize_total_page(value, default=0)
+            if pages > 0:
+                return pages
+        return 0
+
+    def _get_download_dir(self, platform):
+        from core.platform import Platform
+        from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
+
+        if platform == Platform.JM:
+            return JM_PICTURES_DIR
+        if platform == Platform.PK:
+            return PK_PICTURES_DIR
+        return None
+
+    def _sync_cover_for_record(self, comic_data: dict, platform_service) -> tuple:
+        """
+        Ensure local cover file and web cover_path for one record.
+        Returns: (downloaded_cover, updated_cover_path)
+        """
+        from core.platform import Platform, get_platform_from_id, get_original_id
+        from core.constants import JM_COVER_DIR, PK_COVER_DIR
+
+        comic_id = comic_data.get("id")
+        platform = get_platform_from_id(comic_id)
+        if platform not in (Platform.JM, Platform.PK):
+            return False, False
+
+        original_id = get_original_id(comic_id)
+        cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
+        cover_prefix = "JM" if platform == Platform.JM else "PK"
+        cover_file = os.path.join(cover_dir, f"{original_id}.jpg")
+        cover_url = f"/static/cover/{cover_prefix}/{original_id}.jpg"
+
+        downloaded = False
+        updated = False
+
+        if not os.path.exists(cover_file):
+            _, success = platform_service.download_cover(
+                platform,
+                original_id,
+                save_path=cover_file,
+                show_progress=False
+            )
+            downloaded = bool(success and os.path.exists(cover_file))
+
+        if os.path.exists(cover_file) and comic_data.get("cover_path") != cover_url:
+            comic_data["cover_path"] = cover_url
+            updated = True
+
+        return downloaded, updated
+
+    def check_comic_update(self, comic_id: str) -> ServiceResult:
+        """Check whether remote comic has more pages than local files."""
+        try:
+            from core.platform import Platform, get_platform_from_id, get_original_id
+            from third_party.platform_service import get_platform_service
+
+            comic = self._comic_repo.get_by_id(comic_id)
+            if not comic:
+                return ServiceResult.error("Comic not found")
+
+            platform = get_platform_from_id(comic_id)
+            if platform not in (Platform.JM, Platform.PK):
+                return ServiceResult.error("Current platform does not support update check")
+
+            local_page_count = self._get_local_page_count(comic_id)
+            db_total_page = normalize_total_page(comic.total_page, default=0)
+
+            platform_service = get_platform_service()
+            remote_meta = platform_service.get_album_by_id(platform, get_original_id(comic_id))
+            remote_total_page = self._extract_remote_total_page(remote_meta)
+            if remote_total_page <= 0:
+                return ServiceResult.error("Failed to get remote page count")
+
+            has_update = remote_total_page > local_page_count
+            return ServiceResult.ok({
+                "comic_id": comic_id,
+                "db_total_page": db_total_page,
+                "local_page_count": local_page_count,
+                "remote_total_page": remote_total_page,
+                "has_update": has_update,
+                "can_update": True
+            }, "Update check completed")
+        except Exception as e:
+            error_logger.error(f"Check comic update failed: {comic_id}, {e}")
+            return ServiceResult.error("Update check failed")
+
+    def download_comic_update(self, comic_id: str, force: bool = False) -> ServiceResult:
+        """Download update and sync total_page with local file count."""
+        try:
+            from core.platform import Platform, get_platform_from_id, get_original_id
+            from third_party.platform_service import get_platform_service
+
+            comic = self._comic_repo.get_by_id(comic_id)
+            if not comic:
+                return ServiceResult.error("Comic not found")
+
+            check_result = self.check_comic_update(comic_id)
+            if not check_result.success:
+                return check_result
+
+            check_data = check_result.data or {}
+            has_update = bool(check_data.get("has_update"))
+            if not has_update and not force:
+                return ServiceResult.error("No downloadable update found")
+
+            platform = get_platform_from_id(comic_id)
+            if platform not in (Platform.JM, Platform.PK):
+                return ServiceResult.error("Current platform does not support update download")
+
+            download_dir = self._get_download_dir(platform)
+            if not download_dir:
+                return ServiceResult.error("Download directory not found")
+
+            platform_service = get_platform_service()
+            kwargs = {}
+            if platform == Platform.JM:
+                kwargs["decode_images"] = True
+
+            _, success = platform_service.download_album(
+                platform,
+                get_original_id(comic_id),
+                download_dir=download_dir,
+                show_progress=False,
+                **kwargs
+            )
+            if not success:
+                return ServiceResult.error("Update download failed")
+
+            local_page_count = self._get_local_page_count(comic_id)
+            if local_page_count <= 0:
+                return ServiceResult.error("No local pages found after download")
+
+            old_total_page = normalize_total_page(comic.total_page, default=0)
+            old_current_page = normalize_total_page(comic.current_page, default=1)
+            comic.total_page = local_page_count
+            comic.current_page = max(1, min(old_current_page, local_page_count))
+
+            if not self._comic_repo.save(comic):
+                return ServiceResult.error("Failed to persist updated page count")
+
+            try:
+                self._ensure_cover(comic)
+            except Exception as cover_error:
+                error_logger.error(f"Ensure cover after update failed: {comic_id}, {cover_error}")
+
+            return ServiceResult.ok({
+                "comic_id": comic_id,
+                "had_update": has_update,
+                "old_total_page": old_total_page,
+                "local_page_count": local_page_count,
+                "current_page": comic.current_page
+            }, "Update download completed")
+        except Exception as e:
+            error_logger.error(f"Download comic update failed: {comic_id}, {e}")
+            return ServiceResult.error("Update download failed")
+
+    def organize_database_v2(self) -> ServiceResult:
+        """
+        New organize flow:
+        1) Repair missing covers for home/recommendation DB.
+        2) Rewrite home comics total_page from local downloaded image count.
+        3) Clamp current_page into [1, total_page] when local pages exist.
+        """
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
+            from third_party.platform_service import get_platform_service
+
+            platform_service = get_platform_service()
+
+            # Home DB
+            home_storage = JsonStorage(JSON_FILE)
+            home_data = home_storage.read()
+            home_comics = home_data.get("comics", [])
+
+            home_stats = {
+                "total_comics": len(home_comics),
+                "downloaded_covers": 0,
+                "updated_cover_paths": 0,
+                "rewritten_total_pages": 0,
+                "corrected_current_pages": 0,
+                "skipped_empty_local_pages": 0,
+                "failed_comics": 0,
+                # keep legacy field for compatibility
+                "re_downloaded_comics": 0
+            }
+
+            for comic in home_comics:
+                comic_id = comic.get("id", "")
+                try:
+                    downloaded, cover_updated = self._sync_cover_for_record(comic, platform_service)
+                    if downloaded:
+                        home_stats["downloaded_covers"] += 1
+                    if cover_updated:
+                        home_stats["updated_cover_paths"] += 1
+
+                    local_page_count = self._get_local_page_count(comic_id)
+                    db_total_page = normalize_total_page(comic.get("total_page", 0), default=0)
+                    db_current_page = normalize_total_page(comic.get("current_page", 1), default=1)
+
+                    if local_page_count > 0:
+                        if db_total_page != local_page_count:
+                            comic["total_page"] = local_page_count
+                            home_stats["rewritten_total_pages"] += 1
+
+                        corrected_current = max(1, min(db_current_page, local_page_count))
+                        if corrected_current != db_current_page:
+                            comic["current_page"] = corrected_current
+                            home_stats["corrected_current_pages"] += 1
+                    else:
+                        # Do not overwrite total_page to 0 when local files are not found.
+                        home_stats["skipped_empty_local_pages"] += 1
+                except Exception as item_error:
+                    home_stats["failed_comics"] += 1
+                    error_logger.error(f"Organize home comic failed: {comic_id}, {item_error}")
+
+            if not home_storage.write(home_data):
+                return ServiceResult.error("Failed to write home database")
+
+            # Recommendation DB (cover repair only)
+            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+            rec_data = rec_storage.read()
+            rec_comics = rec_data.get("recommendations", [])
+
+            rec_stats = {
+                "total_comics": len(rec_comics),
+                "downloaded_covers": 0,
+                "updated_cover_paths": 0,
+                "failed_comics": 0
+            }
+
+            for comic in rec_comics:
+                comic_id = comic.get("id", "")
+                try:
+                    downloaded, cover_updated = self._sync_cover_for_record(comic, platform_service)
+                    if downloaded:
+                        rec_stats["downloaded_covers"] += 1
+                    if cover_updated:
+                        rec_stats["updated_cover_paths"] += 1
+                except Exception as item_error:
+                    rec_stats["failed_comics"] += 1
+                    error_logger.error(f"Organize recommendation comic failed: {comic_id}, {item_error}")
+
+            if not rec_storage.write(rec_data):
+                return ServiceResult.error("Failed to write recommendation database")
+
+            return ServiceResult.ok({
+                "home": home_stats,
+                "recommendation": rec_stats
+            }, "Database organize completed")
+        except Exception as e:
+            error_logger.error(f"Organize database v2 failed: {e}")
+            return ServiceResult.error("Database organize failed")
     
     def organize_database(self) -> ServiceResult:
         """整理数据库"""

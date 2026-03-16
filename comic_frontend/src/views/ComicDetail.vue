@@ -335,11 +335,11 @@ const editForm = ref({
 
 const actions = [
   { name: '下载漫画', value: 'download' },
+  { name: '检查更新并下载', value: 'check_update' },
   { name: '编辑信息', value: 'edit' },
   { name: '绑定标签', value: 'tags' },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ]
-
 const coverUrl = computed(() => {
   return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
 })
@@ -488,6 +488,8 @@ function onActionSelect(action) {
   showActionSheet.value = false
   if (action.value === 'download') {
     handleDownload()
+  } else if (action.value === 'check_update') {
+    handleCheckAndDownloadUpdate()
   } else if (action.value === 'edit') {
     showEditPopup.value = true
   } else if (action.value === 'tags') {
@@ -496,7 +498,6 @@ function onActionSelect(action) {
     handleMoveToTrash()
   }
 }
-
 async function handleDownload() {
   if (!comic.value) return
   
@@ -512,6 +513,53 @@ async function handleDownload() {
   }
 }
 
+async function handleCheckAndDownloadUpdate() {
+  if (!comic.value) return
+
+  try {
+    const checkResponse = await comicApi.checkUpdate(comic.value.id)
+    const checkData = checkResponse?.data || {}
+
+    if (!checkData.can_update) {
+      showFailToast('当前平台暂不支持在线更新')
+      return
+    }
+
+    if (!checkData.has_update) {
+      const localPages = checkData.local_page_count ?? comic.value.total_page ?? 0
+      const remotePages = checkData.remote_total_page ?? localPages
+      showSuccessToast(`暂无更新（本地 ${localPages} 页 / 远程 ${remotePages} 页）`)
+      return
+    }
+
+    const localPages = checkData.local_page_count ?? 0
+    const remotePages = checkData.remote_total_page ?? 0
+
+    const { showConfirmDialog } = await import('vant')
+    await showConfirmDialog({
+      title: '发现更新',
+      message: `检测到远程页数 ${remotePages} 大于本地页数 ${localPages}，是否立即下载更新？`
+    })
+
+    const downloadResponse = await comicApi.downloadUpdate(comic.value.id)
+    if (downloadResponse.code !== 200) {
+      showFailToast(downloadResponse.msg || '下载更新失败')
+      return
+    }
+
+    comicStore.clearCache('detail', comic.value.id)
+    comicStore.clearCache('images', comic.value.id)
+    comicStore.clearCache('list')
+    await fetchComicDetail()
+
+    const latestPages = downloadResponse?.data?.local_page_count ?? comic.value?.total_page ?? 0
+    showSuccessToast(`更新完成，当前本地 ${latestPages} 页`)
+  } catch (error) {
+    if (error === 'cancel') return
+    console.error('检查更新失败:', error)
+    showFailToast(error?.message || '检查更新失败')
+  }
+}
 async function handleMoveToTrash() {
   if (!comic.value) return
   
