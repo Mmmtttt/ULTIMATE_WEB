@@ -1,4 +1,4 @@
-﻿from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
@@ -118,7 +118,6 @@ def _build_third_party_schema() -> dict:
                 {"key": "enabled", "label": "启用", "type": "boolean"},
                 {"key": "username", "label": "账号", "type": "text", "placeholder": "JM 用户名"},
                 {"key": "password", "label": "密码", "type": "password", "placeholder": "JM 密码", "secret": True},
-                {"key": "download_dir", "label": "下载目录", "type": "text", "placeholder": JM_PICTURES_DIR},
                 {"key": "collection_name", "label": "收藏夹名称", "type": "text", "placeholder": "我的最爱"},
             ],
         },
@@ -128,7 +127,6 @@ def _build_third_party_schema() -> dict:
                 {"key": "enabled", "label": "启用", "type": "boolean"},
                 {"key": "account", "label": "账号", "type": "text", "placeholder": "Picacomic 账号"},
                 {"key": "password", "label": "密码", "type": "password", "placeholder": "Picacomic 密码", "secret": True},
-                {"key": "base_dir", "label": "下载目录", "type": "text", "placeholder": PK_PICTURES_DIR},
             ],
         },
         "javdb": {

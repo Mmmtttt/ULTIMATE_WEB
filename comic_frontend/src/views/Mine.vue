@@ -43,7 +43,7 @@
       v-model:show="showCachePanel"
       position="bottom"
       round
-      :style="{ height: '60%' }"
+      :style="{ height: '55%' }"
     >
       <div class="cache-panel">
         <van-nav-bar
@@ -53,40 +53,26 @@
         />
 
         <div class="cache-content">
-          <!-- 缓存统计 -->
-          <van-cell-group inset class="stats-group">
-            <van-cell title="列表缓存" :value="listCacheStatus" />
-            <van-cell title="详情缓存" :value="detailCacheCount + ' 个'" />
-            <van-cell title="标签缓存" :value="tagsCacheStatus" />
-          </van-cell-group>
-
-          <!-- 缓存时间设置 -->
-          <van-cell-group inset class="settings-group">
-            <van-cell title="缓存有效期（分钟）">
-              <template #value>
-                <van-stepper
-                  v-model="cacheExpiryMinutes"
-                  :min="1"
-                  :max="1440"
-                  :step="10"
-                  @change="saveCacheExpiry"
-                />
+          <!-- 缓存信息 -->
+          <van-cell-group inset class="cache-info-group">
+            <van-cell title="数据缓存" :value="cacheInfo.cache.size_mb + ' MB'">
+              <template #label>
+                <span class="cache-desc">存储漫画和视频的临时缓存数据</span>
               </template>
             </van-cell>
-            <div class="setting-hint">{{ cacheExpiryHint }}</div>
+            <van-cell title="预览缓存" :value="cacheInfo.recommendation_cache.size_mb + ' MB'">
+              <template #label>
+                <span class="cache-desc">存储预览库的临时缓存数据</span>
+              </template>
+            </van-cell>
           </van-cell-group>
 
-          <!-- 操作按钮 -->
-          <div class="action-buttons">
-            <van-button
-              type="danger"
-              block
-              round
-              @click="confirmClearCache"
-            >
-              清除所有缓存
-            </van-button>
-          </div>
+          <!-- 清除选项 -->
+          <van-cell-group inset class="clear-options-group">
+            <van-cell title="清除数据缓存" is-link @click="confirmClearCache('cache')" />
+            <van-cell title="清除预览缓存" is-link @click="confirmClearCache('recommendation_cache')" />
+            <van-cell title="清除所有缓存" is-link @click="confirmClearCache('all')" />
+          </van-cell-group>
         </div>
       </div>
     </van-popup>
@@ -204,7 +190,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
-import { comicApi, authorApi, recommendationApi, videoApi } from '@/api'
+import { comicApi, authorApi, recommendationApi, videoApi, configApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
@@ -222,7 +208,6 @@ const isVideoMode = computed(() => modeStore.isVideoMode)
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
 const showUploadPanel = ref(false)
-const cacheExpiryMinutes = ref(30)
 const importType = ref('by_id')
 const importTarget = ref('home')
 const importPlatform = ref('JM')
@@ -234,6 +219,12 @@ const uploading = ref(false)
 const selectedFiles = ref([])
 const importFileInput = ref(null)
 const fileInput = ref(null)
+
+// Cache Info
+const cacheInfo = ref({
+  cache: { size_mb: 0, file_count: 0 },
+  recommendation_cache: { size_mb: 0, file_count: 0 }
+})
 
 // Stats
 const stats = computed(() => {
@@ -257,27 +248,46 @@ const stats = computed(() => {
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 const tagManagePath = computed(() => isVideoMode.value ? '/video-tags' : '/tags')
 
-// Cache Logic (Reuse)
-const listCacheStatus = computed(() => cacheStore.listCache ? '已缓存' : '未缓存')
-const detailCacheCount = computed(() => Object.keys(cacheStore.detailCache || {}).length)
-const tagsCacheStatus = computed(() => cacheStore.tagsCache ? '已缓存' : '未缓存')
-const cacheExpiryHint = computed(() => `缓存将在 ${cacheExpiryMinutes.value} 分钟后过期`)
-
-function saveCacheExpiry() {
-  localStorage.setItem('cache_expiry_minutes', cacheExpiryMinutes.value.toString())
-  showToast('设置已保存')
+// Cache Logic
+async function loadCacheInfo() {
+  try {
+    const res = await configApi.getCacheInfo()
+    if (res.code === 200 && res.data) {
+      cacheInfo.value = res.data
+    }
+  } catch (e) {
+    console.error('加载缓存信息失败', e)
+  }
 }
 
-function confirmClearCache() {
-  showConfirmDialog({ title: '确认清除', message: '确定清除所有缓存吗？' })
-    .then(clearAllCache)
+function confirmClearCache(cacheType) {
+  const messages = {
+    'cache': '确定清除数据缓存吗？',
+    'recommendation_cache': '确定清除预览缓存吗？',
+    'all': '确定清除所有缓存吗？'
+  }
+  showConfirmDialog({ title: '确认清除', message: messages[cacheType] || '确定清除缓存吗？' })
+    .then(() => clearCache(cacheType))
 }
 
-async function clearAllCache() {
-  cacheStore.clearCache('all')
-  showSuccessToast('缓存已清除')
-  showCachePanel.value = false
+async function clearCache(cacheType) {
+  try {
+    const res = await configApi.clearSpecificCache(cacheType)
+    if (res.code === 200) {
+      showSuccessToast(`缓存已清除，释放 ${res.data.freed_size_mb} MB`)
+      await loadCacheInfo()
+    }
+  } catch (e) {
+    showFailToast('清除缓存失败')
+  }
 }
+
+// Watch showCachePanel to load info when opened
+watch(showCachePanel, (newVal) => {
+  if (newVal) {
+    loadCacheInfo()
+  }
+})
 
 function goToFavorites() {
   const favoritesListId = isVideoMode.value ? 'list_favorites_video' : 'list_favorites_comic'
@@ -536,6 +546,15 @@ watch(() => modeStore.currentMode, () => {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
+}
+
+.cache-info-group, .clear-options-group {
+  margin-bottom: 16px;
+}
+
+.cache-desc {
+  font-size: 12px;
+  color: #999;
 }
 
 .import-dialog {

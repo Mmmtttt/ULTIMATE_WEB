@@ -414,3 +414,88 @@ def clean_orphan_cache():
     except Exception as e:
         error_logger.error(f"清理孤立缓存失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/cache/clear-specific', methods=['DELETE'])
+def clear_specific_cache():
+    try:
+        from core.constants import CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR
+        
+        data = request.json or {}
+        cache_type = data.get('cache_type', 'all')
+        
+        deleted_count = 0
+        freed_size_bytes = 0
+        
+        def get_dir_size(dir_path):
+            total_size = 0
+            if os.path.exists(dir_path):
+                for dirpath, dirnames, filenames in os.walk(dir_path):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
+                        if os.path.exists(filepath):
+                            total_size += os.path.getsize(filepath)
+            return total_size
+        
+        def clear_directory(dir_path):
+            nonlocal deleted_count, freed_size_bytes
+            if os.path.exists(dir_path):
+                size = get_dir_size(dir_path)
+                freed_size_bytes += size
+                shutil.rmtree(dir_path)
+                os.makedirs(dir_path, exist_ok=True)
+                deleted_count += 1
+        
+        if cache_type == 'all':
+            clear_directory(CACHE_ROOT_DIR)
+            clear_directory(RECOMMENDATION_CACHE_DIR)
+        elif cache_type == 'cache':
+            clear_directory(CACHE_ROOT_DIR)
+        elif cache_type == 'recommendation_cache':
+            clear_directory(RECOMMENDATION_CACHE_DIR)
+        
+        freed_mb = freed_size_bytes / (1024 * 1024)
+        app_logger.info(f"清除特定缓存完成: 类型={cache_type}, 清理 {deleted_count} 个目录, 释放 {freed_mb:.2f} MB")
+        return success_response({
+            "cache_type": cache_type,
+            "deleted_count": deleted_count,
+            "freed_size_bytes": freed_size_bytes,
+            "freed_size_mb": round(freed_mb, 2),
+        }, "缓存清除成功")
+    except Exception as e:
+        error_logger.error(f"清除特定缓存失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/cache/info', methods=['GET'])
+def get_cache_info():
+    try:
+        from core.constants import CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR
+        
+        def get_dir_info(dir_path, label):
+            exists = os.path.exists(dir_path)
+            file_count = 0
+            size_bytes = 0
+            if exists:
+                for dirpath, dirnames, filenames in os.walk(dir_path):
+                    file_count += len(filenames)
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
+                        if os.path.exists(filepath):
+                            size_bytes += os.path.getsize(filepath)
+            return {
+                "label": label,
+                "exists": exists,
+                "file_count": file_count,
+                "size_bytes": size_bytes,
+                "size_mb": round(size_bytes / (1024 * 1024), 2),
+                "description": label
+            }
+        
+        return success_response({
+            "cache": get_dir_info(CACHE_ROOT_DIR, "数据缓存"),
+            "recommendation_cache": get_dir_info(RECOMMENDATION_CACHE_DIR, "预览缓存")
+        })
+    except Exception as e:
+        error_logger.error(f"获取缓存信息失败: {e}")
+        return error_response(500, "服务器内部错误")

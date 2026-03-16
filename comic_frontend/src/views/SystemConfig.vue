@@ -44,6 +44,10 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
+      <van-cell title="第三方平台配置" is-link @click="showThirdPartyConfig = true" />
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
       <van-cell title="数据目录配置" :label="runtimeDataDirLabel" />
       <van-field
         v-model="systemDataDir"
@@ -61,10 +65,6 @@
           保存并迁移 data 目录
         </van-button>
       </div>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell title="第三方平台配置" is-link @click="showThirdPartyConfig = true" />
     </van-cell-group>
 
     <van-popup v-model:show="showThirdPartyConfig" position="bottom" round :style="{ height: '82%' }">

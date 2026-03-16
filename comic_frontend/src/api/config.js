@@ -34,6 +34,14 @@ export const configApi = {
     }
     const normalized = base.startsWith('/') ? base : `/${base}`
     return `${normalized}/v1/config/javdb-cookie-guide`
+  },
+
+  getCacheInfo() {
+    return request.get('/v1/config/cache/info')
+  },
+
+  clearSpecificCache(cacheType) {
+    return request.delete('/v1/config/cache/clear-specific', { data: { cache_type: cacheType } })
   }
 }
 
