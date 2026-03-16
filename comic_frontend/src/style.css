@@ -226,22 +226,53 @@ a {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.van-button--primary {
+.van-button--plain.van-button--primary {
+  color: var(--brand-600);
+  border-color: rgba(47, 116, 255, 0.36);
+  box-shadow: none;
+}
+
+.van-button--plain.van-button--danger {
+  color: var(--danger-500);
+  border-color: rgba(222, 91, 109, 0.34);
+  box-shadow: none;
+}
+
+.van-button--plain.van-button--warning {
+  color: var(--warning-500);
+  border-color: rgba(245, 154, 34, 0.36);
+  box-shadow: none;
+}
+
+.van-button--plain.van-button--success {
+  color: var(--success-500);
+  border-color: rgba(0, 168, 117, 0.34);
+  box-shadow: none;
+}
+
+.van-button--primary:not(.van-button--plain) {
   border: none;
   background: linear-gradient(130deg, var(--brand-500) 0%, var(--brand-600) 75%);
   box-shadow: 0 10px 20px rgba(35, 93, 209, 0.24);
+  color: #fff;
 }
 
-.van-button--danger {
+.van-button--danger:not(.van-button--plain) {
   border: none;
   background: linear-gradient(130deg, #ef7a89 0%, var(--danger-500) 72%);
   box-shadow: 0 10px 20px rgba(222, 91, 109, 0.23);
+  color: #fff;
 }
 
-.van-button--warning {
+.van-button--warning:not(.van-button--plain) {
   border: none;
   background: linear-gradient(130deg, #ffc96d 0%, #f5a21e 80%);
   box-shadow: 0 10px 20px rgba(245, 154, 34, 0.24);
+  color: #fff;
+}
+
+.van-button--success:not(.van-button--plain) {
+  color: #fff;
 }
 
 .van-nav-bar {
@@ -280,6 +311,29 @@ a {
 .van-dialog {
   border-radius: var(--radius-lg);
   overflow: hidden;
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 250, 255, 0.97) 100%);
+  box-shadow: 0 16px 38px rgba(20, 42, 81, 0.18);
+  color: var(--text-primary);
+}
+
+.van-dialog__header {
+  color: var(--text-strong);
+  font-weight: 700;
+}
+
+.van-dialog__content,
+.van-dialog__message {
+  color: var(--text-primary);
+}
+
+.van-dialog__confirm {
+  color: var(--brand-600);
+  font-weight: 700;
+}
+
+.van-dialog__cancel {
+  color: var(--text-secondary);
 }
 
 .media-card,
