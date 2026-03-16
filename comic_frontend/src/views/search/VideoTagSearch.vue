@@ -16,7 +16,17 @@
     </div>
 
     <template v-else>
-      <div class="filters-card">
+      <van-loading v-if="!cookieStatusChecked" class="loading-center" />
+
+      <div v-else-if="!cookieConfigured" class="mode-empty">
+        <EmptyState
+          title="未配置cookie"
+          description="请先在系统配置中填写JAVDB cookie后再使用标签搜索"
+        />
+      </div>
+
+      <template v-else>
+        <div class="filters-card">
         <div class="filter-actions">
           <span class="selected-summary">已选 {{ selectedTagIds.length }} 个标签</span>
           <div class="filter-action-btns">
@@ -79,7 +89,7 @@
         </template>
       </div>
 
-      <div class="results-card">
+        <div class="results-card">
         <div class="results-header">
           <span class="results-title">搜索结果</span>
           <span v-if="searchExecuted" class="results-count">{{ normalizedResults.length }} 项</span>
@@ -144,7 +154,8 @@
             </van-button>
           </div>
         </div>
-      </div>
+        </div>
+      </template>
     </template>
 
     <div v-if="selectedResultIds.length > 0 && isVideoMode" class="floating-import-bar">
@@ -166,7 +177,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useModeStore } from '@/stores'
 import { videoApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const modeStore = useModeStore()
@@ -177,6 +188,8 @@ const loadingTags = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
 const searchExecuted = ref(false)
+const cookieConfigured = ref(false)
+const cookieStatusChecked = ref(false)
 
 const allTags = ref([])
 const categories = ref([])
@@ -225,8 +238,53 @@ const isAllResultsSelected = computed(() => {
   return isAllSelected(selectedResultIds.value, normalizedResults.value, item => getItemId(item))
 })
 
-function switchToVideoMode() {
+async function ensureCookieConfigured(showDialog = false) {
+  try {
+    const res = await videoApi.thirdPartyJavdbCookieStatus()
+    const configured = Boolean(res?.code === 200 && res?.data?.configured)
+    cookieConfigured.value = configured
+    cookieStatusChecked.value = true
+
+    if (!configured) {
+      allTags.value = []
+      categories.value = []
+      activeCategory.value = 'all'
+      selectedTagIds.value = []
+      if (showDialog) {
+        await showConfirmDialog({
+          title: '提示',
+          message: '未配置cookie，请先在系统配置中填写JAVDB cookie',
+          showCancelButton: false,
+          confirmButtonText: '知道了'
+        })
+      }
+    }
+
+    return configured
+  } catch (e) {
+    cookieConfigured.value = false
+    cookieStatusChecked.value = true
+    allTags.value = []
+    categories.value = []
+    activeCategory.value = 'all'
+    selectedTagIds.value = []
+
+    if (showDialog) {
+      await showConfirmDialog({
+        title: '提示',
+        message: e?.message || '未配置cookie，请先在系统配置中填写JAVDB cookie',
+        showCancelButton: false,
+        confirmButtonText: '知道了'
+      })
+    }
+    return false
+  }
+}
+
+async function switchToVideoMode() {
   modeStore.setMode('video')
+  const configured = await ensureCookieConfigured()
+  if (!configured) return
   loadTags()
 }
 
@@ -278,12 +336,20 @@ function toggleSelectAllResults() {
 }
 
 async function loadTags() {
-  if (!isVideoMode.value) return
+  if (!isVideoMode.value || !cookieConfigured.value || !cookieStatusChecked.value) return
 
   loadingTags.value = true
   try {
     const res = await videoApi.thirdPartyJavdbTags()
     if (res.code === 200 && res.data) {
+      if (res.data.cookie_configured === false) {
+        cookieConfigured.value = false
+        allTags.value = []
+        categories.value = []
+        activeCategory.value = 'all'
+        return
+      }
+
       if (res.data.source_ready === false) {
         showToast(res.data.message || 'JAVDB 内置标签库未初始化')
       }
@@ -315,6 +381,11 @@ async function loadTags() {
 }
 
 async function handleSearch() {
+  if (!cookieConfigured.value) {
+    await ensureCookieConfigured(true)
+    return
+  }
+
   if (selectedTagIds.value.length === 0) {
     showToast('请先选择至少一个标签')
     return
@@ -407,7 +478,9 @@ async function confirmImport(target) {
   selectedResultIds.value = []
 }
 
-onMounted(() => {
+onMounted(async () => {
+  const configured = await ensureCookieConfigured()
+  if (!configured) return
   loadTags()
 })
 </script>

@@ -1,6 +1,6 @@
 # ULTIMATE_WEB 全栈功能设计说明书
 
-更新时间：2026-03-15  
+更新时间：2026-03-16  
 适用版本：当前工作区代码（`comic_frontend` + `comic_backend`）
 
 ---
@@ -93,6 +93,7 @@
 | 本地搜索 | `/search` -> 本地库 Tab | 直接调用 store 搜索 | `GlobalSearch.vue` `searchLocal` | 漫画：`/v1/comic/search`; 视频：`/v1/video/search` |
 | 预览库搜索 | `/search` -> 预览库 Tab | 走推荐库 API | `GlobalSearch.vue` `searchPreview` | 漫画：`/v1/recommendation/search`; 视频：`/v1/video/recommendation/search` |
 | 全网搜索 | `/search` -> 全网搜索 Tab | 支持多选、全选、批量导入 | `GlobalSearch.vue` `searchRemote` `toggleSelectAllRemote` `confirmImport` | 漫画：`/v1/comic/search-third-party`；视频：`/v1/video/third-party/search` |
+| JAVDB 标签搜索（视频） | 视频模式 `/search` -> 全网搜索 Tab -> 标签搜索 | 点击入口先检查 cookie，未配置时弹窗提示且不进入标签页；支持多标签组合搜索与导入 | `GlobalSearch.vue` `goToVideoTagSearch`; `VideoTagSearch.vue` `ensureCookieConfigured/loadTags/handleSearch` | `/v1/video/third-party/javdb/cookie-status`; `/v1/video/third-party/javdb/tags`; `/v1/video/third-party/javdb/search-by-tags` |
 | 全网结果跳转 | 点击全网卡片 | 当前为“先导入再查看”策略（提示导入） | `GlobalSearch.vue` `onItemClick` | 无 |
 
 ## 3.5 详情页（漫画/视频/预览）
@@ -277,7 +278,7 @@
 
 ### 7.3 视频与视频推荐
 
-- `videoApi`：`getList/getDetail/filter/search/thirdParty*/play-urls/recommendation/*/trash/*`
+- `videoApi`：`getList/getDetail/filter/search/thirdParty*/thirdPartyJavdbCookieStatus/thirdPartyJavdbTags/thirdPartyJavdbSearchByTags/play-urls/recommendation/*/trash/*`
 - 后端：`api/v1/video.py` + `VideoAppService`
 
 ### 7.4 清单/标签/订阅/配置/备份
@@ -298,4 +299,3 @@
 - 统一筛选项保持四要素：标签、作者/演员、清单、最低评分（漫画可加未读）。
 - 导入相关逻辑优先复用 `ListAppService` 并发与去重策略，避免分散重复实现。
 - 涉及缓存与备份改动时，同时更新 `config.py`、`recommendation_cache_manager.py`、`backup_manager.py` 的联动行为。
-

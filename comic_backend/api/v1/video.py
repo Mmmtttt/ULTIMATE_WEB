@@ -613,6 +613,31 @@ def _is_javdb_tag_search_available(adapter) -> bool:
         return True
 
 
+def _get_javdb_cookie_config_status():
+    """读取 third_party_config.json 中 JAVDB cookies 配置状态。"""
+    from third_party.adapter_factory import AdapterConfig
+
+    config_manager = AdapterConfig()
+    javdb_config = config_manager.get_adapter_config('javdb') or {}
+    cookies = javdb_config.get('cookies') or {}
+
+    normalized_cookies = {}
+    if isinstance(cookies, dict):
+        for raw_key, raw_value in cookies.items():
+            key = str(raw_key or '').strip()
+            value = str(raw_value or '').strip()
+            if key and value:
+                normalized_cookies[key] = value
+
+    cookie_keys = sorted(normalized_cookies.keys())
+    has_session_cookie = bool(normalized_cookies.get("_jdb_session"))
+    return {
+        "configured": has_session_cookie,
+        "cookie_keys": cookie_keys,
+        "has_session_cookie": has_session_cookie
+    }
+
+
 @video_bp.route('/third-party/search', methods=['GET'])
 def third_party_search():
     try:
@@ -682,12 +707,34 @@ def third_party_search():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/third-party/javdb/cookie-status', methods=['GET'])
+def third_party_javdb_cookie_status():
+    """检查 JAVDB cookies 是否已配置。"""
+    try:
+        return success_response(_get_javdb_cookie_config_status())
+    except Exception as e:
+        error_logger.error(f"检查 JAVDB cookies 配置状态失败: {e}")
+        return error_response(500, "server error")
+
+
 @video_bp.route('/third-party/javdb/tags', methods=['GET'])
 def third_party_javdb_tags():
     """获取 JAVDB 内置标签（来自 javdb-api-scraper 的 TagManager）"""
     try:
         keyword = (request.args.get('keyword') or '').strip().lower()
         category_filter = (request.args.get('category') or '').strip().lower()
+        cookie_status = _get_javdb_cookie_config_status()
+
+        if not cookie_status.get("configured"):
+            return success_response({
+                "categories": [],
+                "tags": [],
+                "total": 0,
+                "source_ready": False,
+                "tag_search_available": False,
+                "cookie_configured": False,
+                "message": "未配置cookie，请先在系统配置中填写JAVDB cookie"
+            })
 
         adapter = get_video_adapter('javdb')
         tag_manager = adapter.api.tag_manager
@@ -704,6 +751,7 @@ def third_party_javdb_tags():
                 "total": 0,
                 "source_ready": False,
                 "tag_search_available": tag_search_available,
+                "cookie_configured": True,
                 "message": "JAVDB 内置标签库未初始化（缺少 tags_database.enc）"
             })
 
@@ -753,7 +801,8 @@ def third_party_javdb_tags():
             "tags": tags,
             "total": len(tags),
             "source_ready": True,
-            "tag_search_available": tag_search_available
+            "tag_search_available": tag_search_available,
+            "cookie_configured": True
         })
     except Exception as e:
         error_logger.error(f"获取 JAVDB 内置标签失败: {e}")

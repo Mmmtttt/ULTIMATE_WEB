@@ -69,6 +69,10 @@ export const videoApi = {
     return request.get('/v1/video/third-party/search', { params: { keyword, page, platform } })
   },
 
+  thirdPartyJavdbCookieStatus() {
+    return request.get('/v1/video/third-party/javdb/cookie-status')
+  },
+
   thirdPartyJavdbTags(keyword = '', category = '') {
     return request.get('/v1/video/third-party/javdb/tags', {
       params: {

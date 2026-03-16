@@ -127,7 +127,7 @@ import { useModeStore, useComicStore, useVideoStore, useRecommendationStore, use
 import { videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import { showToast } from 'vant'
+import { showConfirmDialog, showToast } from 'vant'
 import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
@@ -220,8 +220,29 @@ function toggleSelectAllRemote() {
   toggleSelectAll(selectedIds, normalizedResults.value, (item) => getItemId(item))
 }
 
-function goToVideoTagSearch() {
-  router.push('/video-tag-search')
+async function goToVideoTagSearch() {
+  try {
+    const res = await videoApi.thirdPartyJavdbCookieStatus()
+    const configured = Boolean(res?.code === 200 && res?.data?.configured)
+    if (configured) {
+      router.push('/video-tag-search')
+      return
+    }
+
+    await showConfirmDialog({
+      title: '提示',
+      message: '未配置cookie，请先在系统配置中填写JAVDB cookie',
+      showCancelButton: false,
+      confirmButtonText: '知道了'
+    })
+  } catch (e) {
+    await showConfirmDialog({
+      title: '提示',
+      message: e?.message || '未配置cookie，请先在系统配置中填写JAVDB cookie',
+      showCancelButton: false,
+      confirmButtonText: '知道了'
+    })
+  }
 }
 
 function handleImport() {
