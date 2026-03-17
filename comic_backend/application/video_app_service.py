@@ -713,6 +713,24 @@ class VideoAppService(BaseContentAppService):
     def _normalize_preview_source(source: str) -> str:
         return "preview" if str(source or "").strip().lower() == "preview" else "local"
 
+    @staticmethod
+    def _is_preview_import_asset_download_enabled() -> bool:
+        try:
+            from application.config_app_service import ConfigAppService
+
+            result = ConfigAppService().get_config()
+            if not result.success or not isinstance(result.data, dict):
+                return True
+            return bool(result.data.get("auto_download_preview_assets_for_preview_import", True))
+        except Exception as e:
+            app_logger.warning(f"读取预览库资源下载配置失败: {e}")
+            return True
+
+    def _allow_asset_cache_for_source(self, source_key: str) -> bool:
+        if source_key != "preview":
+            return True
+        return self._is_preview_import_asset_download_enabled()
+
     @classmethod
     def _sanitize_preview_video_url(cls, preview_url: str) -> str:
         if not preview_url:
@@ -1011,6 +1029,11 @@ class VideoAppService(BaseContentAppService):
         return best_url
 
     def _download_preview_hls_to_local(self, video_id: str, preview_video_url: str, source: str = "local") -> str:
+        source_key = self._normalize_preview_source(source)
+        if not self._allow_asset_cache_for_source(source_key):
+            app_logger.info(f"预览库资源下载已关闭，终止 HLS 缓存: id={video_id}")
+            return ""
+
         hls_dir, _, playlist_rel = self._build_preview_hls_paths(video_id, source)
         tmp_dir = f"{hls_dir}.tmp"
 
@@ -1060,6 +1083,10 @@ class VideoAppService(BaseContentAppService):
                 if asset_url in asset_cache:
                     return asset_cache[asset_url]
 
+                if not self._allow_asset_cache_for_source(source_key):
+                    app_logger.info(f"预览库资源下载已关闭，终止 HLS 分片缓存: id={video_id}")
+                    return ""
+
                 ext = os.path.splitext(urlparse(asset_url).path or "")[1].lower()
                 if not ext or len(ext) > 8:
                     ext = fallback_ext
@@ -1086,6 +1113,9 @@ class VideoAppService(BaseContentAppService):
                         for chunk in resp.iter_content(chunk_size=256 * 1024):
                             if not chunk:
                                 continue
+                            if not self._allow_asset_cache_for_source(source_key):
+                                app_logger.info(f"预览库资源下载已关闭，终止 HLS 写入: id={video_id}")
+                                return ""
                             written += len(chunk)
                             downloaded_total += len(chunk)
                             if downloaded_total > self.PREVIEW_VIDEO_MAX_BYTES:
@@ -1174,6 +1204,11 @@ class VideoAppService(BaseContentAppService):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _download_preview_video_to_local(self, video_id: str, preview_video_url: str, source: str = "local") -> str:
+        source_key = self._normalize_preview_source(source)
+        if not self._allow_asset_cache_for_source(source_key):
+            app_logger.info(f"预览库资源下载已关闭，终止预览视频缓存: id={video_id}")
+            return ""
+
         sanitized_url = self._sanitize_preview_video_url(preview_video_url)
         if not sanitized_url:
             return ""
@@ -1187,7 +1222,7 @@ class VideoAppService(BaseContentAppService):
 
         lowered = sanitized_url.lower()
         if ".m3u8" in lowered:
-            return self._download_preview_hls_to_local(video_id, sanitized_url, source=source)
+            return self._download_preview_hls_to_local(video_id, sanitized_url, source=source_key)
 
         if not (lowered.startswith("http://") or lowered.startswith("https://")):
             return ""
@@ -1210,7 +1245,7 @@ class VideoAppService(BaseContentAppService):
             content_type = (response.headers.get("content-type", "") or "").lower()
             if "mpegurl" in content_type or "m3u8" in content_type:
                 final_playlist_url = response.url or sanitized_url
-                return self._download_preview_hls_to_local(video_id, final_playlist_url, source=source)
+                return self._download_preview_hls_to_local(video_id, final_playlist_url, source=source_key)
 
             extension = self._guess_preview_video_extension(sanitized_url, content_type)
             if not extension:
@@ -1227,6 +1262,14 @@ class VideoAppService(BaseContentAppService):
                 for chunk in response.iter_content(chunk_size=256 * 1024):
                     if not chunk:
                         continue
+                    if not self._allow_asset_cache_for_source(source_key):
+                        app_logger.info(f"预览库资源下载已关闭，终止预览视频写入: id={video_id}")
+                        f.close()
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+                        return ""
                     downloaded_bytes += len(chunk)
                     if downloaded_bytes > self.PREVIEW_VIDEO_MAX_BYTES:
                         app_logger.warning(f"预览视频过大，跳过缓�? id={video_id}, bytes={downloaded_bytes}")
@@ -1325,6 +1368,10 @@ class VideoAppService(BaseContentAppService):
 
     def cache_preview_video_async(self, video_id: str, preview_video_url: str, source: str = "local"):
         source_key = self._normalize_preview_source(source)
+        if not self._allow_asset_cache_for_source(source_key):
+            app_logger.info(f"预览库资源下载已关闭，跳过预览视频缓存: id={video_id}")
+            return
+
         sanitized_url = self._sanitize_preview_video_url(preview_video_url)
         if not video_id or not sanitized_url:
             return
@@ -1359,6 +1406,10 @@ class VideoAppService(BaseContentAppService):
 
     def cache_cover_to_preview_assets_async(self, video_id: str, cover_url: str, source: str = "local"):
         source_key = self._normalize_preview_source(source)
+        if not self._allow_asset_cache_for_source(source_key):
+            app_logger.info(f"预览库资源下载已关闭，跳过封面缓存: id={video_id}")
+            return
+
         target_url = str(cover_url or "").strip()
         if not video_id or not target_url:
             return
@@ -1406,6 +1457,10 @@ class VideoAppService(BaseContentAppService):
 
     def cache_thumbnail_images_async(self, video_id: str, thumbnail_images: List[str], source: str = "local"):
         source_key = self._normalize_preview_source(source)
+        if not self._allow_asset_cache_for_source(source_key):
+            app_logger.info(f"预览库资源下载已关闭，跳过缩略图缓存: id={video_id}")
+            return
+
         original_images = [str(item or "").strip() for item in (thumbnail_images or [])]
         if not video_id or not original_images:
             return

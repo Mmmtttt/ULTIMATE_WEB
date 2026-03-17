@@ -721,6 +721,7 @@ def _schedule_video_asset_cache(
         return
 
     if not _should_auto_download_preview_assets(source):
+        app_logger.info(f"预览库资源下载已关闭，跳过资源缓存调度: id={video_id}, source={source}")
         return
 
     cover = str(cover_url or "").strip()
