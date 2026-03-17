@@ -1254,6 +1254,24 @@ def get_video_recommendation_detail():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/recommendation/migrate-to-local', methods=['POST'])
+def migrate_video_recommendations_to_local():
+    """Import preview recommendation videos into local library."""
+    try:
+        data = request.json or {}
+        video_ids = data.get('video_ids', [])
+        if not isinstance(video_ids, list) or len(video_ids) == 0:
+            return error_response(400, "missing parameter: video_ids")
+
+        result = video_service.migrate_recommendations_to_local(video_ids)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"migrate recommendation videos to local failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @video_bp.route('/recommendation/score', methods=['PUT'])
 def update_video_recommendation_score():
     """更新推荐视频评分"""

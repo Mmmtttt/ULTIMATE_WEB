@@ -1,14 +1,24 @@
 from typing import List, Optional
 import os
+import shutil
+from domain.comic import Comic, ComicRepository
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
-from infrastructure.persistence.repositories import RecommendationJsonRepository, TagJsonRepository
+from infrastructure.persistence.repositories import RecommendationJsonRepository, TagJsonRepository, ComicJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.platform import get_platform_from_id, get_original_id, Platform, get_platform_image_url
+from core.constants import (
+    JM_PICTURES_DIR,
+    PK_PICTURES_DIR,
+    JM_RECOMMENDATION_CACHE_DIR,
+    PK_RECOMMENDATION_CACHE_DIR,
+)
+from third_party.platform_service import get_platform_service
 from third_party.adapter_factory import AdapterFactory, AdapterConfig
+from utils.file_parser import file_parser
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
@@ -19,10 +29,13 @@ class RecommendationAppService:
     def __init__(
         self,
         recommendation_repo: RecommendationRepository = None,
-        tag_repo: TagRepository = None
+        tag_repo: TagRepository = None,
+        comic_repo: ComicRepository = None
     ):
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
+        self._comic_repo = comic_repo or ComicJsonRepository()
+        self._platform_service = get_platform_service()
     
     def get_recommendation_list(
         self,
@@ -229,6 +242,198 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"更新推荐总页数失败: {e}")
             return ServiceResult.error("更新推荐总页数失败")
+
+    def _get_local_comic_dir(self, recommendation: Recommendation) -> Optional[str]:
+        platform = get_platform_from_id(recommendation.id)
+        if platform not in (Platform.JM, Platform.PK):
+            return None
+
+        base_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
+        original_id = get_original_id(recommendation.id)
+        return self._platform_service.get_comic_dir(
+            platform,
+            original_id,
+            recommendation.author or None,
+            recommendation.title or None,
+            base_dir=base_dir
+        )
+
+    def _get_local_total_page(self, comic_id: str) -> int:
+        image_paths = file_parser.parse_comic_images(comic_id)
+        return len(image_paths)
+
+    def _migrate_cached_content_to_local(self, recommendation: Recommendation) -> dict:
+        cache_dir = recommendation_cache_manager.get_cache_dir(recommendation.id)
+        if not cache_dir:
+            return {"success": False, "reason": "cache_not_found"}
+
+        platform = get_platform_from_id(recommendation.id)
+        local_dir = None
+        try:
+            if platform == Platform.JM:
+                relative_path = os.path.relpath(cache_dir, JM_RECOMMENDATION_CACHE_DIR)
+                local_dir = os.path.join(JM_PICTURES_DIR, relative_path)
+            elif platform == Platform.PK:
+                relative_path = os.path.relpath(cache_dir, PK_RECOMMENDATION_CACHE_DIR)
+                local_dir = os.path.join(PK_PICTURES_DIR, relative_path)
+        except Exception:
+            local_dir = None
+
+        if not local_dir:
+            local_dir = self._get_local_comic_dir(recommendation)
+        if not local_dir:
+            return {"success": False, "reason": "unsupported_platform"}
+
+        os.makedirs(os.path.dirname(local_dir), exist_ok=True)
+        shutil.copytree(cache_dir, local_dir, dirs_exist_ok=True)
+
+        total_page = self._get_local_total_page(recommendation.id)
+        if total_page <= 0:
+            total_page = len(recommendation_cache_manager.get_cached_pages(recommendation.id))
+
+        return {
+            "success": total_page > 0,
+            "source": "cache",
+            "total_page": total_page
+        }
+
+    def _download_content_to_local(self, recommendation: Recommendation) -> dict:
+        platform = get_platform_from_id(recommendation.id)
+        if platform not in (Platform.JM, Platform.PK):
+            return {"success": False, "reason": "unsupported_platform"}
+
+        original_id = get_original_id(recommendation.id)
+        download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
+        download_kwargs = {"decode_images": True} if platform == Platform.JM else {}
+
+        detail, success = self._platform_service.download_album(
+            platform,
+            original_id,
+            download_dir=download_dir,
+            show_progress=False,
+            **download_kwargs
+        )
+        if not success:
+            return {"success": False, "reason": "download_failed"}
+
+        total_page = normalize_total_page(
+            detail.get("local_pages", detail.get("pages_count", 0)),
+            default=0
+        )
+        if total_page <= 0:
+            total_page = self._get_local_total_page(recommendation.id)
+
+        return {
+            "success": total_page > 0,
+            "source": "download",
+            "total_page": total_page
+        }
+
+    def migrate_to_local(self, recommendation_ids: List[str]) -> ServiceResult:
+        """Migrate preview recommendations into local comic library."""
+        try:
+            if not recommendation_ids:
+                return ServiceResult.error("recommendation_ids is required")
+
+            imported_count = 0
+            skipped_count = 0
+            failed_count = 0
+            imported_ids = []
+            skipped_ids = []
+            failed_items = []
+
+            for recommendation_id in recommendation_ids:
+                try:
+                    recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+                    if not recommendation or recommendation.is_deleted:
+                        skipped_count += 1
+                        skipped_ids.append(recommendation_id)
+                        continue
+
+                    if self._comic_repo.get_by_id(recommendation_id):
+                        skipped_count += 1
+                        skipped_ids.append(recommendation_id)
+                        continue
+
+                    if recommendation_cache_manager.is_cached(recommendation_id):
+                        content_result = self._migrate_cached_content_to_local(recommendation)
+                    else:
+                        content_result = self._download_content_to_local(recommendation)
+
+                    if not content_result.get("success"):
+                        failed_count += 1
+                        failed_items.append({
+                            "id": recommendation_id,
+                            "reason": content_result.get("reason", "content_migrate_failed")
+                        })
+                        continue
+
+                    total_page = normalize_total_page(
+                        content_result.get("total_page", 0),
+                        default=normalize_total_page(recommendation.total_page, default=0)
+                    )
+                    if total_page <= 0:
+                        total_page = 1
+
+                    current_page = normalize_total_page(recommendation.current_page, default=1)
+                    current_page = min(max(1, current_page), total_page)
+
+                    create_time = recommendation.create_time or get_current_time()
+                    last_read_time = recommendation.last_read_time or create_time
+
+                    local_comic = Comic(
+                        id=recommendation.id,
+                        title=recommendation.title or "",
+                        title_jp=recommendation.title_jp or "",
+                        creator=recommendation.author or "",
+                        desc=recommendation.desc or "",
+                        cover_path=recommendation.cover_path or "",
+                        total_units=total_page,
+                        current_unit=current_page,
+                        score=recommendation.score,
+                        tag_ids=list(recommendation.tag_ids or []),
+                        list_ids=list(recommendation.list_ids or []),
+                        create_time=create_time,
+                        last_access_time=last_read_time,
+                        is_deleted=False
+                    )
+
+                    if not self._comic_repo.save(local_comic):
+                        failed_count += 1
+                        failed_items.append({
+                            "id": recommendation_id,
+                            "reason": "save_local_failed"
+                        })
+                        continue
+
+                    imported_count += 1
+                    imported_ids.append(recommendation_id)
+                except Exception as item_error:
+                    failed_count += 1
+                    failed_items.append({
+                        "id": recommendation_id,
+                        "reason": str(item_error)
+                    })
+                    error_logger.error(f"migrate recommendation failed: {recommendation_id}, {item_error}")
+
+            app_logger.info(
+                f"migrate recommendations to local finished: imported={imported_count}, "
+                f"skipped={skipped_count}, failed={failed_count}"
+            )
+            return ServiceResult.ok(
+                {
+                    "imported_count": imported_count,
+                    "skipped_count": skipped_count,
+                    "failed_count": failed_count,
+                    "imported_ids": imported_ids,
+                    "skipped_ids": skipped_ids,
+                    "failed_items": failed_items
+                },
+                f"导入完成：成功 {imported_count}，跳过 {skipped_count}，失败 {failed_count}"
+            )
+        except Exception as e:
+            error_logger.error(f"migrate recommendations to local failed: {e}")
+            return ServiceResult.error("导入本地库失败")
 
     def update_score(self, recommendation_id: str, score: float) -> ServiceResult:
         """更新评分"""
@@ -645,4 +850,3 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"批量永久删除失败: {e}")
             return ServiceResult.error("批量永久删除失败")
-

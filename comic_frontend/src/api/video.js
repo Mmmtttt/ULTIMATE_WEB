@@ -164,6 +164,10 @@ export const videoApi = {
   batchMoveVideoRecommendationToTrash(videoIds) {
     return request.put('/v1/video/recommendation/trash/batch-move', { video_ids: videoIds })
   },
+
+  migrateRecommendationToLocal(videoIds) {
+    return request.post('/v1/video/recommendation/migrate-to-local', { video_ids: videoIds })
+  },
   
   getVideoRecommendationTrashList() {
     return request.get('/v1/video/recommendation/trash/list')

@@ -66,8 +66,8 @@
           <van-button size="small" plain @click="toggleSelectAllItems">
             {{ isAllItemsSelected ? '取消全选' : '全选' }}
           </van-button>
-          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="batchSave">
-            批量保存
+          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="batchImportToLocal">
+            导入本地库
           </van-button>
           <van-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="batchTrash">
             移入回收站
@@ -140,7 +140,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore } from '@/stores'
-import { recommendationApi } from '@/api'
+import { recommendationApi, videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
@@ -315,8 +315,31 @@ async function toggleSave(item) {
   }
 }
 
-async function batchSave() {
-  showToast('Batch save')
+async function batchImportToLocal() {
+  if (selectedIds.value.length === 0) return
+
+  let res
+  if (isVideoMode.value) {
+    res = await videoApi.migrateRecommendationToLocal(selectedIds.value)
+  } else {
+    res = await recommendationApi.migrateToLocal(selectedIds.value)
+  }
+
+  if (!res || res.code !== 200) {
+    showToast(res?.msg || '导入本地库失败')
+    return
+  }
+
+  const stats = res.data || {}
+  const importedCount = Number(stats.imported_count || 0)
+  const skippedCount = Number(stats.skipped_count || 0)
+  const failedCount = Number(stats.failed_count || 0)
+
+  showToast(`导入完成：成功 ${importedCount}，跳过 ${skippedCount}，失败 ${failedCount}`)
+
+  selectedIds.value = []
+  isManageMode.value = false
+  await loadData(true)
 }
 
 async function batchTrash() {

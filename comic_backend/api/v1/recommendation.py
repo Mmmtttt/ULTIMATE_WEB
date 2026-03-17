@@ -312,6 +312,24 @@ def get_recommendation_images():
         return error_response(500, "服务器内部错误")
 
 
+@recommendation_bp.route('/migrate-to-local', methods=['POST'])
+def migrate_recommendations_to_local():
+    """Import preview recommendations into local comic library."""
+    try:
+        data = request.json or {}
+        recommendation_ids = data.get('recommendation_ids', [])
+        if not isinstance(recommendation_ids, list) or len(recommendation_ids) == 0:
+            return error_response(400, "missing parameter: recommendation_ids")
+
+        result = recommendation_service.migrate_to_local(recommendation_ids)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"migrate recommendations to local failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @recommendation_bp.route('/cache/download', methods=['POST'])
 def download_to_cache():
     """下载推荐漫画到缓存"""

@@ -11,7 +11,7 @@ from io import BytesIO
 from PIL import Image
 
 from domain.video import Video, VideoRepository
-from domain.video_recommendation import VideoRecommendationRepository
+from domain.video_recommendation import VideoRecommendationRepository, VideoRecommendation
 from domain.tag import Tag, TagRepository
 from domain.actor import ActorSubscription, ActorRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
@@ -328,6 +328,144 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"导入视频失败: {e}")
             return ServiceResult.error("导入失败")
     
+    @staticmethod
+    def _normalize_code_for_compare(code: str) -> str:
+        raw = str(code or "").upper()
+        return "".join(ch for ch in raw if ch.isalnum())
+
+    def _find_local_video_duplicate(self, video_id: str, code: str) -> Optional[str]:
+        if video_id and self._video_repo.get_by_id(video_id):
+            return video_id
+
+        normalized_code = self._normalize_code_for_compare(code)
+        if not normalized_code:
+            return None
+
+        for local_video in self._video_repo.get_all():
+            if self._normalize_code_for_compare(local_video.code) == normalized_code:
+                return local_video.id
+        return None
+
+    def _migrate_recommendation_assets_to_local(self, recommendation_video: VideoRecommendation, local_video: Video) -> dict:
+        """
+        Asset migration extension point.
+        For now preview/local video do not persist playable files, so keep as no-op.
+        """
+        return {
+            "success": True,
+            "handled": False,
+            "strategy": "reserved"
+        }
+
+    def migrate_recommendations_to_local(self, video_ids: List[str]) -> ServiceResult:
+        try:
+            if not video_ids:
+                return ServiceResult.error("video_ids is required")
+
+            imported_count = 0
+            skipped_count = 0
+            failed_count = 0
+            imported_ids = []
+            skipped_items = []
+            failed_items = []
+
+            for video_id in video_ids:
+                try:
+                    recommendation_video = self._video_rec_repo.get_by_id(video_id)
+                    if not recommendation_video or recommendation_video.is_deleted:
+                        skipped_count += 1
+                        skipped_items.append({
+                            "id": video_id,
+                            "reason": "not_found_or_deleted"
+                        })
+                        continue
+
+                    duplicate_id = self._find_local_video_duplicate(
+                        recommendation_video.id,
+                        recommendation_video.code
+                    )
+                    if duplicate_id:
+                        skipped_count += 1
+                        skipped_items.append({
+                            "id": video_id,
+                            "reason": "duplicate_in_local",
+                            "duplicate_id": duplicate_id
+                        })
+                        continue
+
+                    create_time = recommendation_video.create_time or get_current_time()
+                    last_access_time = recommendation_video.last_access_time or create_time
+
+                    local_video = Video(
+                        id=recommendation_video.id,
+                        title=recommendation_video.title or "",
+                        title_jp=recommendation_video.title_jp or "",
+                        creator=recommendation_video.creator or "",
+                        desc=recommendation_video.desc or "",
+                        cover_path=recommendation_video.cover_path or "",
+                        total_units=recommendation_video.total_units or 0,
+                        current_unit=max(1, recommendation_video.current_unit or 1),
+                        score=recommendation_video.score,
+                        tag_ids=list(recommendation_video.tag_ids or []),
+                        list_ids=list(recommendation_video.list_ids or []),
+                        create_time=create_time,
+                        last_access_time=last_access_time,
+                        is_deleted=False,
+                        code=recommendation_video.code or "",
+                        date=recommendation_video.date or "",
+                        series=recommendation_video.series or "",
+                        magnets=list(recommendation_video.magnets or []),
+                        thumbnail_images=list(recommendation_video.thumbnail_images or []),
+                        preview_video=recommendation_video.preview_video or ""
+                    )
+                    local_video.actors = list(recommendation_video.actors or [])
+
+                    assets_result = self._migrate_recommendation_assets_to_local(recommendation_video, local_video)
+                    if not assets_result.get("success"):
+                        failed_count += 1
+                        failed_items.append({
+                            "id": video_id,
+                            "reason": assets_result.get("reason", "asset_migrate_failed")
+                        })
+                        continue
+
+                    if not self._video_repo.save(local_video):
+                        failed_count += 1
+                        failed_items.append({
+                            "id": video_id,
+                            "reason": "save_local_failed"
+                        })
+                        continue
+
+                    imported_count += 1
+                    imported_ids.append(video_id)
+                except Exception as item_error:
+                    failed_count += 1
+                    failed_items.append({
+                        "id": video_id,
+                        "reason": str(item_error)
+                    })
+                    error_logger.error(f"migrate recommendation video failed: {video_id}, {item_error}")
+
+            app_logger.info(
+                f"migrate recommendation videos to local finished: imported={imported_count}, "
+                f"skipped={skipped_count}, failed={failed_count}"
+            )
+            return ServiceResult.ok(
+                {
+                    "imported_count": imported_count,
+                    "skipped_count": skipped_count,
+                    "failed_count": failed_count,
+                    "imported_ids": imported_ids,
+                    "skipped_items": skipped_items,
+                    "failed_items": failed_items
+                },
+                f"导入完成：成功 {imported_count}，跳过 {skipped_count}，失败 {failed_count}"
+            )
+        except Exception as e:
+            error_logger.error(f"migrate recommendation videos to local failed: {e}")
+            return ServiceResult.error("导入本地库失败")
+
     def get_trash_list(self) -> ServiceResult:
         try:
             videos = self._video_repo.get_all()

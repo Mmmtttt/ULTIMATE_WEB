@@ -488,6 +488,13 @@ class RecommendationCacheManager:
         image_paths = self._get_all_image_paths(comic_dir)
         
         return list(range(1, len(image_paths) + 1))
+
+    def get_cache_dir(self, comic_id: str) -> Optional[str]:
+        """Return the cache directory path when the comic cache exists."""
+        comic_dir = self._get_comic_cache_dir(comic_id)
+        if os.path.exists(comic_dir):
+            return comic_dir
+        return None
     
     def get_cache_stats(self) -> Dict:
         """获取缓存统计信息

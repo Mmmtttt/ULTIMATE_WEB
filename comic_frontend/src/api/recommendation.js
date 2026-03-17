@@ -149,6 +149,12 @@ export const recommendationApi = {
     })
   },
 
+  migrateToLocal: (recommendationIds) => {
+    return request.post('/v1/recommendation/migrate-to-local', {
+      recommendation_ids: recommendationIds
+    })
+  },
+
   /**
    * 添加推荐漫画
    * @param {object} data - 漫画数据
