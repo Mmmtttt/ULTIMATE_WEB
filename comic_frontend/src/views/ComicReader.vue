@@ -34,6 +34,10 @@
         :style="getContainerStyle"
         @scroll="handleScroll"
         @wheel="handleWheel"
+        @touchstart="handleReaderTouchStart"
+        @touchmove="handleReaderTouchMove"
+        @touchend="handleReaderTouchEnd"
+        @touchcancel="handleReaderTouchEnd"
       >
         <div class="page-track page-track-horizontal" :style="getContentStyle">
           <div 
@@ -49,7 +53,6 @@
               draggable="false"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
-              @touchstart="startTouchDrag($event, index)"
             />
           </div>
         </div>
@@ -63,6 +66,10 @@
         :style="getContainerStyle"
         @scroll="handleScroll"
         @wheel="handleWheel"
+        @touchstart="handleReaderTouchStart"
+        @touchmove="handleReaderTouchMove"
+        @touchend="handleReaderTouchEnd"
+        @touchcancel="handleReaderTouchEnd"
       >
         <div class="page-track page-track-vertical" :style="getContentStyle">
           <div 
@@ -78,7 +85,6 @@
               draggable="false"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
-              @touchstart="startTouchDrag($event, index)"
             />
           </div>
         </div>
@@ -196,6 +202,14 @@ const zoomDragStartY = ref(0)
 const zoomDragStartPanX = ref(0)
 const zoomDragStartPanY = ref(0)
 const lastTouchDistance = ref(0)
+const touchPanActive = ref(false)
+const touchPanStartX = ref(0)
+const touchPanStartY = ref(0)
+const touchPanStartPanX = ref(0)
+const touchPanStartPanY = ref(0)
+const touchPinchLastDistance = ref(0)
+const touchPinchLastCenterX = ref(0)
+const touchPinchLastCenterY = ref(0)
 
 const isDragging = ref(false)
 const dragStartX = ref(0)
@@ -260,9 +274,64 @@ const getContentStyle = computed(() => {
 
   return {
     transform: `translate3d(${panX.value}px, ${panY.value}px, 0) scale(${zoomLevel.value})`,
-    transformOrigin: pageMode.value === 'left_right' ? 'left top' : 'center top'
+    transformOrigin: 'left top'
   }
 })
+
+const getTouchDistance = (touch1, touch2) =>
+  Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY)
+
+const getTouchCenterPoint = (touch1, touch2, container) => {
+  const centerX = (touch1.clientX + touch2.clientX) / 2
+  const centerY = (touch1.clientY + touch2.clientY) / 2
+  if (!container || typeof container.getBoundingClientRect !== 'function') {
+    return { x: centerX, y: centerY }
+  }
+  const rect = container.getBoundingClientRect()
+  const scrollX =
+    typeof container.scrollLeft === 'number'
+      ? container.scrollLeft
+      : typeof window !== 'undefined'
+        ? window.scrollX || 0
+        : 0
+  const scrollY =
+    typeof container.scrollTop === 'number'
+      ? container.scrollTop
+      : typeof window !== 'undefined'
+        ? window.scrollY || 0
+        : 0
+  return {
+    x: centerX - rect.left + scrollX,
+    y: centerY - rect.top + scrollY
+  }
+}
+
+const applyPinchAtPoint = (distance, centerX, centerY) => {
+  if (distance <= 0) return
+  if (touchPinchLastDistance.value <= 0) {
+    touchPinchLastDistance.value = distance
+    touchPinchLastCenterX.value = centerX
+    touchPinchLastCenterY.value = centerY
+    return
+  }
+
+  const prevZoom = zoomLevel.value
+  if (!Number.isFinite(prevZoom) || prevZoom <= 0) return
+
+  const scaleDelta = distance / touchPinchLastDistance.value
+  const nextZoom = Math.max(1, Math.min(5, Number((prevZoom * scaleDelta).toFixed(3))))
+  const appliedScale = nextZoom / prevZoom
+  const centerDeltaX = centerX - touchPinchLastCenterX.value
+  const centerDeltaY = centerY - touchPinchLastCenterY.value
+
+  panX.value = centerX - (centerX - panX.value) * appliedScale + centerDeltaX
+  panY.value = centerY - (centerY - panY.value) * appliedScale + centerDeltaY
+  applyZoomLevel(nextZoom)
+
+  touchPinchLastDistance.value = distance
+  touchPinchLastCenterX.value = centerX
+  touchPinchLastCenterY.value = centerY
+}
 
 const resetZoomState = () => {
   zoomLevel.value = 1
@@ -680,6 +749,81 @@ const handleWheel = (event) => {
   }
 }
 
+const handleReaderTouchStart = (event) => {
+  if (!supportsTouch.value || isZoomMode.value) return
+
+  if (event.touches.length === 2) {
+    event.preventDefault()
+    touchPanActive.value = false
+    const container = activeContainer.value || readerContent.value
+    const center = getTouchCenterPoint(event.touches[0], event.touches[1], container)
+    touchPinchLastDistance.value = getTouchDistance(event.touches[0], event.touches[1])
+    touchPinchLastCenterX.value = center.x
+    touchPinchLastCenterY.value = center.y
+    return
+  }
+
+  if (event.touches.length === 1 && zoomLevel.value > 1) {
+    event.preventDefault()
+    const touch = event.touches[0]
+    touchPanActive.value = true
+    touchPanStartX.value = touch.clientX
+    touchPanStartY.value = touch.clientY
+    touchPanStartPanX.value = panX.value
+    touchPanStartPanY.value = panY.value
+  }
+}
+
+const handleReaderTouchMove = (event) => {
+  if (!supportsTouch.value || isZoomMode.value) return
+
+  if (event.touches.length === 2) {
+    event.preventDefault()
+    const container = activeContainer.value || readerContent.value
+    const center = getTouchCenterPoint(event.touches[0], event.touches[1], container)
+    const distance = getTouchDistance(event.touches[0], event.touches[1])
+    applyPinchAtPoint(distance, center.x, center.y)
+    touchPanActive.value = false
+    return
+  }
+
+  if (event.touches.length === 1 && zoomLevel.value > 1) {
+    event.preventDefault()
+    const touch = event.touches[0]
+    if (!touchPanActive.value) {
+      touchPanActive.value = true
+      touchPanStartX.value = touch.clientX
+      touchPanStartY.value = touch.clientY
+      touchPanStartPanX.value = panX.value
+      touchPanStartPanY.value = panY.value
+      return
+    }
+
+    panX.value = touchPanStartPanX.value + (touch.clientX - touchPanStartX.value)
+    panY.value = touchPanStartPanY.value + (touch.clientY - touchPanStartY.value)
+  }
+}
+
+const handleReaderTouchEnd = (event) => {
+  if (!supportsTouch.value || isZoomMode.value) return
+
+  if (event.touches.length === 1 && zoomLevel.value > 1) {
+    const touch = event.touches[0]
+    touchPanActive.value = true
+    touchPanStartX.value = touch.clientX
+    touchPanStartY.value = touch.clientY
+    touchPanStartPanX.value = panX.value
+    touchPanStartPanY.value = panY.value
+    touchPinchLastDistance.value = 0
+    return
+  }
+
+  touchPanActive.value = false
+  touchPinchLastDistance.value = 0
+  touchPinchLastCenterX.value = 0
+  touchPinchLastCenterY.value = 0
+}
+
 const startDrag = (event) => {
   if (event.button !== 0) return
 
@@ -834,12 +978,15 @@ const startZoomTouch = (event) => {
   if (!supportsTouch.value) return
 
   if (event.touches.length === 2) {
+    event.preventDefault()
     const touch1 = event.touches[0]
     const touch2 = event.touches[1]
-    lastTouchDistance.value = Math.hypot(
-      touch2.clientX - touch1.clientX,
-      touch2.clientY - touch1.clientY
-    )
+    const center = getTouchCenterPoint(touch1, touch2, event.currentTarget)
+    const distance = getTouchDistance(touch1, touch2)
+    touchPinchLastDistance.value = distance
+    touchPinchLastCenterX.value = center.x
+    touchPinchLastCenterY.value = center.y
+    lastTouchDistance.value = distance
   } else if (event.touches.length === 1 && zoomLevel.value > 1) {
     isZoomDragging.value = true
     zoomDragStartX.value = event.touches[0].clientX
@@ -856,16 +1003,9 @@ const handleZoomTouchMove = (event) => {
     event.preventDefault()
     const touch1 = event.touches[0]
     const touch2 = event.touches[1]
-    const distance = Math.hypot(
-      touch2.clientX - touch1.clientX,
-      touch2.clientY - touch1.clientY
-    )
-
-    if (lastTouchDistance.value > 0) {
-      const scale = distance / lastTouchDistance.value
-      applyZoomLevel(zoomLevel.value * scale)
-    }
-
+    const center = getTouchCenterPoint(touch1, touch2, event.currentTarget)
+    const distance = getTouchDistance(touch1, touch2)
+    applyPinchAtPoint(distance, center.x, center.y)
     lastTouchDistance.value = distance
   } else if (event.touches.length === 1 && zoomLevel.value > 1) {
     event.preventDefault()
@@ -889,6 +1029,9 @@ const handleZoomTouchMove = (event) => {
 const endZoomTouch = () => {
   lastTouchDistance.value = 0
   isZoomDragging.value = false
+  touchPinchLastDistance.value = 0
+  touchPinchLastCenterX.value = 0
+  touchPinchLastCenterY.value = 0
 }
 
 const handleZoomWheel = (event) => {
