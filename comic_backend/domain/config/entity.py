@@ -44,6 +44,7 @@ class UserConfig:
     default_background: str = "white"
     auto_hide_toolbar: bool = True
     show_page_number: bool = True
+    auto_download_preview_assets_for_preview_import: bool = True
     cache_config: CacheConfig = None
     
     def __post_init__(self):
@@ -66,6 +67,10 @@ class UserConfig:
             default_background=data.get("default_background", "white"),
             auto_hide_toolbar=data.get("auto_hide_toolbar", True),
             show_page_number=data.get("show_page_number", True),
+            auto_download_preview_assets_for_preview_import=data.get(
+                "auto_download_preview_assets_for_preview_import",
+                True
+            ),
             cache_config=cache_config
         )
     
@@ -75,6 +80,7 @@ class UserConfig:
             "default_background": self.default_background,
             "auto_hide_toolbar": self.auto_hide_toolbar,
             "show_page_number": self.show_page_number,
+            "auto_download_preview_assets_for_preview_import": self.auto_download_preview_assets_for_preview_import,
             "cache_config": self.cache_config.to_dict() if self.cache_config else CacheConfig().to_dict()
         }
     
@@ -96,6 +102,11 @@ class UserConfig:
         
         if 'show_page_number' in kwargs:
             self.show_page_number = bool(kwargs['show_page_number'])
+
+        if 'auto_download_preview_assets_for_preview_import' in kwargs:
+            self.auto_download_preview_assets_for_preview_import = bool(
+                kwargs['auto_download_preview_assets_for_preview_import']
+            )
         
         if 'cache_config' in kwargs:
             cache_config_data = kwargs['cache_config']
@@ -112,6 +123,7 @@ class UserConfig:
         self.default_background = "white"
         self.auto_hide_toolbar = True
         self.show_page_number = True
+        self.auto_download_preview_assets_for_preview_import = True
         self.cache_config = CacheConfig()
 
 

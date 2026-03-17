@@ -919,8 +919,8 @@ class ListAppService:
         try:
             from core.platform import add_platform_prefix
             from application.tag_app_service import TagAppService
+            from application.config_app_service import ConfigAppService
             from domain.tag.entity import ContentType
-            from core.constants import JAV_PICTURES_DIR, JAV_COVER_DIR
             from application.video_app_service import VideoAppService
             import re
             
@@ -937,6 +937,17 @@ class ListAppService:
             imported_count = 0
             skipped_count = 0
             imported_video_ids: ListType[str] = []
+            auto_download_preview_assets = True
+
+            if source != "local":
+                try:
+                    config_result = ConfigAppService().get_config()
+                    if config_result.success and isinstance(config_result.data, dict):
+                        auto_download_preview_assets = bool(
+                            config_result.data.get("auto_download_preview_assets_for_preview_import", True)
+                        )
+                except Exception as e:
+                    app_logger.warning(f"读取预览库导入下载配置失败: {e}")
             
             platform_service = get_platform_service()
             detail_tasks: ListType[dict] = []
@@ -1049,6 +1060,7 @@ class ListAppService:
                     "magnets": video_detail.get("magnets", []),
                     "thumbnail_images": video_detail.get("thumbnail_images", []),
                     "preview_video": video_detail.get("preview_video", ""),
+                    "cover_path": video_detail.get("cover_url", ""),
                     "tag_ids": video_tag_ids,
                     "list_ids": [target_list_id],
                     "create_time": get_current_time(),
@@ -1073,14 +1085,19 @@ class ListAppService:
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
                         app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if cover_url:
+                        if auto_download_preview_assets and cover_url:
                             app_logger.info(f"开始下载封面: {prefixed_id}")
-                            video_service.download_cover_async(prefixed_id, cover_url)
-                            video_service.download_high_quality_thumbnail_async(
-                                prefixed_id, cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR
-                            )
+                            video_service.cache_cover_to_preview_assets_async(prefixed_id, cover_url, source="local")
                         else:
                             app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
+
+                        thumbnail_images = video_data.get("thumbnail_images", [])
+                        if thumbnail_images:
+                            video_service.cache_thumbnail_images_async(prefixed_id, thumbnail_images, source="local")
+
+                        preview_video = video_data.get("preview_video", "")
+                        if preview_video and not str(prefixed_id or "").upper().startswith("JAVBUS"):
+                            video_service.cache_preview_video_async(prefixed_id, preview_video, source="local")
                     else:
                         skipped_count += 1
                 else:
@@ -1111,11 +1128,20 @@ class ListAppService:
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
                         app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if cover_url:
+                        if auto_download_preview_assets and cover_url:
                             app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                            video_service.download_cover_async_for_recommendation(prefixed_id, cover_url, JAV_COVER_DIR)
+                            video_service.cache_cover_to_preview_assets_async(prefixed_id, cover_url, source="preview")
                         else:
                             app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
+
+                        if auto_download_preview_assets:
+                            thumbnail_images = video_data.get("thumbnail_images", [])
+                            if thumbnail_images:
+                                video_service.cache_thumbnail_images_async(prefixed_id, thumbnail_images, source="preview")
+
+                            preview_video = video_data.get("preview_video", "")
+                            if preview_video and not str(prefixed_id or "").upper().startswith("JAVBUS"):
+                                video_service.cache_preview_video_async(prefixed_id, preview_video, source="preview")
                     else:
                         skipped_count += 1
 
@@ -1474,3 +1500,4 @@ class ListAppService:
             import traceback
             error_logger.error(traceback.format_exc())
             return ServiceResult.error(f"同步平台收藏夹失败: {e}")
+

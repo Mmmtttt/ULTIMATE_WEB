@@ -3,6 +3,7 @@
 """
 
 from typing import List, Dict, Optional
+import base64
 import os
 import re
 import shutil
@@ -10,7 +11,7 @@ import threading
 import json
 import requests
 from io import BytesIO
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, unquote
 from PIL import Image
 
 from domain.video import Video, VideoRepository
@@ -34,10 +35,13 @@ class VideoAppService(BaseContentAppService):
     _entity_name = "视频"
     _cache_manager = CacheManager()
     RECENT_IMPORT_TAG_ID = "tag_video_recent_import"
-    RECENT_IMPORT_TAG_NAME = "�������"
+    RECENT_IMPORT_TAG_NAME = "最近导入"
     PREVIEW_VIDEO_DIR_NAME = "preview_video"
+    PREVIEW_ASSET_COVER_NAME = "cover.jpg"
     PREVIEW_VIDEO_MAX_BYTES = 180 * 1024 * 1024
     PREVIEW_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
+    _asset_download_lock = threading.Lock()
+    _asset_download_tasks = set()
     
     def __init__(
         self,
@@ -285,9 +289,18 @@ class VideoAppService(BaseContentAppService):
             except Exception as e:
                 error_logger.error(f"删除视频目录失败: {e}")
 
+        self._remove_preview_video_file(getattr(video, "cover_path", ""))
         self._remove_preview_video_file(getattr(video, "preview_video", ""))
+        for thumb_url in getattr(video, "thumbnail_images", []) or []:
+            self._remove_preview_video_file(thumb_url)
     
-    def delete_recommendation_assets(self, video_id: str, preview_video: str = ""):
+    def delete_recommendation_assets(
+        self,
+        video_id: str,
+        preview_video: str = "",
+        cover_path: str = "",
+        thumbnail_images: Optional[List[str]] = None,
+    ):
         jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video_id}.jpg")
         if os.path.exists(jav_cover_path):
             try:
@@ -304,6 +317,10 @@ class VideoAppService(BaseContentAppService):
 
         if preview_video:
             self._remove_preview_video_file(preview_video)
+        if cover_path:
+            self._remove_preview_video_file(cover_path)
+        for thumb_url in thumbnail_images or []:
+            self._remove_preview_video_file(thumb_url)
     
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
@@ -447,6 +464,27 @@ class VideoAppService(BaseContentAppService):
                             "reason": "save_local_failed"
                         })
                         continue
+
+                    if local_video.cover_path:
+                        self.cache_cover_to_preview_assets_async(
+                            local_video.id,
+                            local_video.cover_path,
+                            source="local"
+                        )
+
+                    if local_video.thumbnail_images:
+                        self.cache_thumbnail_images_async(
+                            local_video.id,
+                            local_video.thumbnail_images,
+                            source="local"
+                        )
+
+                    if local_video.preview_video and not str(local_video.id or "").upper().startswith("JAVBUS"):
+                        self.cache_preview_video_async(
+                            local_video.id,
+                            local_video.preview_video,
+                            source="local"
+                        )
 
                     imported_count += 1
                     imported_ids.append(video_id)
@@ -705,6 +743,88 @@ class VideoAppService(BaseContentAppService):
 
         return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
 
+    @staticmethod
+    def _decode_proxy_url_value(raw_value: str) -> str:
+        raw = str(raw_value or "").strip()
+        if not raw:
+            return ""
+
+        for candidate in (raw, unquote(raw)):
+            value = candidate.strip()
+            if not value:
+                continue
+
+            padded = value + ("=" * (-len(value) % 4))
+            for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+                try:
+                    decoded = decoder(padded.encode("utf-8")).decode("utf-8").strip()
+                    if decoded and (
+                        decoded.startswith("http://")
+                        or decoded.startswith("https://")
+                        or decoded.startswith("//")
+                        or decoded.startswith("/")
+                    ):
+                        return decoded
+                except Exception:
+                    continue
+
+            if value:
+                return value
+
+        return ""
+
+    @classmethod
+    def _resolve_proxy_source_url(cls, raw_url: str) -> str:
+        url = str(raw_url or "").strip()
+        if not url:
+            return ""
+
+        lowered = url.lower()
+        if lowered.startswith("//"):
+            return f"https:{url}"
+
+        if (
+            lowered.startswith("/api/v1/video/proxy2")
+            or lowered.startswith("/v1/video/proxy2")
+            or lowered.startswith("/proxy2?")
+        ):
+            parsed = urlparse(url)
+            encoded_url = ""
+            for param in (parsed.query or "").split("&"):
+                if param.startswith("url="):
+                    encoded_url = param[4:]
+                    break
+            if not encoded_url:
+                return ""
+            decoded = cls._decode_proxy_url_value(encoded_url)
+            if decoded.startswith("//"):
+                return f"https:{decoded}"
+            return decoded
+
+        if lowered.startswith("/proxy/"):
+            parsed = urlparse(url)
+            path_segments = [seg for seg in (parsed.path or "").split("/") if seg]
+            if len(path_segments) >= 3:
+                domain = path_segments[1]
+                suffix = "/".join(path_segments[2:])
+                target = f"https://{domain}/{suffix}"
+                if parsed.query:
+                    target = f"{target}?{parsed.query}"
+                return target
+
+        return url
+
+    def _begin_asset_download(self, task_key: str) -> bool:
+        with self.__class__._asset_download_lock:
+            if task_key in self.__class__._asset_download_tasks:
+                return False
+            self.__class__._asset_download_tasks.add(task_key)
+            return True
+
+    def _end_asset_download(self, task_key: str):
+        with self.__class__._asset_download_lock:
+            self.__class__._asset_download_tasks.discard(task_key)
+
     @classmethod
     def _guess_preview_video_extension(cls, preview_url: str, content_type: str = "") -> str:
         lowered_url = (preview_url or "").lower()
@@ -803,29 +923,47 @@ class VideoAppService(BaseContentAppService):
             allow_redirects=allow_redirects,
         )
 
-    def _build_preview_video_save_paths(self, video_id: str, source: str, extension: str) -> tuple:
-        source_key = self._normalize_preview_source(source)
-        safe_video_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
-
-        save_dir = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME, source_key)
-        os.makedirs(save_dir, exist_ok=True)
-
-        filename = f"{safe_video_id}{extension}"
-        abs_path = os.path.join(save_dir, filename)
-        relative_path = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{filename}"
-        return abs_path, relative_path
-
-    def _build_preview_hls_paths(self, video_id: str, source: str) -> tuple:
+    def _build_preview_asset_dir(self, video_id: str, source: str) -> tuple:
         source_key = self._normalize_preview_source(source)
         safe_video_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
 
         source_dir = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME, source_key)
         os.makedirs(source_dir, exist_ok=True)
 
-        hls_dir_name = f"{safe_video_id}_hls"
-        hls_dir = os.path.join(source_dir, hls_dir_name)
+        asset_dir = os.path.join(source_dir, safe_video_id)
+        os.makedirs(asset_dir, exist_ok=True)
+
+        relative_dir = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{safe_video_id}"
+        return asset_dir, relative_dir
+
+    def _build_preview_cover_save_paths(self, video_id: str, source: str) -> tuple:
+        asset_dir, relative_dir = self._build_preview_asset_dir(video_id, source)
+        abs_path = os.path.join(asset_dir, self.PREVIEW_ASSET_COVER_NAME)
+        relative_path = f"{relative_dir}/{self.PREVIEW_ASSET_COVER_NAME}"
+        return abs_path, relative_path
+
+    def _build_preview_thumbnail_save_paths(self, video_id: str, source: str, index: int) -> tuple:
+        asset_dir, relative_dir = self._build_preview_asset_dir(video_id, source)
+        thumbs_dir = os.path.join(asset_dir, "thumbs")
+        os.makedirs(thumbs_dir, exist_ok=True)
+        filename = f"thumb-{index:04d}.jpg"
+        abs_path = os.path.join(thumbs_dir, filename)
+        relative_path = f"{relative_dir}/thumbs/{filename}"
+        return abs_path, relative_path
+
+    def _build_preview_video_save_paths(self, video_id: str, source: str, extension: str) -> tuple:
+        asset_dir, relative_dir = self._build_preview_asset_dir(video_id, source)
+        filename = f"preview{extension}"
+        abs_path = os.path.join(asset_dir, filename)
+        relative_path = f"{relative_dir}/{filename}"
+        return abs_path, relative_path
+
+    def _build_preview_hls_paths(self, video_id: str, source: str) -> tuple:
+        asset_dir, relative_dir = self._build_preview_asset_dir(video_id, source)
+        hls_dir = os.path.join(asset_dir, "hls")
+        os.makedirs(hls_dir, exist_ok=True)
         playlist_abs = os.path.join(hls_dir, "index.m3u8")
-        playlist_rel = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{hls_dir_name}/index.m3u8"
+        playlist_rel = f"{relative_dir}/hls/index.m3u8"
         return hls_dir, playlist_abs, playlist_rel
 
     @staticmethod
@@ -1040,6 +1178,10 @@ class VideoAppService(BaseContentAppService):
         if not sanitized_url:
             return ""
 
+        resolved_url = self._resolve_proxy_source_url(sanitized_url)
+        if resolved_url:
+            sanitized_url = resolved_url
+
         if sanitized_url.startswith("/static/"):
             return sanitized_url
 
@@ -1067,7 +1209,8 @@ class VideoAppService(BaseContentAppService):
 
             content_type = (response.headers.get("content-type", "") or "").lower()
             if "mpegurl" in content_type or "m3u8" in content_type:
-                return ""
+                final_playlist_url = response.url or sanitized_url
+                return self._download_preview_hls_to_local(video_id, final_playlist_url, source=source)
 
             extension = self._guess_preview_video_extension(sanitized_url, content_type)
             if not extension:
@@ -1124,14 +1267,79 @@ class VideoAppService(BaseContentAppService):
         video.preview_video = preview_video or ""
         return bool(repo.save(video))
 
+    def update_cover_path(self, video_id: str, cover_path: str, source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.cover_path = cover_path or ""
+        return bool(repo.save(video))
+
+    def update_thumbnail_images(self, video_id: str, thumbnail_images: List[str], source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.thumbnail_images = list(thumbnail_images or [])
+        return bool(repo.save(video))
+
+    @staticmethod
+    def _resolve_static_asset_abs_path(static_url: str) -> str:
+        url = str(static_url or "").strip()
+        if not url.startswith("/static/"):
+            return ""
+
+        static_relative = url.lstrip("/")
+        if not static_relative.startswith("static/"):
+            return ""
+
+        file_relative = static_relative[len("static/"):]
+        abs_path = os.path.join(STATIC_DIR, file_relative.replace("/", os.sep))
+
+        try:
+            static_root = os.path.abspath(STATIC_DIR)
+            target_abs = os.path.abspath(abs_path)
+            common = os.path.commonpath([static_root, target_abs])
+            if common != static_root:
+                return ""
+        except Exception:
+            return ""
+
+        return abs_path
+
+    def _read_static_asset_bytes(self, static_url: str) -> Optional[bytes]:
+        abs_path = self._resolve_static_asset_abs_path(static_url)
+        if not abs_path or not os.path.isfile(abs_path):
+            return None
+
+        try:
+            with open(abs_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            app_logger.warning(f"读取本地静态资源失败: url={static_url}, error={e}")
+            return None
+
     def cache_preview_video_async(self, video_id: str, preview_video_url: str, source: str = "local"):
         source_key = self._normalize_preview_source(source)
         sanitized_url = self._sanitize_preview_video_url(preview_video_url)
         if not video_id or not sanitized_url:
             return
 
+        resolved_url = self._resolve_proxy_source_url(sanitized_url)
+        if resolved_url:
+            sanitized_url = resolved_url
+
         if sanitized_url.startswith("/static/"):
             self.update_preview_video(video_id, sanitized_url, source=source_key)
+            return
+
+        task_key = f"preview:{source_key}:{video_id}"
+        if not self._begin_asset_download(task_key):
+            app_logger.info(f"预览视频缓存任务已在进行中: id={video_id}, source={source_key}")
             return
 
         def download():
@@ -1143,6 +1351,116 @@ class VideoAppService(BaseContentAppService):
                     app_logger.info(f"预览视频缓存成功: id={video_id}, source={source_key}, path={local_path}")
             except Exception as e:
                 error_logger.error(f"缓存预览视频失败: id={video_id}, error={e}")
+            finally:
+                self._end_asset_download(task_key)
+
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+
+    def cache_cover_to_preview_assets_async(self, video_id: str, cover_url: str, source: str = "local"):
+        source_key = self._normalize_preview_source(source)
+        target_url = str(cover_url or "").strip()
+        if not video_id or not target_url:
+            return
+
+        expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
+        if target_url.startswith(expected_prefix):
+            self.update_cover_path(video_id, target_url, source=source_key)
+            return
+
+        task_key = f"cover:{source_key}:{video_id}"
+        if not self._begin_asset_download(task_key):
+            app_logger.info(f"封面缓存任务已在进行中: id={video_id}, source={source_key}")
+            return
+
+        def download():
+            tmp_path = ""
+            try:
+                image_content = self._read_static_asset_bytes(target_url) if target_url.startswith("/static/") else None
+                if not image_content:
+                    image_content = self._download_image_content(target_url, video_id)
+                if not image_content:
+                    return
+
+                image = Image.open(BytesIO(image_content))
+                abs_path, relative_path = self._build_preview_cover_save_paths(video_id, source_key)
+                tmp_path = f"{abs_path}.tmp"
+                image.convert("RGB").save(tmp_path, "JPEG", quality=95)
+                os.replace(tmp_path, abs_path)
+                tmp_path = ""
+
+                if self.update_cover_path(video_id, relative_path, source=source_key):
+                    app_logger.info(f"预览资源封面缓存成功: id={video_id}, source={source_key}, path={relative_path}")
+            except Exception as e:
+                error_logger.error(f"缓存预览资源封面失败: id={video_id}, source={source_key}, error={e}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+                self._end_asset_download(task_key)
+
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+
+    def cache_thumbnail_images_async(self, video_id: str, thumbnail_images: List[str], source: str = "local"):
+        source_key = self._normalize_preview_source(source)
+        original_images = [str(item or "").strip() for item in (thumbnail_images or [])]
+        if not video_id or not original_images:
+            return
+
+        task_key = f"thumbs:{source_key}:{video_id}"
+        if not self._begin_asset_download(task_key):
+            app_logger.info(f"缩略图缓存任务已在进行中: id={video_id}, source={source_key}")
+            return
+
+        def download():
+            changed = False
+            merged_images = list(original_images)
+            expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
+
+            try:
+                for idx, raw_url in enumerate(original_images):
+                    if not raw_url:
+                        continue
+
+                    if raw_url.startswith(expected_prefix):
+                        continue
+
+                    image_content = None
+                    if raw_url.startswith("/static/"):
+                        image_content = self._read_static_asset_bytes(raw_url)
+                    if not image_content:
+                        image_content = self._download_image_content(raw_url, video_id)
+                    if not image_content:
+                        continue
+
+                    try:
+                        tmp_path = ""
+                        image = Image.open(BytesIO(image_content))
+                        abs_path, relative_path = self._build_preview_thumbnail_save_paths(video_id, source_key, idx + 1)
+                        tmp_path = f"{abs_path}.tmp"
+                        image.convert("RGB").save(tmp_path, "JPEG", quality=95)
+                        os.replace(tmp_path, abs_path)
+                        merged_images[idx] = relative_path
+                        changed = True
+                    except Exception as image_error:
+                        error_logger.error(
+                            f"缓存缩略图失败: id={video_id}, source={source_key}, index={idx}, error={image_error}"
+                        )
+                        try:
+                            if os.path.exists(tmp_path):
+                                os.remove(tmp_path)
+                        except Exception:
+                            pass
+
+                if changed and self.update_thumbnail_images(video_id, merged_images, source=source_key):
+                    app_logger.info(f"缩略图缓存成功: id={video_id}, source={source_key}")
+            except Exception as e:
+                error_logger.error(f"缓存缩略图任务失败: id={video_id}, source={source_key}, error={e}")
+            finally:
+                self._end_asset_download(task_key)
 
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
@@ -1166,12 +1484,33 @@ class VideoAppService(BaseContentAppService):
             if os.path.isfile(abs_path):
                 os.remove(abs_path)
 
-            parent_dir = os.path.dirname(abs_path)
-            if os.path.isdir(parent_dir) and os.path.basename(parent_dir).endswith("_hls"):
-                shutil.rmtree(parent_dir, ignore_errors=True)
-            app_logger.info(f"��ɾ��Ԥ����Ƶ����: {abs_path}")
+            preview_root = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME)
+            source_local_root = os.path.join(preview_root, "local")
+            source_preview_root = os.path.join(preview_root, "preview")
+
+            candidate_asset_dir = os.path.dirname(abs_path)
+            if os.path.basename(candidate_asset_dir).lower() == "hls":
+                candidate_asset_dir = os.path.dirname(candidate_asset_dir)
+
+            candidate_abs = os.path.abspath(candidate_asset_dir)
+            if (
+                os.path.isdir(candidate_abs) and
+                candidate_abs not in {
+                    os.path.abspath(preview_root),
+                    os.path.abspath(source_local_root),
+                    os.path.abspath(source_preview_root),
+                }
+            ):
+                try:
+                    common = os.path.commonpath([os.path.abspath(preview_root), candidate_abs])
+                except ValueError:
+                    common = ""
+                if common == os.path.abspath(preview_root):
+                    shutil.rmtree(candidate_abs, ignore_errors=True)
+
+            app_logger.info(f"已删除预览资源文件: {abs_path}")
         except Exception as e:
-            error_logger.error(f"ɾ��Ԥ����Ƶ����ʧ��: {abs_path}, error={e}")
+            error_logger.error(f"删除预览资源文件失败: {abs_path}, error={e}")
 
     def _build_image_request_headers(self, image_url: str, video_id: str = "") -> Dict[str, str]:
         headers = {
@@ -1188,18 +1527,41 @@ class VideoAppService(BaseContentAppService):
         return headers
 
     def _download_image_content(self, image_url: str, video_id: str = "") -> Optional[bytes]:
-        headers = self._build_image_request_headers(image_url, video_id)
-        response = requests.get(image_url, headers=headers, timeout=30)
-        if response.status_code != 200:
-            app_logger.warning(f"下载图片失败: url={image_url}, status={response.status_code}")
+        resolved_url = self._resolve_proxy_source_url(image_url) or str(image_url or "").strip()
+        if resolved_url.startswith("//"):
+            resolved_url = f"https:{resolved_url}"
+
+        lowered = resolved_url.lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            app_logger.warning(f"图片URL无效，跳过下载: url={image_url}")
             return None
 
-        content_type = (response.headers.get("content-type", "") or "").lower()
-        if "image" not in content_type:
-            app_logger.warning(f"下载内容不是图片: url={image_url}, content-type={content_type}")
-            return None
+        headers = self._build_image_request_headers(resolved_url, video_id)
+        response = None
+        try:
+            response = self._request_preview_url(
+                resolved_url,
+                headers=headers,
+                stream=False,
+                timeout=30,
+                allow_redirects=True,
+            )
+            if response.status_code != 200:
+                app_logger.warning(f"下载图片失败: url={resolved_url}, status={response.status_code}")
+                return None
 
-        return response.content
+            content_type = (response.headers.get("content-type", "") or "").lower()
+            if "image" not in content_type:
+                app_logger.warning(f"下载内容不是图片: url={resolved_url}, content-type={content_type}")
+                return None
+
+            return response.content
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
     
     def download_cover_async(self, video_id: str, cover_url: str):
         def download():

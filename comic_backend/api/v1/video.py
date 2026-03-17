@@ -5,6 +5,7 @@
 from flask import Blueprint, request, jsonify, Response, make_response
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
+from application.config_app_service import ConfigAppService
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
@@ -18,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
 actor_service = ActorAppService()
+config_service = ConfigAppService()
 _preview_refresh_lock = threading.Lock()
 _preview_refresh_last_run = {}
 _PREVIEW_REFRESH_COOLDOWN_SECONDS = 180
@@ -78,6 +80,7 @@ def video_detail():
         if result.success:
             detail = (result.data or {}).copy()
             detail = _ensure_preview_video_detail(detail, source="local")
+            _schedule_local_cover_thumbnail_cache(detail, source="local")
             return success_response(detail)
         else:
             return error_response(404, result.message)
@@ -276,9 +279,15 @@ def import_video():
         if result.success:
             video_id = result.data.get("id") if isinstance(result.data, dict) else None
             if video_id:
-                preview_video = _sanitize_preview_video_value(result.data.get("preview_video", ""))
-                if preview_video:
-                    video_service.cache_preview_video_async(video_id, preview_video, source="local")
+                _schedule_video_asset_cache(
+                    video_id=video_id,
+                    source="local",
+                    cover_url=(result.data or {}).get("cover_path", ""),
+                    preview_video=(result.data or {}).get("preview_video", ""),
+                    thumbnail_images=(result.data or {}).get("thumbnail_images", []),
+                    allow_cover=True,
+                    allow_preview_video=not _is_javbus_platform(video_id=video_id),
+                )
 
                 recent_result = video_service.apply_recent_import_tags(
                     [video_id],
@@ -308,6 +317,24 @@ def batch_import():
         if result.success:
             imported_ids = result.data.get("imported_ids", []) if isinstance(result.data, dict) else []
             if imported_ids:
+                imported_id_set = {str(item_id) for item_id in imported_ids if item_id}
+                for video_item in videos:
+                    item_id = str((video_item or {}).get("id") or "").strip()
+                    if not item_id or item_id not in imported_id_set:
+                        continue
+                    _schedule_video_asset_cache(
+                        video_id=item_id,
+                        source="local",
+                        cover_url=(video_item or {}).get("cover_path", "") or (video_item or {}).get("cover_url", ""),
+                        preview_video=(video_item or {}).get("preview_video", ""),
+                        thumbnail_images=(video_item or {}).get("thumbnail_images", []),
+                        allow_cover=True,
+                        allow_preview_video=not _is_javbus_platform(
+                            platform=(video_item or {}).get("platform", ""),
+                            video_id=item_id
+                        ),
+                    )
+
                 recent_result = video_service.apply_recent_import_tags(
                     imported_ids,
                     source="local",
@@ -628,7 +655,8 @@ def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
                 return
 
             video_service.update_preview_video(video_id, recovered_preview, source=source)
-            video_service.cache_preview_video_async(video_id, recovered_preview, source=source)
+            if _should_auto_download_preview_assets(source):
+                video_service.cache_preview_video_async(video_id, recovered_preview, source=source)
         except Exception as e:
             app_logger.warning(f"async refresh preview video failed: id={video_id}, code={code}, error={e}")
 
@@ -650,6 +678,102 @@ def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dic
     video_data["preview_video"] = ""
     _schedule_preview_video_refresh(video_data, source=source)
     return video_data
+
+
+def _is_javbus_platform(platform: str = "", video_id: str = "") -> bool:
+    platform_name = str(platform or "").strip().lower()
+    if platform_name == "javbus":
+        return True
+
+    normalized_id = str(video_id or "").strip().upper()
+    return normalized_id.startswith("JAVBUS")
+
+
+def _get_preview_import_auto_download_enabled() -> bool:
+    try:
+        result = config_service.get_config()
+        if not result.success or not isinstance(result.data, dict):
+            return True
+        return bool(result.data.get("auto_download_preview_assets_for_preview_import", True))
+    except Exception as e:
+        app_logger.warning(f"read preview import asset config failed: {e}")
+        return True
+
+
+def _should_auto_download_preview_assets(source: str = "local") -> bool:
+    source_key = str(source or "").strip().lower()
+    if source_key != "preview":
+        return True
+    return _get_preview_import_auto_download_enabled()
+
+
+def _schedule_video_asset_cache(
+    *,
+    video_id: str,
+    source: str,
+    cover_url: str = "",
+    preview_video: str = "",
+    thumbnail_images=None,
+    allow_cover: bool = True,
+    allow_preview_video: bool = True,
+):
+    if not video_id:
+        return
+
+    if not _should_auto_download_preview_assets(source):
+        return
+
+    cover = str(cover_url or "").strip()
+    preview = _sanitize_preview_video_value(preview_video or "")
+    thumbs = [str(item or "").strip() for item in (thumbnail_images or []) if str(item or "").strip()]
+
+    if allow_cover and cover:
+        video_service.cache_cover_to_preview_assets_async(video_id, cover, source=source)
+
+    if thumbs:
+        video_service.cache_thumbnail_images_async(video_id, thumbs, source=source)
+
+    if allow_preview_video and preview:
+        video_service.cache_preview_video_async(video_id, preview, source=source)
+
+
+def _is_source_preview_asset(path: str, source: str) -> bool:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return False
+    source_key = "preview" if str(source or "").strip().lower() == "preview" else "local"
+    return normalized.startswith(f"/static/preview_video/{source_key}/")
+
+
+def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local"):
+    if not isinstance(video_data, dict):
+        return
+
+    source_key = "preview" if str(source or "").strip().lower() == "preview" else "local"
+    if source_key != "local":
+        return
+
+    video_id = str(video_data.get("id") or "").strip()
+    if not video_id:
+        return
+
+    cover = str(video_data.get("cover_path") or "").strip()
+    thumbnails = [str(item or "").strip() for item in (video_data.get("thumbnail_images") or []) if str(item or "").strip()]
+
+    should_cache_cover = bool(cover) and not _is_source_preview_asset(cover, source_key)
+    should_cache_thumbs = any(not _is_source_preview_asset(item, source_key) for item in thumbnails)
+
+    if not should_cache_cover and not should_cache_thumbs:
+        return
+
+    _schedule_video_asset_cache(
+        video_id=video_id,
+        source=source_key,
+        cover_url=cover if should_cache_cover else "",
+        thumbnail_images=thumbnails if should_cache_thumbs else [],
+        allow_cover=should_cache_cover,
+        allow_preview_video=False,
+    )
 
 
 def _parse_javdb_tag_ids(tag_ids):
@@ -1157,7 +1281,7 @@ def third_party_import():
         
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
-        from core.constants import VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE, JAV_PICTURES_DIR, JAV_COVER_DIR
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         
         tag_service = TagAppService()
         existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
@@ -1196,7 +1320,10 @@ def third_party_import():
                         app_logger.info(f"创建新标签: {result.data['id']} - {tag_name}")
                 if tag_name in tag_name_to_id:
                     video_tag_ids.append(tag_name_to_id[tag_name])
-            
+
+            cover_url = detail.get("cover_url", "")
+            cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+
             video_data = {
                 "id": video_id_full,
                 "title": detail.get("title", ""),
@@ -1208,6 +1335,7 @@ def third_party_import():
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
+                "cover_path": cover_path_fallback,
                 "tag_ids": video_tag_ids,
                 "list_ids": []
             }
@@ -1222,17 +1350,15 @@ def third_party_import():
                 if not recent_result.success:
                     app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
 
-                cover_url = detail.get("cover_url", "")
-                if cover_url:
-                    video_service.download_cover_async(video_data["id"], cover_url)
-                    video_service.download_high_quality_thumbnail_async(video_data["id"], cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR)
-
-                if video_data.get("preview_video"):
-                    video_service.cache_preview_video_async(
-                        video_data["id"],
-                        video_data.get("preview_video", ""),
-                        source="local"
-                    )
+                _schedule_video_asset_cache(
+                    video_id=video_data["id"],
+                    source="local",
+                    cover_url=cover_url,
+                    preview_video=video_data.get("preview_video", ""),
+                    thumbnail_images=video_data.get("thumbnail_images", []),
+                    allow_cover=True,
+                    allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_data["id"]),
+                )
                 
                 app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
                 return success_response(result.data, result.message)
@@ -1273,6 +1399,9 @@ def third_party_import():
             if video_code and video_code.upper() in existing_codes:
                 return error_response(400, f"视频 {video_id_full} 已存在")
             
+            cover_url = detail.get("cover_url", "")
+            cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+
             video_data = {
                 "id": video_id_full,
                 "title": detail.get("title", ""),
@@ -1284,7 +1413,7 @@ def third_party_import():
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
-                "cover_path": detail.get("cover_url", ""),
+                "cover_path": cover_path_fallback,
                 "tag_ids": video_tag_ids,
                 "list_ids": [],
                 "create_time": get_current_time(),
@@ -1298,15 +1427,16 @@ def third_party_import():
             if not storage.write(db_data):
                 return error_response(500, "数据写入失败")
             
-            cover_url = detail.get("cover_url", "")
-            if cover_url:
-                video_service.download_cover_async_for_recommendation(video_id_full, cover_url, JAV_COVER_DIR)
-
-            if video_data.get("preview_video"):
-                video_service.cache_preview_video_async(
-                    video_id_full,
-                    video_data.get("preview_video", ""),
-                    source="preview"
+            auto_download_assets = _get_preview_import_auto_download_enabled()
+            if auto_download_assets:
+                _schedule_video_asset_cache(
+                    video_id=video_id_full,
+                    source="preview",
+                    cover_url=cover_url,
+                    preview_video=video_data.get("preview_video", ""),
+                    thumbnail_images=video_data.get("thumbnail_images", []),
+                    allow_cover=True,
+                    allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_id_full),
                 )
 
             recent_result = video_service.apply_recent_import_tags(
@@ -1638,7 +1768,9 @@ def delete_video_recommendation_permanently():
         
         video_service.delete_recommendation_assets(
             video_id,
-            preview_video=(video_to_delete or {}).get("preview_video", "")
+            preview_video=(video_to_delete or {}).get("preview_video", ""),
+            cover_path=(video_to_delete or {}).get("cover_path", ""),
+            thumbnail_images=(video_to_delete or {}).get("thumbnail_images", []),
         )
         
         app_logger.info(f"推荐视频永久删除: {video_id}")
@@ -1720,7 +1852,9 @@ def batch_delete_video_recommendation_permanently():
         for video in videos_to_delete:
             video_service.delete_recommendation_assets(
                 video.get('id', ''),
-                preview_video=video.get('preview_video', '')
+                preview_video=video.get('preview_video', ''),
+                cover_path=video.get('cover_path', ''),
+                thumbnail_images=video.get('thumbnail_images', []),
             )
         
         app_logger.info(f"推荐视频批量永久删除: {len(videos_to_delete)}个")
@@ -1987,3 +2121,5 @@ def clear_actor_works_cache():
     except Exception as e:
         error_logger.error(f"清理演员作品缓存失败: {e}")
         return error_response(500, "服务器内部错误")
+
+

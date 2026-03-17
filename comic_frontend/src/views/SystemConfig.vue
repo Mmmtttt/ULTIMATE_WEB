@@ -44,6 +44,17 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
+      <van-cell
+        title="预览库导入自动下载资源"
+        label="开启后：导入到预览库时自动异步下载高清封面和预览视频（JavBus 无预览视频时会自动跳过）"
+      >
+        <template #right-icon>
+          <van-switch v-model="autoDownloadPreviewImportAssets" @change="updatePreviewImportAssetDownload" />
+        </template>
+      </van-cell>
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
       <van-cell title="第三方平台配置" is-link @click="showThirdPartyConfig = true" />
     </van-cell-group>
 
@@ -155,6 +166,7 @@ const configStore = useConfigStore()
 
 const pageModeValue = ref('left_right')
 const backgroundValue = ref('white')
+const autoDownloadPreviewImportAssets = ref(true)
 
 const showThirdPartyConfig = ref(false)
 const savingAdapterMap = ref({})
@@ -196,6 +208,7 @@ const runtimeDataDirLabel = computed(() => {
 function initValues() {
   pageModeValue.value = configStore.defaultPageMode
   backgroundValue.value = configStore.defaultBackground
+  autoDownloadPreviewImportAssets.value = configStore.autoDownloadPreviewImportAssets
 }
 
 function adapterLabel(adapterName) {
@@ -303,6 +316,16 @@ async function selectBackground(background) {
   }
   backgroundValue.value = background
   await updateBackground()
+}
+
+async function updatePreviewImportAssetDownload() {
+  configStore.setAutoDownloadPreviewImportAssets(autoDownloadPreviewImportAssets.value)
+  const ok = await configStore.saveConfigToServer()
+  if (!ok) {
+    showFailToast('预览库导入资源下载设置保存失败')
+    return
+  }
+  showSuccessToast('设置已保存')
 }
 
 async function saveAdapterConfig(adapterName) {

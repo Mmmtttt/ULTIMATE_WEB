@@ -403,9 +403,13 @@ const currentSource = ref('')
 const currentStreams = ref([])
 const currentQuality = ref(0)
 const previewVideoPlayer = ref(null)
+const assetRefreshTimer = ref(null)
+const assetRefreshAttempts = ref(0)
 
 const hls = ref(null)
 const previewHls = ref(null)
+const MAX_ASSET_REFRESH_ATTEMPTS = 4
+const ASSET_REFRESH_DELAY_MS = 2500
 
 const videoId = computed(() => route.params.id)
 const isLocalVideo = computed(() => video.value?.source !== 'preview')
@@ -439,6 +443,68 @@ const isFavoritedVideo = computed(() => {
 const customLists = computed(() => listStore.lists || [])
 const previewVideoPlayerUrl = computed(() => resolvePreviewVideoUrl(video.value?.preview_video))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
+
+function clearAssetRefreshTimer() {
+  if (assetRefreshTimer.value) {
+    clearTimeout(assetRefreshTimer.value)
+    assetRefreshTimer.value = null
+  }
+}
+
+function isLocalPreviewAssetPath(path) {
+  if (!path || typeof path !== 'string') {
+    return false
+  }
+  return path.startsWith('/static/preview_video/local/')
+}
+
+function hasPendingLocalAssets(detail) {
+  if (!detail || typeof detail !== 'object') {
+    return false
+  }
+
+  const coverPath = String(detail.cover_path || '').trim()
+  const thumbnails = Array.isArray(detail.thumbnail_images) ? detail.thumbnail_images : []
+
+  const coverNeedsRefresh = Boolean(coverPath) && !isLocalPreviewAssetPath(coverPath)
+  const thumbsNeedRefresh = thumbnails.some((item) => {
+    const value = String(item || '').trim()
+    return Boolean(value) && !isLocalPreviewAssetPath(value)
+  })
+
+  return coverNeedsRefresh || thumbsNeedRefresh
+}
+
+function scheduleLocalAssetRefresh() {
+  clearAssetRefreshTimer()
+
+  if (!isLocalVideo.value || !video.value || !hasPendingLocalAssets(video.value)) {
+    return
+  }
+
+  if (assetRefreshAttempts.value >= MAX_ASSET_REFRESH_ATTEMPTS) {
+    return
+  }
+
+  assetRefreshAttempts.value += 1
+  assetRefreshTimer.value = setTimeout(async () => {
+    try {
+      const res = await videoApi.getDetail(videoId.value)
+      if (res?.code === 200 && res.data) {
+        video.value = res.data
+        if (res.data?.score) {
+          scoreValue.value = res.data.score
+        }
+      }
+    } catch (error) {
+      console.warn('刷新本地资源失败:', error)
+    } finally {
+      if (hasPendingLocalAssets(video.value)) {
+        scheduleLocalAssetRefresh()
+      }
+    }
+  }, ASSET_REFRESH_DELAY_MS)
+}
 
 function isLikelyPreviewMediaUrl(url) {
   if (!url || typeof url !== 'string') {
@@ -602,6 +668,8 @@ async function fetchAllTags() {
 }
 
 async function loadVideo() {
+  clearAssetRefreshTimer()
+  assetRefreshAttempts.value = 0
   loading.value = true
   try {
     const data = await videoStore.fetchDetail(videoId.value)
@@ -614,6 +682,7 @@ async function loadVideo() {
     }
     selectedTagIds.value = [...(data?.tag_ids || [])]
     syncEditFormFromVideo(data)
+    scheduleLocalAssetRefresh()
   } finally {
     loading.value = false
   }
@@ -1103,6 +1172,7 @@ watch(
 )
 
 onUnmounted(() => {
+  clearAssetRefreshTimer()
   // 清理 HLS 实例
   if (hls.value) {
     hls.value.destroy()
