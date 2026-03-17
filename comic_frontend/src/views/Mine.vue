@@ -85,8 +85,7 @@
         <van-radio-group v-model="importType" class="import-options">
           <div class="option-group">
             <div class="option-title">导入方式</div>
-            <van-radio name="by_id">通过 ID</van-radio>
-            <van-radio name="by_search">通过搜索</van-radio>
+            <van-radio name="by_id">{{ isVideoMode ? '通过 code' : '通过 ID' }}</van-radio>
             <van-radio name="by_list">批量文件</van-radio>
           </div>
         </van-radio-group>
@@ -111,8 +110,8 @@
         <van-field
           v-if="importType === 'by_id'"
           v-model="importId"
-          label="ID"
-          placeholder="请输入内容ID"
+          :label="isVideoMode ? 'Code' : 'ID'"
+          :placeholder="isVideoMode ? '请输入视频 code（如 ARBB-048）' : '请输入内容ID'"
         />
         
         <van-field
@@ -130,13 +129,6 @@
           accept=".txt" 
           style="display: none" 
           @change="handleImportFileSelect"
-        />
-        
-        <van-field
-          v-if="importType === 'by_search'"
-          v-model="importKeyword"
-          label="关键词"
-          placeholder="请输入搜索关键词"
         />
         
         <div class="dialog-buttons">
@@ -212,7 +204,6 @@ const importType = ref('by_id')
 const importTarget = ref('home')
 const importPlatform = ref('JM')
 const importId = ref('')
-const importKeyword = ref('')
 const importFile = ref(null)
 const importing = ref(false)
 const uploading = ref(false)
@@ -331,21 +322,45 @@ async function parseIdsFromFile(file, platform = '') {
   return Array.from(new Set(ids))
 }
 
+function normalizeVideoCode(rawCode) {
+  return String(rawCode || '').trim()
+}
+
+function canonicalizeVideoCode(rawCode) {
+  return normalizeVideoCode(rawCode).replace(/-/g, '').toUpperCase()
+}
+
+async function parseVideoCodesFromFile(file) {
+  if (!file) {
+    throw new Error('请先选择导入文件')
+  }
+
+  const content = await file.text()
+  const uniqueCodes = new Map()
+
+  content
+    .split(/[\r\n,\s]+/)
+    .map(item => normalizeVideoCode(item))
+    .filter(Boolean)
+    .forEach(code => {
+      const canonical = canonicalizeVideoCode(code)
+      if (!canonical || uniqueCodes.has(canonical)) return
+      uniqueCodes.set(canonical, code)
+    })
+
+  return Array.from(uniqueCodes.values())
+}
+
 async function handleComicImport() {
   const params = {
     import_type: importType.value,
     target: importTarget.value,
     platform: importPlatform.value,
-    comic_id: normalizeImportId(importId.value, importPlatform.value),
-    keyword: (importKeyword.value || '').trim()
+    comic_id: normalizeImportId(importId.value, importPlatform.value)
   }
 
   if (importType.value === 'by_id' && !params.comic_id) {
     throw new Error('请输入漫画ID')
-  }
-
-  if (importType.value === 'by_search' && !params.keyword) {
-    throw new Error('请输入搜索关键词')
   }
 
   if (importType.value === 'by_list') {
@@ -355,7 +370,8 @@ async function handleComicImport() {
     }
     params.comic_ids = comicIds
     params.comic_id = ''
-    params.keyword = ''
+  } else if (importType.value !== 'by_id') {
+    throw new Error('当前模式不支持该导入方式')
   }
 
   await importTaskStore.createImportTask(params)
@@ -369,47 +385,24 @@ async function handleVideoImport() {
   let failedCount = 0
 
   if (importType.value === 'by_id') {
-    const videoId = normalizeImportId(importId.value, importPlatform.value)
-    if (!videoId) {
-      throw new Error('请输入视频ID')
+    const videoCode = normalizeVideoCode(importId.value)
+    if (!videoCode) {
+      throw new Error('请输入视频 code')
     }
-    await videoApi.thirdPartyImport(videoId, target, defaultPlatform)
+    await videoApi.thirdPartyImport(videoCode, target, defaultPlatform)
     showSuccessToast('导入成功')
     return
   }
 
-  if (importType.value === 'by_search') {
-    const keyword = (importKeyword.value || '').trim()
-    if (!keyword) {
-      throw new Error('请输入搜索关键词')
+  if (importType.value === 'by_list') {
+    const videoCodes = await parseVideoCodesFromFile(importFile.value)
+    if (videoCodes.length === 0) {
+      throw new Error('文件中没有可导入的 code')
     }
 
-    const searchRes = await videoApi.thirdPartySearch(keyword, 1, defaultPlatform)
-    const videos = searchRes?.data?.videos || []
-    if (videos.length === 0) {
-      throw new Error('未找到可导入的视频')
-    }
-
-    for (const item of videos) {
-      const itemId = normalizeImportId(item.video_id || item.id || '', item.platform || importPlatform.value)
-      if (!itemId) continue
-      const itemPlatform = (item.platform || defaultPlatform).toLowerCase()
+    for (const videoCode of videoCodes) {
       try {
-        await videoApi.thirdPartyImport(itemId, target, itemPlatform)
-        successCount += 1
-      } catch (e) {
-        failedCount += 1
-      }
-    }
-  } else if (importType.value === 'by_list') {
-    const videoIds = await parseIdsFromFile(importFile.value, importPlatform.value)
-    if (videoIds.length === 0) {
-      throw new Error('文件中没有可导入的ID')
-    }
-
-    for (const videoId of videoIds) {
-      try {
-        await videoApi.thirdPartyImport(videoId, target, defaultPlatform)
+        await videoApi.thirdPartyImport(videoCode, target, defaultPlatform)
         successCount += 1
       } catch (e) {
         failedCount += 1
