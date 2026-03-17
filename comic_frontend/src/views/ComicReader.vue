@@ -150,7 +150,6 @@
         </van-button>
         <van-button size="small" @click="nextPage">下一页</van-button>
         <van-button size="small" @click="toggleFullscreen">全屏</van-button>
-        <van-button v-if="supportsTouch" size="small" @click="enterZoomMode">缩放</van-button>
       </div>
     </div>
   </div>

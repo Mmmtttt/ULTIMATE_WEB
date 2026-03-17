@@ -14,6 +14,7 @@ export const useConfigStore = defineStore('config', () => {
   const defaultBackground = ref(DEFAULT_CONFIG.BACKGROUND)
   const autoHideToolbar = ref(DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR)
   const showPageNumber = ref(DEFAULT_CONFIG.SHOW_PAGE_NUMBER)
+  const autoDownloadPreviewImportAssets = ref(DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS)
   const loading = ref(false)
 
   const normalizePageMode = (mode) => {
@@ -52,7 +53,8 @@ export const useConfigStore = defineStore('config', () => {
     defaultPageMode: defaultPageMode.value,
     defaultBackground: defaultBackground.value,
     autoHideToolbar: autoHideToolbar.value,
-    showPageNumber: showPageNumber.value
+    showPageNumber: showPageNumber.value,
+    autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value
   }))
 
   const isLeftRightMode = computed(() => defaultPageMode.value === PAGE_MODE.LEFT_RIGHT)
@@ -93,6 +95,10 @@ export const useConfigStore = defineStore('config', () => {
     defaultBackground.value = normalizeBackground(saved.defaultBackground ?? DEFAULT_CONFIG.BACKGROUND)
     autoHideToolbar.value = saved.autoHideToolbar ?? DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
     showPageNumber.value = saved.showPageNumber ?? DEFAULT_CONFIG.SHOW_PAGE_NUMBER
+    autoDownloadPreviewImportAssets.value = (
+      saved.autoDownloadPreviewImportAssets ??
+      DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
+    )
     applyAppTheme(defaultBackground.value)
   }
 
@@ -109,6 +115,10 @@ export const useConfigStore = defineStore('config', () => {
       defaultBackground.value = normalizeBackground(serverConfig.default_background ?? DEFAULT_CONFIG.BACKGROUND)
       autoHideToolbar.value = serverConfig.auto_hide_toolbar ?? DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
       showPageNumber.value = serverConfig.show_page_number ?? DEFAULT_CONFIG.SHOW_PAGE_NUMBER
+      autoDownloadPreviewImportAssets.value = (
+        serverConfig.auto_download_preview_assets_for_preview_import ??
+        DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
+      )
       saveConfig()
       applyAppTheme(defaultBackground.value)
       return true
@@ -130,7 +140,8 @@ export const useConfigStore = defineStore('config', () => {
         default_page_mode: defaultPageMode.value,
         default_background: defaultBackground.value,
         auto_hide_toolbar: autoHideToolbar.value,
-        show_page_number: showPageNumber.value
+        show_page_number: showPageNumber.value,
+        auto_download_preview_assets_for_preview_import: autoDownloadPreviewImportAssets.value
       }
       const res = await configApi.update(payload)
       return res.code === 200
@@ -173,11 +184,17 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setAutoDownloadPreviewImportAssets(value) {
+    autoDownloadPreviewImportAssets.value = !!value
+    saveConfig()
+  }
+
   async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
     autoHideToolbar.value = DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
     showPageNumber.value = DEFAULT_CONFIG.SHOW_PAGE_NUMBER
+    autoDownloadPreviewImportAssets.value = DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     saveConfig()
     applyAppTheme(defaultBackground.value)
     await saveConfigToServer()
@@ -196,6 +213,9 @@ export const useConfigStore = defineStore('config', () => {
     if (newConfig.showPageNumber !== undefined) {
       setShowPageNumber(newConfig.showPageNumber)
     }
+    if (newConfig.autoDownloadPreviewImportAssets !== undefined) {
+      setAutoDownloadPreviewImportAssets(newConfig.autoDownloadPreviewImportAssets)
+    }
   }
 
   loadConfig()
@@ -205,6 +225,7 @@ export const useConfigStore = defineStore('config', () => {
     defaultBackground,
     autoHideToolbar,
     showPageNumber,
+    autoDownloadPreviewImportAssets,
     loading,
 
     config,
@@ -225,6 +246,7 @@ export const useConfigStore = defineStore('config', () => {
     toggleBackground,
     setAutoHideToolbar,
     setShowPageNumber,
+    setAutoDownloadPreviewImportAssets,
     resetConfig,
     updateConfig
   }
