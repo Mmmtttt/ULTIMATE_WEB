@@ -1088,9 +1088,14 @@ class ListAppService:
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
                         app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if auto_download_preview_assets and cover_url:
+                        if cover_url:
                             app_logger.info(f"开始下载封面: {prefixed_id}")
-                            video_service.cache_cover_to_preview_assets_async(prefixed_id, cover_url, source="local")
+                            video_service.cache_cover_to_preview_assets_async(
+                                prefixed_id,
+                                cover_url,
+                                source="local",
+                                force=True
+                            )
                         else:
                             app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
 
@@ -1131,9 +1136,14 @@ class ListAppService:
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
                         app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if auto_download_preview_assets and cover_url:
+                        if cover_url:
                             app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                            video_service.cache_cover_to_preview_assets_async(prefixed_id, cover_url, source="preview")
+                            video_service.cache_cover_to_preview_assets_async(
+                                prefixed_id,
+                                cover_url,
+                                source="preview",
+                                force=True
+                            )
                         else:
                             app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
 

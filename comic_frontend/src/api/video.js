@@ -112,6 +112,13 @@ export const videoApi = {
   getRecommendationPlayUrls(videoId) {
     return request.get(`/v1/video/recommendation/${videoId}/play-urls`)
   },
+
+  refreshPreviewVideo(videoId, source = 'local') {
+    return request.post('/v1/video/preview-video/refresh', {
+      video_id: videoId,
+      source
+    })
+  },
   
   getTags() {
     return request.get('/v1/video/tags')

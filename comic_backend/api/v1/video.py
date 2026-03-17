@@ -89,6 +89,32 @@ def video_detail():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/preview-video/refresh', methods=['POST'])
+def refresh_preview_video():
+    """手动刷新预览视频链接并触发下载"""
+    try:
+        data = request.json or {}
+        video_id = str(data.get('video_id') or '').strip()
+        source = str(data.get('source') or 'local').strip().lower()
+        source = 'preview' if source == 'preview' else 'local'
+
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+
+        refresh_result = _refresh_preview_video_now(
+            video_id=video_id,
+            source=source,
+            force_download=True
+        )
+        if not refresh_result.get("success"):
+            return error_response(400, refresh_result.get("message", "刷新预览视频失败"))
+
+        return success_response(refresh_result.get("data"), refresh_result.get("message", "预览视频已更新"))
+    except Exception as e:
+        error_logger.error(f"手动刷新预览视频失败: {e}")
+        return error_response(500, "服务端内部错误")
+
+
 @video_bp.route('/search', methods=['GET'])
 def video_search():
     try:
@@ -679,6 +705,69 @@ def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
     thread.start()
 
 
+def _refresh_preview_video_now(video_id: str, source: str = "local", force_download: bool = True) -> dict:
+    source_key = "preview" if str(source or "").strip().lower() == "preview" else "local"
+    repo = video_service._get_repo_by_source(source_key)
+    current_video = repo.get_by_id(video_id)
+    if not current_video:
+        return {"success": False, "message": "视频不存在"}
+
+    current_data = current_video.to_dict() if hasattr(current_video, "to_dict") else {}
+    code = str(current_data.get("code") or "").strip()
+
+    platform_name = "javdb"
+    lookup_id = ""
+    try:
+        from core.platform import Platform as CorePlatform, remove_platform_prefix
+        parsed_platform, original_id = remove_platform_prefix(video_id)
+        if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS]:
+            platform_name = parsed_platform.value.lower()
+            lookup_id = str(original_id or "").strip()
+    except Exception:
+        pass
+
+    lookup = lookup_id or code or video_id
+    if not lookup:
+        return {"success": False, "message": "缺少可用于刷新的视频标识"}
+
+    try:
+        adapter = get_video_adapter(platform_name)
+        detail = adapter.get_video_detail(lookup)
+        if not detail and code and hasattr(adapter, "get_video_by_code"):
+            detail = adapter.get_video_by_code(code)
+    except Exception as e:
+        return {"success": False, "message": f"获取平台预览视频失败: {e}"}
+
+    refreshed_preview = _sanitize_preview_video_value((detail or {}).get("preview_video", ""))
+    if not refreshed_preview:
+        return {"success": False, "message": "未获取到可用预览视频链接"}
+
+    if not video_service.update_preview_video(video_id, refreshed_preview, source=source_key):
+        return {"success": False, "message": "回写预览视频链接失败"}
+
+    old_local_preview = str(getattr(current_video, "preview_video_local", "") or "").strip()
+    if old_local_preview:
+        video_service._remove_preview_video_file(old_local_preview)
+    video_service.update_preview_video_local(video_id, "", source=source_key)
+
+    if force_download or _should_auto_download_preview_assets(source_key):
+        video_service.cache_preview_video_async(
+            video_id,
+            refreshed_preview,
+            source=source_key,
+            force=force_download
+        )
+
+    latest_video = repo.get_by_id(video_id)
+    latest_data = latest_video.to_dict() if latest_video and hasattr(latest_video, "to_dict") else {}
+    latest_data = _ensure_preview_video_detail(latest_data, source=source_key)
+    return {
+        "success": True,
+        "message": "预览视频链接已刷新，后台开始重新下载",
+        "data": latest_data
+    }
+
+
 def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dict:
     if not isinstance(video_data, dict):
         return video_data
@@ -738,16 +827,18 @@ def _schedule_video_asset_cache(
     if not video_id:
         return
 
-    if not _should_auto_download_preview_assets(source):
-        app_logger.info(f"预览库资源下载已关闭，跳过资源缓存调度: id={video_id}, source={source}")
-        return
-
     cover = str(cover_url or "").strip()
     preview = _sanitize_preview_video_value(preview_video or "")
     thumbs = [str(item or "").strip() for item in (thumbnail_images or []) if str(item or "").strip()]
+    auto_download_enabled = _should_auto_download_preview_assets(source)
 
     if allow_cover and cover:
-        video_service.cache_cover_to_preview_assets_async(video_id, cover, source=source)
+        # 封面始终下载，不受预览库自动下载开关影响
+        video_service.cache_cover_to_preview_assets_async(video_id, cover, source=source, force=True)
+
+    if not auto_download_enabled:
+        app_logger.info(f"预览库资源下载开关已关闭，跳过预览图/预览视频缓存: id={video_id}, source={source}")
+        return
 
     if thumbs:
         video_service.cache_thumbnail_images_async(video_id, thumbs, source=source)

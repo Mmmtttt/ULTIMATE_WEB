@@ -199,10 +199,22 @@
         </van-cell-group>
       </div>
 
-      <div v-if="hasPreviewVideo" class="preview-video-section">
+      <div v-if="video" class="preview-video-section">
         <van-cell-group title="预览视频">
+          <div class="preview-video-actions">
+            <van-button
+              size="small"
+              plain
+              type="primary"
+              :loading="refreshingPreviewVideo"
+              @click="refreshPreviewVideo"
+            >
+              更新预览视频
+            </van-button>
+          </div>
           <div class="preview-video-player-container">
             <video
+              v-if="hasPreviewVideo"
               ref="previewVideoPlayer"
               controls
               playsinline
@@ -210,6 +222,9 @@
               @error="handlePreviewVideoError"
               class="preview-video-player"
             ></video>
+            <div v-else class="preview-video-empty">
+              暂无可用预览视频，可点击上方按钮尝试更新
+            </div>
           </div>
         </van-cell-group>
       </div>
@@ -405,6 +420,7 @@ const currentQuality = ref(0)
 const previewVideoPlayer = ref(null)
 const assetRefreshTimer = ref(null)
 const assetRefreshAttempts = ref(0)
+const refreshingPreviewVideo = ref(false)
 
 const hls = ref(null)
 const previewHls = ref(null)
@@ -471,6 +487,7 @@ const previewVideoPlayerUrl = computed(() => {
   const remotePreview = String(video.value?.preview_video || '').trim()
   return resolvePreviewVideoUrl(localPreview || remotePreview)
 })
+const previewRefreshSource = computed(() => (video.value?.source === 'preview' ? 'preview' : 'local'))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
 
 function clearAssetRefreshTimer() {
@@ -675,6 +692,42 @@ async function mountPreviewVideoSource() {
   }
 
   videoEl.src = src
+}
+
+async function refreshPreviewVideo() {
+  if (!videoId.value || refreshingPreviewVideo.value) {
+    return
+  }
+
+  refreshingPreviewVideo.value = true
+  showLoadingToast({
+    message: '正在更新预览视频...',
+    forbidClick: true
+  })
+
+  try {
+    const response = await videoApi.refreshPreviewVideo(videoId.value, previewRefreshSource.value)
+    closeToast()
+
+    if (response?.code !== 200 || !response?.data) {
+      showFailToast(response?.msg || '更新预览视频失败')
+      return
+    }
+
+    video.value = response.data
+    if (response.data?.score) {
+      scoreValue.value = response.data.score
+    }
+    scheduleLocalAssetRefresh()
+    await mountPreviewVideoSource()
+    showSuccessToast('预览视频链接已刷新，后台正在重新下载')
+  } catch (error) {
+    closeToast()
+    console.error('更新预览视频失败:', error)
+    showFailToast('更新预览视频失败')
+  } finally {
+    refreshingPreviewVideo.value = false
+  }
 }
 
 function syncEditFormFromVideo(detail) {
@@ -1479,12 +1532,31 @@ onUnmounted(() => {
   padding: 12px;
 }
 
+.preview-video-actions {
+  padding: 12px 12px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .preview-video-player {
   width: 100%;
   display: block;
   border-radius: 10px;
   background: #000;
   aspect-ratio: 16 / 9;
+}
+
+.preview-video-empty {
+  border: 1px dashed var(--border-soft);
+  border-radius: 10px;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 12px;
+  text-align: center;
 }
 
 .thumbnails-section {
