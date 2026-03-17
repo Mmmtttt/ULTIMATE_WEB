@@ -375,6 +375,54 @@ const applyZoomLevel = (nextLevel) => {
   }
 }
 
+const getZoomContainer = () => activeContainer.value || readerContent.value
+
+const getContainerAnchorPoint = (container, clientX, clientY) => {
+  if (!container || typeof container.getBoundingClientRect !== 'function') {
+    return { x: 0, y: 0 }
+  }
+
+  const rect = container.getBoundingClientRect()
+  const rawX = clientX - rect.left
+  const rawY = clientY - rect.top
+  return {
+    x: Math.max(0, Math.min(container.clientWidth || 0, rawX)),
+    y: Math.max(0, Math.min(container.clientHeight || 0, rawY))
+  }
+}
+
+const zoomAtPoint = (nextLevel, anchorPoint, container) => {
+  const prevZoom = zoomLevel.value
+  const clamped = Math.max(1, Math.min(5, Number(nextLevel.toFixed(3))))
+
+  if (!Number.isFinite(prevZoom) || prevZoom <= 0) {
+    applyZoomLevel(clamped)
+    return
+  }
+
+  if (Math.abs(clamped - prevZoom) < 0.0001) return
+
+  if (!container || !anchorPoint || clamped <= 1) {
+    applyZoomLevel(clamped)
+    return
+  }
+
+  const scrollX = typeof container.scrollLeft === 'number' ? container.scrollLeft : 0
+  const scrollY = typeof container.scrollTop === 'number' ? container.scrollTop : 0
+  const scaleRatio = clamped / prevZoom
+
+  panX.value =
+    anchorPoint.x +
+    scrollX -
+    (anchorPoint.x + scrollX - panX.value) * scaleRatio
+  panY.value =
+    anchorPoint.y +
+    scrollY -
+    (anchorPoint.y + scrollY - panY.value) * scaleRatio
+
+  applyZoomLevel(clamped)
+}
+
 const updateDeviceState = () => {
   if (typeof window === 'undefined') return
   isMobile.value = detectMobileDevice()
@@ -760,11 +808,31 @@ const exitZoomMode = () => {
 }
 
 const zoomIn = () => {
-  applyZoomLevel(zoomLevel.value + 0.2)
+  const container = getZoomContainer()
+  if (!container) {
+    applyZoomLevel(zoomLevel.value + 0.2)
+    return
+  }
+
+  const anchorPoint = {
+    x: (container.clientWidth || 0) / 2,
+    y: (container.clientHeight || 0) / 2
+  }
+  zoomAtPoint(zoomLevel.value + 0.2, anchorPoint, container)
 }
 
 const zoomOut = () => {
-  applyZoomLevel(zoomLevel.value - 0.2)
+  const container = getZoomContainer()
+  if (!container) {
+    applyZoomLevel(zoomLevel.value - 0.2)
+    return
+  }
+
+  const anchorPoint = {
+    x: (container.clientWidth || 0) / 2,
+    y: (container.clientHeight || 0) / 2
+  }
+  zoomAtPoint(zoomLevel.value - 0.2, anchorPoint, container)
 }
 
 const handleWheel = (event) => {
@@ -772,11 +840,12 @@ const handleWheel = (event) => {
 
   if (event.ctrlKey) {
     event.preventDefault()
-    if (event.deltaY > 0) {
-      zoomOut()
-    } else {
-      zoomIn()
-    }
+    const container = getZoomContainer()
+    const anchorPoint = container
+      ? getContainerAnchorPoint(container, event.clientX, event.clientY)
+      : { x: 0, y: 0 }
+    const nextZoom = event.deltaY > 0 ? zoomLevel.value - 0.2 : zoomLevel.value + 0.2
+    zoomAtPoint(nextZoom, anchorPoint, container)
     return
   }
 
