@@ -1,13 +1,16 @@
-"""
+﻿"""
 视频应用服务
 """
 
 from typing import List, Dict, Optional
 import os
+import re
 import shutil
 import threading
+import json
 import requests
 from io import BytesIO
+from urllib.parse import urlparse, urljoin
 from PIL import Image
 
 from domain.video import Video, VideoRepository
@@ -22,7 +25,7 @@ from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
-from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR, JAV_PICTURES_DIR, JAV_COVER_DIR
+from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR, JAV_PICTURES_DIR, JAV_COVER_DIR, STATIC_DIR
 from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
 
@@ -31,7 +34,10 @@ class VideoAppService(BaseContentAppService):
     _entity_name = "视频"
     _cache_manager = CacheManager()
     RECENT_IMPORT_TAG_ID = "tag_video_recent_import"
-    RECENT_IMPORT_TAG_NAME = "最近导入"
+    RECENT_IMPORT_TAG_NAME = "�������"
+    PREVIEW_VIDEO_DIR_NAME = "preview_video"
+    PREVIEW_VIDEO_MAX_BYTES = 180 * 1024 * 1024
+    PREVIEW_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
     
     def __init__(
         self,
@@ -71,7 +77,7 @@ class VideoAppService(BaseContentAppService):
             app_logger.info(f"创建视频系统标签: {self.RECENT_IMPORT_TAG_NAME} ({new_tag.id})")
             return new_tag.id
 
-        error_logger.error("创建视频最近导入标签失败")
+        error_logger.error("������Ƶ��������ǩʧ��")
         return None
 
     def apply_recent_import_tags(
@@ -87,11 +93,11 @@ class VideoAppService(BaseContentAppService):
                     "tag_id": None,
                     "updated_count": 0,
                     "cleared_count": 0
-                }, "无需更新最近导入标签")
+                }, "���������������ǩ")
 
             tag_id = self._ensure_recent_import_tag_id()
             if not tag_id:
-                return ServiceResult.error("创建最近导入标签失败")
+                return ServiceResult.error("������������ǩʧ��")
 
             repo = self._get_repo_by_source(source)
 
@@ -115,17 +121,17 @@ class VideoAppService(BaseContentAppService):
                     updated_count += 1
 
             app_logger.info(
-                f"更新视频最近导入标签完成: source={source}, tag_id={tag_id}, "
+                f"更新视频最近导入标签完�? source={source}, tag_id={tag_id}, "
                 f"cleared={cleared_count}, updated={updated_count}"
             )
             return ServiceResult.ok({
                 "tag_id": tag_id,
                 "updated_count": updated_count,
                 "cleared_count": cleared_count
-            }, "更新最近导入标签成功")
+            }, "������������ǩ�ɹ�")
         except Exception as e:
-            error_logger.error(f"更新视频最近导入标签失败: {e}")
-            return ServiceResult.error("更新最近导入标签失败")
+            error_logger.error(f"更新视频最近导入标签失�? {e}")
+            return ServiceResult.error("������������ǩʧ��")
     
     def get_video_list(
         self,
@@ -162,7 +168,7 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 video_list.append(video_info)
             
-            app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
+            app_logger.info(f"��ȡ��Ƶ�б�ɹ����� {len(video_list)} ����Ƶ")
             return ServiceResult.ok(video_list)
         except Exception as e:
             error_logger.error(f"获取视频列表失败: {e}")
@@ -172,7 +178,7 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("视频不存在")
+                return ServiceResult.error("��Ƶ������")
             
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -191,7 +197,7 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_code(code)
             if not video:
-                return ServiceResult.error("视频不存在")
+                return ServiceResult.error("��Ƶ������")
             return ServiceResult.ok(video.to_dict())
         except Exception as e:
             error_logger.error(f"根据番号获取视频失败: {e}")
@@ -211,7 +217,7 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(results)}")
+            app_logger.info(f"搜索成功: 关键�?'{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
             error_logger.error(f"搜索失败: {e}")
@@ -233,21 +239,21 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("视频不存在")
+                return ServiceResult.error("��Ƶ������")
             
             self._cleanup_video_files(video)
             
             success = self._video_repo.delete(video_id)
             if success:
-                app_logger.info(f"视频已永久删除: {video_id}")
-                return ServiceResult.ok({"message": "视频已永久删除"})
+                app_logger.info(f"视频已永久删�? {video_id}")
+                return ServiceResult.ok({"message": "��Ƶ������ɾ��"})
             return ServiceResult.error("删除失败")
         except Exception as e:
             error_logger.error(f"永久删除视频失败: {e}")
             return ServiceResult.error("删除失败")
     
     def _cleanup_video_files(self, video):
-        """清理视频相关的所有文件"""
+        """������Ƶ��ص������ļ�"""
         from core.constants import COVER_DIR
         
         if video.cover_path:
@@ -259,7 +265,7 @@ class VideoAppService(BaseContentAppService):
             if os.path.exists(cover_path_full):
                 try:
                     os.remove(cover_path_full)
-                    app_logger.info(f"已删除视频封面: {cover_path_full}")
+                    app_logger.info(f"已删除视频封�? {cover_path_full}")
                 except Exception as e:
                     error_logger.error(f"删除视频封面失败: {e}")
         
@@ -267,7 +273,7 @@ class VideoAppService(BaseContentAppService):
         if os.path.exists(jav_cover_path):
             try:
                 os.remove(jav_cover_path)
-                app_logger.info(f"已删除视频封面: {jav_cover_path}")
+                app_logger.info(f"已删除视频封�? {jav_cover_path}")
             except Exception as e:
                 error_logger.error(f"删除视频封面失败: {e}")
         
@@ -275,11 +281,13 @@ class VideoAppService(BaseContentAppService):
         if os.path.exists(video_dir):
             try:
                 shutil.rmtree(video_dir)
-                app_logger.info(f"已删除视频目录: {video_dir}")
+                app_logger.info(f"已删除视频目�? {video_dir}")
             except Exception as e:
                 error_logger.error(f"删除视频目录失败: {e}")
+
+        self._remove_preview_video_file(getattr(video, "preview_video", ""))
     
-    def delete_recommendation_assets(self, video_id: str):
+    def delete_recommendation_assets(self, video_id: str, preview_video: str = ""):
         jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video_id}.jpg")
         if os.path.exists(jav_cover_path):
             try:
@@ -293,6 +301,9 @@ class VideoAppService(BaseContentAppService):
                 shutil.rmtree(video_dir)
             except Exception as e:
                 error_logger.error(f"删除推荐视频目录失败: {e}")
+
+        if preview_video:
+            self._remove_preview_video_file(preview_video)
     
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
@@ -460,11 +471,11 @@ class VideoAppService(BaseContentAppService):
                     "skipped_items": skipped_items,
                     "failed_items": failed_items
                 },
-                f"导入完成：成功 {imported_count}，跳过 {skipped_count}，失败 {failed_count}"
+                f"导入完成：成�?{imported_count}，跳�?{skipped_count}，失�?{failed_count}"
             )
         except Exception as e:
             error_logger.error(f"migrate recommendation videos to local failed: {e}")
-            return ServiceResult.error("导入本地库失败")
+            return ServiceResult.error("���뱾�ؿ�ʧ��")
 
     def get_trash_list(self) -> ServiceResult:
         try:
@@ -472,8 +483,8 @@ class VideoAppService(BaseContentAppService):
             trash_list = [v.to_dict() for v in videos if v.is_deleted]
             return ServiceResult.ok(trash_list)
         except Exception as e:
-            error_logger.error(f"获取回收站列表失败: {e}")
-            return ServiceResult.error("获取回收站失败")
+            error_logger.error(f"获取回收站列表失�? {e}")
+            return ServiceResult.error("��ȡ����վʧ��")
     
     def get_videos_by_tag(self, tag_id: str) -> ServiceResult:
         try:
@@ -502,11 +513,11 @@ class VideoAppService(BaseContentAppService):
         try:
             for tag_id in tag_ids:
                 if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+                    return ServiceResult.error(f"标签不存�? {tag_id}")
             
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("视频不存在")
+                return ServiceResult.error("��Ƶ������")
             
             video.bind_tags(tag_ids)
             
@@ -593,11 +604,11 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
+            app_logger.info(f"筛选成�? 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
-            error_logger.error(f"筛选失败: {e}")
-            return ServiceResult.error("筛选失败")
+            error_logger.error(f"筛选失�? {e}")
+            return ServiceResult.error("ɸѡʧ��")
     
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
@@ -612,17 +623,17 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
+            app_logger.info(f"筛选成�? 包含 {include_tags}, 排除 {exclude_tags}, 作�?{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
-            error_logger.error(f"筛选失败: {e}")
-            return ServiceResult.error("筛选失败")
+            error_logger.error(f"筛选失�? {e}")
+            return ServiceResult.error("ɸѡʧ��")
     
     def batch_add_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
             for tag_id in tag_ids:
                 if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+                    return ServiceResult.error(f"标签不存�? {tag_id}")
             
             updated_count = 0
             for video_id in video_ids:
@@ -633,10 +644,10 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("没有找到有效的视频")
+                return ServiceResult.error("û���ҵ���Ч����Ƶ")
             
-            app_logger.info(f"批量添加标签成功: {updated_count}个视频, 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为{updated_count}个视频添加标签")
+            app_logger.info(f"批量添加标签成功: {updated_count}个视�? 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"�ɹ�Ϊ {updated_count} ����Ƶ��ӱ�ǩ")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
             return ServiceResult.error("批量添加标签失败")
@@ -652,13 +663,515 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("没有找到有效的视频")
+                return ServiceResult.error("û���ҵ���Ч����Ƶ")
             
-            app_logger.info(f"批量移除标签成功: {updated_count}个视频, 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功从{updated_count}个视频移除标签")
+            app_logger.info(f"批量移除标签成功: {updated_count}个视�? 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"�ɹ��� {updated_count} ����Ƶ�Ƴ���ǩ")
         except Exception as e:
             error_logger.error(f"批量移除标签失败: {e}")
             return ServiceResult.error("批量移除标签失败")
+
+    @staticmethod
+    def _normalize_preview_source(source: str) -> str:
+        return "preview" if str(source or "").strip().lower() == "preview" else "local"
+
+    @classmethod
+    def _sanitize_preview_video_url(cls, preview_url: str) -> str:
+        if not preview_url:
+            return ""
+
+        url = str(preview_url).strip()
+        if not url:
+            return ""
+
+        lowered = url.lower()
+        if lowered.startswith("blob:"):
+            return ""
+
+        if lowered.startswith("/api/v1/video/proxy2") or lowered.startswith("/v1/video/proxy2"):
+            return url
+        if lowered.startswith("/proxy2?") or lowered.startswith("/proxy/"):
+            return url
+
+        if lowered.startswith("//"):
+            url = f"https:{url}"
+            lowered = url.lower()
+
+        if lowered.startswith("/static/"):
+            return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
+
+        if lowered.startswith("http://") or lowered.startswith("https://"):
+            return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
+
+        return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
+
+    @classmethod
+    def _guess_preview_video_extension(cls, preview_url: str, content_type: str = "") -> str:
+        lowered_url = (preview_url or "").lower()
+        for ext in cls.PREVIEW_VIDEO_EXTENSIONS:
+            if ext in lowered_url:
+                return ext
+
+        lowered_type = (content_type or "").lower()
+        if "webm" in lowered_type:
+            return ".webm"
+        if "quicktime" in lowered_type:
+            return ".mov"
+        if "mp4" in lowered_type or "video/" in lowered_type:
+            return ".mp4"
+        return ""
+
+    @staticmethod
+    def _load_javdb_cookie_header() -> str:
+        try:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(project_root, "third_party_config.json")
+            if not os.path.exists(config_path):
+                return ""
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+            cookies = (
+                (config.get("adapters") or {})
+                .get("javdb", {})
+                .get("cookies", {})
+            )
+            if not isinstance(cookies, dict):
+                return ""
+
+            pairs = []
+            for key, value in cookies.items():
+                key_str = str(key or "").strip()
+                if not key_str:
+                    continue
+                pairs.append(f"{key_str}={str(value or '')}")
+            return "; ".join(pairs)
+        except Exception:
+            return ""
+
+    def _build_preview_video_headers(self, preview_url: str) -> Dict[str, str]:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "*/*",
+        }
+
+        parsed = urlparse(preview_url or "")
+        host = (parsed.netloc or "").lower()
+
+        if "javdb" in host or "jdbstatic.com" in host:
+            headers["Referer"] = "https://javdb.com/"
+            cookie_header = self._load_javdb_cookie_header()
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+            return headers
+
+        if parsed.scheme and parsed.netloc:
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+        return headers
+
+    def _request_preview_url(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        stream: bool = False,
+        timeout: int = 30,
+        allow_redirects: bool = True,
+    ):
+        # Prefer Missav client's request stack to reuse curl_cffi impersonation and anti-bot handling.
+        try:
+            from third_party.missav import get_client
+
+            client = get_client(proxy_base_path="/api/v1/video")
+            return client._request(
+                "GET",
+                url,
+                headers=headers,
+                stream=stream,
+                timeout=timeout,
+                allow_redirects=allow_redirects,
+                impersonate=getattr(client, "impersonate", "chrome120"),
+            )
+        except Exception as e:
+            app_logger.warning(f"preview request fallback to requests: url={url}, error={e}")
+
+        return requests.get(
+            url,
+            headers=headers,
+            stream=stream,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+        )
+
+    def _build_preview_video_save_paths(self, video_id: str, source: str, extension: str) -> tuple:
+        source_key = self._normalize_preview_source(source)
+        safe_video_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
+
+        save_dir = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME, source_key)
+        os.makedirs(save_dir, exist_ok=True)
+
+        filename = f"{safe_video_id}{extension}"
+        abs_path = os.path.join(save_dir, filename)
+        relative_path = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{filename}"
+        return abs_path, relative_path
+
+    def _build_preview_hls_paths(self, video_id: str, source: str) -> tuple:
+        source_key = self._normalize_preview_source(source)
+        safe_video_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
+
+        source_dir = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME, source_key)
+        os.makedirs(source_dir, exist_ok=True)
+
+        hls_dir_name = f"{safe_video_id}_hls"
+        hls_dir = os.path.join(source_dir, hls_dir_name)
+        playlist_abs = os.path.join(hls_dir, "index.m3u8")
+        playlist_rel = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{hls_dir_name}/index.m3u8"
+        return hls_dir, playlist_abs, playlist_rel
+
+    @staticmethod
+    def _extract_m3u8_uri(line: str) -> str:
+        match = re.search(r'URI="([^"]+)"', line or "")
+        return match.group(1).strip() if match else ""
+
+    @staticmethod
+    def _select_hls_variant_playlist(playlist_text: str, playlist_url: str) -> str:
+        lines = (playlist_text or "").splitlines()
+        best_url = ""
+        best_bandwidth = -1
+
+        for idx, line in enumerate(lines):
+            current = (line or "").strip()
+            if not current.upper().startswith("#EXT-X-STREAM-INF"):
+                continue
+
+            bandwidth = 0
+            bandwidth_match = re.search(r"BANDWIDTH=(\d+)", current)
+            if bandwidth_match:
+                try:
+                    bandwidth = int(bandwidth_match.group(1))
+                except Exception:
+                    bandwidth = 0
+
+            candidate_uri = ""
+            for next_line in lines[idx + 1:]:
+                candidate = (next_line or "").strip()
+                if not candidate:
+                    continue
+                if candidate.startswith("#"):
+                    continue
+                candidate_uri = candidate
+                break
+
+            if not candidate_uri:
+                continue
+
+            absolute_url = urljoin(playlist_url, candidate_uri)
+            if bandwidth > best_bandwidth:
+                best_bandwidth = bandwidth
+                best_url = absolute_url
+
+        return best_url
+
+    def _download_preview_hls_to_local(self, video_id: str, preview_video_url: str, source: str = "local") -> str:
+        hls_dir, _, playlist_rel = self._build_preview_hls_paths(video_id, source)
+        tmp_dir = f"{hls_dir}.tmp"
+
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        try:
+            playlist_url = preview_video_url
+            playlist_text = ""
+
+            # Handle possible master playlists by choosing highest BANDWIDTH stream.
+            for _ in range(3):
+                response = self._request_preview_url(
+                    playlist_url,
+                    headers=self._build_preview_video_headers(playlist_url),
+                    stream=False,
+                    timeout=30,
+                    allow_redirects=True,
+                )
+                if response.status_code != 200:
+                    app_logger.warning(
+                        f"下载预览 m3u8 失败: id={video_id}, status={response.status_code}, url={playlist_url}"
+                    )
+                    return ""
+
+                playlist_url = response.url or playlist_url
+                playlist_text = response.text or ""
+                variant_url = self._select_hls_variant_playlist(playlist_text, playlist_url)
+                if not variant_url:
+                    break
+                playlist_url = variant_url
+
+            if not playlist_text:
+                return ""
+
+            rewritten_lines = []
+            downloaded_total = 0
+            key_index = 0
+            map_index = 0
+            seg_index = 0
+            asset_cache = {}
+
+            def download_asset(asset_url: str, prefix: str, index: int, fallback_ext: str) -> str:
+                nonlocal downloaded_total
+
+                if asset_url in asset_cache:
+                    return asset_cache[asset_url]
+
+                ext = os.path.splitext(urlparse(asset_url).path or "")[1].lower()
+                if not ext or len(ext) > 8:
+                    ext = fallback_ext
+
+                filename = f"{prefix}-{index:04d}{ext}"
+                target_path = os.path.join(tmp_dir, filename)
+
+                resp = self._request_preview_url(
+                    asset_url,
+                    headers=self._build_preview_video_headers(asset_url),
+                    stream=True,
+                    timeout=60,
+                    allow_redirects=True,
+                )
+                if resp.status_code not in (200, 206):
+                    app_logger.warning(
+                        f"下载预览分片失败: id={video_id}, status={resp.status_code}, url={asset_url}"
+                    )
+                    return ""
+
+                written = 0
+                try:
+                    with open(target_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=256 * 1024):
+                            if not chunk:
+                                continue
+                            written += len(chunk)
+                            downloaded_total += len(chunk)
+                            if downloaded_total > self.PREVIEW_VIDEO_MAX_BYTES:
+                                app_logger.warning(
+                                    f"预览 HLS 资源过大，停止缓�? id={video_id}, bytes={downloaded_total}"
+                                )
+                                return ""
+                            f.write(chunk)
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+
+                if written == 0:
+                    try:
+                        os.remove(target_path)
+                    except Exception:
+                        pass
+                    return ""
+
+                asset_cache[asset_url] = filename
+                return filename
+
+            for raw_line in playlist_text.splitlines():
+                stripped = (raw_line or "").strip()
+                if not stripped:
+                    rewritten_lines.append(raw_line)
+                    continue
+
+                upper_line = stripped.upper()
+                if upper_line.startswith("#EXT-X-KEY"):
+                    key_uri = self._extract_m3u8_uri(raw_line)
+                    if key_uri and not key_uri.startswith("data:"):
+                        key_url = urljoin(playlist_url, key_uri)
+                        local_key = download_asset(key_url, "key", key_index, ".key")
+                        if not local_key:
+                            return ""
+                        key_index += 1
+                        rewritten_lines.append(raw_line.replace(key_uri, local_key, 1))
+                    else:
+                        rewritten_lines.append(raw_line)
+                    continue
+
+                if upper_line.startswith("#EXT-X-MAP"):
+                    map_uri = self._extract_m3u8_uri(raw_line)
+                    if map_uri and not map_uri.startswith("data:"):
+                        map_url = urljoin(playlist_url, map_uri)
+                        local_map = download_asset(map_url, "map", map_index, ".mp4")
+                        if not local_map:
+                            return ""
+                        map_index += 1
+                        rewritten_lines.append(raw_line.replace(map_uri, local_map, 1))
+                    else:
+                        rewritten_lines.append(raw_line)
+                    continue
+
+                if stripped.startswith("#"):
+                    rewritten_lines.append(raw_line)
+                    continue
+
+                segment_url = urljoin(playlist_url, stripped)
+                local_segment = download_asset(segment_url, "seg", seg_index, ".ts")
+                if not local_segment:
+                    return ""
+                seg_index += 1
+                rewritten_lines.append(local_segment)
+
+            if seg_index == 0:
+                app_logger.warning(f"m3u8 中未发现可用分片: id={video_id}, url={playlist_url}")
+                return ""
+
+            playlist_tmp_path = os.path.join(tmp_dir, "index.m3u8")
+            with open(playlist_tmp_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(rewritten_lines))
+
+            if os.path.isdir(hls_dir):
+                shutil.rmtree(hls_dir, ignore_errors=True)
+            shutil.move(tmp_dir, hls_dir)
+            return playlist_rel
+        except Exception as e:
+            error_logger.error(f"缓存预览 HLS 失败: id={video_id}, error={e}")
+            return ""
+        finally:
+            if os.path.isdir(tmp_dir):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _download_preview_video_to_local(self, video_id: str, preview_video_url: str, source: str = "local") -> str:
+        sanitized_url = self._sanitize_preview_video_url(preview_video_url)
+        if not sanitized_url:
+            return ""
+
+        if sanitized_url.startswith("/static/"):
+            return sanitized_url
+
+        lowered = sanitized_url.lower()
+        if ".m3u8" in lowered:
+            return self._download_preview_hls_to_local(video_id, sanitized_url, source=source)
+
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            return ""
+
+        response = None
+        try:
+            response = self._request_preview_url(
+                sanitized_url,
+                headers=self._build_preview_video_headers(sanitized_url),
+                stream=True,
+                timeout=60,
+                allow_redirects=True,
+            )
+            if response.status_code not in (200, 206):
+                app_logger.warning(
+                    f"预览视频下载失败: id={video_id}, status={response.status_code}, url={sanitized_url}"
+                )
+                return ""
+
+            content_type = (response.headers.get("content-type", "") or "").lower()
+            if "mpegurl" in content_type or "m3u8" in content_type:
+                return ""
+
+            extension = self._guess_preview_video_extension(sanitized_url, content_type)
+            if not extension:
+                app_logger.warning(
+                    f"无法识别预览视频后缀: id={video_id}, content_type={content_type}, url={sanitized_url}"
+                )
+                return ""
+
+            abs_path, relative_path = self._build_preview_video_save_paths(video_id, source, extension)
+            tmp_path = f"{abs_path}.tmp"
+
+            downloaded_bytes = 0
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=256 * 1024):
+                    if not chunk:
+                        continue
+                    downloaded_bytes += len(chunk)
+                    if downloaded_bytes > self.PREVIEW_VIDEO_MAX_BYTES:
+                        app_logger.warning(f"预览视频过大，跳过缓�? id={video_id}, bytes={downloaded_bytes}")
+                        f.close()
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+                        return ""
+                    f.write(chunk)
+
+            if downloaded_bytes == 0:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+                return ""
+
+            os.replace(tmp_path, abs_path)
+            return relative_path
+        except Exception as e:
+            error_logger.error(f"下载预览视频失败: id={video_id}, error={e}")
+            return ""
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+
+    def update_preview_video(self, video_id: str, preview_video: str, source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.preview_video = preview_video or ""
+        return bool(repo.save(video))
+
+    def cache_preview_video_async(self, video_id: str, preview_video_url: str, source: str = "local"):
+        source_key = self._normalize_preview_source(source)
+        sanitized_url = self._sanitize_preview_video_url(preview_video_url)
+        if not video_id or not sanitized_url:
+            return
+
+        if sanitized_url.startswith("/static/"):
+            self.update_preview_video(video_id, sanitized_url, source=source_key)
+            return
+
+        def download():
+            try:
+                local_path = self._download_preview_video_to_local(video_id, sanitized_url, source=source_key)
+                if not local_path:
+                    return
+                if self.update_preview_video(video_id, local_path, source=source_key):
+                    app_logger.info(f"预览视频缓存成功: id={video_id}, source={source_key}, path={local_path}")
+            except Exception as e:
+                error_logger.error(f"缓存预览视频失败: id={video_id}, error={e}")
+
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+
+    def _remove_preview_video_file(self, preview_video_url: str):
+        url = str(preview_video_url or "").strip()
+        if not url or not url.startswith("/static/"):
+            return
+
+        static_relative = url.lstrip("/")
+        prefix = f"static/{self.PREVIEW_VIDEO_DIR_NAME}/"
+        if not static_relative.startswith(prefix):
+            return
+
+        file_relative = static_relative[len("static/"):]
+        abs_path = os.path.join(STATIC_DIR, file_relative.replace("/", os.sep))
+        if not os.path.exists(abs_path):
+            return
+
+        try:
+            if os.path.isfile(abs_path):
+                os.remove(abs_path)
+
+            parent_dir = os.path.dirname(abs_path)
+            if os.path.isdir(parent_dir) and os.path.basename(parent_dir).endswith("_hls"):
+                shutil.rmtree(parent_dir, ignore_errors=True)
+            app_logger.info(f"��ɾ��Ԥ����Ƶ����: {abs_path}")
+        except Exception as e:
+            error_logger.error(f"ɾ��Ԥ����Ƶ����ʧ��: {abs_path}, error={e}")
 
     def _build_image_request_headers(self, image_url: str, video_id: str = "") -> Dict[str, str]:
         headers = {
@@ -717,7 +1230,7 @@ class VideoAppService(BaseContentAppService):
         thread.start()
     
     def download_high_quality_thumbnail_async(self, video_id: str, cover_url: str, jav_pictures_dir: str, jav_cover_dir: str):
-        """下载高清缩略图到JAV目录（主页导入时使用）"""
+        """���ظ�����Ƶ����ͼ�� JAV Ŀ¼����ҳ����ʱʹ�ã�"""
         def download():
             try:
                 if not cover_url:
@@ -748,15 +1261,15 @@ class VideoAppService(BaseContentAppService):
                     video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
                     self._video_repo.save(video)
                 
-                app_logger.info(f"下载高清缩略图成功: {video_id}")
+                app_logger.info(f"下载高清缩略图成�? {video_id}")
             except Exception as e:
-                error_logger.error(f"下载高清缩略图失败: {e}")
+                error_logger.error(f"下载高清缩略图失�? {e}")
         
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
     
     def download_cover_async_for_recommendation(self, video_id: str, cover_url: str, jav_cover_dir: str):
-        """下载推荐页封面"""
+        """�����Ƽ�ҳ����"""
         def download():
             try:
                 if not cover_url:
@@ -781,9 +1294,9 @@ class VideoAppService(BaseContentAppService):
                     video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
                     video_recommendation_repo.save(video)
                 
-                app_logger.info(f"下载推荐页封面成功: {video_id}")
+                app_logger.info(f"下载推荐页封面成�? {video_id}")
             except Exception as e:
-                error_logger.error(f"下载推荐页封面失败: {e}")
+                error_logger.error(f"下载推荐页封面失�? {e}")
         
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
@@ -800,13 +1313,13 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("没有找到有效的视频")
+                return ServiceResult.error("û���ҵ���Ч����Ƶ")
             
-            app_logger.info(f"批量移入回收站成功: {updated_count}个视频")
+            app_logger.info(f"�����������վ�ɹ�: {updated_count}����Ƶ")
             return ServiceResult.ok({"updated_count": updated_count}, f"已将{updated_count}个视频移入回收站")
         except Exception as e:
-            error_logger.error(f"批量移入回收站失败: {e}")
-            return ServiceResult.error("批量移入回收站失败")
+            error_logger.error(f"批量移入回收站失�? {e}")
+            return ServiceResult.error("�����������վʧ��")
     
     def batch_restore_from_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复视频"""
@@ -820,10 +1333,10 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("没有找到有效的视频")
+                return ServiceResult.error("û���ҵ���Ч����Ƶ")
             
-            app_logger.info(f"批量从回收站恢复成功: {updated_count}个视频")
-            return ServiceResult.ok({"updated_count": updated_count}, f"已恢复{updated_count}个视频")
+            app_logger.info(f"�����ӻ���վ�ָ��ɹ�: {updated_count}����Ƶ")
+            return ServiceResult.ok({"updated_count": updated_count}, f"�ѻָ� {updated_count} ����Ƶ")
         except Exception as e:
             error_logger.error(f"批量从回收站恢复失败: {e}")
             return ServiceResult.error("批量从回收站恢复失败")
@@ -840,10 +1353,10 @@ class VideoAppService(BaseContentAppService):
                     deleted_count += 1
             
             if deleted_count == 0:
-                return ServiceResult.error("没有找到有效的视频")
+                return ServiceResult.error("û���ҵ���Ч����Ƶ")
             
-            app_logger.info(f"批量永久删除成功: {deleted_count}个视频")
-            return ServiceResult.ok({"deleted_count": deleted_count}, f"已永久删除{deleted_count}个视频")
+            app_logger.info(f"��������ɾ���ɹ�: {deleted_count}����Ƶ")
+            return ServiceResult.ok({"deleted_count": deleted_count}, f"������ɾ�� {deleted_count} ����Ƶ")
         except Exception as e:
             error_logger.error(f"批量永久删除失败: {e}")
             return ServiceResult.error("批量永久删除失败")
@@ -876,3 +1389,4 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"批量导入视频失败: {e}")
             return ServiceResult.error("批量导入失败")
+

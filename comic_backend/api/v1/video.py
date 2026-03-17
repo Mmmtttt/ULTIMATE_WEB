@@ -13,10 +13,14 @@ from bs4 import BeautifulSoup
 import re
 import threading
 import time
+from urllib.parse import parse_qs, urlparse
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
 actor_service = ActorAppService()
+_preview_refresh_lock = threading.Lock()
+_preview_refresh_last_run = {}
+_PREVIEW_REFRESH_COOLDOWN_SECONDS = 180
 
 
 def success_response(data=None, msg="成功"):
@@ -72,7 +76,9 @@ def video_detail():
         
         result = video_service.get_video_detail(video_id)
         if result.success:
-            return success_response(result.data)
+            detail = (result.data or {}).copy()
+            detail = _ensure_preview_video_detail(detail, source="local")
+            return success_response(detail)
         else:
             return error_response(404, result.message)
     except Exception as e:
@@ -270,6 +276,10 @@ def import_video():
         if result.success:
             video_id = result.data.get("id") if isinstance(result.data, dict) else None
             if video_id:
+                preview_video = _sanitize_preview_video_value(result.data.get("preview_video", ""))
+                if preview_video:
+                    video_service.cache_preview_video_async(video_id, preview_video, source="local")
+
                 recent_result = video_service.apply_recent_import_tags(
                     [video_id],
                     source="local",
@@ -513,6 +523,133 @@ def to_proxy_image_url(url: str) -> str:
     import base64
     encoded_url = base64.b64encode(url.encode('utf-8')).decode('utf-8')
     return f"/api/v1/video/proxy2?url={encoded_url}"
+
+
+_PREVIEW_VIDEO_MEDIA_MARKERS = (".mp4", ".m3u8", ".webm", ".mov", ".m4v")
+
+
+def _sanitize_preview_video_value(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+
+    url = str(raw_url).strip()
+    if not url:
+        return ""
+
+    lowered = url.lower()
+    if lowered.startswith("blob:"):
+        return ""
+
+    if lowered.startswith("/api/v1/video/proxy2") or lowered.startswith("/v1/video/proxy2"):
+        return url
+    if lowered.startswith("/proxy2?") or lowered.startswith("/proxy/"):
+        return url
+
+    if lowered.startswith("//"):
+        url = f"https:{url}"
+        lowered = url.lower()
+
+    if lowered.startswith("/static/"):
+        return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
+
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
+
+    return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
+
+
+def _should_refresh_preview_video_url(url: str) -> bool:
+    normalized = _sanitize_preview_video_value(url)
+    if not normalized:
+        return False
+
+    lowered = normalized.lower()
+    if "javdb.com/movies/ttm3u8/preview/" not in lowered:
+        return False
+
+    try:
+        parsed = urlparse(normalized)
+        query = parse_qs(parsed.query or "")
+        expire_raw = (query.get("t") or [None])[0]
+        if expire_raw and str(expire_raw).isdigit():
+            expire_at = int(expire_raw)
+            # 提前 2 分钟刷新，避免打开详情时 token 刚好过期
+            return expire_at <= int(time.time()) + 120
+    except Exception:
+        return True
+
+    # JavDB 该类签名链接通常短时有效，未解析到时间参数也主动刷新
+    return True
+
+
+def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
+    if not isinstance(video_data, dict):
+        return
+
+    video_id = str(video_data.get("id") or "").strip()
+    code = str(video_data.get("code") or "").strip()
+    if not video_id and not code:
+        return
+
+    refresh_key = f"{source}:{video_id or code}"
+    now = time.time()
+    with _preview_refresh_lock:
+        last_refresh = _preview_refresh_last_run.get(refresh_key, 0)
+        if now - last_refresh < _PREVIEW_REFRESH_COOLDOWN_SECONDS:
+            return
+        _preview_refresh_last_run[refresh_key] = now
+
+    def worker():
+        platform_name = "javdb"
+        lookup_id = ""
+
+        try:
+            from core.platform import Platform as CorePlatform, remove_platform_prefix
+
+            parsed_platform, original_id = remove_platform_prefix(video_id)
+            if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS]:
+                platform_name = parsed_platform.value.lower()
+                lookup_id = str(original_id or "").strip()
+        except Exception:
+            pass
+
+        lookup = lookup_id or code or video_id
+        if not lookup:
+            return
+
+        try:
+            adapter = get_video_adapter(platform_name)
+            detail = adapter.get_video_detail(lookup)
+            if not detail and code and hasattr(adapter, "get_video_by_code"):
+                detail = adapter.get_video_by_code(code)
+
+            recovered_preview = _sanitize_preview_video_value((detail or {}).get("preview_video", ""))
+            if not recovered_preview or not video_id:
+                return
+
+            video_service.update_preview_video(video_id, recovered_preview, source=source)
+            video_service.cache_preview_video_async(video_id, recovered_preview, source=source)
+        except Exception as e:
+            app_logger.warning(f"async refresh preview video failed: id={video_id}, code={code}, error={e}")
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+
+def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dict:
+    if not isinstance(video_data, dict):
+        return video_data
+
+    normalized_preview = _sanitize_preview_video_value(video_data.get("preview_video", ""))
+    if normalized_preview:
+        video_data["preview_video"] = normalized_preview
+        if _should_refresh_preview_video_url(normalized_preview):
+            _schedule_preview_video_refresh(video_data, source=source)
+        return video_data
+
+    video_data["preview_video"] = ""
+    _schedule_preview_video_refresh(video_data, source=source)
+    return video_data
 
 
 def _parse_javdb_tag_ids(tag_ids):
@@ -1070,7 +1207,7 @@ def third_party_import():
                 "actors": detail.get("actors", []),
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
-                "preview_video": detail.get("preview_video", ""),
+                "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
                 "tag_ids": video_tag_ids,
                 "list_ids": []
             }
@@ -1089,6 +1226,13 @@ def third_party_import():
                 if cover_url:
                     video_service.download_cover_async(video_data["id"], cover_url)
                     video_service.download_high_quality_thumbnail_async(video_data["id"], cover_url, JAV_PICTURES_DIR, JAV_COVER_DIR)
+
+                if video_data.get("preview_video"):
+                    video_service.cache_preview_video_async(
+                        video_data["id"],
+                        video_data.get("preview_video", ""),
+                        source="local"
+                    )
                 
                 app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
                 return success_response(result.data, result.message)
@@ -1139,7 +1283,7 @@ def third_party_import():
                 "actors": detail.get("actors", []),
                 "magnets": detail.get("magnets", []),
                 "thumbnail_images": detail.get("thumbnail_images", []),
-                "preview_video": detail.get("preview_video", ""),
+                "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
                 "cover_path": detail.get("cover_url", ""),
                 "tag_ids": video_tag_ids,
                 "list_ids": [],
@@ -1157,6 +1301,13 @@ def third_party_import():
             cover_url = detail.get("cover_url", "")
             if cover_url:
                 video_service.download_cover_async_for_recommendation(video_id_full, cover_url, JAV_COVER_DIR)
+
+            if video_data.get("preview_video"):
+                video_service.cache_preview_video_async(
+                    video_id_full,
+                    video_data.get("preview_video", ""),
+                    source="preview"
+                )
 
             recent_result = video_service.apply_recent_import_tags(
                 [video_id_full],
@@ -1204,6 +1355,7 @@ def get_video_recommendation_list():
             
             video_with_tags = video.copy()
             video_tag_ids = video.get('tag_ids', [])
+            video_with_tags['preview_video'] = _sanitize_preview_video_value(video_with_tags.get('preview_video', ''))
             video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
             filtered_videos.append(video_with_tags)
         
@@ -1246,7 +1398,8 @@ def get_video_recommendation_detail():
                 video_with_tags = video.copy()
                 video_tag_ids = video.get('tag_ids', [])
                 video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-                return success_response(video_with_tags)
+                detail = _ensure_preview_video_detail(video_with_tags, source="preview")
+                return success_response(detail)
         
         return error_response(404, "视频不存在")
     except Exception as e:
@@ -1483,7 +1636,10 @@ def delete_video_recommendation_permanently():
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
         
-        video_service.delete_recommendation_assets(video_id)
+        video_service.delete_recommendation_assets(
+            video_id,
+            preview_video=(video_to_delete or {}).get("preview_video", "")
+        )
         
         app_logger.info(f"推荐视频永久删除: {video_id}")
         return success_response({"message": "已永久删除"})
@@ -1562,7 +1718,10 @@ def batch_delete_video_recommendation_permanently():
             return error_response(500, "数据写入失败")
         
         for video in videos_to_delete:
-            video_service.delete_recommendation_assets(video.get('id', ''))
+            video_service.delete_recommendation_assets(
+                video.get('id', ''),
+                preview_video=video.get('preview_video', '')
+            )
         
         app_logger.info(f"推荐视频批量永久删除: {len(videos_to_delete)}个")
         return success_response({"deleted_count": len(videos_to_delete)}, f"已永久删除 {len(videos_to_delete)} 个视频")
@@ -1738,7 +1897,7 @@ def proxy_video_request(domain, path):
         return Response(f'Proxy error: {str(e)}', status=500)
 
 
-@video_bp.route('/proxy2', methods=['GET', 'POST'])
+@video_bp.route('/proxy2', methods=['GET', 'POST', 'HEAD'])
 def proxy_video_request2():
     """代理视频请求（完整URL方式，支持重写m3u8）"""
     try:
@@ -1751,7 +1910,13 @@ def proxy_video_request2():
             method=request.method,
             query_string=request.query_string.decode(),
             body_url=body_url,
-            incoming_referer=request.headers.get('Referer', '')
+            incoming_referer=request.headers.get('Referer', ''),
+            incoming_headers={
+                "Range": request.headers.get("Range", ""),
+                "Accept": request.headers.get("Accept", ""),
+                "Origin": request.headers.get("Origin", ""),
+                "User-Agent": request.headers.get("User-Agent", "")
+            }
         )
 
         response = make_response(proxy_result.content)

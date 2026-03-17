@@ -135,15 +135,6 @@
       </div>
     </van-popup>
 
-    <!-- Import Modal -->
-    <van-dialog 
-      v-model:show="showImportDialog" 
-      title="快速导入"
-      show-cancel-button
-      @confirm="handleQuickImport"
-    >
-      <van-field v-model="importInput" label="ID/链接" placeholder="输入内容ID" />
-    </van-dialog>
   </div>
 </template>
 
@@ -170,11 +161,9 @@ const listStore = useListStore()
 const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
 const showMenu = ref(false)
-const showImportDialog = ref(false)
 const showViewModeSheet = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
-const importInput = ref('')
 const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
@@ -261,7 +250,6 @@ const emptyTitle = computed(() =>
 )
 
 const menuActions = [
-  { text: '导入内容', icon: 'plus' },
   { text: '批量管理', icon: 'setting-o' },
   { text: '刷新列表', icon: 'replay' }
 ]
@@ -378,7 +366,6 @@ function goToSearch() {
 }
 
 function onMenuSelect(action) {
-  if (action.text === '导入内容') showImportDialog.value = true
   if (action.text === '批量管理') isManageMode.value = true
   if (action.text === '刷新列表') loadData(true)
 }
@@ -499,10 +486,6 @@ async function loadData(force = false) {
     if (tagStore.tags.length === 0) await tagStore.fetchTags('comic')
     await comicStore.fetchComics()
   }
-}
-
-function handleQuickImport() {
-  // Logic
 }
 
 // Lifecycle

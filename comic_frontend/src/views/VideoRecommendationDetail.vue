@@ -191,6 +191,21 @@
           </van-cell>
         </van-cell-group>
       </div>
+
+      <div v-if="hasPreviewVideo" class="preview-video-section">
+        <van-cell-group title="预览视频">
+          <div class="preview-video-player-container">
+            <video
+              ref="previewVideoPlayer"
+              controls
+              playsinline
+              preload="metadata"
+              @error="handlePreviewVideoError"
+              class="preview-video-player"
+            ></video>
+          </div>
+        </van-cell-group>
+      </div>
       
       <div v-if="recommendation.thumbnail_images && recommendation.thumbnail_images.length > 0" class="thumbnails-section">
         <van-cell-group title="预览图">
@@ -270,7 +285,7 @@ import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stor
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -295,8 +310,10 @@ const playSources = ref([])
 const currentSource = ref('')
 const currentStreams = ref([])
 const currentQuality = ref(0)
+const previewVideoPlayer = ref(null)
 
 const hls = ref(null)
+const previewHls = ref(null)
 
 const actions = computed(() => {
   if (recommendation.value?.is_deleted) {
@@ -318,20 +335,167 @@ const isFavoritedVideo = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
+const previewVideoPlayerUrl = computed(() => resolvePreviewVideoUrl(recommendation.value?.preview_video))
+const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
+
+function isLikelyPreviewMediaUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return false
+  }
+
+  const lower = url.toLowerCase()
+  if (
+    lower.startsWith('/api/v1/video/proxy2') ||
+    lower.startsWith('/v1/video/proxy2') ||
+    lower.startsWith('/proxy2?') ||
+    lower.startsWith('/proxy/')
+  ) {
+    return true
+  }
+
+  return /\.(mp4|m3u8|webm|mov|m4v)(?:$|[?#])/i.test(lower)
+}
+
+function resolvePreviewVideoUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return ''
+  }
+
+  let url = rawUrl.trim()
+  if (!url || url.startsWith('blob:')) {
+    return ''
+  }
+
+  if (url.startsWith('//')) {
+    url = `https:${url}`
+  }
+
+  if (url.startsWith('/api/v1/video/proxy2')) {
+    return toBackendUrl(url)
+  }
+
+  if (url.startsWith('/v1/video/proxy2')) {
+    return toBackendUrl(`/api${url}`)
+  }
+
+  if (url.startsWith('/proxy2?') || url.startsWith('/proxy/')) {
+    return toBackendApiUrl(`/v1/video${url}`)
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    if (!isLikelyPreviewMediaUrl(url)) {
+      return ''
+    }
+    return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(url)}`)
+  }
+
+  if (url.startsWith('/')) {
+    if (!isLikelyPreviewMediaUrl(url)) {
+      return ''
+    }
+    return toBackendUrl(url)
+  }
+
+  if (!isLikelyPreviewMediaUrl(url)) {
+    return ''
+  }
+
+  return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`)
+}
+
+function handlePreviewVideoError(event) {
+  const mediaErrorCode = event?.target?.error?.code
+  console.warn('预览视频加载失败', {
+    url: previewVideoPlayerUrl.value,
+    mediaErrorCode
+  })
+}
+
+function isM3u8Url(url) {
+  if (!url || typeof url !== 'string') {
+    return false
+  }
+  return /\.m3u8(?:$|[?#])/i.test(url) || url.toLowerCase().includes('m3u8')
+}
+
+function destroyPreviewHls() {
+  if (previewHls.value) {
+    previewHls.value.destroy()
+    previewHls.value = null
+  }
+}
+
+async function mountPreviewVideoSource() {
+  await nextTick()
+
+  const videoEl = previewVideoPlayer.value
+  const src = previewVideoPlayerUrl.value
+  if (!videoEl) {
+    return
+  }
+
+  destroyPreviewHls()
+  videoEl.pause()
+  videoEl.removeAttribute('src')
+  videoEl.load()
+
+  if (!src) {
+    return
+  }
+
+  if (isM3u8Url(src)) {
+    if (Hls.isSupported()) {
+      const instance = new Hls({
+        debug: false,
+        enableWorker: true
+      })
+
+      previewHls.value = instance
+      instance.loadSource(src)
+      instance.attachMedia(videoEl)
+      instance.on(Hls.Events.ERROR, (event, data) => {
+        console.error('预览视频 HLS 错误:', event, data)
+        if (data?.fatal) {
+          showFailToast('预览视频播放失败，请稍后重试')
+          destroyPreviewHls()
+        }
+      })
+      return
+    }
+
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = src
+      return
+    }
+
+    showFailToast('当前浏览器不支持 m3u8 预览播放')
+    return
+  }
+
+  videoEl.src = src
+}
 
 async function loadVideo() {
   loading.value = true
-  const data = await videoRecommendationStore.fetchDetail(recommendationId.value)
-  recommendation.value = data
-  if (data?.score) {
-    scoreValue.value = data.score
+  try {
+    const data = await videoRecommendationStore.fetchDetail(recommendationId.value)
+    recommendation.value = data
+    if (data?.score) {
+      scoreValue.value = data.score
+    }
+    if (data?.list_ids) {
+      selectedListIds.value = [...data.list_ids]
+    }
+  } finally {
+    loading.value = false
   }
-  if (data?.list_ids) {
-    selectedListIds.value = [...data.list_ids]
-  }
-  await listStore.fetchLists('video')
-  await actorStore.fetchList()
-  loading.value = false
+
+  Promise.allSettled([
+    listStore.fetchLists('video'),
+    actorStore.fetchList()
+  ]).catch((error) => {
+    console.warn('加载附加数据失败:', error)
+  })
 }
 
 function isActorSubscribed(actorName) {
@@ -658,12 +822,24 @@ watch(showListPopup, async (val) => {
   }
 })
 
+watch(
+  [previewVideoPlayerUrl, loading],
+  ([, isLoading]) => {
+    if (isLoading) {
+      return
+    }
+    mountPreviewVideoSource()
+  },
+  { immediate: true, flush: 'post' }
+)
+
 onUnmounted(() => {
   // 清理 HLS 实例
   if (hls.value) {
     hls.value.destroy()
     hls.value = null
   }
+  destroyPreviewHls()
 })
 </script>
 
@@ -918,6 +1094,26 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.preview-video-section {
+  margin-bottom: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.preview-video-player-container {
+  padding: 12px;
+}
+
+.preview-video-player {
+  width: 100%;
+  display: block;
+  border-radius: 10px;
+  background: #000;
+  aspect-ratio: 16 / 9;
+}
+
 .thumbnails-section {
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
@@ -1010,6 +1206,14 @@ onUnmounted(() => {
   border-radius: 8px;
 }
 
+.video-detail-desktop .preview-video-player-container {
+  padding: 16px;
+}
+
+.video-detail-desktop .preview-video-player {
+  border-radius: 12px;
+}
+
 .list-popup {
   height: 100%;
   display: flex;
@@ -1035,6 +1239,7 @@ onUnmounted(() => {
   .video-player-section,
   .video-info,
   .magnets-section,
+  .preview-video-section,
   .thumbnails-section {
     border-radius: 12px;
   }
