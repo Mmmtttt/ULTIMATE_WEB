@@ -35,21 +35,23 @@
         @scroll="handleScroll"
         @wheel="handleWheel"
       >
-        <div 
-          v-for="(image, index) in images" 
-          :key="index"
-          class="page"
-        >
-          <img 
-            :src="getImageSrc(index)" 
-            class="comic-image"
-            decoding="async"
-            loading="lazy"
-            draggable="false"
-            @click="handleImageClick"
-            @mousedown="startDrag($event, index)"
-            @touchstart="startTouchDrag($event, index)"
-          />
+        <div class="page-track page-track-horizontal" :style="getContentStyle">
+          <div 
+            v-for="(image, index) in images" 
+            :key="index"
+            class="page"
+          >
+            <img 
+              :src="getImageSrc(index)" 
+              class="comic-image"
+              decoding="async"
+              loading="lazy"
+              draggable="false"
+              @click="handleImageClick"
+              @mousedown="startDrag($event, index)"
+              @touchstart="startTouchDrag($event, index)"
+            />
+          </div>
         </div>
       </div>
       
@@ -62,27 +64,29 @@
         @scroll="handleScroll"
         @wheel="handleWheel"
       >
-        <div 
-          v-for="(image, index) in images" 
-          :key="index" 
-          class="up-down-page"
-        >
-          <img 
-            :src="getImageSrc(index)" 
-            class="comic-image"
-            decoding="async"
-            loading="lazy"
-            draggable="false"
-            @click="handleImageClick"
-            @mousedown="startDrag($event, index)"
-            @touchstart="startTouchDrag($event, index)"
-          />
+        <div class="page-track page-track-vertical" :style="getContentStyle">
+          <div 
+            v-for="(image, index) in images" 
+            :key="index" 
+            class="up-down-page"
+          >
+            <img 
+              :src="getImageSrc(index)" 
+              class="comic-image"
+              decoding="async"
+              loading="lazy"
+              draggable="false"
+              @click="handleImageClick"
+              @mousedown="startDrag($event, index)"
+              @touchstart="startTouchDrag($event, index)"
+            />
+          </div>
         </div>
       </div>
       
       <!-- 涓婁笅缈婚〉妯″紡 -->
       <div 
-        v-if="isMobile && isZoomMode" 
+        v-if="supportsTouch && isZoomMode" 
         class="zoom-overlay"
         @wheel="handleZoomWheel"
         @mousedown="startZoomDrag"
@@ -138,7 +142,7 @@
         </van-button>
         <van-button size="small" @click="nextPage">下一页</van-button>
         <van-button size="small" @click="toggleFullscreen">全屏</van-button>
-        <van-button v-if="isMobile" size="small" @click="enterZoomMode">缩放</van-button>
+        <van-button v-if="supportsTouch" size="small" @click="enterZoomMode">缩放</van-button>
       </div>
     </div>
   </div>
@@ -201,17 +205,24 @@ const dragStartScrollY = ref(0)
 
 const detectMobileDevice = () => {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  const hasTouch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window
+  const ua = navigator.userAgent || ''
+  const mobileUa = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(ua)
   const coarsePointer =
     typeof window.matchMedia === 'function'
       ? window.matchMedia('(pointer: coarse)').matches
       : false
-  const smallViewport = Math.min(window.innerWidth, window.innerHeight) <= 900
-  return coarsePointer || (hasTouch && smallViewport)
+  const narrowViewport = window.innerWidth <= 1024
+  return mobileUa || (coarsePointer && narrowViewport)
+}
+
+const detectTouchSupport = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window
 }
 
 const isProgrammaticScroll = ref(false)
 const isMobile = ref(detectMobileDevice())
+const supportsTouch = ref(detectTouchSupport())
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 
@@ -238,8 +249,18 @@ const getContainerStyle = computed(() => {
   }
 
   return {
+    touchAction: 'none'
+  }
+})
+
+const getContentStyle = computed(() => {
+  if (zoomLevel.value <= 1 || isZoomMode.value) {
+    return {}
+  }
+
+  return {
     transform: `translate3d(${panX.value}px, ${panY.value}px, 0) scale(${zoomLevel.value})`,
-    transformOrigin: 'center center'
+    transformOrigin: pageMode.value === 'left_right' ? 'left top' : 'center top'
   }
 })
 
@@ -263,6 +284,7 @@ const applyZoomLevel = (nextLevel) => {
 const updateDeviceState = () => {
   if (typeof window === 'undefined') return
   isMobile.value = detectMobileDevice()
+  supportsTouch.value = detectTouchSupport()
 }
 
 const updateReaderViewport = () => {
@@ -609,7 +631,7 @@ const togglePageMode = async () => {
 }
 
 const enterZoomMode = () => {
-  if (!isMobile.value) return
+  if (!supportsTouch.value) return
   isZoomMode.value = true
   showMenu.value = false
   resetZoomState()
@@ -629,7 +651,7 @@ const zoomOut = () => {
 }
 
 const handleWheel = (event) => {
-  if (isMobile.value || isZoomMode.value) return
+  if (isZoomMode.value) return
 
   if (event.ctrlKey) {
     event.preventDefault()
@@ -648,6 +670,8 @@ const handleWheel = (event) => {
     return
   }
 
+  if (isMobile.value) return
+
   if (pageMode.value === 'left_right' && leftRightContainer.value) {
     if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
       event.preventDefault()
@@ -657,7 +681,7 @@ const handleWheel = (event) => {
 }
 
 const startDrag = (event) => {
-  if (isMobile.value || event.button !== 0) return
+  if (event.button !== 0) return
 
   const container = activeContainer.value
   if (!container) return
@@ -775,12 +799,39 @@ const handleFullscreenChange = () => {
 }
 
 const startTouchDrag = (event) => {
-  if (!isMobile.value) return
-  if (isZoomMode.value || event.touches.length !== 1) return
+  if (!supportsTouch.value) return
+  if (isZoomMode.value || event.touches.length !== 1 || zoomLevel.value <= 1) return
+
+  event.preventDefault()
+  isDragging.value = true
+  const touch = event.touches[0]
+  zoomDragStartX.value = touch.clientX
+  zoomDragStartY.value = touch.clientY
+  zoomDragStartPanX.value = panX.value
+  zoomDragStartPanY.value = panY.value
+
+  const handleTouchMove = (moveEvent) => {
+    if (moveEvent.touches.length !== 1) return
+    moveEvent.preventDefault()
+    const moveTouch = moveEvent.touches[0]
+    panX.value = zoomDragStartPanX.value + (moveTouch.clientX - zoomDragStartX.value)
+    panY.value = zoomDragStartPanY.value + (moveTouch.clientY - zoomDragStartY.value)
+  }
+
+  const handleTouchEnd = () => {
+    isDragging.value = false
+    document.removeEventListener('touchmove', handleTouchMove)
+    document.removeEventListener('touchend', handleTouchEnd)
+    document.removeEventListener('touchcancel', handleTouchEnd)
+  }
+
+  document.addEventListener('touchmove', handleTouchMove, { passive: false })
+  document.addEventListener('touchend', handleTouchEnd)
+  document.addEventListener('touchcancel', handleTouchEnd)
 }
 
 const startZoomTouch = (event) => {
-  if (!isMobile.value) return
+  if (!supportsTouch.value) return
 
   if (event.touches.length === 2) {
     const touch1 = event.touches[0]
@@ -799,7 +850,7 @@ const startZoomTouch = (event) => {
 }
 
 const handleZoomTouchMove = (event) => {
-  if (!isMobile.value) return
+  if (!supportsTouch.value) return
 
   if (event.touches.length === 2) {
     event.preventDefault()
@@ -816,9 +867,20 @@ const handleZoomTouchMove = (event) => {
     }
 
     lastTouchDistance.value = distance
-  } else if (event.touches.length === 1 && isZoomDragging.value) {
-    const deltaX = event.touches[0].clientX - zoomDragStartX.value
-    const deltaY = event.touches[0].clientY - zoomDragStartY.value
+  } else if (event.touches.length === 1 && zoomLevel.value > 1) {
+    event.preventDefault()
+    const touch = event.touches[0]
+    if (!isZoomDragging.value) {
+      isZoomDragging.value = true
+      zoomDragStartX.value = touch.clientX
+      zoomDragStartY.value = touch.clientY
+      zoomDragStartPanX.value = panX.value
+      zoomDragStartPanY.value = panY.value
+      return
+    }
+
+    const deltaX = touch.clientX - zoomDragStartX.value
+    const deltaY = touch.clientY - zoomDragStartY.value
     panX.value = zoomDragStartPanX.value + deltaX
     panY.value = zoomDragStartPanY.value + deltaY
   }
@@ -830,7 +892,7 @@ const endZoomTouch = () => {
 }
 
 const handleZoomWheel = (event) => {
-  if (!isMobile.value) return
+  if (!supportsTouch.value) return
   event.preventDefault()
   if (event.deltaY > 0) {
     zoomOut()
@@ -1035,6 +1097,25 @@ onUnmounted(() => {
 
 .left-right-mode::-webkit-scrollbar {
   display: none;
+}
+
+.page-track {
+  will-change: transform;
+}
+
+.page-track-horizontal {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+  width: max-content;
+}
+
+.page-track-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 100%;
 }
 
 .page {
