@@ -52,8 +52,9 @@
               :src="getImageSrc(index)" 
               class="comic-image"
               decoding="async"
-              loading="lazy"
+              :loading="getImageLoading(index)"
               draggable="false"
+              @load="handlePageImageLoad(index)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -84,8 +85,9 @@
               :src="getImageSrc(index)" 
               class="comic-image"
               decoding="async"
-              loading="lazy"
+              :loading="getImageLoading(index)"
               draggable="false"
+              @load="handlePageImageLoad(index)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -213,6 +215,11 @@ const touchPanStartX = ref(0)
 const touchPanStartY = ref(0)
 const touchPanStartPanX = ref(0)
 const touchPanStartPanY = ref(0)
+const touchPanLastX = ref(0)
+const touchPanLastY = ref(0)
+const touchPanLastTime = ref(0)
+const touchPanVelocityX = ref(0)
+const touchPanVelocityY = ref(0)
 const touchPinchLastDistance = ref(0)
 const touchPinchLastCenterX = ref(0)
 const touchPinchLastCenterY = ref(0)
@@ -245,12 +252,17 @@ const isMobile = ref(detectMobileDevice())
 const supportsTouch = ref(detectTouchSupport())
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
+const pendingRestorePage = ref(null)
 
 let saveProgressTimer = null
 let scrollIdleTimer = null
 let programmaticScrollTimer = null
 let resizeAlignTimer = null
 let scrollRafId = 0
+let restoreRetryTimer = null
+let restoreRetryCount = 0
+let pageUpdateRafId = 0
+let inertiaRafId = 0
 
 const recommendationId = computed(() => route.params.id)
 
@@ -339,6 +351,13 @@ const applyPinchAtPoint = (distance, centerX, centerY) => {
   touchPinchLastCenterY.value = centerY
 }
 
+const clearPanInertia = () => {
+  if (inertiaRafId && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(inertiaRafId)
+  }
+  inertiaRafId = 0
+}
+
 const normalizePageCount = (value) => {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return 0
@@ -359,19 +378,27 @@ const normalizePageList = (value, fallbackTotal = 0) => {
 }
 
 const resetZoomState = () => {
+  clearPanInertia()
   zoomLevel.value = 1
   panX.value = 0
   panY.value = 0
   isZoomDragging.value = false
+  touchPanVelocityX.value = 0
+  touchPanVelocityY.value = 0
+  touchPanLastTime.value = 0
 }
 
 const applyZoomLevel = (nextLevel) => {
   const clamped = Math.max(1, Math.min(5, Number(nextLevel.toFixed(3))))
   zoomLevel.value = clamped
   if (clamped <= 1) {
+    clearPanInertia()
     panX.value = 0
     panY.value = 0
     isZoomDragging.value = false
+    touchPanVelocityX.value = 0
+    touchPanVelocityY.value = 0
+    touchPanLastTime.value = 0
   }
 }
 
@@ -421,6 +448,9 @@ const zoomAtPoint = (nextLevel, anchorPoint, container) => {
     (anchorPoint.y + scrollY - panY.value) * scaleRatio
 
   applyZoomLevel(clamped)
+  if (activeContainer.value) {
+    updatePageFromScroll()
+  }
 }
 
 const updateDeviceState = () => {
@@ -454,14 +484,66 @@ const getAxisStart = (element) => {
   return pageMode.value === 'left_right' ? element.offsetLeft : element.offsetTop
 }
 
+const getAxisExtent = (element) => {
+  if (!element) return 0
+  return pageMode.value === 'left_right' ? element.offsetWidth : element.offsetHeight
+}
+
+const getRectAxisStart = (rect) => {
+  if (!rect) return 0
+  return pageMode.value === 'left_right' ? rect.left : rect.top
+}
+
+const getRectAxisEnd = (rect) => {
+  if (!rect) return 0
+  return pageMode.value === 'left_right' ? rect.right : rect.bottom
+}
+
+const getPageElementByNumber = (container, page) => {
+  const pages = getPageElements(container)
+  if (!pages.length) return null
+  const index = clampPage(page, pages.length) - 1
+  return pages[index] || null
+}
+
 const getViewportExtent = (container) => {
   if (!container) return 0
   return pageMode.value === 'left_right' ? container.clientWidth : container.clientHeight
 }
 
-const getScrollPosition = (container) => {
-  if (!container) return 0
-  return pageMode.value === 'left_right' ? container.scrollLeft : container.scrollTop
+const isPageExtentReady = (container, page) => {
+  const element = getPageElementByNumber(container, page)
+  return getAxisExtent(element) > 0
+}
+
+const arePagesMeasuredThrough = (container, page) => {
+  const pages = getPageElements(container)
+  if (!pages.length) return false
+
+  const targetIndex = clampPage(page, pages.length) - 1
+  for (let index = 0; index <= targetIndex; index += 1) {
+    if (getAxisExtent(pages[index]) <= 0) {
+      return false
+    }
+  }
+
+  return true
+}
+
+const isScrollAlignedWithPage = (container, page) => {
+  if (!container) return false
+  if (!isPageExtentReady(container, page)) return false
+  if (!arePagesMeasuredThrough(container, page)) return false
+
+  const element = getPageElementByNumber(container, page)
+  if (!element) return false
+
+  const containerRect = container.getBoundingClientRect()
+  const elementRect = element.getBoundingClientRect()
+  const targetOffset = getRectAxisStart(elementRect)
+  const currentOffset = getRectAxisStart(containerRect)
+  const tolerance = Math.max(2, getViewportExtent(container) * 0.02)
+  return Math.abs(currentOffset - targetOffset) <= tolerance
 }
 
 const scrollToPosition = (container, position, behavior) => {
@@ -484,19 +566,22 @@ const estimatePageFromScroll = (container) => {
   const pages = getPageElements(container)
   if (!pages.length || totalPage.value <= 0) return 1
 
-  const focusPosition = getScrollPosition(container) + getViewportExtent(container) * 0.35
-  let index = clampPage(currentPage.value, totalPage.value) - 1
-  index = Math.min(pages.length - 1, Math.max(0, index))
+  const containerRect = container.getBoundingClientRect()
+  const leadingEdge = getRectAxisStart(containerRect)
+  const epsilon = 0.5
 
-  while (index + 1 < pages.length && getAxisStart(pages[index + 1]) <= focusPosition) {
-    index += 1
+  for (let index = 0; index < pages.length; index += 1) {
+    const rect = pages[index].getBoundingClientRect()
+    const extent = pageMode.value === 'left_right' ? rect.width : rect.height
+    if (extent <= 0) continue
+
+    const end = getRectAxisEnd(rect)
+    if (end > leadingEdge + epsilon) {
+      return clampPage(index + 1, totalPage.value)
+    }
   }
 
-  while (index > 0 && getAxisStart(pages[index]) > focusPosition) {
-    index -= 1
-  }
-
-  return clampPage(index + 1, totalPage.value)
+  return clampPage(currentPage.value, totalPage.value)
 }
 
 const flushProgressSave = async (page) => {
@@ -543,10 +628,6 @@ const commitReadingPage = (page, immediateProgress = false) => {
     preloadImages(safePage)
   }
 
-  if (isMobile.value) {
-    resetZoomState()
-  }
-
   scheduleProgressSave(safePage, immediateProgress)
   return safePage
 }
@@ -568,7 +649,33 @@ const rebuildLoadQueue = (centerPage) => {
     return
   }
 
-  const sequence = calculateLoadSequence(centerPage, totalPage.value)
+  const pendingPage = pendingRestorePage.value
+  const appendPage = (sequence, added, pageNum) => {
+    if (pageNum < 1 || pageNum > totalPage.value || added.has(pageNum)) return
+    sequence.push(pageNum)
+    added.add(pageNum)
+  }
+
+  const sequence = []
+  const added = new Set()
+
+  if (pendingPage != null) {
+    const targetPage = clampPage(pendingPage, totalPage.value)
+    for (let pageNum = 1; pageNum <= targetPage; pageNum += 1) {
+      appendPage(sequence, added, pageNum)
+    }
+
+    const tailSequence = calculateLoadSequence(targetPage, totalPage.value)
+    for (const pageNum of tailSequence) {
+      appendPage(sequence, added, pageNum)
+    }
+  } else {
+    const baseSequence = calculateLoadSequence(centerPage, totalPage.value)
+    for (const pageNum of baseSequence) {
+      appendPage(sequence, added, pageNum)
+    }
+  }
+
   const nextQueue = []
   for (const pageNum of sequence) {
     if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
@@ -628,10 +735,85 @@ const getImageSrc = (index) => {
   return images.value[index] || ''
 }
 
+const getImageLoading = (index) => {
+  const pageNum = index + 1
+  const pending = pendingRestorePage.value
+
+  if (pending != null && totalPage.value > 0) {
+    const eagerThrough = Math.min(totalPage.value, pending + 2)
+    return pageNum <= eagerThrough ? 'eager' : 'lazy'
+  }
+
+  return pageNum <= 3 ? 'eager' : 'lazy'
+}
+
+const clearRestoreRetry = () => {
+  if (restoreRetryTimer) {
+    clearTimeout(restoreRetryTimer)
+    restoreRetryTimer = null
+  }
+}
+
+const scheduleRestoreRetry = (delay) => {
+  if (pendingRestorePage.value == null) return
+
+  restoreRetryCount += 1
+  const nextDelay =
+    typeof delay === 'number' && delay >= 0
+      ? delay
+      : Math.min(1200, 120 + restoreRetryCount * 45)
+
+  clearRestoreRetry()
+  restoreRetryTimer = setTimeout(() => {
+    void tryRestorePendingPage()
+  }, nextDelay)
+}
+
+const tryRestorePendingPage = async () => {
+  if (pendingRestorePage.value == null || totalPage.value <= 0) return
+
+  const targetPage = clampPage(pendingRestorePage.value, totalPage.value)
+  await nextTick()
+  await nextAnimationFrame()
+  const containerBeforeJump = activeContainer.value
+  if (!containerBeforeJump) {
+    scheduleRestoreRetry(120)
+    return
+  }
+
+  await jumpToPage(targetPage, false)
+
+  const container = activeContainer.value
+  if (container && isScrollAlignedWithPage(container, targetPage)) {
+    pendingRestorePage.value = null
+    restoreRetryCount = 0
+    clearRestoreRetry()
+    return
+  }
+
+  scheduleRestoreRetry()
+}
+
+const handlePageImageLoad = (index) => {
+  const pendingPage = pendingRestorePage.value
+  if (pendingPage == null) return
+
+  const pageNum = index + 1
+  if (pageNum <= pendingPage + 1) {
+    restoreRetryCount = 0
+    clearRestoreRetry()
+    void tryRestorePendingPage()
+  }
+}
+
 const loadImages = async () => {
   loading.value = true
   error.value = false
   downloadProgress.value = ''
+  resetZoomState()
+  pendingRestorePage.value = null
+  restoreRetryCount = 0
+  clearRestoreRetry()
   loadedPages.value = new Set()
   loadingPages.value = new Set()
   loadQueue.value = []
@@ -678,12 +860,15 @@ const loadImages = async () => {
     sliderPage.value = initialPage
     lastCommittedPage.value = initialPage
     lastSavedPage.value = initialPage
+    pendingRestorePage.value = initialPage
+    restoreRetryCount = 0
+    clearRestoreRetry()
 
     preloadImages(initialPage)
 
     await nextTick()
     await nextAnimationFrame()
-    await jumpToPage(initialPage, false)
+    void tryRestorePendingPage()
   } catch (err) {
     error.value = true
     console.error('加载图片失败:', err)
@@ -835,6 +1020,61 @@ const zoomOut = () => {
   zoomAtPoint(zoomLevel.value - 0.2, anchorPoint, container)
 }
 
+const queuePageUpdate = () => {
+  if (typeof window === 'undefined') {
+    updatePageFromScroll()
+    return
+  }
+
+  if (pageUpdateRafId) return
+  pageUpdateRafId = window.requestAnimationFrame(() => {
+    pageUpdateRafId = 0
+    updatePageFromScroll()
+  })
+}
+
+const startPanInertia = () => {
+  if (typeof window === 'undefined' || zoomLevel.value <= 1 || isZoomMode.value) return
+
+  let velocityX = touchPanVelocityX.value
+  let velocityY = touchPanVelocityY.value
+  if (Math.hypot(velocityX, velocityY) < 0.05) return
+
+  clearPanInertia()
+
+  const frictionPerFrame = 0.92
+  const stopSpeed = 0.015
+  const maxDuration = 1400
+  let elapsed = 0
+  let lastTime = performance.now()
+
+  const step = (now) => {
+    const dt = Math.max(1, now - lastTime)
+    lastTime = now
+    elapsed += dt
+
+    panX.value += velocityX * dt
+    panY.value += velocityY * dt
+
+    const decay = Math.pow(frictionPerFrame, dt / 16.667)
+    velocityX *= decay
+    velocityY *= decay
+    queuePageUpdate()
+
+    if (elapsed >= maxDuration || Math.hypot(velocityX, velocityY) <= stopSpeed) {
+      inertiaRafId = 0
+      touchPanVelocityX.value = 0
+      touchPanVelocityY.value = 0
+      queuePageUpdate()
+      return
+    }
+
+    inertiaRafId = window.requestAnimationFrame(step)
+  }
+
+  inertiaRafId = window.requestAnimationFrame(step)
+}
+
 const handleWheel = (event) => {
   if (isZoomMode.value) return
 
@@ -851,8 +1091,10 @@ const handleWheel = (event) => {
 
   if (zoomLevel.value > 1) {
     event.preventDefault()
+    clearPanInertia()
     panX.value -= event.deltaX
     panY.value -= event.deltaY
+    queuePageUpdate()
     return
   }
 
@@ -871,7 +1113,11 @@ const handleReaderTouchStart = (event) => {
 
   if (event.touches.length === 2) {
     event.preventDefault()
+    clearPanInertia()
     touchPanActive.value = false
+    touchPanVelocityX.value = 0
+    touchPanVelocityY.value = 0
+    touchPanLastTime.value = 0
     const container = activeContainer.value || readerContent.value
     const center = getTouchCenterPoint(event.touches[0], event.touches[1], container)
     touchPinchLastDistance.value = getTouchDistance(event.touches[0], event.touches[1])
@@ -882,12 +1128,19 @@ const handleReaderTouchStart = (event) => {
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     event.preventDefault()
+    clearPanInertia()
     const touch = event.touches[0]
     touchPanActive.value = true
     touchPanStartX.value = touch.clientX
     touchPanStartY.value = touch.clientY
     touchPanStartPanX.value = panX.value
     touchPanStartPanY.value = panY.value
+    touchPanLastX.value = touch.clientX
+    touchPanLastY.value = touch.clientY
+    touchPanLastTime.value =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
+    touchPanVelocityX.value = 0
+    touchPanVelocityY.value = 0
   }
 }
 
@@ -896,11 +1149,16 @@ const handleReaderTouchMove = (event) => {
 
   if (event.touches.length === 2) {
     event.preventDefault()
+    clearPanInertia()
     const container = activeContainer.value || readerContent.value
     const center = getTouchCenterPoint(event.touches[0], event.touches[1], container)
     const distance = getTouchDistance(event.touches[0], event.touches[1])
     applyPinchAtPoint(distance, center.x, center.y)
+    queuePageUpdate()
     touchPanActive.value = false
+    touchPanVelocityX.value = 0
+    touchPanVelocityY.value = 0
+    touchPanLastTime.value = 0
     return
   }
 
@@ -913,11 +1171,28 @@ const handleReaderTouchMove = (event) => {
       touchPanStartY.value = touch.clientY
       touchPanStartPanX.value = panX.value
       touchPanStartPanY.value = panY.value
+      touchPanLastX.value = touch.clientX
+      touchPanLastY.value = touch.clientY
+      touchPanLastTime.value =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+      touchPanVelocityX.value = 0
+      touchPanVelocityY.value = 0
       return
     }
 
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const dt = Math.max(1, now - (touchPanLastTime.value || now))
+    const instantVX = (touch.clientX - touchPanLastX.value) / dt
+    const instantVY = (touch.clientY - touchPanLastY.value) / dt
+    touchPanVelocityX.value = touchPanVelocityX.value * 0.72 + instantVX * 0.28
+    touchPanVelocityY.value = touchPanVelocityY.value * 0.72 + instantVY * 0.28
+    touchPanLastX.value = touch.clientX
+    touchPanLastY.value = touch.clientY
+    touchPanLastTime.value = now
+
     panX.value = touchPanStartPanX.value + (touch.clientX - touchPanStartX.value)
     panY.value = touchPanStartPanY.value + (touch.clientY - touchPanStartY.value)
+    queuePageUpdate()
   }
 }
 
@@ -925,20 +1200,41 @@ const handleReaderTouchEnd = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
+    clearPanInertia()
     const touch = event.touches[0]
     touchPanActive.value = true
     touchPanStartX.value = touch.clientX
     touchPanStartY.value = touch.clientY
     touchPanStartPanX.value = panX.value
     touchPanStartPanY.value = panY.value
+    touchPanLastX.value = touch.clientX
+    touchPanLastY.value = touch.clientY
+    touchPanLastTime.value =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
+    touchPanVelocityX.value = 0
+    touchPanVelocityY.value = 0
     touchPinchLastDistance.value = 0
     return
   }
+
+  const canInertia =
+    zoomLevel.value > 1 &&
+    Math.hypot(touchPanVelocityX.value, touchPanVelocityY.value) >= 0.05
 
   touchPanActive.value = false
   touchPinchLastDistance.value = 0
   touchPinchLastCenterX.value = 0
   touchPinchLastCenterY.value = 0
+  touchPanLastTime.value = 0
+  if (canInertia) {
+    startPanInertia()
+    return
+  }
+  touchPanVelocityX.value = 0
+  touchPanVelocityY.value = 0
+  if (zoomLevel.value > 1) {
+    queuePageUpdate()
+  }
 }
 
 const startDrag = (event) => {
@@ -970,8 +1266,10 @@ const startDrag = (event) => {
     }
 
     if (dragZoomedContent) {
+      clearPanInertia()
       panX.value = zoomDragStartPanX.value + (moveEvent.clientX - dragStartX.value)
       panY.value = zoomDragStartPanY.value + (moveEvent.clientY - dragStartY.value)
+      queuePageUpdate()
       return
     }
 
@@ -1287,8 +1585,14 @@ onUnmounted(() => {
   if (resizeAlignTimer) {
     clearTimeout(resizeAlignTimer)
   }
+  clearRestoreRetry()
+  clearPanInertia()
   if (scrollRafId && typeof window !== 'undefined') {
     window.cancelAnimationFrame(scrollRafId)
+  }
+  if (pageUpdateRafId && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(pageUpdateRafId)
+    pageUpdateRafId = 0
   }
 
   flushProgressBeforeLeave()
