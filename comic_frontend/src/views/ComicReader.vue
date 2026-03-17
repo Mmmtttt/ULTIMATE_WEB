@@ -246,6 +246,7 @@ const supportsTouch = ref(detectTouchSupport())
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 const pendingRestorePage = ref(null)
+const isRestoreBootstrap = ref(false)
 
 let saveProgressTimer = null
 let scrollIdleTimer = null
@@ -256,6 +257,7 @@ let restoreRetryTimer = null
 let restoreRetryCount = 0
 let pageUpdateRafId = 0
 let inertiaRafId = 0
+let restoreBootstrapTimer = null
 
 const comicId = computed(() => route.params.id)
 
@@ -529,24 +531,9 @@ const isPageExtentReady = (container, page) => {
   return getAxisExtent(element) > 0
 }
 
-const arePagesMeasuredThrough = (container, page) => {
-  const pages = getPageElements(container)
-  if (!pages.length) return false
-
-  const targetIndex = clampPage(page, pages.length) - 1
-  for (let index = 0; index <= targetIndex; index += 1) {
-    if (getAxisExtent(pages[index]) <= 0) {
-      return false
-    }
-  }
-
-  return true
-}
-
 const isScrollAlignedWithPage = (container, page) => {
   if (!container) return false
   if (!isPageExtentReady(container, page)) return false
-  if (!arePagesMeasuredThrough(container, page)) return false
 
   const element = getPageElementByNumber(container, page)
   if (!element) return false
@@ -662,32 +649,18 @@ const rebuildLoadQueue = (centerPage) => {
     return
   }
 
-  const pendingPage = pendingRestorePage.value
-  const appendPage = (sequence, added, pageNum) => {
-    if (pageNum < 1 || pageNum > totalPage.value || added.has(pageNum)) return
-    sequence.push(pageNum)
-    added.add(pageNum)
-  }
-
-  const sequence = []
-  const added = new Set()
-
-  if (pendingPage != null) {
-    const targetPage = clampPage(pendingPage, totalPage.value)
-    for (let pageNum = 1; pageNum <= targetPage; pageNum += 1) {
-      appendPage(sequence, added, pageNum)
-    }
-
-    const tailSequence = calculateLoadSequence(targetPage, totalPage.value)
-    for (const pageNum of tailSequence) {
-      appendPage(sequence, added, pageNum)
-    }
-  } else {
-    const baseSequence = calculateLoadSequence(centerPage, totalPage.value)
-    for (const pageNum of baseSequence) {
-      appendPage(sequence, added, pageNum)
-    }
-  }
+  const focusPage =
+    pendingRestorePage.value != null
+      ? clampPage(pendingRestorePage.value, totalPage.value)
+      : clampPage(centerPage, totalPage.value)
+  const baseSequence = calculateLoadSequence(focusPage, totalPage.value)
+  const sequence = isRestoreBootstrap.value
+    ? baseSequence.filter((pageNum) => {
+        const minPage = Math.max(1, focusPage - 1)
+        const maxPage = Math.min(totalPage.value, focusPage + 24)
+        return pageNum >= minPage && pageNum <= maxPage
+      })
+    : baseSequence
 
   const nextQueue = []
   for (const pageNum of sequence) {
@@ -708,10 +681,15 @@ const queueProcessNextTick = () => {
 }
 
 const processLoadQueue = () => {
-  const maxConcurrent = getAdaptiveMaxConcurrent({
+  const adaptiveMaxConcurrent = getAdaptiveMaxConcurrent({
     isMobileViewport: isMobile.value,
     lanHost: isLikelyLanHost()
   })
+  const maxConcurrent = isRestoreBootstrap.value
+    ? Math.max(2, Math.min(adaptiveMaxConcurrent, 4))
+    : pendingRestorePage.value != null
+      ? Math.max(3, Math.min(adaptiveMaxConcurrent, 6))
+      : adaptiveMaxConcurrent
 
   while (loadQueue.value.length > 0 && loadingPages.value.size < maxConcurrent) {
     const pageNum = loadQueue.value.shift()
@@ -745,19 +723,25 @@ const preloadImages = (startPage) => {
 }
 
 const getImageSrc = (index) => {
+  const pageNum = index + 1
+  if (!loadedPages.value.has(pageNum)) {
+    return ''
+  }
   return images.value[index] || ''
+}
+
+const getLoadFocusPage = () => {
+  if (totalPage.value <= 0) return 1
+  const focus = pendingRestorePage.value != null ? pendingRestorePage.value : currentPage.value
+  return clampPage(focus, totalPage.value)
 }
 
 const getImageLoading = (index) => {
   const pageNum = index + 1
-  const pending = pendingRestorePage.value
-
-  if (pending != null && totalPage.value > 0) {
-    const eagerThrough = Math.min(totalPage.value, pending + 2)
-    return pageNum <= eagerThrough ? 'eager' : 'lazy'
-  }
-
-  return pageNum <= 3 ? 'eager' : 'lazy'
+  const focusPage = getLoadFocusPage()
+  const eagerStart = Math.max(1, focusPage - 1)
+  const eagerEnd = Math.min(totalPage.value, focusPage + 4)
+  return pageNum >= eagerStart && pageNum <= eagerEnd ? 'eager' : 'lazy'
 }
 
 const clearRestoreRetry = () => {
@@ -767,10 +751,35 @@ const clearRestoreRetry = () => {
   }
 }
 
+const clearRestoreBootstrap = () => {
+  if (restoreBootstrapTimer) {
+    clearTimeout(restoreBootstrapTimer)
+    restoreBootstrapTimer = null
+  }
+  isRestoreBootstrap.value = false
+}
+
+const startRestoreBootstrap = (duration = 2200) => {
+  clearRestoreBootstrap()
+  isRestoreBootstrap.value = true
+  restoreBootstrapTimer = setTimeout(() => {
+    isRestoreBootstrap.value = false
+    restoreBootstrapTimer = null
+    if (totalPage.value > 0) {
+      preloadImages(clampPage(currentPage.value, totalPage.value))
+    }
+  }, duration)
+}
+
 const scheduleRestoreRetry = (delay) => {
   if (pendingRestorePage.value == null) return
 
   restoreRetryCount += 1
+  if (restoreRetryCount >= 90) {
+    pendingRestorePage.value = null
+    clearRestoreRetry()
+    return
+  }
   const nextDelay =
     typeof delay === 'number' && delay >= 0
       ? delay
@@ -824,8 +833,10 @@ const loadImages = async () => {
   error.value = false
   resetZoomState()
   pendingRestorePage.value = null
+  isRestoreBootstrap.value = false
   restoreRetryCount = 0
   clearRestoreRetry()
+  clearRestoreBootstrap()
   loadedPages.value = new Set()
   loadingPages.value = new Set()
   loadQueue.value = []
@@ -854,6 +865,7 @@ const loadImages = async () => {
     pendingRestorePage.value = initialPage
     restoreRetryCount = 0
     clearRestoreRetry()
+    startRestoreBootstrap()
 
     preloadImages(initialPage)
 
@@ -916,6 +928,13 @@ const handleSliderChange = () => {
 const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
+
+  if (pendingRestorePage.value != null) {
+    const lockedPage = clampPage(pendingRestorePage.value, totalPage.value)
+    currentPage.value = lockedPage
+    sliderPage.value = lockedPage
+    return
+  }
 
   const estimatedPage = estimatePageFromScroll(container)
   currentPage.value = estimatedPage
@@ -1576,6 +1595,7 @@ onUnmounted(() => {
     clearTimeout(resizeAlignTimer)
   }
   clearRestoreRetry()
+  clearRestoreBootstrap()
   clearPanInertia()
   if (scrollRafId && typeof window !== 'undefined') {
     window.cancelAnimationFrame(scrollRafId)
