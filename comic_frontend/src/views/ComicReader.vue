@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="comic-reader" :style="{ background: background }">
     <van-nav-bar 
       v-show="showMenu"
@@ -25,7 +25,7 @@
     </div>
     
     <div v-else class="reader-content" ref="readerContent">
-      <!-- 左右翻页模式 -->
+      <!-- 宸﹀彸缈婚〉妯″紡 -->
       <div 
         v-if="pageMode === 'left_right'" 
         class="left-right-mode" 
@@ -42,8 +42,8 @@
           <img 
             :src="getImageSrc(index)" 
             class="comic-image"
-            :class="{ 'loading': !loadedPages.has(index + 1) }"
             decoding="async"
+            loading="lazy"
             draggable="false"
             @click="handleImageClick"
             @mousedown="startDrag($event, index)"
@@ -52,7 +52,7 @@
         </div>
       </div>
       
-      <!-- 上下翻页模式 -->
+      <!-- 涓婁笅缈婚〉妯″紡 -->
       <div 
         v-else 
         class="up-down-mode" 
@@ -69,8 +69,8 @@
           <img 
             :src="getImageSrc(index)" 
             class="comic-image"
-            :class="{ 'loading': !loadedPages.has(index + 1) }"
             decoding="async"
+            loading="lazy"
             draggable="false"
             @click="handleImageClick"
             @mousedown="startDrag($event, index)"
@@ -79,7 +79,7 @@
         </div>
       </div>
       
-      <!-- 上下翻页模式 -->
+      <!-- 涓婁笅缈婚〉妯″紡 -->
       <div 
         v-if="isMobile && isZoomMode" 
         class="zoom-overlay"
@@ -106,13 +106,13 @@
         </div>
       </div>
       
-      <!-- 电脑端缩放提示 -->
+      <!-- 鐢佃剳绔缉鏀炬彁绀?-->
       <div v-if="!isMobile && zoomLevel > 1" class="desktop-zoom-info">
         {{ Math.round(zoomLevel * 100) }}% | Ctrl+滚轮缩放 | 双击重置
       </div>
     </div>
     
-    <!-- 底部控制栏 -->
+    <!-- 搴曢儴鎺у埗鏍?-->
     <div v-if="showMenu" class="control-bar">
       <div class="progress-section">
         <span class="page-indicator">{{ Math.round(currentPage) }} / {{ totalPage }}</span>
@@ -148,6 +148,14 @@ import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useComicStore, useConfigStore } from '@/stores'
 import { buildImageUrl } from '@/api/image'
+import {
+  calculateLoadSequence,
+  clampPage,
+  getAdaptiveMaxConcurrent,
+  isLikelyLanHost,
+  nextAnimationFrame,
+  updateViewportHeightCssVar
+} from '@/composables/readerShared'
 
 const route = useRoute()
 const comicStore = useComicStore()
@@ -155,7 +163,6 @@ const configStore = useConfigStore()
 
 const resolvePageMode = (mode) => (mode === 'left_right' || mode === 'up_down' ? mode : 'up_down')
 
-// 状态
 const images = ref([])
 const currentPage = ref(1)
 const totalPage = ref(0)
@@ -169,132 +176,10 @@ const upDownContainer = ref(null)
 const readerContent = ref(null)
 const sliderPage = ref(1)
 
-// 图片加载队列控制
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
 const loadQueue = ref([])
-let isProcessingQueue = false
 
-// 计算需要加载的页面（向后优先，每向后4页插入1页向前）
-const calculateLoadSequence = (startPage, totalPages) => {
-  const sequence = []
-  const added = new Set()
-  
-  if (totalPages <= 0) return sequence
-  
-  // 先加当前页
-  if (startPage >= 1 && startPage <= totalPages) {
-    sequence.push(startPage)
-    added.add(startPage)
-  }
-  
-  let forwardOffset = 1
-  let backwardOffset = 1
-  let backwardCount = 0
-  let iterations = 0
-  const maxIterations = totalPages * 2 + 10  // 安全限制
-  
-  while (added.size < totalPages && iterations < maxIterations) {
-    iterations++
-    let addedThisRound = false
-    
-    // 向后加载
-    const forwardPage = startPage + forwardOffset
-    if (forwardPage <= totalPages && !added.has(forwardPage)) {
-      sequence.push(forwardPage)
-      added.add(forwardPage)
-      backwardCount++
-      addedThisRound = true
-    }
-    forwardOffset++
-    
-    // 每向后4页，向前加载1页
-    if (backwardCount >= 4) {
-      const backwardPage = startPage - backwardOffset
-      if (backwardPage >= 1 && !added.has(backwardPage)) {
-        sequence.push(backwardPage)
-        added.add(backwardPage)
-        addedThisRound = true
-      }
-      backwardOffset++
-      backwardCount = 0
-    }
-    
-    // 如果向后已遍历完，继续向前加载剩余页面
-    if (forwardOffset > totalPages) {
-      while (startPage - backwardOffset >= 1 && added.size < totalPages) {
-        const backwardPage = startPage - backwardOffset
-        if (!added.has(backwardPage)) {
-          sequence.push(backwardPage)
-          added.add(backwardPage)
-        }
-        backwardOffset++
-      }
-      break
-    }
-  }
-  
-  return sequence
-}
-
-// 处理队列（非递归版本）
-const processLoadQueue = () => {
-  const MAX_CONCURRENT = 20
-  
-  while (loadQueue.value.length > 0 && loadingPages.value.size < MAX_CONCURRENT) {
-    const pageNum = loadQueue.value.shift()
-    
-    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
-      continue
-    }
-    
-    loadingPages.value.add(pageNum)
-    
-    const img = new Image()
-    const imageUrl = buildImageUrl(comicId.value, pageNum)
-    
-    img.onload = () => {
-      loadedPages.value.add(pageNum)
-      loadingPages.value.delete(pageNum)
-      // 用 setTimeout 避免递归栈溢出
-      setTimeout(() => processLoadQueue(), 0)
-    }
-    img.onerror = () => {
-      loadingPages.value.delete(pageNum)
-      setTimeout(() => processLoadQueue(), 0)
-    }
-    img.src = imageUrl
-  }
-  
-  isProcessingQueue = loadingPages.value.size > 0
-}
-
-// 触发预加载（清空旧队列，开始新序列）
-const preloadImages = (startPage) => {
-  loadQueue.value = []
-  
-  const sequence = calculateLoadSequence(startPage, totalPage.value)
-  
-  for (const pageNum of sequence) {
-    if (!loadedPages.value.has(pageNum) && !loadingPages.value.has(pageNum)) {
-      loadQueue.value.push(pageNum)
-    }
-  }
-  
-  processLoadQueue()
-}
-
-// 获取图片URL（只返回已加载或在加载队列中的图片URL）
-const getImageSrc = (index) => {
-  const pageNum = index + 1
-  // 只返回已加载或正在加载的图片URL
-  if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
-    return images.value[index] || ''
-  }
-  return ''
-}
-
-// 缩放状态
 const zoomLevel = ref(1)
 const panX = ref(0)
 const panY = ref(0)
@@ -304,68 +189,292 @@ const zoomDragStartX = ref(0)
 const zoomDragStartY = ref(0)
 const zoomDragStartPanX = ref(0)
 const zoomDragStartPanY = ref(0)
-
-// 触摸缩放
 const lastTouchDistance = ref(0)
 
-// 拖拽翻页状态
 const isDragging = ref(false)
 const dragStartX = ref(0)
 const dragStartY = ref(0)
 const dragStartScrollX = ref(0)
 const dragStartScrollY = ref(0)
 
-// 计算属性
+const isProgrammaticScroll = ref(false)
+const isMobile = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
+const lastCommittedPage = ref(1)
+const lastSavedPage = ref(0)
+
+let saveProgressTimer = null
+let scrollIdleTimer = null
+let programmaticScrollTimer = null
+let resizeAlignTimer = null
+let scrollRafId = 0
+
 const comicId = computed(() => route.params.id)
+
+const activeContainer = computed(() =>
+  pageMode.value === 'left_right' ? leftRightContainer.value : upDownContainer.value
+)
+
 const currentZoomImage = computed(() => {
-  const pageIndex = Math.round(currentPage.value) - 1
+  const pageIndex = clampPage(currentPage.value, totalPage.value) - 1
   return images.value[pageIndex] || ''
 })
-const isMobile = computed(() => {
-  if (typeof window !== 'undefined') {
-    return window.innerWidth <= 768
-  }
-  return false
-})
 
-// 获取容器样式（电脑端缩放时应用到整个容器）
 const getContainerStyle = computed(() => {
-  if (isMobile.value || zoomLevel.value === 1) {
+  if (isMobile.value || zoomLevel.value === 1 || isZoomMode.value) {
     return {}
   }
-  
+
   return {
     transform: `scale(${zoomLevel.value})`,
     transformOrigin: 'center center'
   }
 })
 
-// 方法
+const resetZoomState = () => {
+  zoomLevel.value = 1
+  panX.value = 0
+  panY.value = 0
+  isZoomDragging.value = false
+}
+
+const updateDeviceState = () => {
+  if (typeof window === 'undefined') return
+  isMobile.value = window.innerWidth <= 768
+}
+
+const updateReaderViewport = () => {
+  updateViewportHeightCssVar('--reader-vh')
+}
+
+const markProgrammaticScroll = (duration = 220) => {
+  isProgrammaticScroll.value = true
+  if (programmaticScrollTimer) {
+    clearTimeout(programmaticScrollTimer)
+  }
+  programmaticScrollTimer = setTimeout(() => {
+    isProgrammaticScroll.value = false
+  }, duration)
+}
+
+const getPageElements = (container) => {
+  if (!container) return []
+  const selector = pageMode.value === 'left_right' ? '.page' : '.up-down-page'
+  return Array.from(container.querySelectorAll(selector))
+}
+
+const getAxisStart = (element) => {
+  if (!element) return 0
+  return pageMode.value === 'left_right' ? element.offsetLeft : element.offsetTop
+}
+
+const getViewportExtent = (container) => {
+  if (!container) return 0
+  return pageMode.value === 'left_right' ? container.clientWidth : container.clientHeight
+}
+
+const getScrollPosition = (container) => {
+  if (!container) return 0
+  return pageMode.value === 'left_right' ? container.scrollLeft : container.scrollTop
+}
+
+const scrollToPosition = (container, position, behavior) => {
+  if (!container) return
+  if (pageMode.value === 'left_right') {
+    container.scrollTo({ left: position, behavior })
+  } else {
+    container.scrollTo({ top: position, behavior })
+  }
+}
+
+const getPageScrollOffset = (container, page) => {
+  const pages = getPageElements(container)
+  if (!pages.length) return 0
+  const targetIndex = clampPage(page, pages.length) - 1
+  return getAxisStart(pages[targetIndex])
+}
+
+const estimatePageFromScroll = (container) => {
+  const pages = getPageElements(container)
+  if (!pages.length || totalPage.value <= 0) return 1
+
+  const focusPosition = getScrollPosition(container) + getViewportExtent(container) * 0.35
+  let index = clampPage(currentPage.value, totalPage.value) - 1
+  index = Math.min(pages.length - 1, Math.max(0, index))
+
+  while (index + 1 < pages.length && getAxisStart(pages[index + 1]) <= focusPosition) {
+    index += 1
+  }
+
+  while (index > 0 && getAxisStart(pages[index]) > focusPosition) {
+    index -= 1
+  }
+
+  return clampPage(index + 1, totalPage.value)
+}
+
+const flushProgressSave = async (page) => {
+  if (!comicId.value || totalPage.value <= 0) return
+  const safePage = clampPage(page, totalPage.value)
+  if (safePage === lastSavedPage.value) return
+
+  try {
+    await comicStore.saveProgress(comicId.value, safePage)
+    lastSavedPage.value = safePage
+  } catch (err) {
+    console.error('保存进度失败:', err)
+  }
+}
+
+const scheduleProgressSave = (page, immediate = false) => {
+  if (totalPage.value <= 0) return
+  const safePage = clampPage(page, totalPage.value)
+
+  if (saveProgressTimer) {
+    clearTimeout(saveProgressTimer)
+    saveProgressTimer = null
+  }
+
+  if (immediate) {
+    void flushProgressSave(safePage)
+    return
+  }
+
+  saveProgressTimer = setTimeout(() => {
+    void flushProgressSave(safePage)
+  }, 1600)
+}
+
+const commitReadingPage = (page, immediateProgress = false) => {
+  if (totalPage.value <= 0) return 1
+  const safePage = clampPage(page, totalPage.value)
+
+  currentPage.value = safePage
+  sliderPage.value = safePage
+
+  if (safePage !== lastCommittedPage.value) {
+    lastCommittedPage.value = safePage
+    preloadImages(safePage)
+  }
+
+  if (isMobile.value) {
+    resetZoomState()
+  }
+
+  scheduleProgressSave(safePage, immediateProgress)
+  return safePage
+}
+
+const scheduleScrollCommit = () => {
+  if (scrollIdleTimer) {
+    clearTimeout(scrollIdleTimer)
+  }
+
+  scrollIdleTimer = setTimeout(() => {
+    if (isProgrammaticScroll.value || totalPage.value <= 0) return
+    commitReadingPage(currentPage.value)
+  }, 220)
+}
+
+const rebuildLoadQueue = (centerPage) => {
+  if (totalPage.value <= 0) {
+    loadQueue.value = []
+    return
+  }
+
+  const sequence = calculateLoadSequence(centerPage, totalPage.value)
+  const nextQueue = []
+  for (const pageNum of sequence) {
+    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
+      continue
+    }
+    nextQueue.push(pageNum)
+  }
+  loadQueue.value = nextQueue
+}
+
+const queueProcessNextTick = () => {
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(() => processLoadQueue())
+  } else {
+    setTimeout(() => processLoadQueue(), 0)
+  }
+}
+
+const processLoadQueue = () => {
+  const maxConcurrent = getAdaptiveMaxConcurrent({
+    isMobileViewport: isMobile.value,
+    lanHost: isLikelyLanHost()
+  })
+
+  while (loadQueue.value.length > 0 && loadingPages.value.size < maxConcurrent) {
+    const pageNum = loadQueue.value.shift()
+    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
+      continue
+    }
+
+    loadingPages.value.add(pageNum)
+
+    const img = new Image()
+    const imageUrl = buildImageUrl(comicId.value, pageNum)
+
+    img.onload = () => {
+      loadedPages.value.add(pageNum)
+      loadingPages.value.delete(pageNum)
+      queueProcessNextTick()
+    }
+
+    img.onerror = () => {
+      loadingPages.value.delete(pageNum)
+      queueProcessNextTick()
+    }
+
+    img.src = imageUrl
+  }
+}
+
+const preloadImages = (startPage) => {
+  rebuildLoadQueue(startPage)
+  processLoadQueue()
+}
+
+const getImageSrc = (index) => {
+  return images.value[index] || ''
+}
+
 const loadImages = async () => {
   loading.value = true
   error.value = false
+  loadedPages.value = new Set()
+  loadingPages.value = new Set()
+  loadQueue.value = []
+
   try {
-    // 先获取详情，确定当前页
     const comic = await comicStore.fetchComicDetail(comicId.value)
-    if (comic && comic.current_page > 1) {
-      currentPage.value = comic.current_page
-      sliderPage.value = comic.current_page
-    }
-    
-    // 再获取图片列表
     const imageData = await comicStore.fetchImages(comicId.value)
-    if (imageData) {
-      images.value = imageData.map((path, index) => buildImageUrl(comicId.value, index + 1))
-      totalPage.value = images.value.length
-      
-      // 立即开始预加载，按正确顺序加载图片
-      preloadImages(currentPage.value)
+
+    if (!imageData || imageData.length === 0) {
+      throw new Error('empty images')
     }
-    
+
+    images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
+    totalPage.value = images.value.length
+
+    const routePage = Number(route.query.page)
+    const initialPage = clampPage(
+      Number.isFinite(routePage) && routePage > 0 ? routePage : comic?.current_page || 1,
+      totalPage.value
+    )
+
+    currentPage.value = initialPage
+    sliderPage.value = initialPage
+    lastCommittedPage.value = initialPage
+    lastSavedPage.value = initialPage
+
+    preloadImages(initialPage)
+
     await nextTick()
-    setTimeout(() => {
-      jumpToPage(currentPage.value, false)
-    }, 100)
+    await nextAnimationFrame()
+    await jumpToPage(initialPage, false)
   } catch (err) {
     error.value = true
     console.error('加载图片失败:', err)
@@ -374,182 +483,205 @@ const loadImages = async () => {
   }
 }
 
-const handleImageClick = (event) => {
+const jumpToPage = async (page, smooth = true) => {
+  if (totalPage.value <= 0) return
+  const targetPage = clampPage(page, totalPage.value)
+  const behavior = smooth ? 'smooth' : 'auto'
+
+  currentPage.value = targetPage
+  sliderPage.value = targetPage
+  lastCommittedPage.value = targetPage
+
+  if (!activeContainer.value) {
+    await nextTick()
+    await nextAnimationFrame()
+  }
+
+  const container = activeContainer.value
+  if (container) {
+    const preferredOffset = getPageScrollOffset(container, targetPage)
+    const fallbackOffset = (targetPage - 1) * getViewportExtent(container)
+    const scrollPosition =
+      preferredOffset > 0 || targetPage === 1 ? preferredOffset : fallbackOffset
+    markProgrammaticScroll(smooth ? 260 : 120)
+    scrollToPosition(container, scrollPosition, behavior)
+  }
+
+  preloadImages(targetPage)
+  scheduleProgressSave(targetPage, !smooth)
+}
+
+const prevPage = () => {
+  const targetPage = Math.max(1, clampPage(currentPage.value, totalPage.value) - 1)
+  void jumpToPage(targetPage)
+}
+
+const nextPage = () => {
+  const targetPage = Math.min(totalPage.value, clampPage(currentPage.value, totalPage.value) + 1)
+  void jumpToPage(targetPage)
+}
+
+const handleSliderChange = () => {
+  const page = parseInt(sliderPage.value, 10)
+  if (page >= 1 && page <= totalPage.value) {
+    void jumpToPage(page, false)
+  }
+}
+
+const updatePageFromScroll = () => {
+  const container = activeContainer.value
+  if (!container || totalPage.value <= 0) return
+
+  const estimatedPage = estimatePageFromScroll(container)
+  currentPage.value = estimatedPage
+  sliderPage.value = estimatedPage
+
+  scheduleScrollCommit()
+}
+
+const handleScroll = () => {
+  if (typeof window === 'undefined') {
+    updatePageFromScroll()
+    return
+  }
+
+  if (scrollRafId) return
+  scrollRafId = window.requestAnimationFrame(() => {
+    scrollRafId = 0
+    updatePageFromScroll()
+  })
+}
+
+const flushProgressBeforeLeave = () => {
+  if (saveProgressTimer) {
+    clearTimeout(saveProgressTimer)
+    saveProgressTimer = null
+  }
+  if (totalPage.value > 0) {
+    void flushProgressSave(clampPage(currentPage.value, totalPage.value))
+  }
+}
+
+const handleImageClick = () => {
   if (!isDragging.value) {
     showMenu.value = !showMenu.value
   }
 }
 
-const togglePageMode = () => {
+const togglePageMode = async () => {
+  if (totalPage.value <= 0) return
+  const anchorPage = clampPage(currentPage.value, totalPage.value)
   pageMode.value = pageMode.value === 'left_right' ? 'up_down' : 'left_right'
-  setTimeout(() => {
-    jumpToPage(currentPage.value, false)
-  }, 100)
+  configStore.setPageMode(pageMode.value)
+  currentPage.value = anchorPage
+  sliderPage.value = anchorPage
+
+  await nextTick()
+  await nextAnimationFrame()
+  await jumpToPage(anchorPage, false)
 }
 
-const prevPage = () => {
-  const targetPage = Math.max(1, Math.floor(currentPage.value) - 1)
-  jumpToPage(targetPage)
-  saveProgress()
-  preloadImages(targetPage)
-}
-
-const nextPage = () => {
-  const targetPage = Math.min(totalPage.value, Math.ceil(currentPage.value) + 1)
-  jumpToPage(targetPage)
-  saveProgress()
-  preloadImages(targetPage)
-}
-
-const jumpToPage = (page, smooth = true) => {
-  const behavior = smooth ? 'smooth' : 'auto'
-  
-  if (pageMode.value === 'left_right' && leftRightContainer.value) {
-    const scrollPosition = (page - 1) * leftRightContainer.value.clientWidth
-    leftRightContainer.value.scrollTo({
-      left: scrollPosition,
-      behavior
-    })
-  } else if (pageMode.value === 'up_down' && upDownContainer.value) {
-    // 获取实际页面高度（单个页面元素的高度）
-    const pageElement = upDownContainer.value.querySelector('.up-down-page')
-    const pageHeight = pageElement ? pageElement.offsetHeight : upDownContainer.value.clientHeight
-    const scrollPosition = (page - 1) * pageHeight
-    upDownContainer.value.scrollTo({
-      top: scrollPosition,
-      behavior
-    })
-  }
-}
-
-const handleSliderChange = () => {
-  const page = parseInt(sliderPage.value)
-  if (page >= 1 && page <= totalPage.value) {
-    jumpToPage(page, false)
-    saveProgress()
-    preloadImages(page)
-  }
-}
-
-const saveProgress = async () => {
-  try {
-    const pageToSave = Math.round(currentPage.value)
-    await comicStore.saveProgress(comicId.value, pageToSave)
-  } catch (err) {
-    console.error('保存进度失败:', err)
-  }
-}
-
-const handleScroll = () => {
-  const container = pageMode.value === 'left_right' ? leftRightContainer.value : upDownContainer.value
-  if (!container) return
-  
-  let newPage
-  if (pageMode.value === 'left_right') {
-    const scrollLeft = container.scrollLeft
-    const pageWidth = container.clientWidth
-    newPage = scrollLeft / pageWidth + 1
-  } else {
-    const scrollTop = container.scrollTop
-    // 获取实际页面高度（单个页面元素的高度）
-    const pageElement = container.querySelector('.up-down-page')
-    const pageHeight = pageElement ? pageElement.offsetHeight : container.clientHeight
-    newPage = scrollTop / pageHeight + 1
-  }
-  
-  currentPage.value = Math.max(1, Math.min(totalPage.value, newPage))
-  
-  if (Math.abs(newPage - Math.round(newPage)) < 0.1) {
-    const page = Math.round(newPage)
-    saveProgress()
-    preloadImages(page)
-  }
-}
-
-// 手机端缩放模式
 const enterZoomMode = () => {
+  if (!isMobile.value) return
   isZoomMode.value = true
   showMenu.value = false
-  zoomLevel.value = 1
-  panX.value = 0
-  panY.value = 0
+  resetZoomState()
 }
 
 const exitZoomMode = () => {
   isZoomMode.value = false
-  zoomLevel.value = 1
-  panX.value = 0
-  panY.value = 0
+  resetZoomState()
 }
 
-// 电脑端滚轮处理
+const zoomIn = () => {
+  zoomLevel.value = Math.min(5, Number((zoomLevel.value + 0.2).toFixed(2)))
+}
+
+const zoomOut = () => {
+  zoomLevel.value = Math.max(1, Number((zoomLevel.value - 0.2).toFixed(2)))
+}
+
 const handleWheel = (event) => {
-  if (isMobile.value) return
-  
-  // Ctrl + 滚轮 = 缩放
+  if (isMobile.value || isZoomMode.value) return
+
   if (event.ctrlKey) {
     event.preventDefault()
-    const delta = event.deltaY > 0 ? -0.2 : 0.2
-    const newZoom = Math.max(1, Math.min(5, zoomLevel.value + delta))
-    
-    if (newZoom !== zoomLevel.value) {
-      zoomLevel.value = newZoom
+    if (event.deltaY > 0) {
+      zoomOut()
+    } else {
+      zoomIn()
+    }
+    return
+  }
+
+  if (pageMode.value === 'left_right' && leftRightContainer.value) {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      event.preventDefault()
+      leftRightContainer.value.scrollLeft += event.deltaY
     }
   }
-  // 单纯滚轮 = 翻页（不重置缩放）
 }
 
-// 电脑端拖拽
-const startDrag = (event, index) => {
-  if (isMobile.value) return
-  
-  isDragging.value = false
-  
-  const container = pageMode.value === 'left_right' ? leftRightContainer.value : upDownContainer.value
+const startDrag = (event) => {
+  if (isMobile.value || event.button !== 0) return
+
+  const container = activeContainer.value
   if (!container) return
-  
+
+  isDragging.value = false
+  event.preventDefault()
+
   dragStartX.value = event.clientX
   dragStartY.value = event.clientY
   dragStartScrollX.value = container.scrollLeft
   dragStartScrollY.value = container.scrollTop
-  
-  const handleDragMove = (e) => {
-    const deltaX = Math.abs(e.clientX - dragStartX.value)
-    const deltaY = Math.abs(e.clientY - dragStartY.value)
-    
+
+  const handleDragMove = (moveEvent) => {
+    const deltaX = Math.abs(moveEvent.clientX - dragStartX.value)
+    const deltaY = Math.abs(moveEvent.clientY - dragStartY.value)
+
     if (deltaX > 5 || deltaY > 5) {
       isDragging.value = true
     }
-    
-    // 缩放状态下，拖动速度加快
+
     const speed = zoomLevel.value > 1 ? zoomLevel.value : 1
-    
     if (pageMode.value === 'left_right') {
-      container.scrollLeft = dragStartScrollX.value - (e.clientX - dragStartX.value) * speed
+      container.scrollLeft = dragStartScrollX.value - (moveEvent.clientX - dragStartX.value) * speed
     } else {
-      container.scrollTop = dragStartScrollY.value - (e.clientY - dragStartY.value) * speed
+      container.scrollTop = dragStartScrollY.value - (moveEvent.clientY - dragStartY.value) * speed
     }
   }
-  
+
   const handleDragEnd = () => {
     setTimeout(() => {
       isDragging.value = false
     }, 100)
+
     document.removeEventListener('mousemove', handleDragMove)
     document.removeEventListener('mouseup', handleDragEnd)
-    saveProgress()
+    scheduleScrollCommit()
   }
-  
+
   document.addEventListener('mousemove', handleDragMove)
   document.addEventListener('mouseup', handleDragEnd)
 }
 
+const startZoomDrag = (event) => {
+  if (zoomLevel.value <= 1) return
+  isZoomDragging.value = true
+  zoomDragStartX.value = event.clientX
+  zoomDragStartY.value = event.clientY
+  zoomDragStartPanX.value = panX.value
+  zoomDragStartPanY.value = panY.value
+  document.addEventListener('mousemove', handleZoomDrag)
+  document.addEventListener('mouseup', endZoomDrag)
+}
+
 const handleZoomDrag = (event) => {
   if (!isZoomDragging.value) return
-  
+
   const deltaX = event.clientX - zoomDragStartX.value
   const deltaY = event.clientY - zoomDragStartY.value
-  
   panX.value = zoomDragStartPanX.value + deltaX
   panY.value = zoomDragStartPanY.value + deltaY
 }
@@ -560,52 +692,48 @@ const endZoomDrag = () => {
   document.removeEventListener('mouseup', endZoomDrag)
 }
 
-// 全屏切换
-const toggleFullscreen = () => {
-  // 保存当前进度
-  const savedPage = currentPage.value
-  
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(err => {
-      console.error('全屏失败:', err)
-    })
-  } else {
-    document.exitFullscreen()
+const alignToCurrentPageAfterViewportChange = () => {
+  if (resizeAlignTimer) {
+    clearTimeout(resizeAlignTimer)
   }
-  
-  // 全屏切换后恢复进度
-  setTimeout(() => {
-    jumpToPage(savedPage, false)
-  }, 100)
+
+  resizeAlignTimer = setTimeout(async () => {
+    if (totalPage.value <= 0) return
+    const anchorPage = clampPage(currentPage.value, totalPage.value)
+    await jumpToPage(anchorPage, false)
+  }, 140)
 }
 
-// 全屏变化处理
+const toggleFullscreen = async () => {
+  if (typeof document === 'undefined') return
+
+  const targetEl = readerContent.value || document.documentElement
+  try {
+    if (!document.fullscreenElement) {
+      if (targetEl.requestFullscreen) {
+        await targetEl.requestFullscreen()
+      }
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch (err) {
+    console.error('全屏失败:', err)
+  }
+}
+
 const handleFullscreenChange = () => {
-  // 全屏变化后恢复进度
-  setTimeout(() => {
-    jumpToPage(currentPage.value, false)
-  }, 100)
+  updateReaderViewport()
+  alignToCurrentPageAfterViewportChange()
 }
 
-// 手机端触摸拖拽
-const startTouchDrag = (event, index) => {
+const startTouchDrag = (event) => {
   if (!isMobile.value) return
   if (isZoomMode.value || event.touches.length !== 1) return
-  
-  const touch = event.touches[0]
-  const container = pageMode.value === 'left_right' ? leftRightContainer.value : upDownContainer.value
-  if (!container) return
-  
-  dragStartX.value = touch.clientX
-  dragStartY.value = touch.clientY
-  dragStartScrollX.value = container.scrollLeft
-  dragStartScrollY.value = container.scrollTop
 }
 
-// 手机端缩放触摸
 const startZoomTouch = (event) => {
   if (!isMobile.value) return
-  
+
   if (event.touches.length === 2) {
     const touch1 = event.touches[0]
     const touch2 = event.touches[1]
@@ -624,7 +752,7 @@ const startZoomTouch = (event) => {
 
 const handleZoomTouchMove = (event) => {
   if (!isMobile.value) return
-  
+
   if (event.touches.length === 2) {
     event.preventDefault()
     const touch1 = event.touches[0]
@@ -633,17 +761,16 @@ const handleZoomTouchMove = (event) => {
       touch2.clientX - touch1.clientX,
       touch2.clientY - touch1.clientY
     )
-    
+
     if (lastTouchDistance.value > 0) {
       const scale = distance / lastTouchDistance.value
       zoomLevel.value = Math.max(1, Math.min(5, zoomLevel.value * scale))
     }
-    
+
     lastTouchDistance.value = distance
   } else if (event.touches.length === 1 && isZoomDragging.value) {
     const deltaX = event.touches[0].clientX - zoomDragStartX.value
     const deltaY = event.touches[0].clientY - zoomDragStartY.value
-    
     panX.value = zoomDragStartPanX.value + deltaX
     panY.value = zoomDragStartPanY.value + deltaY
   }
@@ -654,53 +781,148 @@ const endZoomTouch = () => {
   isZoomDragging.value = false
 }
 
-// 手机端缩放滚轮
 const handleZoomWheel = (event) => {
   if (!isMobile.value) return
-  
   event.preventDefault()
-  const delta = event.deltaY > 0 ? -0.2 : 0.2
-  const newZoom = Math.max(1, Math.min(5, zoomLevel.value + delta))
-  
-  if (newZoom !== zoomLevel.value) {
-    zoomLevel.value = newZoom
+  if (event.deltaY > 0) {
+    zoomOut()
+  } else {
+    zoomIn()
   }
 }
 
-// 双击重置缩放
 const handleDoubleClick = () => {
   if (!isMobile.value && zoomLevel.value > 1) {
-    zoomLevel.value = 1
-    panX.value = 0
-    panY.value = 0
+    resetZoomState()
   }
 }
 
-watch(currentPage, (newPage) => {
-  sliderPage.value = Math.round(newPage)
-  // 手机端切换页面时重置缩放
-  if (isMobile.value) {
-    zoomLevel.value = 1
-    panX.value = 0
-    panY.value = 0
+const handleKeydown = (event) => {
+  if (isMobile.value || totalPage.value <= 0 || loading.value || error.value) return
+
+  const target = event.target
+  const tagName = target?.tagName?.toLowerCase()
+  const isEditable =
+    tagName === 'input' ||
+    tagName === 'textarea' ||
+    target?.isContentEditable
+  if (isEditable) return
+
+  switch (event.key) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+    case 'PageUp':
+      event.preventDefault()
+      prevPage()
+      break
+    case 'ArrowRight':
+    case 'ArrowDown':
+    case 'PageDown':
+    case ' ':
+      event.preventDefault()
+      nextPage()
+      break
+    case 'Home':
+      event.preventDefault()
+      void jumpToPage(1, false)
+      break
+    case 'End':
+      event.preventDefault()
+      void jumpToPage(totalPage.value, false)
+      break
+    case 'm':
+    case 'M':
+      showMenu.value = !showMenu.value
+      break
+    case 'f':
+    case 'F':
+      event.preventDefault()
+      void toggleFullscreen()
+      break
+    case '0':
+      resetZoomState()
+      break
+    case '+':
+    case '=':
+      if (event.ctrlKey) {
+        event.preventDefault()
+        zoomIn()
+      }
+      break
+    case '-':
+      if (event.ctrlKey) {
+        event.preventDefault()
+        zoomOut()
+      }
+      break
+    default:
+      break
+  }
+}
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'hidden') {
+    flushProgressBeforeLeave()
+  }
+}
+
+watch(() => route.params.id, async (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    await loadImages()
   }
 })
 
 onMounted(() => {
-  console.log('[Reader] onMounted, id:', comicId.value, 'cache status:', comicStore.cacheStatus)
-  loadImages()
-  // 双击事件监听
+  updateDeviceState()
+  updateReaderViewport()
+  void loadImages()
+
   if (readerContent.value) {
     readerContent.value.addEventListener('dblclick', handleDoubleClick)
   }
-  // 全屏变化监听
+
   document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('resize', updateDeviceState)
+  window.addEventListener('resize', updateReaderViewport)
+  window.addEventListener('resize', alignToCurrentPageAfterViewportChange)
+  window.addEventListener('orientationchange', updateReaderViewport)
+  window.addEventListener('orientationchange', alignToCurrentPageAfterViewportChange)
+  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('pagehide', flushProgressBeforeLeave)
 })
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', handleZoomDrag)
   document.removeEventListener('mouseup', endZoomDrag)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('resize', updateDeviceState)
+  window.removeEventListener('resize', updateReaderViewport)
+  window.removeEventListener('resize', alignToCurrentPageAfterViewportChange)
+  window.removeEventListener('orientationchange', updateReaderViewport)
+  window.removeEventListener('orientationchange', alignToCurrentPageAfterViewportChange)
+  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('pagehide', flushProgressBeforeLeave)
+
+  if (saveProgressTimer) {
+    clearTimeout(saveProgressTimer)
+  }
+  if (scrollIdleTimer) {
+    clearTimeout(scrollIdleTimer)
+  }
+  if (programmaticScrollTimer) {
+    clearTimeout(programmaticScrollTimer)
+  }
+  if (resizeAlignTimer) {
+    clearTimeout(resizeAlignTimer)
+  }
+  if (scrollRafId && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(scrollRafId)
+  }
+
+  flushProgressBeforeLeave()
+
   if (readerContent.value) {
     readerContent.value.removeEventListener('dblclick', handleDoubleClick)
   }
@@ -725,7 +947,7 @@ onUnmounted(() => {
 }
 
 .reader-content {
-  height: calc(100vh - 46px);
+  height: calc(var(--reader-vh, 100dvh) - 46px);
   overflow: hidden;
   position: relative;
 }
@@ -746,10 +968,12 @@ onUnmounted(() => {
 
 .left-right-mode {
   display: flex;
+  align-items: stretch;
   height: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   will-change: scroll-position, transform;
 }
 
@@ -758,30 +982,50 @@ onUnmounted(() => {
 }
 
 .page {
-  flex: 0 0 100%;
-  width: 100%;
+  flex: 0 0 auto;
+  width: auto;
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
   background: #000;
   margin: 0;
   padding: 0;
   flex-shrink: 0;
 }
 
+.page + .page {
+  margin-left: -1px;
+}
+
 .comic-image {
   max-width: 100%;
-  max-height: 100%;
-  width: auto;
+  max-height: none;
+  width: 100%;
   height: auto;
-  object-fit: contain;
+  object-fit: cover;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
   image-rendering: -webkit-optimize-quality;
   image-rendering: high-quality;
+}
+
+.left-right-mode .comic-image {
+  width: auto;
+  height: 100%;
+  max-width: none;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.up-down-mode .comic-image {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: none;
+  object-fit: contain;
 }
 
 .comic-image:active {
@@ -793,6 +1037,7 @@ onUnmounted(() => {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   will-change: scroll-position, transform;
 }
 
@@ -802,11 +1047,8 @@ onUnmounted(() => {
 
 .up-down-page {
   width: 100%;
-  height: calc(100vh - 46px);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  height: auto;
+  display: block;
   background: #000;
   margin: 0;
   padding: 0;
@@ -816,7 +1058,11 @@ onUnmounted(() => {
   outline: none;
 }
 
-/* 手机端缩放覆盖层 */
+.up-down-page + .up-down-page {
+  margin-top: -1px;
+}
+
+/* 鎵嬫満绔缉鏀捐鐩栧眰 */
 .zoom-overlay {
   position: absolute;
   top: 0;
@@ -829,6 +1075,7 @@ onUnmounted(() => {
   justify-content: center;
   z-index: 100;
   overflow: hidden;
+  touch-action: none;
 }
 
 .zoom-image {
@@ -869,7 +1116,7 @@ onUnmounted(() => {
   z-index: 101;
 }
 
-/* 电脑端缩放提示 */
+/* 鐢佃剳绔缉鏀炬彁绀?*/
 .desktop-zoom-info {
   position: fixed;
   bottom: 20px;
@@ -984,10 +1231,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .up-down-page {
-    height: calc(72vh - 46px);
-  }
-  
   .actions {
     gap: 6px;
   }
@@ -998,3 +1241,4 @@ onUnmounted(() => {
   }
 }
 </style>
+
