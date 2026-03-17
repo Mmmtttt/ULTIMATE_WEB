@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -20,6 +20,7 @@
       --ok-line: rgba(91, 165, 255, 0.34);
       --radius: 14px;
       --shadow: 0 14px 34px rgba(3, 8, 18, 0.52);
+      --modal-bg: rgba(0, 0, 0, 0.8);
     }
 
     * { box-sizing: border-box; }
@@ -47,59 +48,105 @@
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      padding: 16px;
+      padding: 20px;
     }
 
     h1 {
-      margin: 0 0 8px;
-      font-size: 26px;
+      margin: 0 0 12px;
+      font-size: 28px;
       color: var(--text-main);
+      text-align: center;
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
 
     h2 {
-      margin: 0 0 10px;
-      font-size: 18px;
+      margin: 0 0 12px;
+      font-size: 20px;
       color: var(--text-main);
+      border-left: 4px solid var(--brand);
+      padding-left: 10px;
     }
 
     p, li {
       margin: 0;
       color: var(--text-sub);
-      line-height: 1.7;
-      font-size: 14px;
+      line-height: 1.8;
+      font-size: 15px;
     }
 
     ol {
       margin: 0;
-      padding-left: 20px;
+      padding-left: 0;
       display: grid;
-      gap: 8px;
+      gap: 24px;
+    }
+
+    li {
+      position: relative;
+      padding-left: 30px;
+      background: rgba(31, 49, 79, 0.32);
+      border-radius: 10px;
+      padding: 16px 20px 16px 50px;
+      border: 1px solid var(--line);
+    }
+
+    li::before {
+      content: counter(step);
+      counter-increment: step;
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%);
+      color: #fff;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    ol {
+      counter-reset: step;
     }
 
     .actions {
       display: flex;
-      gap: 10px;
+      gap: 12px;
       flex-wrap: wrap;
-      margin-top: 12px;
+      margin-top: 16px;
+      justify-content: center;
     }
 
     .btn {
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       text-decoration: none;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 600;
-      padding: 10px 14px;
+      padding: 12px 20px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       color: #fff;
+      transition: all 0.3s ease;
     }
 
     .btn-primary {
       background: linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%);
       box-shadow: 0 10px 20px rgba(61, 134, 230, 0.34);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 28px rgba(61, 134, 230, 0.44);
     }
 
     .btn-ghost {
@@ -108,20 +155,26 @@
       color: #dbe8ff;
     }
 
+    .btn-ghost:hover {
+      background: rgba(41, 69, 119, 0.92);
+      border-color: var(--brand);
+    }
+
     code {
       font-family: Consolas, "Courier New", monospace;
       background: rgba(91, 165, 255, 0.12);
       color: #9ec8ff;
       border-radius: 8px;
-      padding: 2px 6px;
-      font-size: 13px;
+      padding: 3px 8px;
+      font-size: 14px;
       word-break: break-all;
+      font-weight: 600;
     }
 
     .tips {
-      margin-top: 10px;
-      padding: 12px;
-      border-radius: 10px;
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 12px;
       background: var(--ok-bg);
       border: 1px solid var(--ok-line);
     }
@@ -131,55 +184,144 @@
       border-color: var(--warn-line);
     }
 
-    .shots {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 12px;
+    .tips p {
+      margin: 0;
+      font-size: 14px;
+      color: var(--text-main);
     }
 
-    .shot {
+    .step-container {
+      display: grid;
+      gap: 24px;
+      margin-top: 20px;
+    }
+
+    .step-item {
+      background: rgba(31, 49, 79, 0.32);
       border: 1px solid var(--line);
       border-radius: 12px;
       overflow: hidden;
-      background: var(--card-soft);
+      transition: all 0.3s ease;
     }
 
-    .shot img {
-      display: block;
+    .step-item:hover {
+      border-color: var(--brand);
+      box-shadow: 0 8px 20px rgba(61, 134, 230, 0.24);
+      transform: translateY(-2px);
+    }
+
+    .step-header {
+      padding: 14px 16px;
+      background: linear-gradient(135deg, rgba(91, 165, 255, 0.12) 0%, rgba(61, 134, 230, 0.12) 100%);
+      border-bottom: 1px solid var(--line);
+      font-weight: 600;
+      color: var(--text-main);
+      font-size: 16px;
+    }
+
+    .step-content {
+      padding: 16px;
+    }
+
+    .step-image {
       width: 100%;
       height: auto;
-      background: #111b2e;
+      border-radius: 8px;
+      cursor: zoom-in;
+      transition: all 0.3s ease;
+      border: 2px solid var(--line);
     }
 
-    .shot p {
-      padding: 10px 12px;
-      font-size: 13px;
+    .step-image:hover {
+      border-color: var(--brand);
+      transform: scale(1.02);
+    }
+
+    .step-description {
+      margin-top: 12px;
+      font-size: 14px;
+      color: var(--text-sub);
     }
 
     .cookie-example {
-      margin-top: 10px;
-      padding: 10px 12px;
+      margin-top: 12px;
+      padding: 14px;
       border-radius: 10px;
       border: 1px dashed var(--ok-line);
       background: rgba(31, 49, 79, 0.72);
       font-family: Consolas, "Courier New", monospace;
       color: #b5d4ff;
       line-height: 1.6;
-      font-size: 13px;
+      font-size: 14px;
       word-break: break-all;
     }
 
     .footer-note {
       color: var(--text-sub);
-      font-size: 12px;
+      font-size: 13px;
       text-align: center;
-      margin-top: 4px;
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(31, 49, 79, 0.32);
+      border-radius: 10px;
+    }
+
+    /* Modal for image zoom */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: var(--modal-bg);
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .modal.show {
+      display: flex;
+    }
+
+    .modal-content {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      color: #fff;
+      font-size: 30px;
+      font-weight: bold;
+      cursor: pointer;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s ease;
+    }
+
+    .close:hover {
+      background: rgba(0, 0, 0, 0.8);
     }
 
     @media (max-width: 640px) {
       body { padding: 12px; }
-      .card { padding: 14px; }
-      h1 { font-size: 22px; }
+      .card { padding: 16px; }
+      h1 { font-size: 24px; }
+      h2 { font-size: 18px; }
+      li { padding: 14px 16px 14px 45px; }
+      li::before { width: 24px; height: 24px; font-size: 12px; }
     }
   </style>
 </head>
@@ -187,7 +329,7 @@
   <div class="wrap">
     <section class="card">
       <h1>JAVDB Cookie 获取教学</h1>
-      <p>按下面步骤获取登录后的 Cookie，然后粘贴到系统设置的 <code>javdb.cookie_string</code> 字段。</p>
+      <p style="text-align: center; margin-bottom: 20px; font-size: 16px;">按以下步骤获取登录后的 Cookie，然后粘贴到系统设置的 <code>javdb.cookie_string</code> 字段。</p>
       <div class="actions">
         <a class="btn btn-primary" href="https://javdb.com/login" target="_blank" rel="noopener noreferrer">打开 JAVDB 登录页</a>
         <button class="btn btn-ghost" type="button" onclick="window.close()">关闭本页</button>
@@ -195,46 +337,98 @@
     </section>
 
     <section class="card">
-      <h2>操作步骤（Chrome / Edge）</h2>
+      <h2>详细操作步骤（Chrome / Edge）</h2>
       <ol>
-        <li>先在浏览器登录 <code>https://javdb.com</code>。</li>
-        <li>按 <code>F12</code> 打开开发者工具，切到 <code>Application</code> 面板。</li>
-        <li>左侧打开 <code>Cookies</code>，选择 <code>https://javdb.com</code>。</li>
-        <li>复制需要的 Cookie（建议复制完整 Cookie 字符串，至少包含 <code>_jdb_session</code>、<code>over18</code>、<code>locale</code>）。</li>
-        <li>粘贴回系统设置保存，再到“视频模式 → 标签搜索”验证是否可用。</li>
+        <li>
+          <strong>步骤 1：登录 JAVDB</strong><br>
+          打开浏览器访问 <code>https://javdb.com</code>，输入账号密码登录。确保勾选“记住我”以便 Cookie 有效期更长。
+        </li>
+        <li>
+          <strong>步骤 2：打开开发者工具</strong><br>
+          按 <code>F12</code> 或 <code>Ctrl+Shift+I</code> 打开开发者工具，切换到 <code>Application</code>（应用程序）面板。
+        </li>
+        <li>
+          <strong>步骤 3：找到 Cookie 存储</strong><br>
+          在左侧菜单中展开 <code>Cookies</code>，选择 <code>https://javdb.com</code>。此时会显示所有相关的 Cookie 键值对。
+        </li>
+        <li>
+          <strong>步骤 4：复制完整 Cookie</strong><br>
+          建议复制完整的 Cookie 字符串（至少包含 <code>_jdb_session</code>、<code>over18</code>、<code>locale</code>）。可以在 <code>Network</code> 面板中复制请求头中的 Cookie。
+        </li>
+        <li>
+          <strong>步骤 5：粘贴到系统设置</strong><br>
+          将复制的 Cookie 粘贴到系统设置的 JAVDB 配置中保存，然后切换到“视频模式 → 标签搜索”验证是否可以正常搜索。
+        </li>
       </ol>
       <div class="tips">
-        <p>提示：只复制单个字段（如只复制 <code>_jdb_session</code>）时，部分情况下仍可能提示未登录。</p>
+        <p>💡 提示：只复制单个字段（如只复制 <code>_jdb_session</code>）时，部分情况下仍可能提示未登录。建议复制完整的 Cookie 字符串。</p>
       </div>
     </section>
 
     <section class="card">
-      <h2>步骤截图（来自 static_pages/screenshots）</h2>
-      <div class="shots">
-        <figure class="shot">
-          <img src="/api/v1/config/javdb-cookie-guide/screenshots/1.png" alt="步骤一：打开开发者工具" />
-          <p>步骤 1：按 F12 打开开发者工具。</p>
-        </figure>
-        <figure class="shot">
-          <img src="/api/v1/config/javdb-cookie-guide/screenshots/2.png" alt="步骤二：进入 Cookies" />
-          <p>步骤 2：在 Application 中找到 Cookies -> https://javdb.com。</p>
-        </figure>
-        <figure class="shot">
-          <img src="/api/v1/config/javdb-cookie-guide/screenshots/3.png" alt="步骤三：复制 Cookie" />
-          <p>步骤 3：复制需要的 Cookie 值。</p>
-        </figure>
+      <h2>步骤截图演示</h2>
+      <div class="step-container">
+        <div class="step-item">
+          <div class="step-header">步骤 1：打开开发者工具</div>
+          <div class="step-content">
+            <img class="step-image" src="screenshots/1.png" alt="步骤一：打开开发者工具" onclick="openModal(this.src)" />
+            <div class="step-description">按 F12 打开开发者工具，切换到 Application 面板。</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-header">步骤 2：进入 Cookie 管理</div>
+          <div class="step-content">
+            <img class="step-image" src="screenshots/2.png" alt="步骤二：进入 Cookies" onclick="openModal(this.src)" />
+            <div class="step-description">在左侧菜单中找到 Cookies -> https://javdb.com，查看所有 Cookie 键值对。</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-header">步骤 3：复制 Cookie 值</div>
+          <div class="step-content">
+            <img class="step-image" src="screenshots/3.png" alt="步骤三：复制 Cookie" onclick="openModal(this.src)" />
+            <div class="step-description">复制需要的 Cookie 值，建议复制完整的 Cookie 字符串以确保功能正常。</div>
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="card">
       <h2>Cookie 字符串示例</h2>
       <div class="cookie-example">_jdb_session=xxxxxx; over18=1; locale=zh; theme=auto; list_mode=h</div>
-      <div class="tips warn" style="margin-top: 10px;">
-        <p>请勿将 Cookie 分享给他人。Cookie 失效后，需重新获取并更新。</p>
+      <div class="tips warn" style="margin-top: 16px;">
+        <p>⚠️ 重要提示：Cookie 包含您的登录信息，请勿分享给他人。Cookie 会在一段时间后失效，需要重新获取并更新。</p>
       </div>
     </section>
 
-    <p class="footer-note">若截图未显示，请确认后端服务已启动，且可访问 /api/v1/config/javdb-cookie-guide/screenshots/*</p>
+    <p class="footer-note">若截图未显示，请确认后端服务已启动，且文件路径正确。截图文件位于 static_pages/screenshots/ 目录下。</p>
   </div>
+
+  <!-- 图片放大模态框 -->
+  <div id="imageModal" class="modal" onclick="closeModal()">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <img class="modal-content" id="modalImage">
+  </div>
+
+  <script>
+    function openModal(imageSrc) {
+      const modal = document.getElementById('imageModal');
+      const modalImg = document.getElementById('modalImage');
+      modal.classList.add('show');
+      modalImg.src = imageSrc;
+    }
+
+    function closeModal() {
+      const modal = document.getElementById('imageModal');
+      modal.classList.remove('show');
+    }
+
+    // 点击模态框外部关闭
+    window.onclick = function(event) {
+      const modal = document.getElementById('imageModal');
+      if (event.target == modal) {
+        closeModal();
+      }
+    }
+  </script>
 </body>
 </html>
