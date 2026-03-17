@@ -352,8 +352,36 @@ const clearPanInertia = () => {
   inertiaRafId = 0
 }
 
+const syncScrollFromZoomState = () => {
+  if (zoomLevel.value <= 1 || isZoomMode.value) return
+
+  const container = activeContainer.value
+  if (!container) return
+
+  const currentZoom = zoomLevel.value
+  if (!Number.isFinite(currentZoom) || currentZoom <= 0) return
+
+  const currentLeft = typeof container.scrollLeft === 'number' ? container.scrollLeft : 0
+  const currentTop = typeof container.scrollTop === 'number' ? container.scrollTop : 0
+  const nextLeftRaw = (currentLeft - panX.value) / currentZoom
+  const nextTopRaw = (currentTop - panY.value) / currentZoom
+
+  const maxLeft = Math.max(0, (container.scrollWidth || 0) - (container.clientWidth || 0))
+  const maxTop = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0))
+  const nextLeft = Math.min(maxLeft, Math.max(0, nextLeftRaw))
+  const nextTop = Math.min(maxTop, Math.max(0, nextTopRaw))
+
+  markProgrammaticScroll(120)
+  container.scrollTo({
+    left: nextLeft,
+    top: nextTop,
+    behavior: 'auto'
+  })
+}
+
 const resetZoomState = () => {
   clearPanInertia()
+  syncScrollFromZoomState()
   zoomLevel.value = 1
   panX.value = 0
   panY.value = 0
@@ -361,19 +389,30 @@ const resetZoomState = () => {
   touchPanVelocityX.value = 0
   touchPanVelocityY.value = 0
   touchPanLastTime.value = 0
+  if (activeContainer.value) {
+    updatePageFromScroll()
+  }
 }
 
 const applyZoomLevel = (nextLevel) => {
   const clamped = Math.max(1, Math.min(5, Number(nextLevel.toFixed(3))))
+
+  if (clamped <= 1 && zoomLevel.value > 1) {
+    clearPanInertia()
+    syncScrollFromZoomState()
+  }
+
   zoomLevel.value = clamped
   if (clamped <= 1) {
-    clearPanInertia()
     panX.value = 0
     panY.value = 0
     isZoomDragging.value = false
     touchPanVelocityX.value = 0
     touchPanVelocityY.value = 0
     touchPanLastTime.value = 0
+    if (activeContainer.value) {
+      updatePageFromScroll()
+    }
   }
 }
 
