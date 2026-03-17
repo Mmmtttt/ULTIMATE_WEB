@@ -995,12 +995,12 @@ def third_party_actor_works():
 def third_party_import():
     try:
         data = request.json
-        video_id = data.get('video_id')
+        video_id = str(data.get('video_id') or '').strip()
         target = data.get('target', 'home')
         platform = data.get('platform', 'javdb').lower()
         
         if not video_id:
-            return error_response(400, "缺少视频ID")
+            return error_response(400, "缺少视频ID或code")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
@@ -1027,6 +1027,11 @@ def third_party_import():
         
         adapter = get_video_adapter(platform, existing_tags)
         detail = adapter.get_video_detail(video_id)
+
+        if not detail and hasattr(adapter, 'get_video_by_code'):
+            detail = adapter.get_video_by_code(video_id)
+            if detail and detail.get("video_id"):
+                video_id = str(detail.get("video_id")).strip() or video_id
         
         if not detail:
             return error_response(404, "视频不存在")
