@@ -54,7 +54,7 @@
       <div v-else class="video-preview" @click="loadPlayUrls">
         <div class="cover-container">
           <van-image 
-            :src="getCoverUrl(recommendation.cover_path)" 
+            :src="getCoverUrl(preferredCoverPath)" 
             fit="cover"
             class="cover-image"
           />
@@ -207,11 +207,11 @@
         </van-cell-group>
       </div>
       
-      <div v-if="recommendation.thumbnail_images && recommendation.thumbnail_images.length > 0" class="thumbnails-section">
+      <div v-if="preferredThumbnailImages.length > 0" class="thumbnails-section">
         <van-cell-group title="预览图">
           <div class="thumbnail-grid">
             <van-image 
-              v-for="(img, index) in recommendation.thumbnail_images" 
+              v-for="(img, index) in preferredThumbnailImages" 
               :key="index"
               :src="getCoverUrl(img)"
               fit="cover"
@@ -335,7 +335,36 @@ const isFavoritedVideo = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
-const previewVideoPlayerUrl = computed(() => resolvePreviewVideoUrl(recommendation.value?.preview_video))
+const preferredCoverPath = computed(() => {
+  const localPath = String(recommendation.value?.cover_path_local || '').trim()
+  const remotePath = String(recommendation.value?.cover_path || '').trim()
+  return localPath || remotePath
+})
+const preferredThumbnailImages = computed(() => {
+  const local = Array.isArray(recommendation.value?.thumbnail_images_local) ? recommendation.value.thumbnail_images_local : []
+  const remote = Array.isArray(recommendation.value?.thumbnail_images) ? recommendation.value.thumbnail_images : []
+  if (!local.length) {
+    return remote
+  }
+
+  const maxLen = Math.max(local.length, remote.length)
+  const merged = []
+  for (let index = 0; index < maxLen; index += 1) {
+    const localUrl = String(local[index] || '').trim()
+    const remoteUrl = String(remote[index] || '').trim()
+    if (localUrl) {
+      merged.push(localUrl)
+    } else if (remoteUrl) {
+      merged.push(remoteUrl)
+    }
+  }
+  return merged
+})
+const previewVideoPlayerUrl = computed(() => {
+  const localPreview = String(recommendation.value?.preview_video_local || '').trim()
+  const remotePreview = String(recommendation.value?.preview_video || '').trim()
+  return resolvePreviewVideoUrl(localPreview || remotePreview)
+})
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
 
 function isLikelyPreviewMediaUrl(url) {
@@ -607,7 +636,7 @@ function copyMagnet(magnet) {
 
 function previewImages(index) {
   showImagePreview({
-    images: (recommendation.value.thumbnail_images || []).map(img => getCoverUrl(img)),
+    images: preferredThumbnailImages.value.map(img => getCoverUrl(img)),
     startPosition: index,
     closeable: true,
     closeIcon: 'close'

@@ -18,6 +18,9 @@ class Video(BaseContent):
     magnets: List[dict] = field(default_factory=list)
     thumbnail_images: List[str] = field(default_factory=list)
     preview_video: str = ""
+    cover_path_local: str = ""
+    thumbnail_images_local: List[str] = field(default_factory=list)
+    preview_video_local: str = ""
     
     @property
     def actors(self) -> List[str]:
@@ -53,6 +56,9 @@ class Video(BaseContent):
             magnets=data.get("magnets", []),
             thumbnail_images=data.get("thumbnail_images", []),
             preview_video=data.get("preview_video", ""),
+            cover_path_local=data.get("cover_path_local", ""),
+            thumbnail_images_local=data.get("thumbnail_images_local", []),
+            preview_video_local=data.get("preview_video_local", ""),
             _actors=data.get("actors", [])
         )
     
@@ -65,6 +71,9 @@ class Video(BaseContent):
             "magnets": self.magnets,
             "thumbnail_images": self.thumbnail_images,
             "preview_video": self.preview_video,
+            "cover_path_local": self.cover_path_local,
+            "thumbnail_images_local": self.thumbnail_images_local,
+            "preview_video_local": self.preview_video_local,
             "actors": self._actors
         })
         return base_dict

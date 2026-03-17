@@ -54,7 +54,7 @@
       <div v-else class="video-preview" @click="loadPlayUrls">
         <div class="cover-container">
           <van-image 
-            :src="getCoverUrl(video.cover_path)" 
+            :src="getCoverUrl(preferredCoverPath)" 
             fit="cover"
             class="cover-image"
           />
@@ -214,11 +214,11 @@
         </van-cell-group>
       </div>
       
-      <div v-if="video.thumbnail_images && video.thumbnail_images.length > 0" class="thumbnails-section">
+      <div v-if="preferredThumbnailImages.length > 0" class="thumbnails-section">
         <van-cell-group title="预览图">
           <div class="thumbnail-grid">
             <van-image 
-              v-for="(img, index) in video.thumbnail_images" 
+              v-for="(img, index) in preferredThumbnailImages" 
               :key="index"
               :src="getCoverUrl(img)"
               fit="cover"
@@ -441,7 +441,36 @@ const isFavoritedVideo = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
-const previewVideoPlayerUrl = computed(() => resolvePreviewVideoUrl(video.value?.preview_video))
+const preferredCoverPath = computed(() => {
+  const localPath = String(video.value?.cover_path_local || '').trim()
+  const remotePath = String(video.value?.cover_path || '').trim()
+  return localPath || remotePath
+})
+const preferredThumbnailImages = computed(() => {
+  const local = Array.isArray(video.value?.thumbnail_images_local) ? video.value.thumbnail_images_local : []
+  const remote = Array.isArray(video.value?.thumbnail_images) ? video.value.thumbnail_images : []
+  if (!local.length) {
+    return remote
+  }
+
+  const maxLen = Math.max(local.length, remote.length)
+  const merged = []
+  for (let index = 0; index < maxLen; index += 1) {
+    const localUrl = String(local[index] || '').trim()
+    const remoteUrl = String(remote[index] || '').trim()
+    if (localUrl) {
+      merged.push(localUrl)
+    } else if (remoteUrl) {
+      merged.push(remoteUrl)
+    }
+  }
+  return merged
+})
+const previewVideoPlayerUrl = computed(() => {
+  const localPreview = String(video.value?.preview_video_local || '').trim()
+  const remotePreview = String(video.value?.preview_video || '').trim()
+  return resolvePreviewVideoUrl(localPreview || remotePreview)
+})
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
 
 function clearAssetRefreshTimer() {
@@ -463,8 +492,13 @@ function hasPendingLocalAssets(detail) {
     return false
   }
 
-  const coverPath = String(detail.cover_path || '').trim()
-  const thumbnails = Array.isArray(detail.thumbnail_images) ? detail.thumbnail_images : []
+  const localCover = String(detail.cover_path_local || '').trim()
+  const remoteCover = String(detail.cover_path || '').trim()
+  const coverPath = localCover || remoteCover
+
+  const localThumbnails = Array.isArray(detail.thumbnail_images_local) ? detail.thumbnail_images_local : []
+  const remoteThumbnails = Array.isArray(detail.thumbnail_images) ? detail.thumbnail_images : []
+  const thumbnails = localThumbnails.length > 0 ? localThumbnails : remoteThumbnails
 
   const coverNeedsRefresh = Boolean(coverPath) && !isLocalPreviewAssetPath(coverPath)
   const thumbsNeedRefresh = thumbnails.some((item) => {
@@ -862,7 +896,7 @@ async function copyMagnet(magnet) {
 
 function previewImages(index) {
   showImagePreview({
-    images: (video.value.thumbnail_images || []).map(img => getCoverUrl(img)),
+    images: preferredThumbnailImages.value.map(img => getCoverUrl(img)),
     startPosition: index,
     closeable: true,
     closeIcon: 'close'

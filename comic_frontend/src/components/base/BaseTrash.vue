@@ -53,7 +53,7 @@
               @click="toggleItemSelection(tab.key, item.id)"
             >
               <van-image 
-                :src="getCoverUrl(item.cover_path)" 
+                :src="getCoverUrl(item)" 
                 :fit="coverFit"
                 class="media-thumb"
               />

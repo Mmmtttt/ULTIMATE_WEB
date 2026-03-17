@@ -27,7 +27,19 @@ export function toggleSelectAll(selectedIdsRef, items = [], getId = (item) => it
   }
 }
 
-export function getCoverUrl(coverPath) {
+export function getCoverUrl(coverInput) {
+  let coverPath = ''
+  if (typeof coverInput === 'string') {
+    coverPath = coverInput
+  } else if (coverInput && typeof coverInput === 'object') {
+    coverPath = String(
+      coverInput.cover_path_local ||
+      coverInput.cover_path ||
+      coverInput.cover_url ||
+      ''
+    ).trim()
+  }
+
   if (!coverPath) return ''
   if (coverPath.startsWith('http')) return coverPath
   return toBackendUrl(coverPath)

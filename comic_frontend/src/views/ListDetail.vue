@@ -170,7 +170,7 @@
           class="video-card"
           @click="goToVideo(video)"
         >
-          <img :src="getCoverUrl(video.cover_path)" class="video-cover" alt="" />
+          <img :src="getCoverUrl(video)" class="video-cover" alt="" />
           <div class="video-info">
             <p class="video-title">{{ video.title }}</p>
             <div class="video-meta">

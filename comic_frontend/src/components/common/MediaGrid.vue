@@ -146,7 +146,7 @@ const gridClassList = computed(() => ({
 }))
 
 function getCoverUrl(item) {
-  return resolveCoverUrl(item.cover_path || item.cover_url)
+  return resolveCoverUrl(item)
 }
 
 function isSelected(item) {

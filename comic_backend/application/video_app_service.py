@@ -293,13 +293,20 @@ class VideoAppService(BaseContentAppService):
         self._remove_preview_video_file(getattr(video, "preview_video", ""))
         for thumb_url in getattr(video, "thumbnail_images", []) or []:
             self._remove_preview_video_file(thumb_url)
+        self._remove_preview_video_file(getattr(video, "cover_path_local", ""))
+        self._remove_preview_video_file(getattr(video, "preview_video_local", ""))
+        for thumb_url in getattr(video, "thumbnail_images_local", []) or []:
+            self._remove_preview_video_file(thumb_url)
     
     def delete_recommendation_assets(
         self,
         video_id: str,
         preview_video: str = "",
+        preview_video_local: str = "",
         cover_path: str = "",
+        cover_path_local: str = "",
         thumbnail_images: Optional[List[str]] = None,
+        thumbnail_images_local: Optional[List[str]] = None,
     ):
         jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video_id}.jpg")
         if os.path.exists(jav_cover_path):
@@ -317,9 +324,15 @@ class VideoAppService(BaseContentAppService):
 
         if preview_video:
             self._remove_preview_video_file(preview_video)
+        if preview_video_local:
+            self._remove_preview_video_file(preview_video_local)
         if cover_path:
             self._remove_preview_video_file(cover_path)
+        if cover_path_local:
+            self._remove_preview_video_file(cover_path_local)
         for thumb_url in thumbnail_images or []:
+            self._remove_preview_video_file(thumb_url)
+        for thumb_url in thumbnail_images_local or []:
             self._remove_preview_video_file(thumb_url)
     
     def import_video(self, video_data: Dict) -> ServiceResult:
@@ -341,6 +354,9 @@ class VideoAppService(BaseContentAppService):
                 magnets=video_data.get("magnets", []),
                 thumbnail_images=video_data.get("thumbnail_images", []),
                 preview_video=video_data.get("preview_video", ""),
+                cover_path_local=video_data.get("cover_path_local", ""),
+                thumbnail_images_local=video_data.get("thumbnail_images_local", []),
+                preview_video_local=video_data.get("preview_video_local", ""),
                 create_time=get_current_time(),
                 last_access_time=get_current_time()
             )
@@ -444,7 +460,10 @@ class VideoAppService(BaseContentAppService):
                         series=recommendation_video.series or "",
                         magnets=list(recommendation_video.magnets or []),
                         thumbnail_images=list(recommendation_video.thumbnail_images or []),
-                        preview_video=recommendation_video.preview_video or ""
+                        preview_video=recommendation_video.preview_video or "",
+                        cover_path_local=getattr(recommendation_video, "cover_path_local", "") or "",
+                        thumbnail_images_local=list(getattr(recommendation_video, "thumbnail_images_local", []) or []),
+                        preview_video_local=getattr(recommendation_video, "preview_video_local", "") or "",
                     )
                     local_video.actors = list(recommendation_video.actors or [])
 
@@ -465,21 +484,25 @@ class VideoAppService(BaseContentAppService):
                         })
                         continue
 
-                    if local_video.cover_path:
+                    if local_video.cover_path and not local_video.cover_path_local:
                         self.cache_cover_to_preview_assets_async(
                             local_video.id,
                             local_video.cover_path,
                             source="local"
                         )
 
-                    if local_video.thumbnail_images:
+                    if local_video.thumbnail_images and not local_video.thumbnail_images_local:
                         self.cache_thumbnail_images_async(
                             local_video.id,
                             local_video.thumbnail_images,
                             source="local"
                         )
 
-                    if local_video.preview_video and not str(local_video.id or "").upper().startswith("JAVBUS"):
+                    if (
+                        local_video.preview_video and
+                        not local_video.preview_video_local and
+                        not str(local_video.id or "").upper().startswith("JAVBUS")
+                    ):
                         self.cache_preview_video_async(
                             local_video.id,
                             local_video.preview_video,
@@ -1330,6 +1353,36 @@ class VideoAppService(BaseContentAppService):
         video.thumbnail_images = list(thumbnail_images or [])
         return bool(repo.save(video))
 
+    def update_preview_video_local(self, video_id: str, preview_video_local: str, source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.preview_video_local = preview_video_local or ""
+        return bool(repo.save(video))
+
+    def update_cover_path_local(self, video_id: str, cover_path_local: str, source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.cover_path_local = cover_path_local or ""
+        return bool(repo.save(video))
+
+    def update_thumbnail_images_local(self, video_id: str, thumbnail_images_local: List[str], source: str = "local") -> bool:
+        source_key = self._normalize_preview_source(source)
+        repo = self._get_repo_by_source(source_key)
+        video = repo.get_by_id(video_id)
+        if not video:
+            return False
+
+        video.thumbnail_images_local = list(thumbnail_images_local or [])
+        return bool(repo.save(video))
+
     @staticmethod
     def _resolve_static_asset_abs_path(static_url: str) -> str:
         url = str(static_url or "").strip()
@@ -1381,7 +1434,7 @@ class VideoAppService(BaseContentAppService):
             sanitized_url = resolved_url
 
         if sanitized_url.startswith("/static/"):
-            self.update_preview_video(video_id, sanitized_url, source=source_key)
+            self.update_preview_video_local(video_id, sanitized_url, source=source_key)
             return
 
         task_key = f"preview:{source_key}:{video_id}"
@@ -1394,7 +1447,7 @@ class VideoAppService(BaseContentAppService):
                 local_path = self._download_preview_video_to_local(video_id, sanitized_url, source=source_key)
                 if not local_path:
                     return
-                if self.update_preview_video(video_id, local_path, source=source_key):
+                if self.update_preview_video_local(video_id, local_path, source=source_key):
                     app_logger.info(f"预览视频缓存成功: id={video_id}, source={source_key}, path={local_path}")
             except Exception as e:
                 error_logger.error(f"缓存预览视频失败: id={video_id}, error={e}")
@@ -1416,7 +1469,7 @@ class VideoAppService(BaseContentAppService):
 
         expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
         if target_url.startswith(expected_prefix):
-            self.update_cover_path(video_id, target_url, source=source_key)
+            self.update_cover_path_local(video_id, target_url, source=source_key)
             return
 
         task_key = f"cover:{source_key}:{video_id}"
@@ -1440,7 +1493,7 @@ class VideoAppService(BaseContentAppService):
                 os.replace(tmp_path, abs_path)
                 tmp_path = ""
 
-                if self.update_cover_path(video_id, relative_path, source=source_key):
+                if self.update_cover_path_local(video_id, relative_path, source=source_key):
                     app_logger.info(f"预览资源封面缓存成功: id={video_id}, source={source_key}, path={relative_path}")
             except Exception as e:
                 error_logger.error(f"缓存预览资源封面失败: id={video_id}, source={source_key}, error={e}")
@@ -1474,6 +1527,7 @@ class VideoAppService(BaseContentAppService):
             changed = False
             merged_images = list(original_images)
             expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
+            all_local = True
 
             try:
                 for idx, raw_url in enumerate(original_images):
@@ -1482,6 +1536,8 @@ class VideoAppService(BaseContentAppService):
 
                     if raw_url.startswith(expected_prefix):
                         continue
+
+                    all_local = False
 
                     image_content = None
                     if raw_url.startswith("/static/"):
@@ -1510,7 +1566,8 @@ class VideoAppService(BaseContentAppService):
                         except Exception:
                             pass
 
-                if changed and self.update_thumbnail_images(video_id, merged_images, source=source_key):
+                should_update_local_field = changed or all_local
+                if should_update_local_field and self.update_thumbnail_images_local(video_id, merged_images, source=source_key):
                     app_logger.info(f"缩略图缓存成功: id={video_id}, source={source_key}")
             except Exception as e:
                 error_logger.error(f"缓存缩略图任务失败: id={video_id}, source={source_key}, error={e}")

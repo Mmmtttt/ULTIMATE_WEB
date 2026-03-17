@@ -58,7 +58,7 @@
               @click="toggleContentSelection(item.id)"
             >
               <van-image 
-                :src="getCoverUrl(item.cover_path)" 
+                :src="getCoverUrl(item)" 
                 :fit="coverFit"
                 class="content-thumb"
               />

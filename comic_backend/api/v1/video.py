@@ -555,6 +555,21 @@ def to_proxy_image_url(url: str) -> str:
 _PREVIEW_VIDEO_MEDIA_MARKERS = (".mp4", ".m3u8", ".webm", ".mov", ".m4v")
 
 
+def _normalize_str_list(value) -> list:
+    if not isinstance(value, list):
+        return []
+    return [str(item or "").strip() for item in value if str(item or "").strip()]
+
+
+def _ensure_local_asset_fields(video_data: dict) -> dict:
+    if not isinstance(video_data, dict):
+        return video_data
+
+    video_data["cover_path_local"] = str(video_data.get("cover_path_local", "") or "").strip()
+    video_data["thumbnail_images_local"] = _normalize_str_list(video_data.get("thumbnail_images_local", []))
+    return video_data
+
+
 def _sanitize_preview_video_value(raw_url: str) -> str:
     if not raw_url:
         return ""
@@ -668,6 +683,9 @@ def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dic
     if not isinstance(video_data, dict):
         return video_data
 
+    _ensure_local_asset_fields(video_data)
+    video_data["preview_video_local"] = _sanitize_preview_video_value(video_data.get("preview_video_local", ""))
+
     normalized_preview = _sanitize_preview_video_value(video_data.get("preview_video", ""))
     if normalized_preview:
         video_data["preview_video"] = normalized_preview
@@ -758,10 +776,17 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
     if not video_id:
         return
 
-    cover = str(video_data.get("cover_path") or "").strip()
-    thumbnails = [str(item or "").strip() for item in (video_data.get("thumbnail_images") or []) if str(item or "").strip()]
+    _ensure_local_asset_fields(video_data)
 
-    should_cache_cover = bool(cover) and not _is_source_preview_asset(cover, source_key)
+    cover_local = str(video_data.get("cover_path_local") or "").strip()
+    cover_remote = str(video_data.get("cover_path") or "").strip()
+    cover_candidate = cover_local or cover_remote
+
+    thumbnails_local = _normalize_str_list(video_data.get("thumbnail_images_local", []))
+    thumbnails_remote = _normalize_str_list(video_data.get("thumbnail_images", []))
+    thumbnails = thumbnails_local if thumbnails_local else thumbnails_remote
+
+    should_cache_cover = bool(cover_candidate) and not _is_source_preview_asset(cover_candidate, source_key)
     should_cache_thumbs = any(not _is_source_preview_asset(item, source_key) for item in thumbnails)
 
     if not should_cache_cover and not should_cache_thumbs:
@@ -770,7 +795,7 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
     _schedule_video_asset_cache(
         video_id=video_id,
         source=source_key,
-        cover_url=cover if should_cache_cover else "",
+        cover_url=cover_candidate if should_cache_cover else "",
         thumbnail_images=thumbnails if should_cache_thumbs else [],
         allow_cover=should_cache_cover,
         allow_preview_video=False,
@@ -1337,6 +1362,9 @@ def third_party_import():
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
                 "cover_path": cover_path_fallback,
+                "thumbnail_images_local": [],
+                "preview_video_local": "",
+                "cover_path_local": "",
                 "tag_ids": video_tag_ids,
                 "list_ids": []
             }
@@ -1415,6 +1443,9 @@ def third_party_import():
                 "thumbnail_images": detail.get("thumbnail_images", []),
                 "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
                 "cover_path": cover_path_fallback,
+                "thumbnail_images_local": [],
+                "preview_video_local": "",
+                "cover_path_local": "",
                 "tag_ids": video_tag_ids,
                 "list_ids": [],
                 "create_time": get_current_time(),
@@ -1485,8 +1516,10 @@ def get_video_recommendation_list():
                 continue
             
             video_with_tags = video.copy()
+            _ensure_local_asset_fields(video_with_tags)
             video_tag_ids = video.get('tag_ids', [])
             video_with_tags['preview_video'] = _sanitize_preview_video_value(video_with_tags.get('preview_video', ''))
+            video_with_tags['preview_video_local'] = _sanitize_preview_video_value(video_with_tags.get('preview_video_local', ''))
             video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
             filtered_videos.append(video_with_tags)
         
@@ -1527,6 +1560,7 @@ def get_video_recommendation_detail():
         for video in videos:
             if video.get('id') == video_id:
                 video_with_tags = video.copy()
+                _ensure_local_asset_fields(video_with_tags)
                 video_tag_ids = video.get('tag_ids', [])
                 video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
                 detail = _ensure_preview_video_detail(video_with_tags, source="preview")
@@ -1770,8 +1804,11 @@ def delete_video_recommendation_permanently():
         video_service.delete_recommendation_assets(
             video_id,
             preview_video=(video_to_delete or {}).get("preview_video", ""),
+            preview_video_local=(video_to_delete or {}).get("preview_video_local", ""),
             cover_path=(video_to_delete or {}).get("cover_path", ""),
+            cover_path_local=(video_to_delete or {}).get("cover_path_local", ""),
             thumbnail_images=(video_to_delete or {}).get("thumbnail_images", []),
+            thumbnail_images_local=(video_to_delete or {}).get("thumbnail_images_local", []),
         )
         
         app_logger.info(f"推荐视频永久删除: {video_id}")
@@ -1854,8 +1891,11 @@ def batch_delete_video_recommendation_permanently():
             video_service.delete_recommendation_assets(
                 video.get('id', ''),
                 preview_video=video.get('preview_video', ''),
+                preview_video_local=video.get('preview_video_local', ''),
                 cover_path=video.get('cover_path', ''),
+                cover_path_local=video.get('cover_path_local', ''),
                 thumbnail_images=video.get('thumbnail_images', []),
+                thumbnail_images_local=video.get('thumbnail_images_local', []),
             )
         
         app_logger.info(f"推荐视频批量永久删除: {len(videos_to_delete)}个")

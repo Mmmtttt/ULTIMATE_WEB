@@ -127,7 +127,7 @@
             >
               <div class="card-cover">
                 <van-image
-                  :src="getCoverUrl(item.cover_path || item.cover_url)"
+                  :src="getCoverUrl(item)"
                   fit="cover"
                   class="cover-image"
                   lazy-load
