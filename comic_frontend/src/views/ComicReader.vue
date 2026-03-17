@@ -1,6 +1,7 @@
 ﻿<template>
-  <div class="comic-reader" :style="{ background: background }">
+  <div class="comic-reader" :style="{ background: background }" ref="readerRoot">
     <van-nav-bar 
+      class="reader-nav"
       v-show="showMenu"
       title="" 
       left-text="返回" 
@@ -24,7 +25,7 @@
       <van-button type="primary" @click="loadImages">重试</van-button>
     </div>
     
-    <div v-else class="reader-content" ref="readerContent">
+    <div v-else class="reader-content" ref="readerContent" @click.self="toggleMenuVisibility">
       <!-- 宸﹀彸缈婚〉妯″紡 -->
       <div 
         v-if="pageMode === 'left_right'" 
@@ -171,6 +172,7 @@ const error = ref(false)
 const showMenu = ref(false)
 const pageMode = ref(resolvePageMode(configStore.defaultPageMode))
 const background = ref('#000')
+const readerRoot = ref(null)
 const leftRightContainer = ref(null)
 const upDownContainer = ref(null)
 const readerContent = ref(null)
@@ -197,8 +199,19 @@ const dragStartY = ref(0)
 const dragStartScrollX = ref(0)
 const dragStartScrollY = ref(0)
 
+const detectMobileDevice = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  const hasTouch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window
+  const coarsePointer =
+    typeof window.matchMedia === 'function'
+      ? window.matchMedia('(pointer: coarse)').matches
+      : false
+  const smallViewport = Math.min(window.innerWidth, window.innerHeight) <= 900
+  return coarsePointer || (hasTouch && smallViewport)
+}
+
 const isProgrammaticScroll = ref(false)
-const isMobile = ref(typeof window !== 'undefined' ? window.innerWidth <= 768 : false)
+const isMobile = ref(detectMobileDevice())
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 
@@ -220,12 +233,12 @@ const currentZoomImage = computed(() => {
 })
 
 const getContainerStyle = computed(() => {
-  if (isMobile.value || zoomLevel.value === 1 || isZoomMode.value) {
+  if (zoomLevel.value <= 1 || isZoomMode.value) {
     return {}
   }
 
   return {
-    transform: `scale(${zoomLevel.value})`,
+    transform: `translate3d(${panX.value}px, ${panY.value}px, 0) scale(${zoomLevel.value})`,
     transformOrigin: 'center center'
   }
 })
@@ -237,9 +250,19 @@ const resetZoomState = () => {
   isZoomDragging.value = false
 }
 
+const applyZoomLevel = (nextLevel) => {
+  const clamped = Math.max(1, Math.min(5, Number(nextLevel.toFixed(3))))
+  zoomLevel.value = clamped
+  if (clamped <= 1) {
+    panX.value = 0
+    panY.value = 0
+    isZoomDragging.value = false
+  }
+}
+
 const updateDeviceState = () => {
   if (typeof window === 'undefined') return
-  isMobile.value = window.innerWidth <= 768
+  isMobile.value = detectMobileDevice()
 }
 
 const updateReaderViewport = () => {
@@ -564,8 +587,12 @@ const flushProgressBeforeLeave = () => {
 
 const handleImageClick = () => {
   if (!isDragging.value) {
-    showMenu.value = !showMenu.value
+    toggleMenuVisibility()
   }
+}
+
+const toggleMenuVisibility = () => {
+  showMenu.value = !showMenu.value
 }
 
 const togglePageMode = async () => {
@@ -594,11 +621,11 @@ const exitZoomMode = () => {
 }
 
 const zoomIn = () => {
-  zoomLevel.value = Math.min(5, Number((zoomLevel.value + 0.2).toFixed(2)))
+  applyZoomLevel(zoomLevel.value + 0.2)
 }
 
 const zoomOut = () => {
-  zoomLevel.value = Math.max(1, Number((zoomLevel.value - 0.2).toFixed(2)))
+  applyZoomLevel(zoomLevel.value - 0.2)
 }
 
 const handleWheel = (event) => {
@@ -611,6 +638,13 @@ const handleWheel = (event) => {
     } else {
       zoomIn()
     }
+    return
+  }
+
+  if (zoomLevel.value > 1) {
+    event.preventDefault()
+    panX.value -= event.deltaX
+    panY.value -= event.deltaY
     return
   }
 
@@ -635,6 +669,12 @@ const startDrag = (event) => {
   dragStartY.value = event.clientY
   dragStartScrollX.value = container.scrollLeft
   dragStartScrollY.value = container.scrollTop
+  const dragZoomedContent = zoomLevel.value > 1 && !isZoomMode.value
+
+  if (dragZoomedContent) {
+    zoomDragStartPanX.value = panX.value
+    zoomDragStartPanY.value = panY.value
+  }
 
   const handleDragMove = (moveEvent) => {
     const deltaX = Math.abs(moveEvent.clientX - dragStartX.value)
@@ -642,6 +682,12 @@ const startDrag = (event) => {
 
     if (deltaX > 5 || deltaY > 5) {
       isDragging.value = true
+    }
+
+    if (dragZoomedContent) {
+      panX.value = zoomDragStartPanX.value + (moveEvent.clientX - dragStartX.value)
+      panY.value = zoomDragStartPanY.value + (moveEvent.clientY - dragStartY.value)
+      return
     }
 
     const speed = zoomLevel.value > 1 ? zoomLevel.value : 1
@@ -659,7 +705,9 @@ const startDrag = (event) => {
 
     document.removeEventListener('mousemove', handleDragMove)
     document.removeEventListener('mouseup', handleDragEnd)
-    scheduleScrollCommit()
+    if (!dragZoomedContent) {
+      scheduleScrollCommit()
+    }
   }
 
   document.addEventListener('mousemove', handleDragMove)
@@ -707,7 +755,7 @@ const alignToCurrentPageAfterViewportChange = () => {
 const toggleFullscreen = async () => {
   if (typeof document === 'undefined') return
 
-  const targetEl = readerContent.value || document.documentElement
+  const targetEl = readerRoot.value || document.documentElement
   try {
     if (!document.fullscreenElement) {
       if (targetEl.requestFullscreen) {
@@ -764,7 +812,7 @@ const handleZoomTouchMove = (event) => {
 
     if (lastTouchDistance.value > 0) {
       const scale = distance / lastTouchDistance.value
-      zoomLevel.value = Math.max(1, Math.min(5, zoomLevel.value * scale))
+      applyZoomLevel(zoomLevel.value * scale)
     }
 
     lastTouchDistance.value = distance
@@ -947,9 +995,17 @@ onUnmounted(() => {
 }
 
 .reader-content {
-  height: calc(var(--reader-vh, 100dvh) - 46px);
+  height: var(--reader-vh, 100dvh);
   overflow: hidden;
   position: relative;
+}
+
+.reader-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1100;
 }
 
 .mode-switch {
@@ -986,8 +1042,8 @@ onUnmounted(() => {
   width: auto;
   height: 100%;
   display: flex;
-  align-items: stretch;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
   background: #000;
   margin: 0;
   padding: 0;
@@ -1014,18 +1070,19 @@ onUnmounted(() => {
 
 .left-right-mode .comic-image {
   width: auto;
-  height: 100%;
-  max-width: none;
+  height: auto;
+  max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }
 
 .up-down-mode .comic-image {
-  width: 100%;
+  width: auto;
   height: auto;
   max-width: 100%;
-  max-height: none;
+  max-height: var(--reader-vh, 100dvh);
   object-fit: contain;
+  margin: 0 auto;
 }
 
 .comic-image:active {
@@ -1048,7 +1105,9 @@ onUnmounted(() => {
 .up-down-page {
   width: 100%;
   height: auto;
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
   background: #000;
   margin: 0;
   padding: 0;
