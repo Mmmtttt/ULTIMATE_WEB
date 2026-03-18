@@ -1076,7 +1076,7 @@ class ListAppService:
                 if rating_match:
                     try:
                         rating_num = float(rating_match.group(0))
-                        score = min(max(rating_num, 1.0), 10.0)
+                        score = min(max(rating_num, 1.0), 12.0)
                     except Exception:
                         pass
                 video_data["score"] = score

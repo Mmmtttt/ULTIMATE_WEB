@@ -8,6 +8,6 @@
     "port": 5176
   },
   "storage": {
-    "data_dir": "./comic_backend/data"
+    "data_dir": "./data"
   }
 }

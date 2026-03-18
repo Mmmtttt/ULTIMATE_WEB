@@ -46,23 +46,40 @@ class CacheManager:
     def generate_key(*args) -> str:
         key_str = '|'.join(str(arg) for arg in args)
         return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _build_persistent_filepath(self, key: str, category: str = 'default') -> str:
+        raw_key = str(key or "")
+        key_hash = hashlib.md5(raw_key.encode("utf-8")).hexdigest()
+        return os.path.join(CACHE_DIR, f"{category}_{key_hash}.json")
+
+    def _build_legacy_persistent_filepath(self, key: str, category: str = 'default') -> str:
+        return os.path.join(CACHE_DIR, f"{category}_{key}.json")
     
     def get_persistent(self, key: str, category: str = 'default') -> Optional[Any]:
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
-            filepath = os.path.join(CACHE_DIR, f"{category}_{key}.json")
-            
-            if not os.path.exists(filepath):
+            filepath = self._build_persistent_filepath(key, category)
+            legacy_filepath = self._build_legacy_persistent_filepath(key, category)
+
+            data = None
+            active_path = None
+            for candidate in (filepath, legacy_filepath):
+                if not os.path.exists(candidate):
+                    continue
+                with open(candidate, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                active_path = candidate
+                break
+
+            if data is None:
                 return None
-            
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
             
             expires_at_str = data.get('expires_at', '')
             if expires_at_str:
                 expires_at = datetime.fromisoformat(expires_at_str)
                 if datetime.now() > expires_at:
-                    os.remove(filepath)
+                    if active_path and os.path.exists(active_path):
+                        os.remove(active_path)
                     return None
             
             return data.get('value')
@@ -72,7 +89,7 @@ class CacheManager:
     def set_persistent(self, key: str, value: Any, category: str = 'default', ttl_seconds: int = None):
         try:
             os.makedirs(CACHE_DIR, exist_ok=True)
-            filepath = os.path.join(CACHE_DIR, f"{category}_{key}.json")
+            filepath = self._build_persistent_filepath(key, category)
             
             expires_at = None
             if ttl_seconds is not None and ttl_seconds > 0:
@@ -90,11 +107,15 @@ class CacheManager:
     
     def delete_persistent(self, key: str, category: str = 'default') -> bool:
         try:
-            filepath = os.path.join(CACHE_DIR, f"{category}_{key}.json")
-            if os.path.exists(filepath):
-                os.remove(filepath)
-                return True
-            return False
+            deleted = False
+            for filepath in (
+                self._build_persistent_filepath(key, category),
+                self._build_legacy_persistent_filepath(key, category),
+            ):
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                    deleted = True
+            return deleted
         except Exception:
             return False
     

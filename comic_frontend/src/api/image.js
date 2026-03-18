@@ -42,6 +42,8 @@ export function buildCoverUrl(coverPath) {
     normalizedPath = String(coverPath).trim()
   }
 
+  normalizedPath = String(normalizedPath || '').trim()
+
   if (!normalizedPath) {
     return '/default-cover.jpg'
   }

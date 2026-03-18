@@ -14,13 +14,20 @@
 
     <div v-else class="detail-content">
       <div class="cover-section">
-        <van-image
-          :src="recommendationCoverUrl"
-          fit="cover"
-          class="cover"
-          lazy-load
-          @click="startReading"
-        />
+        <div class="cover-wrapper">
+          <van-image
+            :src="recommendationCoverUrl"
+            fit="cover"
+            class="cover"
+            lazy-load
+            @click="startReading"
+          />
+          <van-tag
+            type="primary"
+            size="small"
+            class="source-tag"
+          >预览库</van-tag>
+        </div>
         <div class="info">
           <h1 class="title">{{ recommendation.title }}</h1>
           <div class="author-row">
@@ -58,19 +65,13 @@
                 {{ recommendation.score || '未评分' }}
               </span>
             </div>
-            <van-slider
+            <van-rate
               v-model="scoreValue"
-              :min="1"
-              :max="12"
-              :step="0.5"
-              active-color="#ff9900"
+              :count="12"
+              allow-half
               @change="handleScoreChange"
-              class="score-slider"
+              class="score-rate"
             />
-            <div class="score-labels">
-              <span>1分</span>
-              <span>12分</span>
-            </div>
           </div>
         </div>
       </div>
@@ -665,6 +666,19 @@ watch(showListPopup, async (val) => {
   cursor: pointer;
 }
 
+.cover-wrapper {
+  position: relative;
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.source-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+}
+
 .info {
   flex: 1;
   min-width: 0;
@@ -764,15 +778,8 @@ watch(showListPopup, async (val) => {
   box-shadow: none;
 }
 
-.score-slider {
+.score-rate {
   margin: 8px 0;
-}
-
-.score-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  opacity: 0.86;
 }
 
 .tags-section,
@@ -919,6 +926,10 @@ watch(showListPopup, async (val) => {
   .cover {
     width: 110px;
     height: 148px;
+  }
+
+  .cover-wrapper {
+    width: 110px;
   }
 
   .score-section {

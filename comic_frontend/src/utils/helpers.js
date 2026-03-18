@@ -38,11 +38,13 @@ export function getCoverUrl(coverInput) {
       coverInput.cover_url ||
       ''
     ).trim()
+  } else if (coverInput !== null && coverInput !== undefined) {
+    coverPath = String(coverInput)
   }
 
-  if (!coverPath) return ''
-  if (coverPath.startsWith('http')) return coverPath
-  return toBackendUrl(coverPath)
+  const normalizedCoverPath = String(coverPath || '').trim()
+  if (!normalizedCoverPath) return ''
+  return toBackendUrl(normalizedCoverPath)
 }
 
 export function extractAuthors(items) {

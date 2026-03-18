@@ -130,7 +130,7 @@
           <div class="score-controls">
             <van-rate 
               v-model="scoreValue" 
-              :count="10" 
+              :count="12" 
               allow-half 
               @change="updateScore"
             />
@@ -157,27 +157,27 @@
       <!-- 操作按钮区 -->
       <div class="action-buttons">
         <van-button 
-          :icon="isFavoritedVideo ? 'star' : 'star-o'"
           :type="isFavoritedVideo ? 'warning' : 'default'"
-          block
+          size="small"
           @click="toggleFavorite"
         >
+          <van-icon :name="isFavoritedVideo ? 'star' : 'star-o'" />
           {{ isFavoritedVideo ? '已收藏' : '收藏' }}
         </van-button>
         <van-button 
-          icon="orders-o"
-          type="primary"
-          block
+          type="default"
+          size="small"
           @click="showListPopup = true"
         >
+          <van-icon name="add-o" />
           加入清单
         </van-button>
         <van-button 
-          icon="delete-o"
           type="danger"
-          block
+          size="small"
           @click="handleMoveToTrash"
         >
+          <van-icon name="delete-o" />
           移入回收站
         </van-button>
       </div>
@@ -1507,10 +1507,15 @@ onUnmounted(() => {
 }
 
 .action-buttons {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 0 2px;
+}
+
+.action-buttons .van-button {
+  min-width: 80px;
 }
 
 .magnets-section {
@@ -1634,11 +1639,6 @@ onUnmounted(() => {
 
 .video-detail-desktop .info-row .value {
   font-size: 15px;
-}
-
-.video-detail-desktop .action-buttons {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
 }
 
 .video-detail-desktop .thumbnail-grid {

@@ -1605,63 +1605,6 @@ class VideoAppService(BaseContentAppService):
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
 
-    def cache_cover_to_preview_assets_async(
-        self,
-        video_id: str,
-        cover_url: str,
-        source: str = "local",
-        force: bool = False
-    ):
-        source_key = self._normalize_preview_source(source)
-        if not force and not self._allow_asset_cache_for_source(source_key):
-            app_logger.info(f"预览库资源下载已关闭，跳过封面缓存: id={video_id}")
-            return
-
-        target_url = str(cover_url or "").strip()
-        if not video_id or not target_url:
-            return
-
-        expected_prefix = self._build_preview_asset_prefix(video_id, source_key)
-        if target_url.startswith(expected_prefix):
-            self.update_cover_path_local(video_id, target_url, source=source_key)
-            return
-
-        task_key = f"cover:{source_key}:{video_id}"
-        if not self._begin_asset_download(task_key):
-            app_logger.info(f"封面缓存任务已在进行中: id={video_id}, source={source_key}")
-            return
-
-        def download():
-            tmp_path = ""
-            try:
-                image_content = self._read_static_asset_bytes(target_url) if target_url.startswith(("/static/", "/media/")) else None
-                if not image_content:
-                    image_content = self._download_image_content(target_url, video_id)
-                if not image_content:
-                    return
-
-                image = Image.open(BytesIO(image_content))
-                abs_path, relative_path = self._build_preview_cover_save_paths(video_id, source_key)
-                tmp_path = f"{abs_path}.tmp"
-                image.convert("RGB").save(tmp_path, "JPEG", quality=95)
-                os.replace(tmp_path, abs_path)
-                tmp_path = ""
-
-                if self.update_cover_path_local(video_id, relative_path, source=source_key):
-                    app_logger.info(f"预览资源封面缓存成功: id={video_id}, source={source_key}, path={relative_path}")
-            except Exception as e:
-                error_logger.error(f"缓存预览资源封面失败: id={video_id}, source={source_key}, error={e}")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
-                self._end_asset_download(task_key)
-
-        thread = threading.Thread(target=download, daemon=True)
-        thread.start()
-
     def cache_thumbnail_images_async(self, video_id: str, thumbnail_images: List[str], source: str = "local"):
         source_key = self._normalize_preview_source(source)
         if not self._allow_asset_cache_for_source(source_key):

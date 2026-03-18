@@ -847,7 +847,7 @@ def _schedule_video_asset_cache(
         video_service.cache_preview_video_async(video_id, preview, source=source)
 
 
-def _is_source_preview_asset(path: str, source: str) -> bool:
+def _is_source_preview_asset(path: str) -> bool:
     normalized = str(path or "").strip()
     if not normalized:
         return False
@@ -880,10 +880,10 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
 
     should_cache_cover = (
         bool(cover_candidate)
-        and not _is_source_preview_asset(cover_candidate, source_key)
+        and not _is_source_preview_asset(cover_candidate)
         and not str(cover_candidate).strip().startswith("/static/cover/")
     )
-    should_cache_thumbs = any(not _is_source_preview_asset(item, source_key) for item in thumbnails)
+    should_cache_thumbs = any(not _is_source_preview_asset(item) for item in thumbnails)
 
     if not should_cache_cover and not should_cache_thumbs:
         return

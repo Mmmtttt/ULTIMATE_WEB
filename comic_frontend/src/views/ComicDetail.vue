@@ -14,29 +14,31 @@
     
     <div v-else class="detail-content">
       <div class="cover-section">
-        <van-image 
-          :src="coverUrl" 
-          fit="cover" 
-          class="cover" 
-          lazy-load
-          @click="startReading"
-        >
-          <template #loading>
-            <van-loading class="loading" />
-          </template>
-        </van-image>
-        <van-tag
-          v-if="comic.source === 'preview'"
-          type="primary"
-          size="small"
-          class="source-tag"
-        >预览库</van-tag>
-        <van-tag
-          v-else
-          type="success"
-          size="small"
-          class="source-tag"
-        >本地库</van-tag>
+        <div class="cover-wrapper">
+          <van-image 
+            :src="coverUrl" 
+            fit="cover" 
+            class="cover" 
+            lazy-load
+            @click="startReading"
+          >
+            <template #loading>
+              <van-loading class="loading" />
+            </template>
+          </van-image>
+          <van-tag
+            v-if="comic.source === 'preview'"
+            type="primary"
+            size="small"
+            class="source-tag"
+          >预览库</van-tag>
+          <van-tag
+            v-else
+            type="success"
+            size="small"
+            class="source-tag"
+          >本地库</van-tag>
+        </div>
         <div class="info">
           <h1 class="title">{{ comic.title }}</h1>
           <div class="author-row">
@@ -74,19 +76,13 @@
                 {{ comic.score || '未评分' }}
               </span>
             </div>
-            <van-slider 
-              v-model="scoreValue" 
-              :min="1" 
-              :max="12" 
-              :step="0.5"
-              active-color="#ff9900"
+            <van-rate
+              v-model="scoreValue"
+              :count="12"
+              allow-half
               @change="handleScoreChange"
-              class="score-slider"
+              class="score-rate"
             />
-            <div class="score-labels">
-              <span>1分</span>
-              <span>12分</span>
-            </div>
           </div>
         </div>
       </div>
@@ -772,10 +768,16 @@ watch(showListPopup, async (val) => {
   position: relative;
 }
 
+.cover-wrapper {
+  position: relative;
+  width: 120px;
+  flex-shrink: 0;
+}
+
 .source-tag {
   position: absolute;
-  top: 20px;
-  left: 16px;
+  top: 8px;
+  left: 8px;
   z-index: 2;
 }
 
@@ -881,15 +883,8 @@ watch(showListPopup, async (val) => {
   box-shadow: none;
 }
 
-.score-slider {
+.score-rate {
   margin: 8px 0;
-}
-
-.score-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  opacity: 0.86;
 }
 
 .tags-section,
@@ -1036,6 +1031,10 @@ watch(showListPopup, async (val) => {
   .cover {
     width: 110px;
     height: 148px;
+  }
+
+  .cover-wrapper {
+    width: 110px;
   }
 
   .score-section {
