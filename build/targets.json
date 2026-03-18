@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "id": "windows",
+      "runtime_profile": "full",
+      "third_party_enabled": true,
+      "notes": "Desktop package skeleton for Windows executable pipeline"
+    },
+    {
+      "id": "linux",
+      "runtime_profile": "full",
+      "third_party_enabled": true,
+      "notes": "Desktop package skeleton for Linux executable pipeline"
+    },
+    {
+      "id": "android",
+      "runtime_profile": "mobile_core",
+      "third_party_enabled": false,
+      "notes": "Android package skeleton without bundled third-party libraries"
+    }
+  ]
+}

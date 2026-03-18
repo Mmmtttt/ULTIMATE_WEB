@@ -27,3 +27,5 @@ comic_backend/third_party/*/favorite_comics.txt
 tests/test.txt
 
 comic_backend/venv
+
+output/*

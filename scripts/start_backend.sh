@@ -29,4 +29,6 @@ fi
 
 echo "Starting backend service..."
 cd "$ROOT_DIR/comic_backend"
+export BACKEND_RUNTIME_PROFILE="${BACKEND_RUNTIME_PROFILE:-full}"
+export BACKEND_ENABLE_THIRD_PARTY="${BACKEND_ENABLE_THIRD_PARTY:-true}"
 "$PY_CMD" app.py
