@@ -106,6 +106,32 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def has_non_ascii_path(path: Path) -> bool:
+    return any(ord(ch) > 127 for ch in str(path))
+
+
+def choose_android_workspace_dir(target_out_dir: Path, staged_target_dir: Path, packager_cfg: Dict) -> Path:
+    configured_root = str(packager_cfg.get("workspace_root", "")).strip()
+    if configured_root:
+        root = Path(configured_root).expanduser().resolve()
+        return root / f"{target_out_dir.name}_{staged_target_dir.name}"
+
+    default_workspace = target_out_dir / "android_workspace"
+    if os.name != "nt" or not has_non_ascii_path(default_workspace):
+        return default_workspace
+
+    env_root = os.environ.get("ULTIMATE_ANDROID_WORKSPACE_ROOT", "").strip()
+    if env_root:
+        fallback_root = Path(env_root).expanduser().resolve()
+    else:
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            fallback_root = Path(local_appdata) / "UltimateWebBuild" / "android_workspace"
+        else:
+            fallback_root = Path.home() / "AppData" / "Local" / "UltimateWebBuild" / "android_workspace"
+    return fallback_root / f"{target_out_dir.name}_{staged_target_dir.name}"
+
+
 def get_npm_command() -> str:
     return "npm.cmd" if os.name == "nt" else "npm"
 
@@ -394,7 +420,7 @@ def write_android_capacitor_plan(
         )
     ).strip() or "android/app/build/outputs/apk/debug/app-debug.apk"
 
-    workspace_dir = target_out_dir / "android_workspace"
+    workspace_dir = choose_android_workspace_dir(target_out_dir, staged_target_dir, packager_cfg)
     ensure_clean_dir(workspace_dir)
 
     staged_web_dir = staged_target_dir / staged_web_dir_name
@@ -449,7 +475,8 @@ def write_android_capacitor_plan(
 
     gradle_cmd = ["./gradlew", gradle_task]
     if os.name == "nt":
-        gradle_cmd = ["gradlew.bat", gradle_task]
+        # Execute batch wrapper through cmd on Windows for reliable process launching.
+        gradle_cmd = ["cmd", "/c", "gradlew.bat", gradle_task]
     commands.append(gradle_cmd)
 
     pretty_commands = []
@@ -470,6 +497,7 @@ def write_android_capacitor_plan(
     plan.append("Notes:")
     plan.append(f"- source staged web dir: `{staged_web_dir_name}`")
     plan.append(f"- workspace web dir: `{workspace_web_dir_name}`")
+    plan.append(f"- workspace dir: `{workspace_dir}`")
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
@@ -532,7 +560,19 @@ def package_android(
                     output_dir=str(target_out_dir),
                     command=cmd,
                 )
-        code, output = run_cmd(cmd, cwd=cwd)
+        try:
+            code, output = run_cmd(cmd, cwd=cwd)
+        except FileNotFoundError:
+            log_path = target_out_dir / "android_build.log"
+            logs.append(f"$ {' '.join(cmd)}\n[launcher-error] executable not found in PATH or cwd\n")
+            write_text(log_path, "\n".join(logs))
+            return PackageResult(
+                target=target,
+                status="failed",
+                message=f"android build failed at step {idx}: command not found ({cmd[0]}); see {log_path}",
+                output_dir=str(target_out_dir),
+                command=cmd,
+            )
         logs.append(f"$ {' '.join(cmd)}\n{output}\n")
         if code != 0:
             log_path = target_out_dir / "android_build.log"
