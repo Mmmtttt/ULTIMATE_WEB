@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "packagers": {
+    "windows": {
+      "type": "pyinstaller",
+      "binary_name": "ultimate_backend_windows",
+      "entry": "comic_backend/app.py",
+      "mode": "onefile"
+    },
+    "linux": {
+      "type": "pyinstaller",
+      "binary_name": "ultimate_backend_linux",
+      "entry": "comic_backend/app.py",
+      "mode": "onefile"
+    },
+    "android": {
+      "type": "capacitor",
+      "app_id": "com.ultimate.web",
+      "app_name": "UltimateWeb",
+      "web_dir": "comic_frontend_dist",
+      "android_project_dir": "android_app"
+    }
+  }
+}
