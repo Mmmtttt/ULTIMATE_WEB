@@ -183,7 +183,14 @@
       </div>
       
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
-        <van-cell-group title="磁力链接">
+        <van-cell
+          class="magnets-toggle"
+          :title="`磁力链接（${video.magnets.length}）`"
+          :value="showMagnets ? '收起' : '展开'"
+          is-link
+          @click="showMagnets = !showMagnets"
+        />
+        <van-cell-group v-show="showMagnets">
           <van-cell 
             v-for="(magnet, index) in video.magnets" 
             :key="index"
@@ -400,6 +407,7 @@ const selectedTagIds = ref([])
 const selectedListIds = ref([])
 const scoreValue = ref(0)
 const subscribingActors = ref([])
+const showMagnets = ref(false)
 
 const editForm = ref({
   title: '',
@@ -715,6 +723,7 @@ async function refreshPreviewVideo() {
     }
 
     video.value = response.data
+    showMagnets.value = false
     if (response.data?.score) {
       scoreValue.value = response.data.score
     }
@@ -761,6 +770,7 @@ async function loadVideo() {
   try {
     const data = await videoStore.fetchDetail(videoId.value)
     video.value = data
+    showMagnets.value = false
     if (data?.score) {
       scoreValue.value = data.score
     }
@@ -1707,15 +1717,12 @@ onUnmounted(() => {
   }
 
   .action-buttons {
-    position: sticky;
-    bottom: 62px;
-    z-index: 8;
-    padding: 10px;
-    background: var(--surface-2);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--border-soft);
-    border-radius: 14px;
-    box-shadow: 0 10px 22px rgba(17, 27, 45, 0.14);
+    position: static;
+    padding: 0 2px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .thumbnail-grid {
