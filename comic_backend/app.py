@@ -8,6 +8,7 @@ from flask_cors import CORS
 from api import register_blueprints
 from application.list_app_service import ListAppService
 from core.constants import (
+    CACHE_ROOT_DIR,
     COVER_DIR,
     STATIC_DIR,
     ensure_storage_layout,
@@ -72,8 +73,15 @@ def serve_cover(filename):
 @app.route('/static/cover/<platform>/author_cache/<filename>')
 def serve_author_cover(platform, filename):
     """提供作者更新作品的封面图片"""
-    cache_dir = os.path.join(COVER_DIR, platform, 'author_cache')
-    response = make_response(send_from_directory(cache_dir, filename))
+    platform_key = str(platform or "").strip().upper() or "JM"
+    new_cache_dir = os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
+    legacy_cache_dir = os.path.join(COVER_DIR, platform_key, 'author_cache')
+
+    target_dir = new_cache_dir
+    if not os.path.exists(os.path.join(new_cache_dir, filename)):
+        target_dir = legacy_cache_dir
+
+    response = make_response(send_from_directory(target_dir, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'
     elif filename.endswith('.png'):

@@ -12,7 +12,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from core.utils import get_current_time, generate_id
-from core.constants import JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE
+from core.constants import CACHE_ROOT_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE
 from third_party import external_api
 from application.base.content_app_service import BaseCreatorAppService
 from core.enums import ContentType
@@ -26,6 +26,34 @@ class AuthorAppService(BaseCreatorAppService):
         self._author_repo = author_repo or AuthorJsonRepository()
         self._comic_repo = ComicJsonRepository()
         self._recommendation_repo = RecommendationJsonRepository()
+
+    @staticmethod
+    def _normalize_platform(platform: str) -> str:
+        return "PK" if str(platform or "").strip().upper() == "PK" else "JM"
+
+    @classmethod
+    def _get_author_cover_cache_dir(cls, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        return os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
+
+    @classmethod
+    def _build_author_cover_url(cls, content_id: str, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        safe_id = str(content_id or "").strip()
+        return f"/static/cover/{platform_key}/author_cache/{safe_id}.jpg"
+
+    def _resolve_cover_url_for_work(self, work: Dict) -> str:
+        if not isinstance(work, dict):
+            return ""
+        content_id = str(work.get("id", "")).strip()
+        if not content_id:
+            return ""
+        platform = work.get("platform", "")
+        cache_dir = self._get_author_cover_cache_dir(platform)
+        local_file = os.path.join(cache_dir, f"{content_id}.jpg")
+        if os.path.exists(local_file):
+            return self._build_author_cover_url(content_id, platform)
+        return ""
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索作者作品 - 支持分页
@@ -70,8 +98,8 @@ class AuthorAppService(BaseCreatorAppService):
                         album = platform_albums[plat][i]
                         work_id = str(album.get("album_id", ""))
                         cover_url = album.get("cover_url", "")
-                        local_cover = f"/static/cover/{plat}/author_cache/{work_id}.jpg"
-                        cache_dir = JM_AUTHOR_COVER_CACHE_DIR if plat == "JM" else PK_AUTHOR_COVER_CACHE_DIR
+                        local_cover = self._build_author_cover_url(work_id, plat)
+                        cache_dir = self._get_author_cover_cache_dir(plat)
                         if os.path.exists(os.path.join(cache_dir, f"{work_id}.jpg")):
                             cover_url = local_cover
                         
@@ -127,12 +155,13 @@ class AuthorAppService(BaseCreatorAppService):
         """下载作者作品封面"""
         if not cover_url:
             return ""
-        
-        cache_dir = JM_AUTHOR_COVER_CACHE_DIR if platform == 'JM' else PK_AUTHOR_COVER_CACHE_DIR
+
+        platform_key = self._normalize_platform(platform)
+        cache_dir = self._get_author_cover_cache_dir(platform_key)
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
-        
+
         if os.path.exists(local_path):
-            return f"/static/cover/{platform}/author_cache/{content_id}.jpg"
+            return self._build_author_cover_url(content_id, platform_key)
         
         try:
             headers = {
@@ -147,8 +176,8 @@ class AuthorAppService(BaseCreatorAppService):
                 if img.mode in ('RGBA', 'P'):
                     img = img.convert('RGB')
                 img.save(local_path, 'JPEG', quality=85)
-            
-            return f"/static/cover/{platform}/author_cache/{content_id}.jpg"
+
+            return self._build_author_cover_url(content_id, platform_key)
         except Exception as e:
             error_logger.error(f"下载作者作品封面失败 {content_id}: {e}")
             return cover_url
@@ -434,24 +463,24 @@ class AuthorAppService(BaseCreatorAppService):
     def clear_author_cover_cache(self) -> ServiceResult:
         """清理作者作品封面缓存"""
         import shutil
-        
+
         cleared_count = 0
         freed_size = 0
-        
+
         try:
-            for cache_dir in [JM_AUTHOR_COVER_CACHE_DIR, PK_AUTHOR_COVER_CACHE_DIR]:
-                if os.path.exists(cache_dir):
-                    for filename in os.listdir(cache_dir):
-                        filepath = os.path.join(cache_dir, filename)
+            if os.path.exists(CACHE_ROOT_DIR):
+                for dirpath, _, filenames in os.walk(CACHE_ROOT_DIR):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
                         try:
                             if os.path.isfile(filepath):
-                                file_size = os.path.getsize(filepath)
-                                os.remove(filepath)
+                                freed_size += os.path.getsize(filepath)
                                 cleared_count += 1
-                                freed_size += file_size
-                        except Exception as e:
-                            error_logger.error(f"删除文件失败 {filepath}: {e}")
-            
+                        except Exception:
+                            continue
+                shutil.rmtree(CACHE_ROOT_DIR, ignore_errors=True)
+            os.makedirs(CACHE_ROOT_DIR, exist_ok=True)
+
             app_logger.info(f"清理作者封面缓存完成: 清理 {cleared_count} 个文件, 释放 {freed_size} 字节")
             return ServiceResult.ok({
                 "cleared_count": cleared_count,

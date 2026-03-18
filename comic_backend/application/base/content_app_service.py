@@ -230,6 +230,18 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
     def _get_cache_key_prefix(self) -> str:
         """获取缓存键前缀，子类必须实现"""
         pass
+
+    def _resolve_cover_url_for_work(self, work: Dict) -> str:
+        """可选钩子：返回本地封面 URL，默认不处理。"""
+        return ""
+
+    def _apply_local_cover_preference(self, works: List[Dict]):
+        for work in works or []:
+            if not isinstance(work, dict):
+                continue
+            local_cover_url = self._resolve_cover_url_for_work(work)
+            if local_cover_url:
+                work["cover_url"] = local_cover_url
     
     def _get_subscribed_impl(
         self,
@@ -336,6 +348,7 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
             total = len(cached_all_works)
             has_more = (offset + limit < total) or cached_meta.get("has_more", False)
             
+            self._apply_local_cover_preference(paginated_works)
             app_logger.info(f"[Paginated] 返回作品数量: {len(paginated_works)}，总数: {total}，has_more: {has_more}")
             
             self._async_download_covers(paginated_works)
@@ -413,6 +426,7 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
             total = len(cached_all_works)
             has_more = (offset + limit < total) or cached_meta.get("has_more", False)
             
+            self._apply_local_cover_preference(paginated_works)
             app_logger.info(f"[Paginated] 返回作品数量: {len(paginated_works)}，总数: {total}，has_more: {has_more}")
             
             self._async_download_covers(paginated_works)
@@ -457,10 +471,15 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
         """异步下载作品封面"""
         def download_covers():
             for work in works:
-                if work.get("cover_url"):
+                cover_url = str(work.get("cover_url", "") or "").strip()
+                if cover_url:
+                    if cover_url.startswith("/static/"):
+                        continue
                     try:
                         platform = work.get("platform", "")
-                        self._download_cover(work["id"], work["cover_url"], platform)
+                        local_or_remote = self._download_cover(work["id"], cover_url, platform)
+                        if local_or_remote:
+                            work["cover_url"] = local_or_remote
                     except Exception as e:
                         error_logger.error(f"异步下载封面失败 {work['id']}: {e}")
         threading.Thread(target=download_covers, daemon=True).start()

@@ -19,8 +19,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
 from core.constants import (
-    VIDEO_ACTOR_COVER_CACHE_DIR, 
-    JAV_ACTOR_COVER_CACHE_DIR,
+    CACHE_ROOT_DIR,
     VIDEO_JSON_FILE,
     VIDEO_RECOMMENDATION_JSON_FILE
 )
@@ -35,6 +34,37 @@ class ActorAppService(BaseCreatorAppService):
     def __init__(self, actor_repo: ActorRepository = None, video_repo: VideoRepository = None):
         self._actor_repo = actor_repo or ActorJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
+
+    @staticmethod
+    def _normalize_platform(platform: str) -> str:
+        raw = str(platform or "").strip().lower()
+        if raw == "javbus":
+            return "JAVBUS"
+        return "JAVDB"
+
+    @classmethod
+    def _get_actor_cover_cache_dir(cls, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        return os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
+
+    @classmethod
+    def _build_actor_cover_url(cls, content_id: str, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        safe_id = str(content_id or "").strip()
+        return f"/static/cover/{platform_key}/author_cache/{safe_id}.jpg"
+
+    def _resolve_cover_url_for_work(self, work: Dict) -> str:
+        if not isinstance(work, dict):
+            return ""
+        content_id = str(work.get("id", "")).strip()
+        if not content_id:
+            return ""
+        platform = work.get("platform", "")
+        cache_dir = self._get_actor_cover_cache_dir(platform)
+        local_file = os.path.join(cache_dir, f"{content_id}.jpg")
+        if os.path.exists(local_file):
+            return self._build_actor_cover_url(content_id, platform)
+        return ""
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索演员作品 - 支持分页
@@ -86,8 +116,8 @@ class ActorAppService(BaseCreatorAppService):
                         continue
                     
                     cover_url = video.get("cover_url", "")
-                    local_cover = f"/static/cover/video/actor_cache/{work_id}.jpg"
-                    if os.path.exists(os.path.join(VIDEO_ACTOR_COVER_CACHE_DIR, f"{work_id}.jpg")):
+                    local_cover = self._build_actor_cover_url(work_id, plat)
+                    if os.path.exists(os.path.join(self._get_actor_cover_cache_dir(plat), f"{work_id}.jpg")):
                         cover_url = local_cover
                     
                     works.append({
@@ -135,12 +165,13 @@ class ActorAppService(BaseCreatorAppService):
         """下载演员作品封面"""
         if not cover_url:
             return ""
-        
-        cache_dir = VIDEO_ACTOR_COVER_CACHE_DIR
+
+        platform_key = self._normalize_platform(platform)
+        cache_dir = self._get_actor_cover_cache_dir(platform_key)
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
-        
+
         if os.path.exists(local_path):
-            return f"/static/cover/video/actor_cache/{content_id}.jpg"
+            return self._build_actor_cover_url(content_id, platform_key)
         
         try:
             headers = {
@@ -162,8 +193,8 @@ class ActorAppService(BaseCreatorAppService):
                 if img.mode in ('RGBA', 'P'):
                     img = img.convert('RGB')
                 img.save(local_path, 'JPEG', quality=85)
-            
-            return f"/static/cover/video/actor_cache/{content_id}.jpg"
+
+            return self._build_actor_cover_url(content_id, platform_key)
         except Exception as e:
             error_logger.error(f"下载演员作品封面失败 {content_id}: {e}")
             return cover_url
@@ -406,24 +437,24 @@ class ActorAppService(BaseCreatorAppService):
     def clear_actor_cover_cache(self) -> ServiceResult:
         """清理演员作品封面缓存"""
         import shutil
-        
+
         cleared_count = 0
         freed_size = 0
-        
+
         try:
-            for cache_dir in [VIDEO_ACTOR_COVER_CACHE_DIR, JAV_ACTOR_COVER_CACHE_DIR]:
-                if os.path.exists(cache_dir):
-                    for filename in os.listdir(cache_dir):
-                        filepath = os.path.join(cache_dir, filename)
+            if os.path.exists(CACHE_ROOT_DIR):
+                for dirpath, _, filenames in os.walk(CACHE_ROOT_DIR):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
                         try:
                             if os.path.isfile(filepath):
-                                file_size = os.path.getsize(filepath)
-                                os.remove(filepath)
+                                freed_size += os.path.getsize(filepath)
                                 cleared_count += 1
-                                freed_size += file_size
-                        except Exception as e:
-                            error_logger.error(f"删除文件失败 {filepath}: {e}")
-            
+                        except Exception:
+                            continue
+                shutil.rmtree(CACHE_ROOT_DIR, ignore_errors=True)
+            os.makedirs(CACHE_ROOT_DIR, exist_ok=True)
+
             app_logger.info(f"清理演员封面缓存完成: 清理 {cleared_count} 个文件, 释放 {freed_size} 字节")
             return ServiceResult.ok({
                 "cleared_count": cleared_count,

@@ -30,7 +30,7 @@
 
     <van-cell-group class="mine-menu" inset>
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
-      <van-cell title="缓存管理" icon="tosend" @click="showCachePanel = true" is-link />
+      <van-cell title="存储管理" icon="tosend" @click="showCachePanel = true" is-link />
     </van-cell-group>
     
     <div class="about">
@@ -38,7 +38,7 @@
       <p class="copyright">© 2026 Ultimate Web</p>
     </div>
     
-    <!-- 缓存管理面板 -->
+    <!-- 存储管理面板 -->
     <van-popup
       v-model:show="showCachePanel"
       position="bottom"
@@ -47,22 +47,32 @@
     >
       <div class="cache-panel">
         <van-nav-bar
-          title="缓存管理"
+          title="存储管理"
           left-text="关闭"
           @click-left="showCachePanel = false"
         />
 
         <div class="cache-content">
-          <!-- 缓存信息 -->
+          <!-- 存储信息 -->
           <van-cell-group inset class="cache-info-group">
-            <van-cell title="数据缓存" :value="cacheInfo.cache.size_mb + ' MB'">
+            <van-cell title="data 目录总存储" :value="cacheInfo.data_storage.size_mb + ' MB'">
               <template #label>
-                <span class="cache-desc">存储漫画和视频的临时缓存数据</span>
+                <span class="cache-desc">包含 data 目录下所有文件与子目录</span>
               </template>
             </van-cell>
-            <van-cell title="预览缓存" :value="cacheInfo.recommendation_cache.size_mb + ' MB'">
+            <van-cell title="数据缓存" :value="cacheInfo.cache.size_mb + ' MB'">
               <template #label>
-                <span class="cache-desc">存储预览库的临时缓存数据</span>
+                <span class="cache-desc">订阅页封面和数据临时缓存</span>
+              </template>
+            </van-cell>
+            <van-cell title="漫画预览页缓存" :value="cacheInfo.comic_preview_cache.size_mb + ' MB'">
+              <template #label>
+                <span class="cache-desc">漫画预览页相关缓存资源</span>
+              </template>
+            </van-cell>
+            <van-cell title="视频预览页缓存" :value="cacheInfo.video_preview_page_cache.size_mb + ' MB'">
+              <template #label>
+                <span class="cache-desc">视频预览图与预览视频本地缓存</span>
               </template>
             </van-cell>
           </van-cell-group>
@@ -70,7 +80,8 @@
           <!-- 清除选项 -->
           <van-cell-group inset class="clear-options-group">
             <van-cell title="清除数据缓存" is-link @click="confirmClearCache('cache')" />
-            <van-cell title="清除预览缓存" is-link @click="confirmClearCache('recommendation_cache')" />
+            <van-cell title="清除漫画预览页缓存" is-link @click="confirmClearCache('comic_preview_cache')" />
+            <van-cell title="清除视频预览页缓存" is-link @click="confirmClearCache('video_preview_page_cache')" />
             <van-cell title="清除所有缓存" is-link @click="confirmClearCache('all')" />
           </van-cell-group>
         </div>
@@ -213,8 +224,10 @@ const fileInput = ref(null)
 
 // Cache Info
 const cacheInfo = ref({
+  data_storage: { size_mb: 0, file_count: 0 },
   cache: { size_mb: 0, file_count: 0 },
-  recommendation_cache: { size_mb: 0, file_count: 0 }
+  comic_preview_cache: { size_mb: 0, file_count: 0 },
+  video_preview_page_cache: { size_mb: 0, file_count: 0 }
 })
 
 // Stats
@@ -244,7 +257,13 @@ async function loadCacheInfo() {
   try {
     const res = await configApi.getCacheInfo()
     if (res.code === 200 && res.data) {
-      cacheInfo.value = res.data
+      const recommendationFallback = res.data.recommendation_cache || { size_mb: 0, file_count: 0 }
+      cacheInfo.value = {
+        data_storage: res.data.data_storage || { size_mb: 0, file_count: 0 },
+        cache: res.data.cache || { size_mb: 0, file_count: 0 },
+        comic_preview_cache: res.data.comic_preview_cache || recommendationFallback,
+        video_preview_page_cache: res.data.video_preview_page_cache || { size_mb: 0, file_count: 0 }
+      }
     }
   } catch (e) {
     console.error('加载缓存信息失败', e)
@@ -254,7 +273,8 @@ async function loadCacheInfo() {
 function confirmClearCache(cacheType) {
   const messages = {
     'cache': '确定清除数据缓存吗？',
-    'recommendation_cache': '确定清除预览缓存吗？',
+    'comic_preview_cache': '确定清除漫画预览页缓存吗？',
+    'video_preview_page_cache': '确定清除视频预览页缓存吗？这会清空预览库中本地预览资源字段。',
     'all': '确定清除所有缓存吗？'
   }
   showConfirmDialog({ title: '确认清除', message: messages[cacheType] || '确定清除缓存吗？' })
@@ -265,7 +285,9 @@ async function clearCache(cacheType) {
   try {
     const res = await configApi.clearSpecificCache(cacheType)
     if (res.code === 200) {
-      showSuccessToast(`缓存已清除，释放 ${res.data.freed_size_mb} MB`)
+      const localFieldCount = Number(res?.data?.preview_local_fields?.removed_field_count || 0)
+      const extraText = localFieldCount > 0 ? `，清理预览库本地字段 ${localFieldCount} 个` : ''
+      showSuccessToast(`缓存已清除，释放 ${res.data.freed_size_mb} MB${extraText}`)
       await loadCacheInfo()
     }
   } catch (e) {

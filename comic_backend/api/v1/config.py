@@ -8,8 +8,16 @@ import time
 from flask import Blueprint, jsonify, request, send_from_directory
 
 from application.config_app_service import ConfigAppService
-from core.constants import DATA_DIR, SERVER_CONFIG_PATH
+from core.constants import (
+    CACHE_ROOT_DIR,
+    DATA_DIR,
+    RECOMMENDATION_CACHE_DIR,
+    SERVER_CONFIG_PATH,
+    STATIC_DIR,
+    VIDEO_RECOMMENDATION_JSON_FILE,
+)
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 
 
@@ -29,6 +37,8 @@ _JAVDB_STATIC_SCREENSHOTS_DIR = os.path.abspath(
 _JAVDB_LIB_SCREENSHOTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots')
 )
+_VIDEO_PREVIEW_CACHE_DIR = os.path.join(STATIC_DIR, "preview_video", "preview")
+_VIDEO_LOCAL_ASSET_FIELDS = ("cover_path_local", "thumbnail_images_local", "preview_video_local")
 
 
 def success_response(data=None, msg="成功"):
@@ -100,6 +110,83 @@ def _count_files(root_dir):
     for _, _, files in os.walk(root_dir):
         total += len(files)
     return total
+
+
+def _get_directory_file_count_and_size(root_dir):
+    if not os.path.exists(root_dir):
+        return 0, 0
+
+    file_count = 0
+    total_size = 0
+    for dirpath, _, filenames in os.walk(root_dir):
+        file_count += len(filenames)
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if os.path.isfile(filepath):
+                try:
+                    total_size += os.path.getsize(filepath)
+                except OSError:
+                    continue
+    return file_count, total_size
+
+
+def _clear_directory_keep_root(dir_path):
+    file_count, size_bytes = _get_directory_file_count_and_size(dir_path)
+    existed = os.path.exists(dir_path)
+    if existed:
+        shutil.rmtree(dir_path, ignore_errors=True)
+    os.makedirs(dir_path, exist_ok=True)
+    return {
+        "existed": existed,
+        "file_count": file_count,
+        "size_bytes": size_bytes,
+    }
+
+
+def _clear_preview_video_local_fields():
+    storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+    raw_data = storage.read() or {}
+    video_recommendations = raw_data.get("video_recommendations", [])
+    if not isinstance(video_recommendations, list):
+        return {"updated_count": 0, "removed_field_count": 0}
+
+    updated_count = 0
+    removed_field_count = 0
+
+    for item in video_recommendations:
+        if not isinstance(item, dict):
+            continue
+        changed = False
+        for field_name in _VIDEO_LOCAL_ASSET_FIELDS:
+            if field_name in item:
+                item.pop(field_name, None)
+                removed_field_count += 1
+                changed = True
+        if changed:
+            updated_count += 1
+
+    if removed_field_count > 0:
+        raw_data["video_recommendations"] = video_recommendations
+        if not storage.write(raw_data):
+            raise RuntimeError("写入预览库数据库失败")
+
+    return {
+        "updated_count": updated_count,
+        "removed_field_count": removed_field_count,
+    }
+
+
+def _build_storage_info(dir_path, label, description=""):
+    exists = os.path.exists(dir_path)
+    file_count, size_bytes = _get_directory_file_count_and_size(dir_path)
+    return {
+        "label": label,
+        "exists": exists,
+        "file_count": file_count,
+        "size_bytes": size_bytes,
+        "size_mb": round(size_bytes / (1024 * 1024), 2),
+        "description": description or label,
+    }
 
 
 def _move_data_dir(src_dir, dst_dir):
@@ -419,48 +506,57 @@ def clean_orphan_cache():
 @config_bp.route('/cache/clear-specific', methods=['DELETE'])
 def clear_specific_cache():
     try:
-        from core.constants import CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR
-        
         data = request.json or {}
-        cache_type = data.get('cache_type', 'all')
-        
+        raw_cache_type = str(data.get('cache_type', 'all') or 'all').strip().lower()
+        cache_type = 'comic_preview_cache' if raw_cache_type == 'recommendation_cache' else raw_cache_type
+
+        supported_types = {
+            'all',
+            'cache',
+            'comic_preview_cache',
+            'video_preview_page_cache',
+        }
+        if cache_type not in supported_types:
+            return error_response(400, f"不支持的缓存类型: {cache_type}")
+
         deleted_count = 0
+        deleted_file_count = 0
         freed_size_bytes = 0
-        
-        def get_dir_size(dir_path):
-            total_size = 0
-            if os.path.exists(dir_path):
-                for dirpath, dirnames, filenames in os.walk(dir_path):
-                    for filename in filenames:
-                        filepath = os.path.join(dirpath, filename)
-                        if os.path.exists(filepath):
-                            total_size += os.path.getsize(filepath)
-            return total_size
-        
+
         def clear_directory(dir_path):
-            nonlocal deleted_count, freed_size_bytes
-            if os.path.exists(dir_path):
-                size = get_dir_size(dir_path)
-                freed_size_bytes += size
-                shutil.rmtree(dir_path)
-                os.makedirs(dir_path, exist_ok=True)
-                deleted_count += 1
-        
-        if cache_type == 'all':
+            nonlocal deleted_count, deleted_file_count, freed_size_bytes
+            result = _clear_directory_keep_root(dir_path)
+            deleted_count += 1
+            deleted_file_count += result["file_count"]
+            freed_size_bytes += result["size_bytes"]
+
+        if cache_type in ('all', 'cache'):
             clear_directory(CACHE_ROOT_DIR)
+
+        if cache_type in ('all', 'comic_preview_cache'):
             clear_directory(RECOMMENDATION_CACHE_DIR)
-        elif cache_type == 'cache':
-            clear_directory(CACHE_ROOT_DIR)
-        elif cache_type == 'recommendation_cache':
-            clear_directory(RECOMMENDATION_CACHE_DIR)
-        
+
+        local_field_reset = {
+            "updated_count": 0,
+            "removed_field_count": 0,
+        }
+        if cache_type in ('all', 'video_preview_page_cache'):
+            clear_directory(_VIDEO_PREVIEW_CACHE_DIR)
+            local_field_reset = _clear_preview_video_local_fields()
+
         freed_mb = freed_size_bytes / (1024 * 1024)
-        app_logger.info(f"清除特定缓存完成: 类型={cache_type}, 清理 {deleted_count} 个目录, 释放 {freed_mb:.2f} MB")
+        app_logger.info(
+            "清除特定缓存完成: "
+            f"类型={cache_type}, 清理 {deleted_count} 个目录, 删除 {deleted_file_count} 个文件, "
+            f"释放 {freed_mb:.2f} MB, 清理预览库 local 字段={local_field_reset}"
+        )
         return success_response({
             "cache_type": cache_type,
             "deleted_count": deleted_count,
+            "deleted_file_count": deleted_file_count,
             "freed_size_bytes": freed_size_bytes,
             "freed_size_mb": round(freed_mb, 2),
+            "preview_local_fields": local_field_reset,
         }, "缓存清除成功")
     except Exception as e:
         error_logger.error(f"清除特定缓存失败: {e}")
@@ -470,31 +566,33 @@ def clear_specific_cache():
 @config_bp.route('/cache/info', methods=['GET'])
 def get_cache_info():
     try:
-        from core.constants import CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR
-        
-        def get_dir_info(dir_path, label):
-            exists = os.path.exists(dir_path)
-            file_count = 0
-            size_bytes = 0
-            if exists:
-                for dirpath, dirnames, filenames in os.walk(dir_path):
-                    file_count += len(filenames)
-                    for filename in filenames:
-                        filepath = os.path.join(dirpath, filename)
-                        if os.path.exists(filepath):
-                            size_bytes += os.path.getsize(filepath)
-            return {
-                "label": label,
-                "exists": exists,
-                "file_count": file_count,
-                "size_bytes": size_bytes,
-                "size_mb": round(size_bytes / (1024 * 1024), 2),
-                "description": label
-            }
-        
+        cache_info = _build_storage_info(
+            CACHE_ROOT_DIR,
+            "数据缓存",
+            "订阅页封面和数据临时缓存",
+        )
+        comic_preview_cache_info = _build_storage_info(
+            RECOMMENDATION_CACHE_DIR,
+            "漫画预览页缓存",
+            "漫画预览页相关缓存资源",
+        )
+        video_preview_cache_info = _build_storage_info(
+            _VIDEO_PREVIEW_CACHE_DIR,
+            "视频预览页缓存",
+            "视频详情预览视频与高清图缓存",
+        )
+        data_storage_info = _build_storage_info(
+            DATA_DIR,
+            "data 总存储",
+            "data 目录总占用（含全部子目录）",
+        )
+
         return success_response({
-            "cache": get_dir_info(CACHE_ROOT_DIR, "数据缓存"),
-            "recommendation_cache": get_dir_info(RECOMMENDATION_CACHE_DIR, "预览缓存")
+            "cache": cache_info,
+            "comic_preview_cache": comic_preview_cache_info,
+            "recommendation_cache": comic_preview_cache_info,
+            "video_preview_page_cache": video_preview_cache_info,
+            "data_storage": data_storage_info,
         })
     except Exception as e:
         error_logger.error(f"获取缓存信息失败: {e}")
