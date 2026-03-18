@@ -106,6 +106,14 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def get_npm_command() -> str:
+    return "npm.cmd" if os.name == "nt" else "npm"
+
+
+def get_npx_command() -> str:
+    return "npx.cmd" if os.name == "nt" else "npx"
+
+
 def current_host_target() -> str:
     if os.name == "nt":
         return "windows"
@@ -373,56 +381,120 @@ def write_android_capacitor_plan(
     target_out_dir: Path,
     staged_target_dir: Path,
     packager_cfg: Dict,
-) -> List[str]:
+) -> Tuple[List[List[str]], Path, str]:
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip()
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
-    web_dir = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip()
-    android_project_dir = str(packager_cfg.get("android_project_dir", "android_app")).strip()
+    staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
+    workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
+    gradle_task = str(packager_cfg.get("gradle_task", "assembleDebug")).strip() or "assembleDebug"
+    apk_relative_path = str(
+        packager_cfg.get(
+            "apk_relative_path",
+            "android/app/build/outputs/apk/debug/app-debug.apk",
+        )
+    ).strip() or "android/app/build/outputs/apk/debug/app-debug.apk"
 
-    commands = [
-        "npm install @capacitor/core @capacitor/cli @capacitor/android",
-        f"npx cap init {app_name} {app_id}",
-        f"npx cap add android",
-        f"npx cap copy android --web-dir {web_dir}",
-        "npx cap sync android",
-        "npx cap open android"
+    workspace_dir = target_out_dir / "android_workspace"
+    ensure_clean_dir(workspace_dir)
+
+    staged_web_dir = staged_target_dir / staged_web_dir_name
+    if not staged_web_dir.exists():
+        raise FileNotFoundError(f"android staged web dir not found: {staged_web_dir}")
+    shutil.copytree(staged_web_dir, workspace_dir / workspace_web_dir_name)
+
+    staged_backend_dir = staged_target_dir / "comic_backend"
+    if staged_backend_dir.exists():
+        shutil.copytree(staged_backend_dir, workspace_dir / workspace_web_dir_name / "backend_source")
+
+    runtime_env = staged_target_dir / "runtime.env"
+    if runtime_env.exists():
+        shutil.copy2(runtime_env, workspace_dir / workspace_web_dir_name / "runtime.env")
+
+    package_json = {
+        "name": "ultimate-android-shell",
+        "private": True,
+        "version": "1.0.0",
+        "description": "Android shell build workspace for Ultimate Web",
+    }
+    write_text(
+        workspace_dir / "package.json",
+        json.dumps(package_json, ensure_ascii=False, indent=2) + "\n",
+    )
+
+    core_ver = str(packager_cfg.get("capacitor_core_version", "latest")).strip().lower()
+    cli_ver = str(packager_cfg.get("capacitor_cli_version", "latest")).strip().lower()
+    android_ver = str(packager_cfg.get("capacitor_android_version", "latest")).strip().lower()
+
+    def cap_dep(name: str, version_text: str) -> str:
+        if not version_text or version_text == "latest":
+            return name
+        return f"{name}@{version_text}"
+
+    npm_cmd = get_npm_command()
+    npx_cmd = get_npx_command()
+    commands: List[List[str]] = [
+        [
+            npm_cmd,
+            "install",
+            "--no-fund",
+            "--no-audit",
+            cap_dep("@capacitor/core", core_ver),
+            cap_dep("@capacitor/cli", cli_ver),
+            cap_dep("@capacitor/android", android_ver),
+        ],
+        [npx_cmd, "cap", "init", app_name, app_id, "--web-dir", workspace_web_dir_name],
+        [npx_cmd, "cap", "add", "android"],
+        [npx_cmd, "cap", "sync", "android"],
     ]
+
+    gradle_cmd = ["./gradlew", gradle_task]
+    if os.name == "nt":
+        gradle_cmd = ["gradlew.bat", gradle_task]
+    commands.append(gradle_cmd)
+
+    pretty_commands = []
+    for cmd in commands:
+        pretty_commands.append(" ".join([f"\"{part}\"" if " " in part else part for part in cmd]))
 
     plan = [
         "# Android Packaging Plan",
         "",
-        "This project currently generates packaging workspace only.",
-        "Run the following commands in the staged target directory:",
-        f"`{staged_target_dir}`",
+        "The Android package can be built from this prepared workspace:",
+        f"`{workspace_dir}`",
         "",
+        "Command sequence:",
     ]
-    for idx, cmd in enumerate(commands, start=1):
+    for idx, cmd in enumerate(pretty_commands, start=1):
         plan.append(f"{idx}. `{cmd}`")
     plan.append("")
     plan.append("Notes:")
-    plan.append(f"- staged web assets directory: `{web_dir}`")
-    plan.append(f"- suggested Android project directory: `{android_project_dir}`")
-    plan.append("- ensure Android SDK, Java, and Gradle are configured before running.")
+    plan.append(f"- source staged web dir: `{staged_web_dir_name}`")
+    plan.append(f"- workspace web dir: `{workspace_web_dir_name}`")
+    plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
+    plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
 
-    ps1_lines = [
+    ps1_lines: List[str] = [
         "$ErrorActionPreference = 'Stop'",
-        f"Set-Location \"{staged_target_dir}\"",
-    ] + commands
+        f"Set-Location \"{workspace_dir}\"",
+    ]
+    for cmd in pretty_commands:
+        ps1_lines.append(cmd)
     write_text(target_out_dir / "run_capacitor.ps1", "\n".join(ps1_lines) + "\n")
 
-    sh_lines = [
+    sh_lines: List[str] = [
         "#!/usr/bin/env sh",
         "set -e",
-        f"cd \"{staged_target_dir}\"",
-    ] + commands
+        f"cd \"{str(workspace_dir).replace('\\', '/')}\"",
+    ]
+    sh_lines.extend(pretty_commands)
     sh_path = target_out_dir / "run_capacitor.sh"
     write_text(sh_path, "\n".join(sh_lines) + "\n")
     try:
         sh_path.chmod(0o755)
     except OSError:
         pass
-    return commands
+    return commands, workspace_dir, apk_relative_path
 
 
 def package_android(
@@ -432,21 +504,77 @@ def package_android(
     target_out_dir: Path,
     execute: bool,
 ) -> PackageResult:
-    commands = write_android_capacitor_plan(target_out_dir, staged_target_dir, packager_cfg)
-    if execute:
+    commands, workspace_dir, apk_relative_path = write_android_capacitor_plan(
+        target_out_dir,
+        staged_target_dir,
+        packager_cfg,
+    )
+
+    if not execute:
         return PackageResult(
             target=target,
             status="prepared",
-            message="android packaging scripts generated; execute manually with SDK environment",
+            message="android packaging workspace and scripts generated",
             output_dir=str(target_out_dir),
-            command=commands,
+            command=[item for cmd in commands for item in cmd],
         )
+
+    logs: List[str] = []
+    for idx, cmd in enumerate(commands, start=1):
+        cwd = workspace_dir
+        if idx == len(commands):
+            cwd = workspace_dir / "android"
+            if not cwd.exists():
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android project directory missing before gradle step: {cwd}",
+                    output_dir=str(target_out_dir),
+                    command=cmd,
+                )
+        code, output = run_cmd(cmd, cwd=cwd)
+        logs.append(f"$ {' '.join(cmd)}\n{output}\n")
+        if code != 0:
+            log_path = target_out_dir / "android_build.log"
+            write_text(log_path, "\n".join(logs))
+            return PackageResult(
+                target=target,
+                status="failed",
+                message=f"android build failed at step {idx} with code {code}; see {log_path}",
+                output_dir=str(target_out_dir),
+                command=cmd,
+            )
+
+    expected_apk = workspace_dir / apk_relative_path
+    if not expected_apk.exists():
+        candidates = sorted((workspace_dir / "android").glob("app/build/outputs/apk/**/*.apk"))
+        if candidates:
+            expected_apk = candidates[-1]
+
+    if not expected_apk.exists():
+        log_path = target_out_dir / "android_build.log"
+        write_text(log_path, "\n".join(logs))
+        return PackageResult(
+            target=target,
+            status="failed",
+            message=f"android build completed but APK not found; see {log_path}",
+            output_dir=str(target_out_dir),
+            command=["apk_lookup", apk_relative_path],
+        )
+
+    apk_out_dir = target_out_dir / "apk"
+    apk_out_dir.mkdir(parents=True, exist_ok=True)
+    apk_target = apk_out_dir / expected_apk.name
+    shutil.copy2(expected_apk, apk_target)
+
+    log_path = target_out_dir / "android_build.log"
+    write_text(log_path, "\n".join(logs))
     return PackageResult(
         target=target,
-        status="prepared",
-        message="android packaging plan generated",
+        status="built",
+        message=f"android APK built: {apk_target}",
         output_dir=str(target_out_dir),
-        command=commands,
+        command=[str(apk_target)],
     )
 
 

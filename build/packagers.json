@@ -18,7 +18,12 @@
       "app_id": "com.ultimate.web",
       "app_name": "UltimateWeb",
       "web_dir": "comic_frontend_dist",
-      "android_project_dir": "android_app"
+      "workspace_web_dir": "web",
+      "capacitor_core_version": "latest",
+      "capacitor_cli_version": "latest",
+      "capacitor_android_version": "latest",
+      "gradle_task": "assembleDebug",
+      "apk_relative_path": "android/app/build/outputs/apk/debug/app-debug.apk"
     }
   }
 }
