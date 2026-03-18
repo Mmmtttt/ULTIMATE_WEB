@@ -3,6 +3,7 @@ from application.recommendation_app_service import RecommendationAppService
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import normalize_total_page
+from .runtime_guard import third_party_unavailable_response
 import os
 import sys
 
@@ -352,6 +353,11 @@ def download_to_cache():
                 "cache_info": cache_info,
                 "cached_pages": cached_pages
             })
+
+        try:
+            recommendation_service._get_platform_service()
+        except RuntimeError:
+            return third_party_unavailable_response(error_response)
         
         result = recommendation_service.get_recommendation_detail(recommendation_id)
         if not result.success:

@@ -16,14 +16,14 @@ from core.constants import (
     JM_RECOMMENDATION_CACHE_DIR,
     PK_RECOMMENDATION_CACHE_DIR,
 )
-from third_party.platform_service import get_platform_service
-from third_party.adapter_factory import AdapterFactory, AdapterConfig
+from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from utils.file_parser import file_parser
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
 
 class RecommendationAppService:
+    THIRD_PARTY_DISABLED_MESSAGE = "third-party integration is disabled in current runtime profile"
     """推荐漫画应用服务 - 与 ComicAppService 功能一致，但操作 Recommendation"""
     
     def __init__(
@@ -35,7 +35,20 @@ class RecommendationAppService:
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
+        self._platform_service = None
+
+    def _get_platform_service(self):
+        if self._platform_service is not None:
+            return self._platform_service
+
+        if not is_third_party_enabled():
+            raise RuntimeError(
+                f"{self.THIRD_PARTY_DISABLED_MESSAGE}: {get_runtime_profile()}"
+            )
+
+        from third_party.platform_service import get_platform_service
         self._platform_service = get_platform_service()
+        return self._platform_service
     
     def get_recommendation_list(
         self,
@@ -141,8 +154,7 @@ class RecommendationAppService:
 
                     if not preview_image_urls and preview_pages:
                         try:
-                            from third_party.platform_service import get_platform_service
-                            platform_service = get_platform_service()
+                            platform_service = self._get_platform_service()
                             preview_image_urls = platform_service.get_preview_image_urls(
                                 platform,
                                 original_id,
@@ -250,7 +262,12 @@ class RecommendationAppService:
 
         base_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
         original_id = get_original_id(recommendation.id)
-        return self._platform_service.get_comic_dir(
+        try:
+            platform_service = self._get_platform_service()
+        except RuntimeError:
+            return None
+
+        return platform_service.get_comic_dir(
             platform,
             original_id,
             recommendation.author or None,
@@ -306,7 +323,12 @@ class RecommendationAppService:
         download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
         download_kwargs = {"decode_images": True} if platform == Platform.JM else {}
 
-        detail, success = self._platform_service.download_album(
+        try:
+            platform_service = self._get_platform_service()
+        except RuntimeError:
+            return {"success": False, "reason": "third_party_disabled"}
+
+        detail, success = platform_service.download_album(
             platform,
             original_id,
             download_dir=download_dir,

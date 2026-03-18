@@ -15,7 +15,7 @@ from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id, generate_uuid, normalize_total_page
 from core.enums import ContentType
 from core.platform import Platform
-from third_party.platform_service import get_platform_service
+from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 
 
 class ListAppService:
@@ -23,6 +23,7 @@ class ListAppService:
     DEFAULT_VIDEO_LIST_ID = "list_favorites_video"
     DEFAULT_IMPORT_MAX_WORKERS = 10
     DEFAULT_IMPORT_JM_MAX_WORKERS = 3
+    THIRD_PARTY_DISABLED_MESSAGE = "third-party integration is disabled in current runtime profile"
     
     def __init__(
         self,
@@ -37,6 +38,14 @@ class ListAppService:
         self._video_repo = video_repo or VideoJsonRepository()
         self._rec_repo = rec_repo or RecommendationJsonRepository()
         self._video_rec_repo = video_rec_repo or VideoRecommendationJsonRepository()
+
+    def _get_platform_service(self):
+        if not is_third_party_enabled():
+            raise RuntimeError(
+                f"{self.THIRD_PARTY_DISABLED_MESSAGE}: {get_runtime_profile()}"
+            )
+        from third_party.platform_service import get_platform_service
+        return get_platform_service()
 
     def _build_tracking_list_name(self, platform_str: str, platform_list_name: str, content_type: ContentType) -> str:
         base_name = (platform_list_name or "").strip() or "未命名清单"
@@ -633,7 +642,7 @@ class ListAppService:
                 app_logger.info(f"获取平台用户清单列表成功: {platform_str}, 返回虚拟收藏夹清单")
                 return ServiceResult.ok(result)
             
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             result = platform_service.get_user_lists(platform)
             
             app_logger.info(f"获取平台用户清单列表成功: {len(result.get('lists', []))} 个清单")
@@ -656,7 +665,7 @@ class ListAppService:
             app_logger.info(f"获取平台清单详情: {platform_str}, {list_id}")
             
             platform = Platform(platform_str)
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             
             if platform in [Platform.JM, Platform.PK] and list_id == "favorites":
                 favorites_result = platform_service.get_favorites_basic(platform)
@@ -714,7 +723,7 @@ class ListAppService:
             app_logger.info(f"开始导入平台清单: {platform_str}, {platform_list_id} ({platform_list_name}), source={source}")
             
             platform = Platform(platform_str)
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             
             from core.enums import ContentType
             content_type = ContentType.VIDEO if platform == Platform.JAVDB else ContentType.COMIC
@@ -798,7 +807,7 @@ class ListAppService:
                     return ServiceResult.error("该清单不是网络清单，无法同步")
             
             platform = Platform(lst.platform)
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             source = lst.import_source or "local"
             
             app_logger.info(f"从平台 {lst.platform} 同步清单 {lst.platform_list_id}")
@@ -949,7 +958,7 @@ class ListAppService:
                 except Exception as e:
                     app_logger.warning(f"读取预览库导入下载配置失败: {e}")
             
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             detail_tasks: ListType[dict] = []
 
             def find_existing_video_by_code(code: str):
@@ -1222,7 +1231,7 @@ class ListAppService:
             imported_count = 0
             skipped_count = 0
             
-            platform_service = get_platform_service()
+            platform_service = self._get_platform_service()
             
             cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
             platform_prefix = "JM" if platform == Platform.JM else "PK"

@@ -14,6 +14,7 @@ from core.constants import (
     SUPPORTED_FORMATS,
 )
 from core.utils import normalize_total_page
+from .runtime_guard import require_third_party
 import os
 import time
 
@@ -211,6 +212,7 @@ def _normalize_adapter_payload(adapter_name: str, payload: dict) -> dict:
 
 
 @comic_bp.route('/third-party/config', methods=['GET'])
+@require_third_party(error_response)
 def get_third_party_config():
     try:
         from third_party.adapter_factory import AdapterConfig
@@ -223,6 +225,7 @@ def get_third_party_config():
 
 
 @comic_bp.route('/third-party/config', methods=['POST'])
+@require_third_party(error_response)
 def save_third_party_config():
     try:
         data = request.json
@@ -474,6 +477,7 @@ def search_comics():
 
 
 @comic_bp.route('/search-third-party', methods=['GET'])
+@require_third_party(error_response)
 def search_third_party_comics():
     try:
         keyword = request.args.get('keyword')
@@ -957,6 +961,7 @@ def batch_upload_comics():
 
 
 @comic_bp.route('/import/online', methods=['POST'])
+@require_third_party(error_response)
 def import_online():
     try:
         data = request.json

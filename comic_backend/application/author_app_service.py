@@ -13,12 +13,13 @@ from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from core.utils import get_current_time, generate_id
 from core.constants import CACHE_ROOT_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE
-from third_party import external_api
+from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from application.base.content_app_service import BaseCreatorAppService
 from core.enums import ContentType
 
 
 class AuthorAppService(BaseCreatorAppService):
+    _third_party_disabled_message: str = "third-party integration is disabled in current runtime profile"
     _entity_name: str = "作者"
     _content_type: ContentType = ContentType.COMIC
     
@@ -26,6 +27,15 @@ class AuthorAppService(BaseCreatorAppService):
         self._author_repo = author_repo or AuthorJsonRepository()
         self._comic_repo = ComicJsonRepository()
         self._recommendation_repo = RecommendationJsonRepository()
+
+    @classmethod
+    def _get_external_api(cls):
+        if not is_third_party_enabled():
+            raise RuntimeError(
+                f"{cls._third_party_disabled_message}: {get_runtime_profile()}"
+            )
+        from third_party import external_api
+        return external_api
 
     @staticmethod
     def _normalize_platform(platform: str) -> str:
@@ -74,6 +84,7 @@ class AuthorAppService(BaseCreatorAppService):
         has_more = False
         
         try:
+            external_api = self._get_external_api()
             platforms_to_search = ['JM', 'PK']
             platform_albums = {}
             max_result_count = 0
@@ -349,6 +360,7 @@ class AuthorAppService(BaseCreatorAppService):
             
             works = []
             try:
+                external_api = self._get_external_api()
                 platforms_to_search = get_supported_platforms()
                 platform_albums = {}
                 max_result_count = 0
@@ -402,9 +414,9 @@ class AuthorAppService(BaseCreatorAppService):
             
             if new_works:
                 try:
+                    external_api = self._get_external_api()
                     for work in new_works:
                         try:
-                            from third_party import external_api
                             detail = external_api.get_album_by_id(work["id"])
                             if detail and detail.get("albums"):
                                 album = detail["albums"][0]
@@ -506,6 +518,7 @@ class AuthorAppService(BaseCreatorAppService):
     
     def get_works_batch_detail(self, ids: List[str]) -> ServiceResult:
         try:
+            external_api = self._get_external_api()
             works = []
             
             def fetch_single_detail(work_id):

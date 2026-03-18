@@ -2,11 +2,14 @@
 平台服务 - 统一管理所有平台操作
 通过适配器工厂和适配器接口，提供统一的平台操作入口
 """
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 from core.platform import Platform, get_platform_from_id, get_original_id, get_supported_platforms
-from third_party.adapter_factory import AdapterFactory, AdapterConfig
-from third_party.base_adapter import BaseAdapter
 from infrastructure.logger import app_logger, error_logger
+
+if TYPE_CHECKING:
+    from third_party.base_adapter import BaseAdapter
+else:
+    BaseAdapter = Any
 
 
 class PlatformService:
@@ -29,7 +32,7 @@ class PlatformService:
         if self._initialized:
             return
             
-        self._config_manager = AdapterConfig()
+        self._config_manager = self._get_adapter_config_cls()()
         self._adapters: Dict[str, BaseAdapter] = {}
         self._platform_to_adapter: Dict[Platform, str] = {
             Platform.JM: 'jmcomic',
@@ -43,6 +46,16 @@ class PlatformService:
         self._initialized = True
         app_logger.info("平台服务初始化完成")
     
+    @staticmethod
+    def _get_adapter_factory_cls():
+        from third_party.adapter_factory import AdapterFactory
+        return AdapterFactory
+
+    @staticmethod
+    def _get_adapter_config_cls():
+        from third_party.adapter_factory import AdapterConfig
+        return AdapterConfig
+
     def register_platform(self, platform: Platform, adapter_name: str):
         """注册新平台
         
@@ -69,7 +82,7 @@ class PlatformService:
         
         if adapter_name not in self._adapters:
             config = self._config_manager.get_adapter_config(adapter_name)
-            self._adapters[adapter_name] = AdapterFactory.get_adapter(adapter_name, config)
+            self._adapters[adapter_name] = self._get_adapter_factory_cls().get_adapter(adapter_name, config)
         
         return self._adapters[adapter_name]
     

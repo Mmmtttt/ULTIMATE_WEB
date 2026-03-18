@@ -18,6 +18,7 @@ from core.constants import (
     VIDEO_RECOMMENDATION_CACHE_DIR,
     VIDEO_RECOMMENDATION_JSON_FILE,
 )
+from core.runtime_profile import is_third_party_enabled, runtime_capabilities
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
@@ -258,6 +259,10 @@ def _should_rebase_to_new_data_dir(path_value, old_data_dir):
 
 
 def _update_third_party_storage_paths(old_data_dir, new_data_dir):
+    if not is_third_party_enabled():
+        app_logger.info("skip third-party storage path update: third-party integration disabled")
+        return
+
     try:
         from third_party.adapter_factory import AdapterConfig, AdapterFactory
         from third_party.external_api import reset_config_manager
@@ -376,6 +381,7 @@ def get_system_config():
             'resolved_data_dir': resolved_data_dir,
             'current_runtime_data_dir': os.path.abspath(DATA_DIR),
             'requires_restart': not _is_same_path(resolved_data_dir, DATA_DIR),
+            'runtime': runtime_capabilities(),
         })
     except Exception as e:
         error_logger.error(f"获取系统配置失败: {e}")

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.author_app_service import AuthorAppService
 from infrastructure.logger import app_logger, error_logger
+from .runtime_guard import require_third_party, third_party_unavailable_response
 
 author_bp = Blueprint('author', __name__)
 author_service = AuthorAppService()
@@ -52,6 +53,7 @@ def get_all_authors():
 
 
 @author_bp.route('/search-works', methods=['GET'])
+@require_third_party(error_response)
 def search_author_works():
     """根据作者名搜索作品（不需要订阅）"""
     try:
@@ -114,6 +116,7 @@ def unsubscribe_author():
 
 
 @author_bp.route('/check-updates', methods=['POST'])
+@require_third_party(error_response)
 def check_updates():
     try:
         data = request.json or {}
@@ -131,6 +134,7 @@ def check_updates():
 
 
 @author_bp.route('/new-works/<author_id>', methods=['GET'])
+@require_third_party(error_response)
 def get_new_works(author_id):
     try:
         result = author_service.get_author_new_works(author_id)
@@ -164,6 +168,11 @@ def get_author_works(author_id):
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 5))
         cache_only = str(request.args.get('cache_only', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+        if not cache_only:
+            try:
+                author_service._get_external_api()
+            except RuntimeError:
+                return third_party_unavailable_response(error_response)
 
         result = author_service.get_author_works_paginated(
             author_id,
@@ -182,6 +191,7 @@ def get_author_works(author_id):
 
 
 @author_bp.route('/works/batch-detail', methods=['POST'])
+@require_third_party(error_response)
 def get_works_batch_detail():
     try:
         data = request.json

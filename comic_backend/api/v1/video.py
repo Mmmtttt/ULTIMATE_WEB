@@ -9,12 +9,14 @@ from application.config_app_service import ConfigAppService
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
+from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
 from bs4 import BeautifulSoup
 import re
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
+from .runtime_guard import require_third_party
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
@@ -43,6 +45,10 @@ def error_response(code, msg):
 
 def _get_missav_client():
     """Load Missav third-party client lazily to keep backend core portable."""
+    if not is_third_party_enabled():
+        raise RuntimeError(
+            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+        )
     from third_party.missav import get_client
     return get_client(proxy_base_path='/api/v1/video')
 
@@ -90,6 +96,7 @@ def video_detail():
 
 
 @video_bp.route('/preview-video/refresh', methods=['POST'])
+@require_third_party(error_response)
 def refresh_preview_video():
     """手动刷新预览视频链接并触发下载"""
     try:
@@ -544,6 +551,10 @@ def get_by_actor(actor_name):
 
 def get_video_adapter(platform_name="javdb", *args, **kwargs):
     """获取视频平台适配器"""
+    if not is_third_party_enabled():
+        raise RuntimeError(
+            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+        )
     if platform_name.lower() == "javdb":
         from third_party.javdb_api_scraper import JavdbAdapter
         return JavdbAdapter(*args, **kwargs)
@@ -1041,6 +1052,10 @@ def _is_javdb_tag_search_available(adapter) -> bool:
 
 def _get_javdb_cookie_config_status():
     """读取 third_party_config.json 中 JAVDB cookies 配置状态。"""
+    if not is_third_party_enabled():
+        raise RuntimeError(
+            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+        )
     from third_party.adapter_factory import AdapterConfig
 
     config_manager = AdapterConfig()
@@ -1065,6 +1080,7 @@ def _get_javdb_cookie_config_status():
 
 
 @video_bp.route('/third-party/search', methods=['GET'])
+@require_third_party(error_response)
 def third_party_search():
     try:
         keyword = request.args.get('keyword')
@@ -1134,6 +1150,7 @@ def third_party_search():
 
 
 @video_bp.route('/third-party/javdb/cookie-status', methods=['GET'])
+@require_third_party(error_response)
 def third_party_javdb_cookie_status():
     """检查 JAVDB cookies 是否已配置。"""
     try:
@@ -1144,6 +1161,7 @@ def third_party_javdb_cookie_status():
 
 
 @video_bp.route('/third-party/javdb/tags', methods=['GET'])
+@require_third_party(error_response)
 def third_party_javdb_tags():
     """获取 JAVDB 内置标签（来自 javdb-api-scraper 的 TagManager）"""
     try:
@@ -1236,6 +1254,7 @@ def third_party_javdb_tags():
 
 
 @video_bp.route('/third-party/javdb/search-by-tags', methods=['GET'])
+@require_third_party(error_response)
 def third_party_javdb_search_by_tags():
     """通过 JAVDB 内置标签组合搜索视频"""
     try:
@@ -1289,6 +1308,7 @@ def third_party_javdb_search_by_tags():
 
 
 @video_bp.route('/third-party/detail', methods=['GET'])
+@require_third_party(error_response)
 def third_party_detail():
     try:
         video_id = request.args.get('video_id')
@@ -1310,6 +1330,7 @@ def third_party_detail():
 
 
 @video_bp.route('/third-party/actor/search', methods=['GET'])
+@require_third_party(error_response)
 def third_party_actor_search():
     try:
         actor_name = request.args.get('actor_name')
@@ -1328,6 +1349,7 @@ def third_party_actor_search():
 
 
 @video_bp.route('/third-party/actor/works', methods=['GET'])
+@require_third_party(error_response)
 def third_party_actor_works():
     try:
         actor_id = request.args.get('actor_id')
@@ -1375,6 +1397,7 @@ def third_party_actor_works():
 
 
 @video_bp.route('/third-party/import', methods=['POST'])
+@require_third_party(error_response)
 def third_party_import():
     try:
         data = request.json
@@ -2084,6 +2107,7 @@ def filter_video_recommendations():
 # ========== 视频播放相关 API ==========
 
 @video_bp.route('/recommendation/<video_id>/play-urls', methods=['GET'])
+@require_third_party(error_response)
 def get_video_recommendation_play_urls(video_id):
     """获取推荐视频播放链接（从 MissAV 和 Jable 提取）"""
     try:
@@ -2122,6 +2146,7 @@ def get_video_recommendation_play_urls(video_id):
         return error_response(500, "服务器内部错误")
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
+@require_third_party(error_response)
 def get_video_play_urls(video_id):
     """获取视频播放链接（从 MissAV 和 Jable 提取）"""
     try:
@@ -2150,6 +2175,7 @@ def get_video_play_urls(video_id):
 
 
 @video_bp.route('/proxy/<domain>/<path:path>', methods=['GET'])
+@require_third_party(error_response)
 def proxy_video_request(domain, path):
     """代理视频请求，解决跨域问题"""
     try:
@@ -2167,6 +2193,7 @@ def proxy_video_request(domain, path):
 
 
 @video_bp.route('/proxy2', methods=['GET', 'POST', 'HEAD'])
+@require_third_party(error_response)
 def proxy_video_request2():
     """代理视频请求（完整URL方式，支持重写m3u8）"""
     try:

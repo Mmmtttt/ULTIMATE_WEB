@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.list_app_service import ListAppService
 from infrastructure.logger import app_logger, error_logger
+from .runtime_guard import require_third_party
 
 list_bp = Blueprint('list', __name__)
 list_service = ListAppService()
@@ -278,6 +279,7 @@ def check_favorite_video():
 
 
 @list_bp.route('/platform/lists', methods=['GET'])
+@require_third_party(error_response)
 def get_platform_user_lists():
     try:
         platform = request.args.get('platform')
@@ -296,6 +298,7 @@ def get_platform_user_lists():
 
 
 @list_bp.route('/platform/list/detail', methods=['GET'])
+@require_third_party(error_response)
 def get_platform_list_detail():
     try:
         platform = request.args.get('platform')
@@ -315,6 +318,7 @@ def get_platform_list_detail():
 
 
 @list_bp.route('/import', methods=['POST'])
+@require_third_party(error_response)
 def import_platform_list():
     try:
         data = request.json
@@ -341,6 +345,7 @@ def import_platform_list():
 
 
 @list_bp.route('/sync', methods=['POST'])
+@require_third_party(error_response)
 def sync_platform_list():
     try:
         data = request.json
@@ -364,6 +369,7 @@ def sync_platform_list():
 
 
 @list_bp.route('/import/favorites', methods=['POST'])
+@require_third_party(error_response)
 def import_platform_favorites():
     """导入平台收藏夹
     
@@ -398,6 +404,7 @@ def import_platform_favorites():
 
 
 @list_bp.route('/sync/favorites', methods=['POST'])
+@require_third_party(error_response)
 def sync_platform_favorites():
     """同步平台收藏夹
     
