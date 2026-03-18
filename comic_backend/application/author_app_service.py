@@ -438,14 +438,23 @@ class AuthorAppService(BaseCreatorAppService):
             error_logger.error(f"清除新作品计数失败: {e}")
             return ServiceResult.error("清除新作品计数失败")
     
-    def get_author_works_paginated(self, author_id: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+    def get_author_works_paginated(
+        self,
+        author_id: str,
+        offset: int = 0,
+        limit: int = 5,
+        cache_only: bool = False
+    ) -> ServiceResult:
         """分页获取作者作品"""
         try:
             author = self._author_repo.get_by_id(author_id)
             if not author:
                 return ServiceResult.error("订阅不存在")
             
-            result = self.get_works_paginated_impl(author, offset, limit)
+            if cache_only:
+                result = self.get_cached_works_paginated_impl(author, offset, limit)
+            else:
+                result = self.get_works_paginated_impl(author, offset, limit)
             
             if result.success:
                 data = result.data

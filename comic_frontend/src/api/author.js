@@ -68,9 +68,10 @@ export const authorApi = {
    * @param {number} limit - 每页数量
    * @returns {Promise}
    */
-  getWorks: (authorId, offset = 0, limit = 5) => {
+  getWorks: (authorId, offset = 0, limit = 5, options = {}) => {
+    const cacheOnly = Boolean(options && options.cacheOnly)
     return request.get(`/v1/author/works/${authorId}`, {
-      params: { offset, limit }
+      params: { offset, limit, cache_only: cacheOnly }
     })
   },
 

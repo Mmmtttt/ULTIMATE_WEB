@@ -366,6 +366,51 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
             error_logger.error(f"获取{self._entity_name}作品失败: {e}")
             return ServiceResult.error(f"获取{self._entity_name}作品失败")
     
+    def get_cached_works_paginated_impl(
+        self,
+        creator: BaseCreator,
+        offset: int = 0,
+        limit: int = 5
+    ) -> ServiceResult:
+        """Only read persistent cache and never query remote source."""
+        try:
+            cache_key = f"{self._get_cache_key_prefix()}_{creator.name}"
+            cache_meta_key = f"{cache_key}_meta"
+
+            cached_all_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
+            cached_meta = self._cache_manager.get_persistent(cache_meta_key, self._get_cache_key_prefix())
+
+            if not isinstance(cached_all_works, list):
+                cached_all_works = []
+            if not isinstance(cached_meta, dict):
+                cached_meta = {"has_more": False}
+
+            paginated_works = cached_all_works[offset:offset + limit]
+            total = len(cached_all_works)
+            has_more = (offset + limit < total)
+            if total > 0:
+                has_more = has_more or bool(cached_meta.get("has_more", False))
+
+            self._apply_local_cover_preference(paginated_works)
+            app_logger.info(
+                f"[CacheOnly] return cached works: "
+                f"name={creator.name}, count={len(paginated_works)}, total={total}, has_more={has_more}"
+            )
+
+            return ServiceResult.ok({
+                "creator": creator.to_dict(),
+                "works": paginated_works,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "from_cache": True,
+                "cache_only": True
+            })
+        except Exception as e:
+            error_logger.error(f"get cached works failed: {e}")
+            return ServiceResult.error("get cached works failed")
+
     def search_works_by_name_impl(
         self,
         creator_name: str,

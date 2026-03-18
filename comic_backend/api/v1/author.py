@@ -163,8 +163,14 @@ def get_author_works(author_id):
     try:
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 5))
-        
-        result = author_service.get_author_works_paginated(author_id, offset, limit)
+        cache_only = str(request.args.get('cache_only', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        result = author_service.get_author_works_paginated(
+            author_id,
+            offset,
+            limit,
+            cache_only=cache_only
+        )
         
         if result.success:
             return success_response(result.data)

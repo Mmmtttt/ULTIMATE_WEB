@@ -834,7 +834,7 @@ def _schedule_video_asset_cache(
 
     if allow_cover and cover:
         # 封面始终下载，不受预览库自动下载开关影响
-        video_service.cache_cover_to_preview_assets_async(video_id, cover, source=source, force=True)
+        video_service.cache_cover_to_static_async(video_id, cover, source=source)
 
     if not auto_download_enabled:
         app_logger.info(f"预览库资源下载开关已关闭，跳过预览图/预览视频缓存: id={video_id}, source={source}")
@@ -878,7 +878,11 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
     thumbnails_remote = _normalize_str_list(video_data.get("thumbnail_images", []))
     thumbnails = thumbnails_local if thumbnails_local else thumbnails_remote
 
-    should_cache_cover = bool(cover_candidate) and not _is_source_preview_asset(cover_candidate, source_key)
+    should_cache_cover = (
+        bool(cover_candidate)
+        and not _is_source_preview_asset(cover_candidate, source_key)
+        and not str(cover_candidate).strip().startswith("/static/cover/")
+    )
     should_cache_thumbs = any(not _is_source_preview_asset(item, source_key) for item in thumbnails)
 
     if not should_cache_cover and not should_cache_thumbs:
@@ -1551,17 +1555,15 @@ def third_party_import():
             if not storage.write(db_data):
                 return error_response(500, "数据写入失败")
             
-            auto_download_assets = _get_preview_import_auto_download_enabled()
-            if auto_download_assets:
-                _schedule_video_asset_cache(
-                    video_id=video_id_full,
-                    source="preview",
-                    cover_url=cover_url,
-                    preview_video=video_data.get("preview_video", ""),
-                    thumbnail_images=video_data.get("thumbnail_images", []),
-                    allow_cover=True,
-                    allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_id_full),
-                )
+            _schedule_video_asset_cache(
+                video_id=video_id_full,
+                source="preview",
+                cover_url=cover_url,
+                preview_video=video_data.get("preview_video", ""),
+                thumbnail_images=video_data.get("thumbnail_images", []),
+                allow_cover=True,
+                allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_id_full),
+            )
 
             recent_result = video_service.apply_recent_import_tags(
                 [video_id_full],

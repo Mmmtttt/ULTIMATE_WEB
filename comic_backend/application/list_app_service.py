@@ -1090,11 +1090,10 @@ class ListAppService:
                         app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
                         if cover_url:
                             app_logger.info(f"开始下载封面: {prefixed_id}")
-                            video_service.cache_cover_to_preview_assets_async(
+                            video_service.cache_cover_to_static_async(
                                 prefixed_id,
                                 cover_url,
-                                source="local",
-                                force=True
+                                source="local"
                             )
                         else:
                             app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
@@ -1138,11 +1137,10 @@ class ListAppService:
                         app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
                         if cover_url:
                             app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                            video_service.cache_cover_to_preview_assets_async(
+                            video_service.cache_cover_to_static_async(
                                 prefixed_id,
                                 cover_url,
-                                source="preview",
-                                force=True
+                                source="preview"
                             )
                         else:
                             app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")

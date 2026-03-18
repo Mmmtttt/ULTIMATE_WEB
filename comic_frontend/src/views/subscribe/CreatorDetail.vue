@@ -11,23 +11,33 @@
         <p>共 {{ totalWorks }} 部作品</p>
       </div>
       <div class="actions">
-        <van-button 
-          :type="isSubscribed ? 'default' : 'primary'" 
-          size="small" 
+        <van-button
+          :type="isSubscribed ? 'default' : 'primary'"
+          size="small"
           round
           @click="toggleSubscribe"
         >
           {{ isSubscribed ? '已订阅' : '订阅' }}
+        </van-button>
+        <van-button
+          v-if="!isVideoMode"
+          type="primary"
+          plain
+          size="small"
+          round
+          @click="queryWorks"
+        >
+          查询作品
         </van-button>
       </div>
     </div>
 
     <div class="works-area">
       <van-loading v-if="loading" class="loading-center" />
-      
-      <EmptyState 
-        v-else-if="works.length === 0" 
-        title="暂无作品" 
+
+      <EmptyState
+        v-else-if="works.length === 0"
+        title="暂无作品"
       />
 
       <template v-else>
@@ -47,9 +57,9 @@
             @click="toggleSelection(item)"
           >
             <div class="card-cover">
-              <van-image 
-                :src="getCoverUrl(item)" 
-                fit="cover" 
+              <van-image
+                :src="getCoverUrl(item)"
+                fit="cover"
                 class="cover-image"
                 lazy-load
               />
@@ -65,7 +75,7 @@
           </div>
         </div>
       </template>
-      
+
       <div v-if="hasMore" class="load-more">
         <van-button block plain :loading="loadingMore" @click="loadMore">
           加载更多
@@ -73,13 +83,11 @@
       </div>
     </div>
 
-    <!-- 浮动导入栏 -->
     <div class="floating-import-bar" v-if="selectedIds.length > 0">
       <span class="floating-selection-info">已选 {{ selectedIds.length }} 项</span>
       <van-button type="primary" @click="handleImport">导入选中</van-button>
     </div>
 
-    <!-- Import Options -->
     <van-action-sheet v-model:show="showImportSheet" title="导入位置">
       <div class="sheet-content">
         <van-button block type="primary" @click="confirmImport('home')">导入到主页</van-button>
@@ -88,20 +96,17 @@
     </van-action-sheet>
   </div>
 </template>
-
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useModeStore, useActorStore, useImportTaskStore } from '@/stores'
-import { videoApi, actorApi, authorApi } from '@/api' // Ensure authorApi is exported
+import { useRoute } from 'vue-router'
+import { useModeStore, useImportTaskStore } from '@/stores'
+import { videoApi, actorApi, authorApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
 import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const route = useRoute()
-const router = useRouter()
 const modeStore = useModeStore()
-const actorStore = useActorStore()
 const importTaskStore = useImportTaskStore()
 
 const creatorName = computed(() => decodeURIComponent(route.params.name))
@@ -117,154 +122,99 @@ const selectedIds = ref([])
 const showImportSheet = ref(false)
 const isSubscribed = ref(false)
 const authorSubscriptionId = ref(null)
-const actorId = ref(null) // For video mode
+const actorId = ref(null)
+const hasRemoteQueried = ref(false)
 
 const isAllWorksSelected = computed(() => {
   return isAllSelected(selectedIds.value, works.value, (item) => getItemId(item))
 })
 
-async function loadData(page = 1) {
+async function resolveSubscription() {
+  if (isVideoMode.value) {
+    const actorListRes = await actorApi.getList()
+    const actorList = Array.isArray(actorListRes?.data) ? actorListRes.data : []
+    const actor = actorList.find(item => item?.name === creatorName.value)
+    isSubscribed.value = Boolean(actor)
+    actorId.value = actor?.id || null
+    return
+  }
+
+  const authorListRes = await authorApi.getList()
+  const authorList = Array.isArray(authorListRes?.data) ? authorListRes.data : []
+  const author = authorList.find(item => item?.name === creatorName.value)
+  isSubscribed.value = Boolean(author)
+  authorSubscriptionId.value = author?.id || null
+}
+
+function applyWorksPage(res, page) {
+  const newWorks = res?.data?.works || []
+  if (page === 1) works.value = newWorks
+  else works.value = [...works.value, ...newWorks]
+
+  hasMore.value = Boolean(res?.data?.has_more)
+  totalWorks.value = res?.data?.total || works.value.length
+}
+
+async function loadData(page = 1, options = {}) {
   if (page === 1) loading.value = true
   else loadingMore.value = true
-  
+
+  const forceQuery = Boolean(options?.forceQuery)
+
   try {
-    console.log('=== CreatorDetail loadData start ===')
-    console.log('isVideoMode:', isVideoMode.value)
-    console.log('creatorName:', creatorName.value)
-    console.log('page:', page)
-    
-    if (isVideoMode.value) {
-      console.log('=== Video mode ===')
-      
-      // Video mode：如果是已订阅演员，则优先走订阅演员作品接口，支持持久化缓存
-      if (page === 1) {
-        console.log('=== Page 1, checking all actors ===')
-        // 尝试根据名称匹配订阅记录
-        const allActorsRes = await actorApi.getAll()
-        console.log('allActorsRes:', allActorsRes)
-        
-        if (allActorsRes.code === 200 && Array.isArray(allActorsRes.data)) {
-          console.log('All actors data:', allActorsRes.data)
-          const match = allActorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
-          console.log('Match found:', match)
-          
-          if (match) {
-            isSubscribed.value = true
-            actorId.value = match.subscription.id
-            console.log('Set isSubscribed=true, actorId:', actorId.value)
-          } else {
-            isSubscribed.value = false
-            actorId.value = null
-            console.log('Set isSubscribed=false, actorId=null')
-          }
-        }
-      }
-
-      if (isSubscribed.value && actorId.value) {
-        console.log('=== Loading subscribed actor works ===')
-        console.log('actorId:', actorId.value)
-        // 已订阅演员：优先从后端 actor_works 持久化缓存中读取，第一页给 20 条
-        const offset = (page - 1) * 20
-        const res = await actorApi.getWorks(actorId.value, offset, 20)
-        console.log('getWorks response:', res)
-        
-        if (res.code === 200) {
-          const newWorks = res.data.works || []
-          console.log('New works:', newWorks)
-          if (page === 1) works.value = newWorks
-          else works.value = [...works.value, ...newWorks]
-          
-          hasMore.value = !!res.data.has_more
-          totalWorks.value = res.data.total || works.value.length
-          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
-        }
-      } else {
-        console.log('=== Loading unsubscribed actor works by search ===')
-        console.log('Searching for:', creatorName.value)
-        // 非订阅演员：保持原有按名称搜索逻辑，支持缓存
-        const res = await actorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
-        console.log('searchWorksByName response:', res)
-        
-        if (res.code === 200) {
-          const newWorks = res.data.works || []
-          console.log('New works:', newWorks)
-          if (page === 1) works.value = newWorks
-          else works.value = [...works.value, ...newWorks]
-          
-          hasMore.value = res.data.has_more
-          totalWorks.value = res.data.total || works.value.length
-          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
-        }
-      }
-    } else {
-      console.log('=== Comic mode ===')
-      // Comic mode：如果是已订阅作者，则优先走订阅作者作品接口，支持持久化缓存
-      if (page === 1) {
-        console.log('=== Page 1, checking all authors ===')
-        // 尝试根据名称匹配订阅记录
-        const allAuthorsRes = await authorApi.getAllAuthors()
-        console.log('allAuthorsRes:', allAuthorsRes)
-        
-        if (allAuthorsRes.code === 200 && Array.isArray(allAuthorsRes.data)) {
-          console.log('All authors data:', allAuthorsRes.data)
-          const match = allAuthorsRes.data.find(a => a.name === creatorName.value && a.is_subscribed && a.subscription)
-          console.log('Match found:', match)
-          
-          if (match) {
-            isSubscribed.value = true
-            authorSubscriptionId.value = match.subscription.id
-            console.log('Set isSubscribed=true, authorSubscriptionId:', authorSubscriptionId.value)
-          } else {
-            isSubscribed.value = false
-            authorSubscriptionId.value = null
-            console.log('Set isSubscribed=false, authorSubscriptionId=null')
-          }
-        }
-      }
-
-      if (isSubscribed.value && authorSubscriptionId.value) {
-        console.log('=== Loading subscribed author works ===')
-        console.log('authorSubscriptionId:', authorSubscriptionId.value)
-        // 已订阅作者：优先从后端 author_works 持久化缓存中读取，第一页给 20 条
-        const offset = (page - 1) * 20
-        const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20)
-        console.log('getWorks response:', res)
-        
-        if (res.code === 200) {
-          const newWorks = res.data.works || []
-          console.log('New works:', newWorks)
-          if (page === 1) works.value = newWorks
-          else works.value = [...works.value, ...newWorks]
-          
-          hasMore.value = !!res.data.has_more
-          totalWorks.value = res.data.total || works.value.length
-          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
-        }
-      } else {
-        console.log('=== Loading unsubscribed author works by search ===')
-        console.log('Searching for:', creatorName.value)
-        // 非订阅作者：保持原有按名称搜索逻辑
-        const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
-        console.log('searchWorksByName response:', res)
-        
-        if (res.code === 200) {
-          const newWorks = res.data.works || []
-          console.log('New works:', newWorks)
-          if (page === 1) works.value = newWorks
-          else works.value = [...works.value, ...newWorks]
-          
-          hasMore.value = res.data.has_more
-          totalWorks.value = res.data.total || works.value.length
-          console.log('Set hasMore:', hasMore.value, 'totalWorks:', totalWorks.value)
-        }
+    if (page === 1) {
+      await resolveSubscription()
+      if (!isVideoMode.value && !forceQuery) {
+        hasRemoteQueried.value = false
       }
     }
+
+    if (isVideoMode.value) {
+      if (isSubscribed.value && actorId.value) {
+        const offset = (page - 1) * 20
+        const res = await actorApi.getWorks(actorId.value, offset, 20)
+        if (res.code === 200) {
+          applyWorksPage(res, page)
+        }
+      } else {
+        const res = await actorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        if (res.code === 200) {
+          applyWorksPage(res, page)
+        }
+      }
+      return
+    }
+
+    if (isSubscribed.value && authorSubscriptionId.value) {
+      const offset = (page - 1) * 20
+      const cacheOnly = !forceQuery && !hasRemoteQueried.value
+      const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20, { cacheOnly })
+      if (res.code === 200) {
+        applyWorksPage(res, page)
+        if (forceQuery) {
+          hasRemoteQueried.value = true
+        }
+      }
+      return
+    }
+
+    if (!forceQuery) {
+      if (page === 1) {
+        works.value = []
+        hasMore.value = false
+        totalWorks.value = 0
+      }
+      return
+    }
+
+    const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+    if (res.code === 200) {
+      applyWorksPage(res, page)
+      hasRemoteQueried.value = true
+    }
   } catch (e) {
-    console.error('=== Error in loadData ===', e)
-    console.error('Error stack:', e.stack)
     showToast('加载失败')
   } finally {
-    console.log('=== CreatorDetail loadData end ===')
     loading.value = false
     loadingMore.value = false
   }
@@ -272,7 +222,15 @@ async function loadData(page = 1) {
 
 async function loadMore() {
   currentPage.value++
-  await loadData(currentPage.value)
+  await loadData(currentPage.value, {
+    forceQuery: isVideoMode.value ? false : hasRemoteQueried.value
+  })
+}
+
+async function queryWorks() {
+  currentPage.value = 1
+  selectedIds.value = []
+  await loadData(1, { forceQuery: true })
 }
 
 function toggleSelection(item) {
@@ -303,13 +261,12 @@ function handleImport() {
 
 async function confirmImport(target) {
   showImportSheet.value = false
-  const selectedItems = works.value.filter(item => 
+  const selectedItems = works.value.filter(item =>
     selectedIds.value.includes(getItemId(item))
   )
-  
+
   try {
     if (isVideoMode.value) {
-      // Temporary loop for video
       let successCount = 0
       for (const item of selectedItems) {
         const id = getItemId(item)
@@ -327,12 +284,12 @@ async function confirmImport(target) {
         }
         itemsByPlatform[platform].push(getItemId(item))
       })
-      
+
       for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
         const params = {
           import_type: 'by_list',
-          target: target,
-          platform: platform,
+          target,
+          platform,
           comic_ids: comicIds
         }
         await importTaskStore.createImportTask(params)
@@ -346,15 +303,13 @@ async function confirmImport(target) {
 }
 
 async function toggleSubscribe() {
-  // 订阅/取消订阅逻辑，可根据当前是否已订阅调用对应接口
   showToast('订阅功能稍后完善')
 }
 
 onMounted(() => {
-  loadData()
+  loadData(1, { forceQuery: false })
 })
 </script>
-
 <style scoped>
 .creator-detail-page {
   background: transparent;
@@ -384,6 +339,9 @@ onMounted(() => {
 
 .actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .works-area {

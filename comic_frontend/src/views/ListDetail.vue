@@ -522,8 +522,8 @@ const filteredVideos = computed(() => {
   return result
 })
 
-function getCoverUrl(coverPath) {
-  return buildCoverUrl(coverPath)
+function getCoverUrl(coverSource) {
+  return buildCoverUrl(coverSource)
 }
 
 async function loadDetail() {

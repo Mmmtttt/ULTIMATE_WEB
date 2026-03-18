@@ -1,15 +1,15 @@
 /**
- * 图片相关 API
+ * 鍥剧墖鐩稿叧 API
  */
 import request from './request'
 import { toBackendApiUrl, toBackendUrl } from '@/utils/url'
 
 /**
- * 构建图片 URL
- * @param {string} comicId - 漫画ID
- * @param {number} pageNum - 页码
- * @param {string} source - 图片来源（local/image_host）
- * @returns {string} 图片URL
+ * 鏋勫缓鍥剧墖 URL
+ * @param {string} comicId - 婕敾ID
+ * @param {number} pageNum - 椤电爜
+ * @param {string} source - 鍥剧墖鏉ユ簮锛坙ocal/image_host锛?
+ * @returns {string} 鍥剧墖URL
  */
 export function buildImageUrl(comicId, pageNum, source = 'local') {
   const params = new URLSearchParams()
@@ -22,43 +22,50 @@ export function buildImageUrl(comicId, pageNum, source = 'local') {
 }
 
 /**
- * 构建封面 URL
- * @param {string} coverPath - 封面路径
- * @returns {string} 封面URL
+ * 鏋勫缓灏侀潰 URL
+ * @param {string} coverPath - 灏侀潰璺緞
+ * @returns {string} 灏侀潰URL
  */
 export function buildCoverUrl(coverPath) {
-  if (!coverPath) {
+  let normalizedPath = ''
+  if (typeof coverPath === 'string') {
+    normalizedPath = coverPath.trim()
+  } else if (coverPath && typeof coverPath === 'object') {
+    normalizedPath = String(
+      coverPath.cover_path_local ||
+      coverPath.cover_path ||
+      coverPath.cover_url ||
+      coverPath.thumbnail_url ||
+      ''
+    ).trim()
+  } else if (coverPath !== null && coverPath !== undefined) {
+    normalizedPath = String(coverPath).trim()
+  }
+
+  if (!normalizedPath) {
     return '/default-cover.jpg'
   }
-  
-  // 如果是本地路径，直接返回
-  if (coverPath.startsWith('/')) {
-    return toBackendUrl(coverPath)
+
+  if (normalizedPath.startsWith('/')) {
+    return toBackendUrl(normalizedPath)
   }
-  
-  // 如果是图床URL，提取ID并构建本地路径
-  if (coverPath.startsWith('http')) {
-    // 尝试从图床URL中提取漫画ID
-    // 例如: https://cdn-msp3.18comic.vip/media/albums/1257321.jpg
-    const match = coverPath.match(/\/(\d+)\.jpg$/)
+
+  if (normalizedPath.startsWith('http')) {
+    const match = normalizedPath.match(/\/(\d+)\.jpg$/)
     if (match) {
       const comicId = match[1]
-      // 返回本地路径
       return toBackendUrl(`/static/cover/JM/${comicId}.jpg`)
     }
-    // 如果无法提取ID，返回原图床URL
-    return coverPath
+    return normalizedPath
   }
-  
-  // 其他情况，作为本地路径处理
-  return toBackendUrl(coverPath)
-}
 
+  return toBackendUrl(normalizedPath)
+}
 /**
- * 构建缩略图 URL
- * @param {string} comicId - 漫画ID
- * @param {number} pageNum - 页码
- * @returns {string} 缩略图URL
+ * 鏋勫缓缂╃暐鍥?URL
+ * @param {string} comicId - 婕敾ID
+ * @param {number} pageNum - 椤电爜
+ * @returns {string} 缂╃暐鍥綰RL
  */
 export function buildThumbnailUrl(comicId, pageNum) {
   return toBackendApiUrl(`/v1/comic/thumbnail?comic_id=${comicId}&page_num=${pageNum}`)
@@ -66,32 +73,32 @@ export function buildThumbnailUrl(comicId, pageNum) {
 
 export const imageApi = {
   /**
-   * 获取图片（用于直接下载或预览）
-   * @param {string} comicId - 漫画ID
-   * @param {number} pageNum - 页码
-   * @param {string} source - 图片来源
-   * @returns {string} 图片URL
+   * 鑾峰彇鍥剧墖锛堢敤浜庣洿鎺ヤ笅杞芥垨棰勮锛?
+   * @param {string} comicId - 婕敾ID
+   * @param {number} pageNum - 椤电爜
+   * @param {string} source - 鍥剧墖鏉ユ簮
+   * @returns {string} 鍥剧墖URL
    */
   getImageUrl: buildImageUrl,
   
   /**
-   * 获取封面URL
-   * @param {string} coverPath - 封面路径
-   * @returns {string} 封面URL
+   * 鑾峰彇灏侀潰URL
+   * @param {string} coverPath - 灏侀潰璺緞
+   * @returns {string} 灏侀潰URL
    */
   getCoverUrl: buildCoverUrl,
   
   /**
-   * 获取缩略图URL
-   * @param {string} comicId - 漫画ID
-   * @param {number} pageNum - 页码
-   * @returns {string} 缩略图URL
+   * 鑾峰彇缂╃暐鍥綰RL
+   * @param {string} comicId - 婕敾ID
+   * @param {number} pageNum - 椤电爜
+   * @returns {string} 缂╃暐鍥綰RL
    */
   getThumbnailUrl: buildThumbnailUrl,
   
   /**
-   * 预加载图片
-   * @param {string} url - 图片URL
+   * 棰勫姞杞藉浘鐗?
+   * @param {string} url - 鍥剧墖URL
    * @returns {Promise}
    */
   preload: (url) => {
@@ -104,9 +111,9 @@ export const imageApi = {
   },
   
   /**
-   * 批量预加载图片
-   * @param {string[]} urls - 图片URL数组
-   * @param {number} concurrency - 并发数
+   * 鎵归噺棰勫姞杞藉浘鐗?
+   * @param {string[]} urls - 鍥剧墖URL鏁扮粍
+   * @param {number} concurrency - 骞跺彂鏁?
    * @returns {Promise}
    */
   preloadBatch: async (urls, concurrency = 3) => {

@@ -29,6 +29,8 @@ from core.utils import get_current_time, generate_id
 from core.constants import (
     DATA_DIR,
     STATIC_DIR,
+    JAVDB_COVER_DIR,
+    JAVBUS_COVER_DIR,
     VIDEO_CACHE_DIR,
     VIDEO_DIR,
     VIDEO_RECOMMENDATION_CACHE_DIR,
@@ -482,7 +484,7 @@ class VideoAppService(BaseContentAppService):
                         continue
 
                     if local_video.cover_path and not local_video.cover_path_local:
-                        self.cache_cover_to_preview_assets_async(
+                        self.cache_cover_to_static_async(
                             local_video.id,
                             local_video.cover_path,
                             source="local"
@@ -1530,6 +1532,74 @@ class VideoAppService(BaseContentAppService):
             except Exception as e:
                 error_logger.error(f"缓存预览视频失败: id={video_id}, error={e}")
             finally:
+                self._end_asset_download(task_key)
+
+        thread = threading.Thread(target=download, daemon=True)
+        thread.start()
+
+    def _build_video_cover_save_paths(self, video_id: str) -> tuple:
+        from core.platform import remove_platform_prefix
+
+        platform_key = self._get_video_platform_key(video_id)
+        cover_dir = JAVBUS_COVER_DIR if platform_key == "JAVBUS" else JAVDB_COVER_DIR
+        os.makedirs(cover_dir, exist_ok=True)
+
+        _, original_id = remove_platform_prefix(str(video_id or ""))
+        cover_name = str(original_id or video_id or "").strip()
+        cover_name = re.sub(r"[^0-9A-Za-z._-]+", "_", cover_name).strip("._")
+        if not cover_name:
+            cover_name = self._sanitize_video_asset_id(video_id)
+
+        abs_path = os.path.join(cover_dir, f"{cover_name}.jpg")
+        relative_path = f"/static/cover/{platform_key}/{cover_name}.jpg"
+        return abs_path, relative_path
+
+    def cache_cover_to_static_async(
+        self,
+        video_id: str,
+        cover_url: str,
+        source: str = "local"
+    ):
+        source_key = self._normalize_preview_source(source)
+        target_url = str(cover_url or "").strip()
+        if not video_id or not target_url:
+            return
+
+        if target_url.startswith("/static/cover/"):
+            self.update_cover_path(video_id, target_url, source=source_key)
+            return
+
+        task_key = f"cover_static:{source_key}:{video_id}"
+        if not self._begin_asset_download(task_key):
+            app_logger.info(f"静态封面缓存任务已在进行中: id={video_id}, source={source_key}")
+            return
+
+        def download():
+            tmp_path = ""
+            try:
+                image_content = self._read_static_asset_bytes(target_url) if target_url.startswith(("/static/", "/media/")) else None
+                if not image_content:
+                    image_content = self._download_image_content(target_url, video_id)
+                if not image_content:
+                    return
+
+                image = Image.open(BytesIO(image_content))
+                abs_path, relative_path = self._build_video_cover_save_paths(video_id)
+                tmp_path = f"{abs_path}.tmp"
+                image.convert("RGB").save(tmp_path, "JPEG", quality=95)
+                os.replace(tmp_path, abs_path)
+                tmp_path = ""
+
+                if self.update_cover_path(video_id, relative_path, source=source_key):
+                    app_logger.info(f"静态封面缓存成功: id={video_id}, source={source_key}, path={relative_path}")
+            except Exception as e:
+                error_logger.error(f"缓存静态封面失败: id={video_id}, source={source_key}, error={e}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
                 self._end_asset_download(task_key)
 
         thread = threading.Thread(target=download, daemon=True)
