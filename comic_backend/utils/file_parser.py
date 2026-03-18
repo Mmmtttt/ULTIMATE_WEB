@@ -13,7 +13,7 @@ class FileParser:
         """
         根据漫画 ID 推断其在本地的根目录。
         对于不同平台，目录结构可能不同：
-        - JM: data/pictures/JM/{original_id}
+        - JM: data/comic/JM/{original_id}
         - PK: 默认使用 Picacomic-Crawler 的目录规则：comics/{author}/{title}
         """
         platform = get_platform_from_id(comic_id)

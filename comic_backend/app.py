@@ -9,8 +9,12 @@ from api import register_blueprints
 from application.list_app_service import ListAppService
 from core.constants import (
     CACHE_ROOT_DIR,
+    COMIC_DIR,
     COVER_DIR,
+    DATA_DIR,
+    RECOMMENDATION_CACHE_DIR,
     STATIC_DIR,
+    VIDEO_DIR,
     ensure_storage_layout,
 )
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
@@ -75,17 +79,57 @@ def serve_author_cover(platform, filename):
     """提供作者更新作品的封面图片"""
     platform_key = str(platform or "").strip().upper() or "JM"
     new_cache_dir = os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
-    legacy_cache_dir = os.path.join(COVER_DIR, platform_key, 'author_cache')
-
-    target_dir = new_cache_dir
-    if not os.path.exists(os.path.join(new_cache_dir, filename)):
-        target_dir = legacy_cache_dir
-
-    response = make_response(send_from_directory(target_dir, filename))
+    response = make_response(send_from_directory(new_cache_dir, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'
     elif filename.endswith('.png'):
         response.headers['Content-Type'] = 'image/png'
+    return response
+
+
+@app.route('/media/<path:filename>')
+def serve_media(filename):
+    """Serve media assets stored under DATA_DIR using /media URLs."""
+    relative_path = str(filename or "").replace("\\", "/").lstrip("/")
+    if not relative_path:
+        return make_response("Not Found", 404)
+
+    allowed_prefixes = []
+    for root_dir in (RECOMMENDATION_CACHE_DIR, VIDEO_DIR, COMIC_DIR):
+        rel_dir = os.path.relpath(os.path.abspath(root_dir), os.path.abspath(DATA_DIR)).replace("\\", "/").strip("/")
+        if rel_dir and rel_dir != ".":
+            allowed_prefixes.append(rel_dir)
+
+    if not any(relative_path == prefix or relative_path.startswith(f"{prefix}/") for prefix in allowed_prefixes):
+        return make_response("Not Found", 404)
+
+    target_path = os.path.abspath(os.path.join(DATA_DIR, relative_path.replace("/", os.sep)))
+    data_root = os.path.abspath(DATA_DIR)
+    try:
+        if os.path.commonpath([data_root, target_path]) != data_root:
+            return make_response("Not Found", 404)
+    except Exception:
+        return make_response("Not Found", 404)
+
+    if not os.path.isfile(target_path):
+        return make_response("Not Found", 404)
+
+    response = make_response(send_from_directory(DATA_DIR, relative_path))
+    lowered = relative_path.lower()
+    if lowered.endswith(".m3u8"):
+        response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+    elif lowered.endswith(".ts"):
+        response.headers["Content-Type"] = "video/mp2t"
+    elif lowered.endswith(".mp4"):
+        response.headers["Content-Type"] = "video/mp4"
+    elif lowered.endswith(".webm"):
+        response.headers["Content-Type"] = "video/webm"
+    elif lowered.endswith(".jpg") or lowered.endswith(".jpeg"):
+        response.headers["Content-Type"] = "image/jpeg"
+    elif lowered.endswith(".png"):
+        response.headers["Content-Type"] = "image/png"
+    elif lowered.endswith(".webp"):
+        response.headers["Content-Type"] = "image/webp"
     return response
 
 

@@ -501,7 +501,7 @@ function isLocalPreviewAssetPath(path) {
   if (!path || typeof path !== 'string') {
     return false
   }
-  return path.startsWith('/static/preview_video/local/')
+  return path.startsWith('/media/')
 }
 
 function hasPendingLocalAssets(detail) {

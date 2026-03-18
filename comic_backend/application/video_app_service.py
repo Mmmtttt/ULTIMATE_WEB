@@ -26,7 +26,13 @@ from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
-from core.constants import VIDEO_COVER_DIR, VIDEO_CACHE_DIR, JAV_PICTURES_DIR, JAV_COVER_DIR, STATIC_DIR
+from core.constants import (
+    DATA_DIR,
+    STATIC_DIR,
+    VIDEO_CACHE_DIR,
+    VIDEO_DIR,
+    VIDEO_RECOMMENDATION_CACHE_DIR,
+)
 from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
 
@@ -36,7 +42,6 @@ class VideoAppService(BaseContentAppService):
     _cache_manager = CacheManager()
     RECENT_IMPORT_TAG_ID = "tag_video_recent_import"
     RECENT_IMPORT_TAG_NAME = "最近导入"
-    PREVIEW_VIDEO_DIR_NAME = "preview_video"
     PREVIEW_ASSET_COVER_NAME = "cover.jpg"
     PREVIEW_VIDEO_MAX_BYTES = 180 * 1024 * 1024
     PREVIEW_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
@@ -255,6 +260,11 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"永久删除视频失败: {e}")
             return ServiceResult.error("删除失败")
+
+    def _get_video_storage_dirs(self, video_id: str) -> List[str]:
+        safe_video_id = self._sanitize_video_asset_id(video_id)
+        platform_dir = os.path.join(VIDEO_DIR, self._get_video_platform_key(video_id), safe_video_id)
+        return [platform_dir]
     
     def _cleanup_video_files(self, video):
         """������Ƶ��ص������ļ�"""
@@ -273,16 +283,9 @@ class VideoAppService(BaseContentAppService):
                 except Exception as e:
                     error_logger.error(f"删除视频封面失败: {e}")
         
-        jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video.id}.jpg")
-        if os.path.exists(jav_cover_path):
-            try:
-                os.remove(jav_cover_path)
-                app_logger.info(f"已删除视频封�? {jav_cover_path}")
-            except Exception as e:
-                error_logger.error(f"删除视频封面失败: {e}")
-        
-        video_dir = os.path.join(JAV_PICTURES_DIR, video.id)
-        if os.path.exists(video_dir):
+        for video_dir in self._get_video_storage_dirs(video.id):
+            if not os.path.exists(video_dir):
+                continue
             try:
                 shutil.rmtree(video_dir)
                 app_logger.info(f"已删除视频目�? {video_dir}")
@@ -308,15 +311,9 @@ class VideoAppService(BaseContentAppService):
         thumbnail_images: Optional[List[str]] = None,
         thumbnail_images_local: Optional[List[str]] = None,
     ):
-        jav_cover_path = os.path.join(JAV_COVER_DIR, f"{video_id}.jpg")
-        if os.path.exists(jav_cover_path):
-            try:
-                os.remove(jav_cover_path)
-            except Exception as e:
-                error_logger.error(f"删除推荐视频封面失败: {e}")
-        
-        video_dir = os.path.join(JAV_PICTURES_DIR, video_id)
-        if os.path.exists(video_dir):
+        for video_dir in self._get_video_storage_dirs(video_id):
+            if not os.path.exists(video_dir):
+                continue
             try:
                 shutil.rmtree(video_dir)
             except Exception as e:
@@ -754,6 +751,43 @@ class VideoAppService(BaseContentAppService):
             return True
         return self._is_preview_import_asset_download_enabled()
 
+    @staticmethod
+    def _sanitize_video_asset_id(video_id: str) -> str:
+        return re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
+
+    @staticmethod
+    def _get_video_platform_key(video_id: str) -> str:
+        try:
+            from core.platform import Platform, remove_platform_prefix
+
+            platform, _ = remove_platform_prefix(str(video_id or "").strip())
+            if platform == Platform.JAVBUS:
+                return "JAVBUS"
+            if platform == Platform.JAVDB:
+                return "JAVDB"
+        except Exception:
+            pass
+        return "JAVDB"
+
+    def _build_preview_asset_root(self, video_id: str, source: str) -> tuple:
+        source_key = self._normalize_preview_source(source)
+        platform_key = self._get_video_platform_key(video_id)
+
+        if source_key == "preview":
+            root_dir = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, platform_key)
+        else:
+            root_dir = os.path.join(VIDEO_DIR, platform_key)
+
+        root_relative = os.path.relpath(os.path.abspath(root_dir), os.path.abspath(DATA_DIR)).replace("\\", "/").strip("/")
+        root_url = f"/media/{root_relative}"
+
+        return root_dir, root_url, source_key
+
+    def _build_preview_asset_prefix(self, video_id: str, source: str) -> str:
+        _, root_url, _ = self._build_preview_asset_root(video_id, source)
+        safe_video_id = self._sanitize_video_asset_id(video_id)
+        return f"{root_url}/{safe_video_id}/"
+
     @classmethod
     def _sanitize_preview_video_url(cls, preview_url: str) -> str:
         if not preview_url:
@@ -776,7 +810,7 @@ class VideoAppService(BaseContentAppService):
             url = f"https:{url}"
             lowered = url.lower()
 
-        if lowered.startswith("/static/"):
+        if lowered.startswith("/media/"):
             return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
 
         if lowered.startswith("http://") or lowered.startswith("https://"):
@@ -965,16 +999,14 @@ class VideoAppService(BaseContentAppService):
         )
 
     def _build_preview_asset_dir(self, video_id: str, source: str) -> tuple:
-        source_key = self._normalize_preview_source(source)
-        safe_video_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
+        source_dir, root_url, _ = self._build_preview_asset_root(video_id, source)
+        safe_video_id = self._sanitize_video_asset_id(video_id)
 
-        source_dir = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME, source_key)
         os.makedirs(source_dir, exist_ok=True)
-
         asset_dir = os.path.join(source_dir, safe_video_id)
         os.makedirs(asset_dir, exist_ok=True)
 
-        relative_dir = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/{safe_video_id}"
+        relative_dir = f"{root_url}/{safe_video_id}"
         return asset_dir, relative_dir
 
     def _build_preview_cover_save_paths(self, video_id: str, source: str) -> tuple:
@@ -1252,7 +1284,7 @@ class VideoAppService(BaseContentAppService):
         if resolved_url:
             sanitized_url = resolved_url
 
-        if sanitized_url.startswith("/static/"):
+        if sanitized_url.startswith("/media/"):
             return sanitized_url
 
         lowered = sanitized_url.lower()
@@ -1408,6 +1440,19 @@ class VideoAppService(BaseContentAppService):
     @staticmethod
     def _resolve_static_asset_abs_path(static_url: str) -> str:
         url = str(static_url or "").strip()
+        if url.startswith("/media/"):
+            file_relative = url[len("/media/"):].lstrip("/")
+            abs_path = os.path.join(DATA_DIR, file_relative.replace("/", os.sep))
+            try:
+                data_root = os.path.abspath(DATA_DIR)
+                target_abs = os.path.abspath(abs_path)
+                common = os.path.commonpath([data_root, target_abs])
+                if common != data_root:
+                    return ""
+            except Exception:
+                return ""
+            return abs_path
+
         if not url.startswith("/static/"):
             return ""
 
@@ -1461,7 +1506,7 @@ class VideoAppService(BaseContentAppService):
         if resolved_url:
             sanitized_url = resolved_url
 
-        if sanitized_url.startswith("/static/"):
+        if sanitized_url.startswith("/media/"):
             self.update_preview_video_local(video_id, sanitized_url, source=source_key)
             return
 
@@ -1506,7 +1551,7 @@ class VideoAppService(BaseContentAppService):
         if not video_id or not target_url:
             return
 
-        expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
+        expected_prefix = self._build_preview_asset_prefix(video_id, source_key)
         if target_url.startswith(expected_prefix):
             self.update_cover_path_local(video_id, target_url, source=source_key)
             return
@@ -1519,7 +1564,7 @@ class VideoAppService(BaseContentAppService):
         def download():
             tmp_path = ""
             try:
-                image_content = self._read_static_asset_bytes(target_url) if target_url.startswith("/static/") else None
+                image_content = self._read_static_asset_bytes(target_url) if target_url.startswith(("/static/", "/media/")) else None
                 if not image_content:
                     image_content = self._download_image_content(target_url, video_id)
                 if not image_content:
@@ -1565,7 +1610,7 @@ class VideoAppService(BaseContentAppService):
         def download():
             changed = False
             merged_images = list(original_images)
-            expected_prefix = f"/static/{self.PREVIEW_VIDEO_DIR_NAME}/{source_key}/"
+            expected_prefix = self._build_preview_asset_prefix(video_id, source_key)
             all_local = True
 
             try:
@@ -1579,7 +1624,7 @@ class VideoAppService(BaseContentAppService):
                     all_local = False
 
                     image_content = None
-                    if raw_url.startswith("/static/"):
+                    if raw_url.startswith(("/static/", "/media/")):
                         image_content = self._read_static_asset_bytes(raw_url)
                     if not image_content:
                         image_content = self._download_image_content(raw_url, video_id)
@@ -1618,16 +1663,32 @@ class VideoAppService(BaseContentAppService):
 
     def _remove_preview_video_file(self, preview_video_url: str):
         url = str(preview_video_url or "").strip()
-        if not url or not url.startswith("/static/"):
+        if not url:
             return
 
-        static_relative = url.lstrip("/")
-        prefix = f"static/{self.PREVIEW_VIDEO_DIR_NAME}/"
-        if not static_relative.startswith(prefix):
+        removable_roots = []
+        if url.startswith("/media/"):
+            file_relative = url[len("/media/"):].lstrip("/")
+            abs_path = os.path.join(DATA_DIR, file_relative.replace("/", os.sep))
+            removable_roots = [
+                os.path.abspath(VIDEO_RECOMMENDATION_CACHE_DIR),
+                os.path.abspath(VIDEO_DIR),
+            ]
+        else:
             return
 
-        file_relative = static_relative[len("static/"):]
-        abs_path = os.path.join(STATIC_DIR, file_relative.replace("/", os.sep))
+        abs_path = os.path.abspath(abs_path)
+        in_allowed_root = False
+        for root in removable_roots:
+            try:
+                if os.path.commonpath([root, abs_path]) == root:
+                    in_allowed_root = True
+                    break
+            except ValueError:
+                continue
+        if not in_allowed_root:
+            return
+
         if not os.path.exists(abs_path):
             return
 
@@ -1635,29 +1696,26 @@ class VideoAppService(BaseContentAppService):
             if os.path.isfile(abs_path):
                 os.remove(abs_path)
 
-            preview_root = os.path.join(STATIC_DIR, self.PREVIEW_VIDEO_DIR_NAME)
-            source_local_root = os.path.join(preview_root, "local")
-            source_preview_root = os.path.join(preview_root, "preview")
-
             candidate_asset_dir = os.path.dirname(abs_path)
-            if os.path.basename(candidate_asset_dir).lower() == "hls":
+            if os.path.basename(candidate_asset_dir).lower() in {"hls", "thumbs"}:
                 candidate_asset_dir = os.path.dirname(candidate_asset_dir)
 
             candidate_abs = os.path.abspath(candidate_asset_dir)
-            if (
-                os.path.isdir(candidate_abs) and
-                candidate_abs not in {
-                    os.path.abspath(preview_root),
-                    os.path.abspath(source_local_root),
-                    os.path.abspath(source_preview_root),
-                }
-            ):
-                try:
-                    common = os.path.commonpath([os.path.abspath(preview_root), candidate_abs])
-                except ValueError:
-                    common = ""
-                if common == os.path.abspath(preview_root):
+            if os.path.isdir(candidate_abs):
+                for root in removable_roots:
+                    try:
+                        common = os.path.commonpath([root, candidate_abs])
+                    except ValueError:
+                        continue
+                    if common != root:
+                        continue
+
+                    relative = os.path.relpath(candidate_abs, root)
+                    # Keep root and first-level platform/source directories.
+                    if relative in (".", "") or os.sep not in relative:
+                        continue
                     shutil.rmtree(candidate_abs, ignore_errors=True)
+                    break
 
             app_logger.info(f"已删除预览资源文件: {abs_path}")
         except Exception as e:
@@ -1713,106 +1771,6 @@ class VideoAppService(BaseContentAppService):
                     response.close()
                 except Exception:
                     pass
-    
-    def download_cover_async(self, video_id: str, cover_url: str):
-        def download():
-            try:
-                if not cover_url:
-                    return
-
-                image_content = self._download_image_content(cover_url, video_id)
-                if not image_content:
-                    return
-
-                image = Image.open(BytesIO(image_content))
-                os.makedirs(VIDEO_COVER_DIR, exist_ok=True)
-                
-                cover_path = os.path.join(VIDEO_COVER_DIR, f"{video_id}.jpg")
-                image.convert("RGB").save(cover_path, "JPEG", quality=95)
-                
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.cover_path = f"/static/cover/video/{video_id}.jpg"
-                    self._video_repo.save(video)
-                
-                app_logger.info(f"下载视频封面成功: {video_id}")
-            except Exception as e:
-                error_logger.error(f"下载视频封面失败: {e}")
-        
-        thread = threading.Thread(target=download, daemon=True)
-        thread.start()
-    
-    def download_high_quality_thumbnail_async(self, video_id: str, cover_url: str, jav_pictures_dir: str, jav_cover_dir: str):
-        """���ظ�����Ƶ����ͼ�� JAV Ŀ¼����ҳ����ʱʹ�ã�"""
-        def download():
-            try:
-                if not cover_url:
-                    return
-                
-                app_logger.info(f"开始下载高清缩略图: {video_id}")
-
-                image_content = self._download_image_content(cover_url, video_id)
-                if not image_content:
-                    return
-
-                image = Image.open(BytesIO(image_content))
-                
-                os.makedirs(jav_pictures_dir, exist_ok=True)
-                os.makedirs(jav_cover_dir, exist_ok=True)
-                
-                video_dir = os.path.join(jav_pictures_dir, video_id)
-                os.makedirs(video_dir, exist_ok=True)
-                
-                thumbnail_path = os.path.join(video_dir, "cover.jpg")
-                image.convert("RGB").save(thumbnail_path, "JPEG", quality=95)
-                
-                cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")
-                image.convert("RGB").save(cover_path, "JPEG", quality=95)
-                
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
-                    self._video_repo.save(video)
-                
-                app_logger.info(f"下载高清缩略图成�? {video_id}")
-            except Exception as e:
-                error_logger.error(f"下载高清缩略图失�? {e}")
-        
-        thread = threading.Thread(target=download, daemon=True)
-        thread.start()
-    
-    def download_cover_async_for_recommendation(self, video_id: str, cover_url: str, jav_cover_dir: str):
-        """�����Ƽ�ҳ����"""
-        def download():
-            try:
-                if not cover_url:
-                    return
-
-                image_content = self._download_image_content(cover_url, video_id)
-                if not image_content:
-                    return
-
-                image = Image.open(BytesIO(image_content))
-                os.makedirs(jav_cover_dir, exist_ok=True)
-                
-                cover_path = os.path.join(jav_cover_dir, f"{video_id}.jpg")
-                image.convert("RGB").save(cover_path, "JPEG", quality=95)
-                
-                from domain.video_recommendation.repository import VideoRecommendationRepository
-                from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
-                
-                video_recommendation_repo = VideoRecommendationJsonRepository()
-                video = video_recommendation_repo.get_by_id(video_id)
-                if video:
-                    video.cover_path = f"/static/cover/JAV/{video_id}.jpg"
-                    video_recommendation_repo.save(video)
-                
-                app_logger.info(f"下载推荐页封面成�? {video_id}")
-            except Exception as e:
-                error_logger.error(f"下载推荐页封面失�? {e}")
-        
-        thread = threading.Thread(target=download, daemon=True)
-        thread.start()
     
     def batch_move_to_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量移动视频到回收站"""

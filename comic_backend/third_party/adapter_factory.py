@@ -7,7 +7,7 @@ from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
 from .picacomic_adapter import PicacomicAdapter
 from .javdb_adapter import JavdbAdapter
-from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, normalize_to_data_dir
+from core.constants import DATA_DIR, JM_PICTURES_DIR, PK_PICTURES_DIR, normalize_to_data_dir
 
 
 class AdapterFactory:
@@ -169,9 +169,9 @@ class AdapterConfig:
 
         jm_config = adapters.get("jmcomic")
         if isinstance(jm_config, dict):
-            normalized_download_dir = normalize_to_data_dir(
+            normalized_download_dir = self._normalize_comic_download_dir(
                 jm_config.get("download_dir"),
-                "pictures/JM"
+                JM_PICTURES_DIR,
             )
             if jm_config.get("download_dir") != normalized_download_dir:
                 jm_config["download_dir"] = normalized_download_dir
@@ -179,15 +179,42 @@ class AdapterConfig:
 
         pk_config = adapters.get("picacomic")
         if isinstance(pk_config, dict):
-            normalized_base_dir = normalize_to_data_dir(
+            normalized_base_dir = self._normalize_comic_download_dir(
                 pk_config.get("base_dir"),
-                "pictures/PK"
+                PK_PICTURES_DIR,
             )
             if pk_config.get("base_dir") != normalized_base_dir:
                 pk_config["base_dir"] = normalized_base_dir
                 changed = True
 
         return changed
+
+    @staticmethod
+    def _normalize_comic_download_dir(path_value: str, default_abs_path: str) -> str:
+        import os
+
+        default_abs = os.path.abspath(default_abs_path)
+        if path_value is None or str(path_value).strip() == "":
+            return default_abs
+
+        default_relative = ""
+        try:
+            data_root = os.path.abspath(DATA_DIR)
+            if os.path.commonpath([data_root, default_abs]) == data_root:
+                default_relative = os.path.relpath(default_abs, data_root).replace("\\", "/")
+        except Exception:
+            pass
+
+        normalized = normalize_to_data_dir(path_value, default_relative)
+        try:
+            normalized_abs = os.path.abspath(normalized)
+            data_root = os.path.abspath(DATA_DIR)
+            if os.path.commonpath([data_root, normalized_abs]) == data_root:
+                return default_abs
+            normalized = normalized_abs
+        except Exception:
+            pass
+        return normalized
     
     def get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
         """获取指定适配器的配置
@@ -214,14 +241,14 @@ class AdapterConfig:
         normalized_config = dict(existing_config or {})
         normalized_config.update(dict(config or {}))
         if adapter_name == "jmcomic":
-            normalized_config["download_dir"] = normalize_to_data_dir(
+            normalized_config["download_dir"] = self._normalize_comic_download_dir(
                 normalized_config.get("download_dir"),
-                "pictures/JM"
+                JM_PICTURES_DIR,
             )
         elif adapter_name == "picacomic":
-            normalized_config["base_dir"] = normalize_to_data_dir(
+            normalized_config["base_dir"] = self._normalize_comic_download_dir(
                 normalized_config.get("base_dir"),
-                "pictures/PK"
+                PK_PICTURES_DIR,
             )
 
         self._config['adapters'][adapter_name] = normalized_config

@@ -617,7 +617,7 @@ def _sanitize_preview_video_value(raw_url: str) -> str:
         url = f"https:{url}"
         lowered = url.lower()
 
-    if lowered.startswith("/static/"):
+    if lowered.startswith("/media/"):
         return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
 
     if lowered.startswith("http://") or lowered.startswith("https://"):
@@ -851,8 +851,9 @@ def _is_source_preview_asset(path: str, source: str) -> bool:
     normalized = str(path or "").strip()
     if not normalized:
         return False
-    source_key = "preview" if str(source or "").strip().lower() == "preview" else "local"
-    return normalized.startswith(f"/static/preview_video/{source_key}/")
+    if normalized.startswith("/media/"):
+        return True
+    return False
 
 
 def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local"):

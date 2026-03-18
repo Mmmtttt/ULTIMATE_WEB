@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import shutil
 import sys
@@ -10,10 +10,12 @@ from flask import Blueprint, jsonify, request, send_from_directory
 from application.config_app_service import ConfigAppService
 from core.constants import (
     CACHE_ROOT_DIR,
+    COMIC_RECOMMENDATION_CACHE_DIR,
     DATA_DIR,
-    RECOMMENDATION_CACHE_DIR,
+    JM_PICTURES_DIR,
+    PK_PICTURES_DIR,
     SERVER_CONFIG_PATH,
-    STATIC_DIR,
+    VIDEO_RECOMMENDATION_CACHE_DIR,
     VIDEO_RECOMMENDATION_JSON_FILE,
 )
 from infrastructure.logger import app_logger, error_logger
@@ -37,7 +39,7 @@ _JAVDB_STATIC_SCREENSHOTS_DIR = os.path.abspath(
 _JAVDB_LIB_SCREENSHOTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots')
 )
-_VIDEO_PREVIEW_CACHE_DIR = os.path.join(STATIC_DIR, "preview_video", "preview")
+_VIDEO_PREVIEW_CACHE_DIR = VIDEO_RECOMMENDATION_CACHE_DIR
 _VIDEO_LOCAL_ASSET_FIELDS = ("cover_path_local", "thumbnail_images_local", "preview_video_local")
 
 
@@ -261,17 +263,23 @@ def _update_third_party_storage_paths(old_data_dir, new_data_dir):
         from third_party.external_api import reset_config_manager
 
         config_manager = AdapterConfig()
+        data_root = os.path.abspath(DATA_DIR)
+        new_data_root = os.path.abspath(new_data_dir)
+
+        def _rebase_from_runtime_data(path_value):
+            rel = os.path.relpath(os.path.abspath(path_value), data_root)
+            return os.path.abspath(os.path.join(new_data_root, rel))
 
         jm_config = config_manager.get_adapter_config('jmcomic') or {}
         if _should_rebase_to_new_data_dir(jm_config.get('download_dir'), old_data_dir):
             config_manager.set_adapter_config('jmcomic', {
-                'download_dir': os.path.join(new_data_dir, 'pictures', 'JM')
+                'download_dir': _rebase_from_runtime_data(JM_PICTURES_DIR)
             })
 
         pk_config = config_manager.get_adapter_config('picacomic') or {}
         if _should_rebase_to_new_data_dir(pk_config.get('base_dir'), old_data_dir):
             config_manager.set_adapter_config('picacomic', {
-                'base_dir': os.path.join(new_data_dir, 'pictures', 'PK')
+                'base_dir': _rebase_from_runtime_data(PK_PICTURES_DIR)
             })
 
         for adapter_name in AdapterFactory.list_adapters():
@@ -534,7 +542,7 @@ def clear_specific_cache():
             clear_directory(CACHE_ROOT_DIR)
 
         if cache_type in ('all', 'comic_preview_cache'):
-            clear_directory(RECOMMENDATION_CACHE_DIR)
+            clear_directory(COMIC_RECOMMENDATION_CACHE_DIR)
 
         local_field_reset = {
             "updated_count": 0,
@@ -572,7 +580,7 @@ def get_cache_info():
             "订阅页封面和数据临时缓存",
         )
         comic_preview_cache_info = _build_storage_info(
-            RECOMMENDATION_CACHE_DIR,
+            COMIC_RECOMMENDATION_CACHE_DIR,
             "漫画预览页缓存",
             "漫画预览页相关缓存资源",
         )
@@ -597,3 +605,4 @@ def get_cache_info():
     except Exception as e:
         error_logger.error(f"获取缓存信息失败: {e}")
         return error_response(500, "服务器内部错误")
+

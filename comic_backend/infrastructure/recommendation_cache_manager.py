@@ -12,9 +12,9 @@ from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
 from core.platform import get_platform_from_id, get_original_id, Platform
 from core.constants import (
+    COMIC_RECOMMENDATION_CACHE_DIR,
     JM_RECOMMENDATION_CACHE_DIR,
     PK_RECOMMENDATION_CACHE_DIR,
-    RECOMMENDATION_CACHE_DIR,
     RECOMMENDATION_CACHE_INDEX_FILE,
     RECOMMENDATION_JSON_FILE,
 )
@@ -46,7 +46,7 @@ class RecommendationCacheManager:
         if hasattr(self, '_initialized') and self._initialized:
             return
             
-        self.cache_dir = cache_dir or RECOMMENDATION_CACHE_DIR
+        self.cache_dir = cache_dir or COMIC_RECOMMENDATION_CACHE_DIR
         self.max_size_bytes = max_size_mb * 1024 * 1024
         self.cache_index_file = cache_index_file or RECOMMENDATION_CACHE_INDEX_FILE
         
