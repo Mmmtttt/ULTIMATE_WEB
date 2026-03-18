@@ -1,25 +1,8 @@
 import axios from 'axios'
-import { getLocation } from '@/runtime/browser'
-
-const getBaseURL = () => {
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL
-  }
-
-  if (import.meta.env.DEV) {
-    const location = getLocation()
-    if (!location) {
-      return '/api'
-    }
-    const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
-    return `${location.protocol}//${location.hostname}:${backendPort}/api`
-  }
-
-  return '/api'
-}
+import { resolveApiBaseUrl } from '@/runtime/endpoint'
 
 const request = axios.create({
-  baseURL: getBaseURL(),
+  baseURL: resolveApiBaseUrl(),
   timeout: 30000
 })
 

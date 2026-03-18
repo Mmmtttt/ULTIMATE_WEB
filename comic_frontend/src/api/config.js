@@ -1,5 +1,5 @@
 import request from './request'
-import { getLocation } from '@/runtime/browser'
+import { resolveBackendApiUrl } from '@/runtime/endpoint'
 
 export const configApi = {
   get() {
@@ -23,22 +23,7 @@ export const configApi = {
   },
 
   getJavdbCookieGuideUrl() {
-    const base = String(request.defaults.baseURL || '/api').replace(/\/$/, '')
-    if (/^https?:\/\//i.test(base)) {
-      return `${base}/v1/config/javdb-cookie-guide`
-    }
-    if (import.meta.env.DEV) {
-      const location = getLocation()
-      if (!location) {
-        return '/api/v1/config/javdb-cookie-guide'
-      }
-      const protocol = location.protocol
-      const hostname = location.hostname
-      const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
-      return `${protocol}//${hostname}:${backendPort}/api/v1/config/javdb-cookie-guide`
-    }
-    const normalized = base.startsWith('/') ? base : `/${base}`
-    return `${normalized}/v1/config/javdb-cookie-guide`
+    return resolveBackendApiUrl('/v1/config/javdb-cookie-guide')
   },
 
   getCacheInfo() {

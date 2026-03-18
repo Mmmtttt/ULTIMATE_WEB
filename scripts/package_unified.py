@@ -106,18 +106,159 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def current_host_target() -> str:
+    if os.name == "nt":
+        return "windows"
+    return "linux"
+
+
+def is_desktop_target(target: str) -> bool:
+    return target in {"windows", "linux"}
+
+
+def write_desktop_bundle_scripts(
+    bundle_dir: Path,
+    binary_name: str,
+    runtime_env: Dict[str, str],
+) -> None:
+    runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
+    third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
+
+    bat = (
+        "@echo off\n"
+        "setlocal\n"
+        f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
+        f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        "set SCRIPT_DIR=%~dp0\n"
+        f"if exist \"%SCRIPT_DIR%bin\\{binary_name}.exe\" (\n"
+        f"  \"%SCRIPT_DIR%bin\\{binary_name}.exe\"\n"
+        "  exit /b %ERRORLEVEL%\n"
+        ")\n"
+        "cd /d \"%SCRIPT_DIR%backend_source\"\n"
+        "python app.py\n"
+    )
+    write_text(bundle_dir / "start_backend.bat", bat)
+
+    ps1 = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+        f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
+        f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        f"$exePath = Join-Path $scriptDir \"bin/{binary_name}.exe\"\n"
+        "if (Test-Path $exePath) {\n"
+        "    & $exePath\n"
+        "    exit $LASTEXITCODE\n"
+        "}\n"
+        "$backendSource = Join-Path $scriptDir \"backend_source\"\n"
+        "Set-Location $backendSource\n"
+        "python app.py\n"
+    )
+    write_text(bundle_dir / "start_backend.ps1", ps1)
+
+    sh = (
+        "#!/usr/bin/env sh\n"
+        "set -e\n"
+        f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
+        f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        f"if [ -x \"$SCRIPT_DIR/bin/{binary_name}\" ]; then\n"
+        f"  exec \"$SCRIPT_DIR/bin/{binary_name}\"\n"
+        "fi\n"
+        "cd \"$SCRIPT_DIR/backend_source\"\n"
+        "if command -v python3 >/dev/null 2>&1; then\n"
+        "  exec python3 app.py\n"
+        "fi\n"
+        "exec python app.py\n"
+    )
+    sh_path = bundle_dir / "start_backend.sh"
+    write_text(sh_path, sh)
+    try:
+        sh_path.chmod(0o755)
+    except OSError:
+        pass
+
+
+def prepare_desktop_release_bundle(
+    target: str,
+    target_out_dir: Path,
+    staged_target_dir: Path,
+    binary_name: str,
+    runtime_env: Dict[str, str],
+) -> Path:
+    bundle_dir = target_out_dir / "release_bundle"
+    ensure_clean_dir(bundle_dir)
+
+    backend_src = staged_target_dir / "comic_backend"
+    frontend_dist = staged_target_dir / "comic_frontend_dist"
+
+    if backend_src.exists():
+        shutil.copytree(backend_src, bundle_dir / "backend_source")
+    if frontend_dist.exists():
+        shutil.copytree(frontend_dist, bundle_dir / "frontend_dist")
+
+    runtime_env_src = staged_target_dir / "runtime.env"
+    if runtime_env_src.exists():
+        shutil.copy2(runtime_env_src, bundle_dir / "runtime.env")
+
+    manifest_src = staged_target_dir / "package_manifest.json"
+    if manifest_src.exists():
+        shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
+
+    notes = [
+        "# Desktop Release Bundle",
+        "",
+        f"- target: `{target}`",
+        "- `backend_source/`: fallback Python source runtime",
+        "- `frontend_dist/`: frontend static assets",
+        "- `bin/`: packaged backend executable (if packaging executed successfully)",
+        "",
+        "Start commands:",
+        "- Windows cmd: `start_backend.bat`",
+        "- Windows PowerShell: `start_backend.ps1`",
+        "- Linux/macOS: `start_backend.sh`",
+    ]
+    write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
+
+    (bundle_dir / "bin").mkdir(parents=True, exist_ok=True)
+    write_desktop_bundle_scripts(bundle_dir, binary_name=binary_name, runtime_env=runtime_env)
+    return bundle_dir
+
+
 def write_pyinstaller_scripts(
     out_dir: Path,
     staged_target_dir: Path,
+    target: str,
     binary_name: str,
     entry: str,
     runtime_env: Dict[str, str],
 ) -> List[str]:
-    cmd = ["python", "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--name", binary_name, entry]
+    dist_dir = out_dir / "dist"
+    work_dir = out_dir / "build"
+    spec_dir = out_dir / "spec"
+    cmd = [
+        "python",
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
+        "--name",
+        binary_name,
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
+        "--specpath",
+        str(spec_dir),
+        entry,
+    ]
 
     ps1 = (
         "$ErrorActionPreference = 'Stop'\n"
-        f"Set-Location \"{staged_target_dir}\"\n"
+        "param(\n"
+        f"    [string]$StagedDir = \"{staged_target_dir}\"\n"
+        ")\n"
+        "Set-Location $StagedDir\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
         + " ".join([f"\"{part}\"" if " " in part else part for part in cmd])
@@ -128,7 +269,10 @@ def write_pyinstaller_scripts(
     sh = (
         "#!/usr/bin/env sh\n"
         "set -e\n"
-        f"cd \"{staged_target_dir}\"\n"
+        "STAGED_DIR=\"${1:-"
+        + str(staged_target_dir).replace("\\", "/")
+        + "}\"\n"
+        "cd \"$STAGED_DIR\"\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
         + " ".join(cmd)
@@ -157,8 +301,16 @@ def package_pyinstaller(
     cmd = write_pyinstaller_scripts(
         out_dir=target_out_dir,
         staged_target_dir=staged_target_dir,
+        target=target,
         binary_name=binary_name,
         entry=entry,
+        runtime_env=runtime_env,
+    )
+    bundle_dir = prepare_desktop_release_bundle(
+        target=target,
+        target_out_dir=target_out_dir,
+        staged_target_dir=staged_target_dir,
+        binary_name=binary_name,
         runtime_env=runtime_env,
     )
 
@@ -166,7 +318,17 @@ def package_pyinstaller(
         return PackageResult(
             target=target,
             status="prepared",
-            message="pyinstaller scripts generated (execution skipped)",
+            message="pyinstaller scripts generated; desktop release bundle prepared (execution skipped)",
+            output_dir=str(target_out_dir),
+            command=cmd,
+        )
+
+    host_target = current_host_target()
+    if target != host_target:
+        return PackageResult(
+            target=target,
+            status="blocked",
+            message=f"packaging host mismatch: current host is {host_target}, target is {target}",
             output_dir=str(target_out_dir),
             command=cmd,
         )
@@ -191,10 +353,17 @@ def package_pyinstaller(
             output_dir=str(target_out_dir),
             command=cmd,
         )
+    dist_dir = target_out_dir / "dist"
+    built_binary = dist_dir / binary_name
+    if target == "windows":
+        built_binary = built_binary.with_suffix(".exe")
+    if built_binary.exists():
+        shutil.copy2(built_binary, bundle_dir / "bin" / built_binary.name)
+
     return PackageResult(
         target=target,
         status="built",
-        message="pyinstaller build completed",
+        message="pyinstaller build completed and desktop release bundle updated",
         output_dir=str(target_out_dir),
         command=cmd,
     )

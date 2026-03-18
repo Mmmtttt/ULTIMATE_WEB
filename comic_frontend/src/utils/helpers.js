@@ -133,7 +133,7 @@ export function saveToSession(key, data) {
   try {
     setRawItem(key, JSON.stringify(data), StorageArea.SESSION)
   } catch (e) {
-    console.error('淇濆瓨鍒?sessionStorage 澶辫触:', e)
+    console.error('Failed to save data to session storage:', e)
   }
 }
 
@@ -142,7 +142,7 @@ export function loadFromSession(key) {
     const raw = getRawItem(key, StorageArea.SESSION)
     return raw ? JSON.parse(raw) : null
   } catch (e) {
-    console.error('浠?sessionStorage 鍔犺浇澶辫触:', e)
+    console.error('Failed to load data from session storage:', e)
     return null
   }
 }
