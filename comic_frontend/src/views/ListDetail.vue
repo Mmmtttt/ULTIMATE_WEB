@@ -281,6 +281,7 @@ import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
+import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
 import { extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
 
 const route = useRoute()
@@ -325,11 +326,11 @@ function saveFilterState() {
     selectedListIds: selectedListIds.value,
     unreadOnly: unreadOnly.value
   }
-  sessionStorage.setItem(getFilterStorageKey(), JSON.stringify(payload))
+  setRawItem(getFilterStorageKey(), JSON.stringify(payload), StorageArea.SESSION)
 }
 
 function restoreFilterState() {
-  const raw = sessionStorage.getItem(getFilterStorageKey())
+  const raw = getRawItem(getFilterStorageKey(), StorageArea.SESSION)
   if (!raw) {
     return
   }

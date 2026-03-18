@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { setDocumentTitle } from '@/runtime/browser'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useModeStore } from '@/stores/mode'
 
@@ -139,7 +140,7 @@ const router = createRouter({
 // 路由守卫：更新页面标题
 router.beforeEach((to, from, next) => {
   if (to.meta.title) {
-    document.title = `${to.meta.title} - Ultimate`
+    setDocumentTitle(`${to.meta.title} - Ultimate`)
   }
   next()
 })

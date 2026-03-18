@@ -160,6 +160,7 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
+import { openExternalUrl, reloadPage } from '@/runtime/browser'
 import { useConfigStore } from '@/stores'
 
 const configStore = useConfigStore()
@@ -403,7 +404,7 @@ async function saveSystemDataDir() {
     if (response.code === 200) {
       showSuccessToast('配置已保存，后端正在重启，请稍后刷新页面')
       setTimeout(() => {
-        window.location.reload()
+        reloadPage()
       }, 2800)
     } else {
       showFailToast(response.msg || '保存失败')
@@ -412,7 +413,7 @@ async function saveSystemDataDir() {
     if (String(error?.message || '').includes('Network Error')) {
       showSuccessToast('配置已提交，后端重启中，请稍后刷新页面')
       setTimeout(() => {
-        window.location.reload()
+        reloadPage()
       }, 2800)
       return
     }
@@ -424,7 +425,7 @@ async function saveSystemDataDir() {
 
 function openJavdbCookieGuide() {
   const url = configApi.getJavdbCookieGuideUrl()
-  const win = window.open(url, '_blank')
+  const win = openExternalUrl(url, '_blank')
   if (!win) {
     showFailToast('浏览器拦截了弹窗，请允许后重试')
   }

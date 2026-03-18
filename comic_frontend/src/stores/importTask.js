@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { showSuccessToast, showFailToast } from 'vant'
-import request from '@/utils/request'
+import request from '@/api/request'
 import { useTagStore } from './tag'
 import { useCacheStore } from './cache'
 
@@ -41,7 +41,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 获取任务列表
   const fetchTasks = async () => {
     try {
-      const response = await request.get('/api/v1/comic/import/tasks')
+      const response = await request.get('/v1/comic/import/tasks')
       if (response && response.code === 200) {
         tasks.value = response.data.tasks || []
         lastFetchSuccess.value = true
@@ -74,7 +74,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 获取单个任务详情
   const fetchTaskDetail = async (taskId) => {
     try {
-      const response = await request.get(`/api/v1/comic/import/task/${taskId}`)
+      const response = await request.get(`/v1/comic/import/task/${taskId}`)
       if (response && response.code === 200) {
         return response.data
       }
@@ -87,7 +87,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 创建异步导入任务
   const createImportTask = async (params) => {
     try {
-      const response = await request.post('/api/v1/comic/import/async', params)
+      const response = await request.post('/v1/comic/import/async', params)
       if (response && response.code === 200) {
         showSuccessToast('导入任务已创建')
         // 立即刷新任务列表
@@ -109,7 +109,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 取消任务
   const cancelTask = async (taskId) => {
     try {
-      const response = await request.post(`/api/v1/comic/import/task/${taskId}/cancel`)
+      const response = await request.post(`/v1/comic/import/task/${taskId}/cancel`)
       if (response && response.code === 200) {
         showSuccessToast('任务已取消')
         await fetchTasks()
@@ -128,7 +128,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 清理已完成任务
   const clearCompletedTasks = async (keepCount = 20) => {
     try {
-      const response = await request.post('/api/v1/comic/import/tasks/clear', { keep_count: keepCount })
+      const response = await request.post('/v1/comic/import/tasks/clear', { keep_count: keepCount })
       if (response && response.code === 200) {
         showSuccessToast(`已清理 ${response.data.deleted_count} 个任务`)
         await fetchTasks()

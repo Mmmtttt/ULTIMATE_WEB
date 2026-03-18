@@ -1,4 +1,5 @@
 import request from './request'
+import { getLocation } from '@/runtime/browser'
 
 export const configApi = {
   get() {
@@ -27,8 +28,12 @@ export const configApi = {
       return `${base}/v1/config/javdb-cookie-guide`
     }
     if (import.meta.env.DEV) {
-      const protocol = window.location.protocol
-      const hostname = window.location.hostname
+      const location = getLocation()
+      if (!location) {
+        return '/api/v1/config/javdb-cookie-guide'
+      }
+      const protocol = location.protocol
+      const hostname = location.hostname
       const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
       return `${protocol}//${hostname}:${backendPort}/api/v1/config/javdb-cookie-guide`
     }

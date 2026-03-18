@@ -1,3 +1,11 @@
+import {
+  getDocument,
+  getLocation,
+  getNavigator,
+  getViewportHeight,
+  requestNextFrame
+} from '@/runtime/browser'
+
 export function clampPage(page, totalPages) {
   const safeTotal = Number.isFinite(totalPages) ? Math.max(0, Math.floor(totalPages)) : 0
   if (safeTotal <= 0) return 1
@@ -52,9 +60,8 @@ export function calculateLoadSequence(centerPage, totalPages) {
 }
 
 export function isLikelyLanHost(hostname) {
-  const host =
-    hostname ||
-    (typeof window !== 'undefined' && window.location ? window.location.hostname || '' : '')
+  const location = getLocation()
+  const host = hostname || location?.hostname || ''
 
   if (!host) return false
 
@@ -73,11 +80,12 @@ export function getAdaptiveMaxConcurrent({
   lanHost = false,
   hardwareConcurrency
 } = {}) {
+  const runtimeNavigator = getNavigator()
   const cores =
     Number.isFinite(hardwareConcurrency) && hardwareConcurrency > 0
       ? hardwareConcurrency
-      : typeof navigator !== 'undefined' && navigator.hardwareConcurrency
-        ? navigator.hardwareConcurrency
+      : runtimeNavigator && runtimeNavigator.hardwareConcurrency
+        ? runtimeNavigator.hardwareConcurrency
         : 8
 
   const lanBoost = lanHost ? 4 : 0
@@ -90,17 +98,17 @@ export function getAdaptiveMaxConcurrent({
 }
 
 export function nextAnimationFrame() {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve()
-  }
-
   return new Promise((resolve) => {
-    window.requestAnimationFrame(() => resolve())
+    const frameId = requestNextFrame(() => resolve())
+    if (!frameId) {
+      resolve()
+    }
   })
 }
 
 export function updateViewportHeightCssVar(varName = '--reader-vh') {
-  if (typeof document === 'undefined' || typeof window === 'undefined') return
-  const height = window.innerHeight
-  document.documentElement.style.setProperty(varName, `${height}px`)
+  const documentRef = getDocument()
+  if (!documentRef) return
+  const height = getViewportHeight()
+  documentRef.documentElement.style.setProperty(varName, `${height}px`)
 }

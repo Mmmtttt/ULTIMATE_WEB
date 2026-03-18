@@ -1,4 +1,5 @@
-import { toBackendUrl } from './url'
+﻿import { toBackendUrl } from './url'
+import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
 
 export function toggleSelection(selectedIds, id) {
   const index = selectedIds.value.indexOf(id)
@@ -130,18 +131,18 @@ export function getFilterStorageKey(baseKey, isVideoMode) {
 
 export function saveToSession(key, data) {
   try {
-    sessionStorage.setItem(key, JSON.stringify(data))
+    setRawItem(key, JSON.stringify(data), StorageArea.SESSION)
   } catch (e) {
-    console.error('保存到 sessionStorage 失败:', e)
+    console.error('淇濆瓨鍒?sessionStorage 澶辫触:', e)
   }
 }
 
 export function loadFromSession(key) {
   try {
-    const raw = sessionStorage.getItem(key)
+    const raw = getRawItem(key, StorageArea.SESSION)
     return raw ? JSON.parse(raw) : null
   } catch (e) {
-    console.error('从 sessionStorage 加载失败:', e)
+    console.error('浠?sessionStorage 鍔犺浇澶辫触:', e)
     return null
   }
 }
@@ -233,10 +234,11 @@ export async function applyListMembershipChanges({
 export function buildListChangeMessage(addCount, removeCount) {
   let message = ''
   if (addCount > 0) {
-    message += `加入${addCount}个清单 `
+    message += `Added to ${addCount} list(s)`
   }
   if (removeCount > 0) {
-    message += `移出${removeCount}个清单`
+    message += `Removed from ${removeCount} list(s)`
   }
-  return message.trim() || '清单无变化'
+  return message.trim() || 'No list changes'
 }
+

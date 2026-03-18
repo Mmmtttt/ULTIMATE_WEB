@@ -1,3 +1,5 @@
+import { getLocation } from '@/runtime/browser'
+
 function normalizeRelativePath(path) {
   if (!path) return ''
   return path.startsWith('/') ? path : `/${path}`
@@ -18,9 +20,13 @@ export function getBackendOrigin() {
     return ''
   }
 
-  if (import.meta.env.DEV && typeof window !== 'undefined') {
-    const protocol = window.location.protocol
-    const hostname = window.location.hostname
+  if (import.meta.env.DEV) {
+    const location = getLocation()
+    if (!location) {
+      return ''
+    }
+    const protocol = location.protocol
+    const hostname = location.hostname
     const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
     return `${protocol}//${hostname}:${backendPort}`
   }

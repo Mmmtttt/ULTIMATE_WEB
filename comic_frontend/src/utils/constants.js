@@ -1,15 +1,17 @@
+﻿import { getRawItem } from '@/runtime/storage'
+
 /**
- * 常量定义
- * 集中管理应用中的所有常量，避免硬编码
+ * 甯搁噺瀹氫箟
+ * 闆嗕腑绠＄悊搴旂敤涓殑鎵€鏈夊父閲忥紝閬垮厤纭紪鐮?
  */
 
-// 阅读器翻页模式
+// 闃呰鍣ㄧ炕椤垫ā寮?
 export const PAGE_MODE = {
   LEFT_RIGHT: 'left_right',
   UP_DOWN: 'up_down'
 }
 
-// 阅读器背景色
+// 闃呰鍣ㄨ儗鏅壊
 export const BACKGROUND = {
   WHITE: 'white',
   DARK: 'dark',
@@ -18,7 +20,7 @@ export const BACKGROUND = {
   EYE_PROTECTION: 'eye_protection'
 }
 
-// 背景色对应的颜色值
+// 鑳屾櫙鑹插搴旂殑棰滆壊鍊?
 export const BACKGROUND_COLORS = {
   [BACKGROUND.WHITE]: '#ffffff',
   [BACKGROUND.DARK]: '#1a1a1a',
@@ -26,7 +28,7 @@ export const BACKGROUND_COLORS = {
   [BACKGROUND.EYE_PROTECTION]: '#c7edcc'
 }
 
-// 默认配置
+// 榛樿閰嶇疆
 export const DEFAULT_CONFIG = {
   PAGE_MODE: PAGE_MODE.LEFT_RIGHT,
   BACKGROUND: BACKGROUND.WHITE,
@@ -35,64 +37,62 @@ export const DEFAULT_CONFIG = {
   AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS: true
 }
 
-// 评分范围
+// 璇勫垎鑼冨洿
 export const SCORE_RANGE = {
   MIN: 0,
   MAX: 10
 }
 
-// 缓存过期时间（毫秒）
+// 缂撳瓨杩囨湡鏃堕棿锛堟绉掞級
 export const CACHE_EXPIRY = {
-  COMIC_LIST: getCacheExpiry(),    // 动态获取
-  COMIC_DETAIL: getCacheExpiry(),  // 动态获取
-  TAGS: getCacheExpiry() * 2,      // 2倍时间
-  IMAGES: getCacheExpiry() * 6,    // 6倍时间
-  AUTHORS: getCacheExpiry() * 2,   // 作者列表缓存
-  AUTHOR_WORKS: getCacheExpiry()   // 作者作品缓存
+  COMIC_LIST: getCacheExpiry(),    // 鍔ㄦ€佽幏鍙?
+  COMIC_DETAIL: getCacheExpiry(),  // 鍔ㄦ€佽幏鍙?
+  TAGS: getCacheExpiry() * 2,      // 2鍊嶆椂闂?
+  IMAGES: getCacheExpiry() * 6,    // 6鍊嶆椂闂?
+  AUTHORS: getCacheExpiry() * 2,   // 浣滆€呭垪琛ㄧ紦瀛?
+  AUTHOR_WORKS: getCacheExpiry()   // 浣滆€呬綔鍝佺紦瀛?
 }
 
-// 获取缓存过期时间（支持用户自定义）
+// 鑾峰彇缂撳瓨杩囨湡鏃堕棿锛堟敮鎸佺敤鎴疯嚜瀹氫箟锛?
 function getCacheExpiry() {
-  if (typeof window !== 'undefined') {
-    const minutes = parseInt(localStorage.getItem('cache_expiry_minutes'), 10)
-    if (minutes && minutes > 0) {
-      return minutes * 60 * 1000
-    }
+  const minutes = parseInt(getRawItem('cache_expiry_minutes'), 10)
+  if (minutes && minutes > 0) {
+    return minutes * 60 * 1000
   }
-  return 30 * 60 * 1000 // 默认30分钟
+  return 30 * 60 * 1000 // 榛樿30鍒嗛挓
 }
 
-// 本地存储键名
+// 鏈湴瀛樺偍閿悕
 export const STORAGE_KEYS = {
   CONFIG: 'comic_config',
   READ_PROGRESS: 'comic_read_progress',
   CACHE: 'comic_cache'
 }
 
-// 排序类型
+// 鎺掑簭绫诲瀷
 export const SORT_TYPE = {
   CREATE_TIME: 'create_time',
   SCORE: 'score',
   READ_TIME: 'read_time'
 }
 
-// 排序选项
+// 鎺掑簭閫夐」
 export const SORT_OPTIONS = [
-  { label: '最近导入', value: SORT_TYPE.CREATE_TIME },
-  { label: '评分', value: SORT_TYPE.SCORE },
-  { label: '最后阅读', value: SORT_TYPE.READ_TIME }
+  { label: 'Recently Imported', value: SORT_TYPE.CREATE_TIME },
+  { label: 'Score', value: SORT_TYPE.SCORE },
+  { label: 'Last Read', value: SORT_TYPE.READ_TIME }
 ]
 
-// 图片格式
+// 鍥剧墖鏍煎紡
 export const IMAGE_FORMATS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
 
-// 默认清单ID
+// 榛樿娓呭崟ID
 export const DEFAULT_LIST_ID = 'list_favorites'
 
-// 默认清单名称
-export const DEFAULT_LIST_NAME = '我的收藏'
+// 榛樿娓呭崟鍚嶇О
+export const DEFAULT_LIST_NAME = '鎴戠殑鏀惰棌'
 
-// 导入类型
+// 瀵煎叆绫诲瀷
 export const IMPORT_TYPE = {
   SCRIPT: 'script',
   DIRECTORY: 'directory',
@@ -100,10 +100,11 @@ export const IMPORT_TYPE = {
   IMAGE_HOST: 'image_host'
 }
 
-// 导入类型选项
+// 瀵煎叆绫诲瀷閫夐」
 export const IMPORT_OPTIONS = [
-  { label: '脚本导入', value: IMPORT_TYPE.SCRIPT },
-  { label: '目录导入', value: IMPORT_TYPE.DIRECTORY },
-  { label: 'ZIP导入', value: IMPORT_TYPE.ZIP },
-  { label: '图床导入', value: IMPORT_TYPE.IMAGE_HOST }
+  { label: '鑴氭湰瀵煎叆', value: IMPORT_TYPE.SCRIPT },
+  { label: '鐩綍瀵煎叆', value: IMPORT_TYPE.DIRECTORY },
+  { label: 'ZIP瀵煎叆', value: IMPORT_TYPE.ZIP },
+  { label: '鍥惧簥瀵煎叆', value: IMPORT_TYPE.IMAGE_HOST }
 ]
+

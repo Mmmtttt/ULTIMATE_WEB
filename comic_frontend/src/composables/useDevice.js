@@ -1,4 +1,5 @@
 import { ref, onMounted, onUnmounted } from 'vue'
+import { getViewportWidth, onWindow } from '@/runtime/browser'
 
 const MOBILE_BREAKPOINT = 768
 const TABLET_BREAKPOINT = 1024
@@ -7,10 +8,11 @@ export function useDevice() {
   const isMobile = ref(false)
   const isTablet = ref(false)
   const isDesktop = ref(true)
-  const windowWidth = ref(window.innerWidth)
+  const windowWidth = ref(getViewportWidth())
+  let removeResizeListener = null
 
   function updateDeviceType() {
-    const width = window.innerWidth
+    const width = getViewportWidth()
     windowWidth.value = width
     
     if (width < MOBILE_BREAKPOINT) {
@@ -30,11 +32,14 @@ export function useDevice() {
 
   onMounted(() => {
     updateDeviceType()
-    window.addEventListener('resize', updateDeviceType)
+    removeResizeListener = onWindow('resize', updateDeviceType)
   })
 
   onUnmounted(() => {
-    window.removeEventListener('resize', updateDeviceType)
+    if (typeof removeResizeListener === 'function') {
+      removeResizeListener()
+      removeResizeListener = null
+    }
   })
 
   return {
