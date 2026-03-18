@@ -171,6 +171,27 @@ import {
   nextAnimationFrame,
   updateViewportHeightCssVar
 } from '@/composables/readerShared'
+import {
+  addDocumentListener,
+  addWindowListener,
+  cancelFrame,
+  exitFullscreen,
+  getDocument,
+  getDocumentElement,
+  getFullscreenElement,
+  getNavigator,
+  getScrollX,
+  getScrollY,
+  getViewportWidth,
+  getVisibilityState,
+  getWindow,
+  isOntouchstartSupported,
+  matchMediaQuery,
+  removeDocumentListener,
+  removeWindowListener,
+  requestFullscreen,
+  requestNextFrame
+} from '@/runtime/browser'
 
 const route = useRoute()
 const recommendationStore = useRecommendationStore()
@@ -230,20 +251,18 @@ const dragStartScrollX = ref(0)
 const dragStartScrollY = ref(0)
 
 const detectMobileDevice = () => {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent || ''
+  if (!getWindow() || !getNavigator()) return false
+  const ua = getNavigator()?.userAgent || ''
   const mobileUa = /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(ua)
   const coarsePointer =
-    typeof window.matchMedia === 'function'
-      ? window.matchMedia('(pointer: coarse)').matches
-      : false
-  const narrowViewport = window.innerWidth <= 1024
+    matchMediaQuery('(pointer: coarse)')
+  const narrowViewport = getViewportWidth() <= 1024
   return mobileUa || (coarsePointer && narrowViewport)
 }
 
 const detectTouchSupport = () => {
-  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
-  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window
+  if (!getWindow() || !getNavigator()) return false
+  return (getNavigator()?.maxTouchPoints || 0) > 0 || isOntouchstartSupported()
 }
 
 const isProgrammaticScroll = ref(false)
@@ -310,14 +329,14 @@ const getTouchCenterPoint = (touch1, touch2, container) => {
   const scrollX =
     typeof container.scrollLeft === 'number'
       ? container.scrollLeft
-      : typeof window !== 'undefined'
-        ? window.scrollX || 0
+      : Boolean(getWindow())
+        ? getScrollX()
         : 0
   const scrollY =
     typeof container.scrollTop === 'number'
       ? container.scrollTop
-      : typeof window !== 'undefined'
-        ? window.scrollY || 0
+      : Boolean(getWindow())
+        ? getScrollY()
         : 0
   return {
     x: centerX - rect.left + scrollX,
@@ -353,8 +372,8 @@ const applyPinchAtPoint = (distance, centerX, centerY) => {
 }
 
 const clearPanInertia = () => {
-  if (inertiaRafId && typeof window !== 'undefined') {
-    window.cancelAnimationFrame(inertiaRafId)
+  if (inertiaRafId && Boolean(getWindow())) {
+    cancelFrame(inertiaRafId)
   }
   inertiaRafId = 0
 }
@@ -494,7 +513,7 @@ const zoomAtPoint = (nextLevel, anchorPoint, container) => {
 }
 
 const updateDeviceState = () => {
-  if (typeof window === 'undefined') return
+  if (!getWindow()) return
   isMobile.value = detectMobileDevice()
   supportsTouch.value = detectTouchSupport()
 }
@@ -992,13 +1011,13 @@ const updatePageFromScroll = () => {
 }
 
 const handleScroll = () => {
-  if (typeof window === 'undefined') {
+  if (!getWindow()) {
     updatePageFromScroll()
     return
   }
 
   if (scrollRafId) return
-  scrollRafId = window.requestAnimationFrame(() => {
+  scrollRafId = requestNextFrame(() => {
     scrollRafId = 0
     updatePageFromScroll()
   })
@@ -1078,20 +1097,20 @@ const zoomOut = () => {
 }
 
 const queuePageUpdate = () => {
-  if (typeof window === 'undefined') {
+  if (!getWindow()) {
     updatePageFromScroll()
     return
   }
 
   if (pageUpdateRafId) return
-  pageUpdateRafId = window.requestAnimationFrame(() => {
+  pageUpdateRafId = requestNextFrame(() => {
     pageUpdateRafId = 0
     updatePageFromScroll()
   })
 }
 
 const startPanInertia = () => {
-  if (typeof window === 'undefined' || zoomLevel.value <= 1 || isZoomMode.value) return
+  if (!getWindow() || zoomLevel.value <= 1 || isZoomMode.value) return
 
   let velocityX = touchPanVelocityX.value
   let velocityY = touchPanVelocityY.value
@@ -1126,10 +1145,10 @@ const startPanInertia = () => {
       return
     }
 
-    inertiaRafId = window.requestAnimationFrame(step)
+    inertiaRafId = requestNextFrame(step)
   }
 
-  inertiaRafId = window.requestAnimationFrame(step)
+  inertiaRafId = requestNextFrame(step)
 }
 
 const handleWheel = (event) => {
@@ -1343,15 +1362,15 @@ const startDrag = (event) => {
       isDragging.value = false
     }, 100)
 
-    document.removeEventListener('mousemove', handleDragMove)
-    document.removeEventListener('mouseup', handleDragEnd)
+    removeDocumentListener('mousemove', handleDragMove)
+    removeDocumentListener('mouseup', handleDragEnd)
     if (!dragZoomedContent) {
       scheduleScrollCommit()
     }
   }
 
-  document.addEventListener('mousemove', handleDragMove)
-  document.addEventListener('mouseup', handleDragEnd)
+  addDocumentListener('mousemove', handleDragMove)
+  addDocumentListener('mouseup', handleDragEnd)
 }
 
 const startZoomDrag = (event) => {
@@ -1361,8 +1380,8 @@ const startZoomDrag = (event) => {
   zoomDragStartY.value = event.clientY
   zoomDragStartPanX.value = panX.value
   zoomDragStartPanY.value = panY.value
-  document.addEventListener('mousemove', handleZoomDrag)
-  document.addEventListener('mouseup', endZoomDrag)
+  addDocumentListener('mousemove', handleZoomDrag)
+  addDocumentListener('mouseup', endZoomDrag)
 }
 
 const handleZoomDrag = (event) => {
@@ -1376,8 +1395,8 @@ const handleZoomDrag = (event) => {
 
 const endZoomDrag = () => {
   isZoomDragging.value = false
-  document.removeEventListener('mousemove', handleZoomDrag)
-  document.removeEventListener('mouseup', endZoomDrag)
+  removeDocumentListener('mousemove', handleZoomDrag)
+  removeDocumentListener('mouseup', endZoomDrag)
 }
 
 const alignToCurrentPageAfterViewportChange = () => {
@@ -1393,16 +1412,16 @@ const alignToCurrentPageAfterViewportChange = () => {
 }
 
 const toggleFullscreen = async () => {
-  if (typeof document === 'undefined') return
+  if (!getDocument()) return
 
-  const targetEl = readerRoot.value || document.documentElement
+  const targetEl = readerRoot.value || getDocumentElement()
   try {
-    if (!document.fullscreenElement) {
+    if (!getFullscreenElement()) {
       if (targetEl.requestFullscreen) {
-        await targetEl.requestFullscreen()
+        await requestFullscreen(targetEl)
       }
     } else {
-      await document.exitFullscreen()
+      await exitFullscreen()
     }
   } catch (err) {
     console.error('全屏失败:', err)
@@ -1436,14 +1455,14 @@ const startTouchDrag = (event) => {
 
   const handleTouchEnd = () => {
     isDragging.value = false
-    document.removeEventListener('touchmove', handleTouchMove)
-    document.removeEventListener('touchend', handleTouchEnd)
-    document.removeEventListener('touchcancel', handleTouchEnd)
+    removeDocumentListener('touchmove', handleTouchMove)
+    removeDocumentListener('touchend', handleTouchEnd)
+    removeDocumentListener('touchcancel', handleTouchEnd)
   }
 
-  document.addEventListener('touchmove', handleTouchMove, { passive: false })
-  document.addEventListener('touchend', handleTouchEnd)
-  document.addEventListener('touchcancel', handleTouchEnd)
+  addDocumentListener('touchmove', handleTouchMove, { passive: false })
+  addDocumentListener('touchend', handleTouchEnd)
+  addDocumentListener('touchcancel', handleTouchEnd)
 }
 
 const startZoomTouch = (event) => {
@@ -1586,7 +1605,7 @@ const handleKeydown = (event) => {
 }
 
 const handleVisibilityChange = () => {
-  if (document.visibilityState === 'hidden') {
+  if (getVisibilityState() === 'hidden') {
     flushProgressBeforeLeave()
   }
 }
@@ -1606,29 +1625,29 @@ onMounted(() => {
     readerContent.value.addEventListener('dblclick', handleDoubleClick)
   }
 
-  document.addEventListener('fullscreenchange', handleFullscreenChange)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  window.addEventListener('resize', updateDeviceState)
-  window.addEventListener('resize', updateReaderViewport)
-  window.addEventListener('resize', alignToCurrentPageAfterViewportChange)
-  window.addEventListener('orientationchange', updateReaderViewport)
-  window.addEventListener('orientationchange', alignToCurrentPageAfterViewportChange)
-  window.addEventListener('keydown', handleKeydown)
-  window.addEventListener('pagehide', flushProgressBeforeLeave)
+  addDocumentListener('fullscreenchange', handleFullscreenChange)
+  addDocumentListener('visibilitychange', handleVisibilityChange)
+  addWindowListener('resize', updateDeviceState)
+  addWindowListener('resize', updateReaderViewport)
+  addWindowListener('resize', alignToCurrentPageAfterViewportChange)
+  addWindowListener('orientationchange', updateReaderViewport)
+  addWindowListener('orientationchange', alignToCurrentPageAfterViewportChange)
+  addWindowListener('keydown', handleKeydown)
+  addWindowListener('pagehide', flushProgressBeforeLeave)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('mousemove', handleZoomDrag)
-  document.removeEventListener('mouseup', endZoomDrag)
-  document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  window.removeEventListener('resize', updateDeviceState)
-  window.removeEventListener('resize', updateReaderViewport)
-  window.removeEventListener('resize', alignToCurrentPageAfterViewportChange)
-  window.removeEventListener('orientationchange', updateReaderViewport)
-  window.removeEventListener('orientationchange', alignToCurrentPageAfterViewportChange)
-  window.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('pagehide', flushProgressBeforeLeave)
+  removeDocumentListener('mousemove', handleZoomDrag)
+  removeDocumentListener('mouseup', endZoomDrag)
+  removeDocumentListener('fullscreenchange', handleFullscreenChange)
+  removeDocumentListener('visibilitychange', handleVisibilityChange)
+  removeWindowListener('resize', updateDeviceState)
+  removeWindowListener('resize', updateReaderViewport)
+  removeWindowListener('resize', alignToCurrentPageAfterViewportChange)
+  removeWindowListener('orientationchange', updateReaderViewport)
+  removeWindowListener('orientationchange', alignToCurrentPageAfterViewportChange)
+  removeWindowListener('keydown', handleKeydown)
+  removeWindowListener('pagehide', flushProgressBeforeLeave)
 
   if (saveProgressTimer) {
     clearTimeout(saveProgressTimer)
@@ -1645,11 +1664,11 @@ onUnmounted(() => {
   clearRestoreRetry()
   clearRestoreBootstrap()
   clearPanInertia()
-  if (scrollRafId && typeof window !== 'undefined') {
-    window.cancelAnimationFrame(scrollRafId)
+  if (scrollRafId && Boolean(getWindow())) {
+    cancelFrame(scrollRafId)
   }
-  if (pageUpdateRafId && typeof window !== 'undefined') {
-    window.cancelAnimationFrame(pageUpdateRafId)
+  if (pageUpdateRafId && Boolean(getWindow())) {
+    cancelFrame(pageUpdateRafId)
     pageUpdateRafId = 0
   }
 
@@ -2010,4 +2029,5 @@ onUnmounted(() => {
   }
 }
 </style>
+
 

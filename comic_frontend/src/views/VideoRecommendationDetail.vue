@@ -307,6 +307,7 @@ import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stor
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
+import { canShare, copyTextToClipboard, shareContent } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
 import Hls from 'hls.js'
 
@@ -688,7 +689,7 @@ function filterByTag(tagId) {
 }
 
 function copyMagnet(magnet) {
-  navigator.clipboard.writeText(magnet).then(() => {
+  copyTextToClipboard(magnet).then(() => {
     showSuccessToast('已复制到剪贴板')
   }).catch(() => {
     showFailToast('复制失败')
@@ -746,8 +747,8 @@ async function handleAction(action) {
       // 取消操作
     }
   } else if (action.value === 'share') {
-    if (navigator.share) {
-      navigator.share({
+    if (canShare()) {
+      shareContent({
         title: recommendation.value.title,
         text: `${recommendation.value.code} - ${recommendation.value.title}`
       })

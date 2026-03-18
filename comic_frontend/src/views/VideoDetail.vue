@@ -385,6 +385,7 @@ import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/store
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
+import { canShare, copyTextToClipboard, shareContent } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
 import Hls from 'hls.js'
 
@@ -932,24 +933,7 @@ async function copyMagnet(magnet) {
   }
 
   try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.setAttribute('readonly', 'readonly')
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      textarea.style.pointerEvents = 'none'
-      document.body.appendChild(textarea)
-      textarea.select()
-      textarea.setSelectionRange(0, text.length)
-      const copied = document.execCommand('copy')
-      document.body.removeChild(textarea)
-      if (!copied) {
-        throw new Error('execCommand copy failed')
-      }
-    }
+    await copyTextToClipboard(text)
     showSuccessToast('已复制磁力链接')
   } catch (error) {
     console.error('复制磁力链接失败:', error)
@@ -1082,8 +1066,8 @@ async function handleAction(action) {
       // 取消操作
     }
   } else if (action.value === 'share') {
-    if (navigator.share) {
-      navigator.share({
+    if (canShare()) {
+      shareContent({
         title: video.value.title,
         text: `${video.value.code} - ${video.value.title}`
       })

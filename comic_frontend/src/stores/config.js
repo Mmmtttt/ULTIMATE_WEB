@@ -6,6 +6,7 @@ import {
   BACKGROUND,
   STORAGE_KEYS
 } from '@/utils'
+import { getDocumentElement } from '@/runtime/browser'
 import { getItem, setItem } from '@/utils/storage'
 import { configApi } from '@/api'
 
@@ -44,9 +45,10 @@ export const useConfigStore = defineStore('config', () => {
   }
 
   const applyAppTheme = (background = defaultBackground.value) => {
-    if (typeof document === 'undefined') return
+    const rootElement = getDocumentElement()
+    if (!rootElement) return
     const theme = resolveTheme(background)
-    document.documentElement.setAttribute('data-theme', theme)
+    rootElement.setAttribute('data-theme', theme)
   }
 
   const config = computed(() => ({
