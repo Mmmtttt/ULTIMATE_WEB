@@ -277,6 +277,124 @@ class DirectionalSyncService:
             summary["total_skipped"] += int(stats.get("skipped", 0))
         return summary
 
+    def estimate_delta_for_known(self, known_inventory: Dict[str, Any], known_files: Dict[str, str]) -> Dict[str, Any]:
+        delta = self.delta_from_known(known_inventory if isinstance(known_inventory, dict) else {})
+        datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
+        data_sync = self._summarize_dataset_delta(datasets if isinstance(datasets, dict) else {})
+        asset_sync = self._estimate_asset_delta(known_files if isinstance(known_files, dict) else {})
+        return {
+            "estimated_at": _iso(_utc_now()),
+            "data_sync": data_sync,
+            "asset_sync": asset_sync,
+        }
+
+    def estimate_peer_sync(self, peer_id: str, direction: str) -> Dict[str, Any]:
+        peer = self._peer_or_raise(peer_id)
+        headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        direction_key = str(direction or "").strip().lower()
+        if direction_key not in {"push", "pull"}:
+            raise ValueError("direction must be push or pull")
+
+        if direction_key == "push":
+            remote_inv = self._request_json(
+                "GET",
+                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"),
+                headers,
+                None,
+            )
+            remote_known_inventory = remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {}
+            remote_files: Dict[str, str] = {}
+            asset_supported = True
+            asset_message = ""
+            try:
+                remote_asset_inv = self._request_json(
+                    "GET",
+                    self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                    headers,
+                    None,
+                )
+                remote_files = (
+                    remote_asset_inv.get("data", {}).get("files", {})
+                    if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict)
+                    else {}
+                )
+            except RuntimeError as exc:
+                if self._is_http_status_error(exc, (404, 405)):
+                    asset_supported = False
+                    asset_message = str(exc)
+                else:
+                    raise
+
+            estimate = self.estimate_delta_for_known(
+                remote_known_inventory if isinstance(remote_known_inventory, dict) else {},
+                remote_files if isinstance(remote_files, dict) else {},
+            )
+            if not asset_supported:
+                estimate["asset_sync"] = {
+                    "status": "unsupported_remote",
+                    "file_count": 0,
+                    "total_bytes": 0,
+                    "total_mb": 0.0,
+                    "message": asset_message or "remote assets inventory endpoint not available",
+                }
+            return {
+                "direction": "push",
+                "peer_id": peer_id,
+                **estimate,
+            }
+
+        local_inventory = self.inventory()
+        local_files = self.asset_inventory().get("files", {})
+
+        try:
+            remote_estimate = self._request_json(
+                "POST",
+                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/estimate"),
+                headers,
+                {
+                    "known_inventory": local_inventory,
+                    "known_files": local_files if isinstance(local_files, dict) else {},
+                },
+            )
+            remote_data = remote_estimate.get("data", {}) if isinstance(remote_estimate, dict) else {}
+            if not isinstance(remote_data, dict):
+                remote_data = {}
+            return {
+                "direction": "pull",
+                "peer_id": peer_id,
+                **remote_data,
+            }
+        except RuntimeError as exc:
+            # Backward compatibility with peers without /directional/estimate
+            if not self._is_http_status_error(exc, (404, 405)):
+                raise
+            remote_delta = self._request_json(
+                "POST",
+                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"),
+                headers,
+                {"known_inventory": local_inventory},
+            )
+            remote_delta_data = remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {}
+            datasets = (
+                remote_delta_data.get("datasets", {})
+                if isinstance(remote_delta_data, dict)
+                else {}
+            )
+            data_sync = self._summarize_dataset_delta(datasets if isinstance(datasets, dict) else {})
+            return {
+                "direction": "pull",
+                "peer_id": peer_id,
+                "estimated_at": _iso(_utc_now()),
+                "data_sync": data_sync,
+                "asset_sync": {
+                    "status": "unsupported_remote",
+                    "file_count": 0,
+                    "total_bytes": 0,
+                    "total_mb": 0.0,
+                    "message": "remote does not support assets estimate endpoint",
+                },
+            }
+
     def push_to_peer(self, peer_id: str) -> Dict[str, Any]:
         peer = self._peer_or_raise(peer_id)
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
@@ -401,8 +519,9 @@ class DirectionalSyncService:
     def _pull_assets_from_peer(self, remote_base_url: str, headers: Dict[str, str], known_files: Dict[str, str]) -> Dict[str, Any]:
         temp_zip = ""
         try:
+            endpoint = self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download")
             response = requests.post(
-                self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download"),
+                endpoint,
                 headers=headers,
                 json={"known_files": known_files or {}},
                 timeout=self.HTTP_TIMEOUT_SECONDS * 8,
@@ -411,11 +530,22 @@ class DirectionalSyncService:
             if response.status_code == 204:
                 return {"status": "no_change", "file_count": 0}
             if response.status_code in (404, 405):
-                return {
-                    "status": "unsupported_remote",
-                    "file_count": 0,
-                    "message": f"remote assets delta endpoint http {response.status_code}",
-                }
+                if response.status_code == 405:
+                    # Backward compatibility: try GET for older peers.
+                    response = requests.get(
+                        endpoint,
+                        headers=headers,
+                        timeout=self.HTTP_TIMEOUT_SECONDS * 8,
+                        stream=True,
+                    )
+                    if response.status_code == 204:
+                        return {"status": "no_change", "file_count": 0}
+                if response.status_code in (404, 405):
+                    return {
+                        "status": "unsupported_remote",
+                        "file_count": 0,
+                        "message": f"remote assets delta endpoint http {response.status_code}",
+                    }
             if response.status_code >= 400:
                 raise RuntimeError(f"remote assets delta http {response.status_code}: {response.text}")
 
@@ -440,6 +570,48 @@ class DirectionalSyncService:
     def _is_http_status_error(exc: Exception, status_codes: tuple) -> bool:
         message = str(exc or "")
         return any(f"http {code}" in message for code in status_codes)
+
+    def _summarize_dataset_delta(self, datasets: Dict[str, Any]) -> Dict[str, Any]:
+        dataset_counts: Dict[str, int] = {}
+        total_records = 0
+        for name, payload in (datasets or {}).items():
+            if isinstance(payload, list):
+                count = len(payload)
+            elif isinstance(payload, dict):
+                count = 1 if payload else 0
+            else:
+                count = 0
+            dataset_counts[name] = count
+            total_records += count
+        return {
+            "dataset_counts": dataset_counts,
+            "total_records": total_records,
+        }
+
+    def _estimate_asset_delta(self, known_files: Dict[str, str]) -> Dict[str, Any]:
+        local_files = self._collect_asset_index()
+        file_count = 0
+        total_bytes = 0
+        data_root = os.path.abspath(DATA_DIR)
+        known = known_files if isinstance(known_files, dict) else {}
+
+        for rel_path, signature in local_files.items():
+            if str(known.get(rel_path, "")) == signature:
+                continue
+            abs_path = os.path.abspath(os.path.join(data_root, rel_path.replace("/", os.sep)))
+            try:
+                size = int(os.path.getsize(abs_path))
+            except Exception:
+                size = 0
+            file_count += 1
+            total_bytes += max(size, 0)
+
+        return {
+            "status": "estimated",
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+            "total_mb": round(total_bytes / (1024 * 1024), 2),
+        }
 
     def _collect_asset_index(self) -> Dict[str, str]:
         index: Dict[str, str] = {}

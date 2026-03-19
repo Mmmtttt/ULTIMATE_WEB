@@ -44,6 +44,14 @@
             <div class="peer-meta">Last Sync: {{ peer.last_sync_at || '-' }}</div>
           </div>
           <div class="peer-actions">
+            <van-button size="small" plain type="primary" :loading="isPeerActionLoading(peer.peer_id, 'preview_push')" @click="previewAndConfirm(peer, 'push')">
+              Preview Push
+            </van-button>
+            <van-button size="small" plain type="success" :loading="isPeerActionLoading(peer.peer_id, 'preview_pull')" @click="previewAndConfirm(peer, 'pull')">
+              Preview Pull
+            </van-button>
+          </div>
+          <div class="peer-actions peer-actions-second">
             <van-button size="small" type="primary" :loading="isPeerActionLoading(peer.peer_id, 'push')" @click="pushToPeer(peer)">
               Push
             </van-button>
@@ -168,6 +176,62 @@ async function loadPeers() {
   }
 }
 
+function formatEstimateMessage(peer, direction, estimate) {
+  const dataSync = estimate?.data_sync || {}
+  const assetSync = estimate?.asset_sync || {}
+  const totalRecords = Number(dataSync?.total_records || 0)
+  const datasetCounts = dataSync?.dataset_counts || {}
+  const datasetLines = Object.keys(datasetCounts)
+    .filter((key) => Number(datasetCounts[key] || 0) > 0)
+    .map((key) => `${key}: ${datasetCounts[key]}`)
+
+  const assetStatus = assetSync?.status || 'unknown'
+  const fileCount = Number(assetSync?.file_count || 0)
+  const totalMb = Number(assetSync?.total_mb || 0)
+  const assetLine = `assets: status=${assetStatus}, files=${fileCount}, size=${totalMb} MB`
+  const msg = assetSync?.message ? `\nasset msg: ${assetSync.message}` : ''
+  const lines = [
+    `Peer: ${peer.display_name || peer.peer_id}`,
+    `Direction: ${direction}`,
+    `data records: ${totalRecords}`,
+    datasetLines.length > 0 ? `data detail: ${datasetLines.join(', ')}` : 'data detail: no changes',
+    assetLine + msg
+  ]
+  return lines.join('\n')
+}
+
+async function previewAndConfirm(peer, direction) {
+  const peerId = peer.peer_id
+  const loadingKey = direction === 'push' ? 'preview_push' : 'preview_pull'
+  setPeerActionLoading(peerId, loadingKey, true)
+  try {
+    const res = await syncApi.previewDirectional(peerId, direction)
+    const estimate = res?.data || {}
+    appendLog(`Preview ${direction} ${peerId}: data=${estimate?.data_sync?.total_records || 0}, assets=${estimate?.asset_sync?.file_count || 0}`)
+
+    await showConfirmDialog({
+      title: `Preview ${direction.toUpperCase()}`,
+      message: formatEstimateMessage(peer, direction, estimate),
+      confirmButtonText: 'Confirm Sync',
+      cancelButtonText: 'Cancel'
+    })
+
+    if (direction === 'push') {
+      await pushToPeer(peer)
+    } else {
+      await pullFromPeer(peer)
+    }
+  } catch (error) {
+    // User cancel returns an exception-like flow; ignore.
+    const msg = String(error?.message || '')
+    if (msg && !msg.includes('cancel')) {
+      showFailToast(msg || 'Preview failed')
+    }
+  } finally {
+    setPeerActionLoading(peerId, loadingKey, false)
+  }
+}
+
 async function pushToPeer(peer) {
   const peerId = peer.peer_id
   setPeerActionLoading(peerId, 'push', true)
@@ -175,7 +239,9 @@ async function pushToPeer(peer) {
     const res = await syncApi.pushDirectional(peerId)
     const status = res?.data?.status || 'completed'
     const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
-    appendLog(`Push ${peerId}: ${status}, assets=${assetCount}`)
+    const assetStatus = res?.data?.asset_sync?.status || 'unknown'
+    const assetMsg = res?.data?.asset_sync?.message ? `, msg=${res.data.asset_sync.message}` : ''
+    appendLog(`Push ${peerId}: ${status}, asset_status=${assetStatus}, assets=${assetCount}${assetMsg}`)
     showSuccessToast('Push done')
     await loadPeers()
   } catch (error) {
@@ -192,7 +258,9 @@ async function pullFromPeer(peer) {
     const res = await syncApi.pullDirectional(peerId)
     const status = res?.data?.status || 'completed'
     const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
-    appendLog(`Pull ${peerId}: ${status}, assets=${assetCount}`)
+    const assetStatus = res?.data?.asset_sync?.status || 'unknown'
+    const assetMsg = res?.data?.asset_sync?.message ? `, msg=${res.data.asset_sync.message}` : ''
+    appendLog(`Pull ${peerId}: ${status}, asset_status=${assetStatus}, assets=${assetCount}${assetMsg}`)
     showSuccessToast('Pull done')
     await loadPeers()
   } catch (error) {
@@ -274,6 +342,10 @@ onMounted(async () => {
 .peer-actions {
   display: flex;
   gap: 8px;
+}
+
+.peer-actions-second {
+  margin-top: 8px;
 }
 
 .log-list {

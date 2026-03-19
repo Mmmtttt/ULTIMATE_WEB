@@ -226,7 +226,7 @@ def directional_assets_apply():
         return error_response(500, "directional assets apply failed")
 
 
-@sync_bp.route("/directional/assets/delta/download", methods=["POST"])
+@sync_bp.route("/directional/assets/delta/download", methods=["GET", "POST"])
 def directional_assets_delta_download():
     try:
         payload = request.get_json(silent=True) or {}
@@ -260,6 +260,45 @@ def directional_assets_delta_download():
     except Exception as exc:
         error_logger.error(f"sync directional assets delta download failed: {exc}")
         return error_response(500, "directional assets delta download failed")
+
+
+@sync_bp.route("/directional/estimate", methods=["POST"])
+def directional_estimate():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = _extract_sync_token(payload)
+        peer = directional_service.verify_token(token)
+        if not peer:
+            return error_response(401, "invalid sync token")
+        known_inventory = payload.get("known_inventory", {})
+        known_files = payload.get("known_files", {})
+        result = directional_service.estimate_delta_for_known(
+            known_inventory if isinstance(known_inventory, dict) else {},
+            known_files if isinstance(known_files, dict) else {},
+        )
+        return success_response(result)
+    except Exception as exc:
+        error_logger.error(f"sync directional estimate failed: {exc}")
+        return error_response(500, "directional estimate failed")
+
+
+@sync_bp.route("/directional/preview", methods=["POST"])
+def directional_preview():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        direction = str(payload.get("direction", "")).strip().lower()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if direction not in {"push", "pull"}:
+            return error_response(400, "direction must be push or pull")
+        result = directional_service.estimate_peer_sync(peer_id, direction)
+        return success_response(result)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.error(f"sync directional preview failed: {exc}")
+        return error_response(500, "directional preview failed")
 
 
 @sync_bp.route("/directional/delta", methods=["POST"])

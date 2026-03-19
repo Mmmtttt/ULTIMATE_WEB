@@ -66,6 +66,13 @@ export const syncApi = {
     return request.post('/v1/sync/directional/push', { peer_id: peerId })
   },
 
+  previewDirectional(peerId, direction) {
+    return request.post('/v1/sync/directional/preview', {
+      peer_id: peerId,
+      direction
+    })
+  },
+
   pullDirectional(peerId) {
     return request.post('/v1/sync/directional/pull', { peer_id: peerId })
   }
