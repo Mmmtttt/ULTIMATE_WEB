@@ -1,7 +1,8 @@
 param(
     [string]$SdkRoot = "$env:LOCALAPPDATA\Android\Sdk",
-    [string]$AndroidApi = "34",
-    [string]$BuildTools = "34.0.0",
+    [string]$AndroidApi = "35",
+    [string]$BuildTools = "35.0.0",
+    [switch]$RefreshCmdlineTools,
     [switch]$DryRun
 )
 
@@ -54,19 +55,80 @@ function Try-Run([scriptblock]$action) {
     }
 }
 
+function Get-JavaMajorFromText([string]$text) {
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+    $match = [regex]::Match($text, '(?:version|openjdk)\s+"?(\d+)')
+    if ($match.Success) {
+        return [int]$match.Groups[1].Value
+    }
+    return $null
+}
+
+function Get-JavaVersionText([string]$javaExecutable) {
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $proc = Start-Process -FilePath $javaExecutable -ArgumentList "--version" -PassThru -Wait -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $outText = Get-Content -Path $outFile -Raw -ErrorAction SilentlyContinue
+        $errText = Get-Content -Path $errFile -Raw -ErrorAction SilentlyContinue
+        $text = (($outText + "`n" + $errText).Trim())
+        if ($proc.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($text)) {
+            $proc = Start-Process -FilePath $javaExecutable -ArgumentList "-version" -PassThru -Wait -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $outText = Get-Content -Path $outFile -Raw -ErrorAction SilentlyContinue
+            $errText = Get-Content -Path $errFile -Raw -ErrorAction SilentlyContinue
+            $text = (($outText + "`n" + $errText).Trim())
+        }
+        return $text
+    } finally {
+        Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-CurrentJavaMajor {
+    $text = Get-JavaVersionText "java"
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+    return Get-JavaMajorFromText $text
+}
+
+function Get-JavaMajorByHome([string]$javaHomePath) {
+    if ([string]::IsNullOrWhiteSpace($javaHomePath)) {
+        return $null
+    }
+    $javaExe = Join-Path $javaHomePath "bin\java.exe"
+    if (-not (Test-Path $javaExe)) {
+        return $null
+    }
+    $text = Get-JavaVersionText $javaExe
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+    return Get-JavaMajorFromText $text
+}
+
 function Resolve-JavaHome {
+    $requiredJavaMajor = 21
+    $candidateHomes = @()
+
     $javaCmd = Get-Command java -ErrorAction SilentlyContinue
     if ($javaCmd -and $javaCmd.Source) {
         $binDir = Split-Path -Parent $javaCmd.Source
         if ($binDir) {
             $javaHomeCandidate = Split-Path -Parent $binDir
             if ($javaHomeCandidate -and (Test-Path (Join-Path $javaHomeCandidate "bin\java.exe"))) {
-                return $javaHomeCandidate
+                $candidateHomes += $javaHomeCandidate
             }
         }
     }
 
     $patterns = @(
+        "C:\Program Files\Eclipse Adoptium\jdk-21*",
+        "C:\Program Files\Microsoft\jdk-21*",
+        "C:\Program Files\Java\jdk-21*",
         "C:\Program Files\Eclipse Adoptium\jdk-17*",
         "C:\Program Files\Microsoft\jdk-17*",
         "C:\Program Files\Java\jdk-17*"
@@ -76,9 +138,30 @@ function Resolve-JavaHome {
         $dirs = Get-ChildItem -Path $pattern -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
         foreach ($dir in $dirs) {
             if (Test-Path (Join-Path $dir.FullName "bin\java.exe")) {
-                return $dir.FullName
+                $candidateHomes += $dir.FullName
             }
         }
+    }
+
+    if ($candidateHomes.Count -eq 0) {
+        return $null
+    }
+
+    $bestHome = $null
+    $bestMajor = -1
+    foreach ($homePath in ($candidateHomes | Select-Object -Unique)) {
+        $major = Get-JavaMajorByHome $homePath
+        if ($null -eq $major) {
+            continue
+        }
+        if ($major -gt $bestMajor) {
+            $bestMajor = $major
+            $bestHome = $homePath
+        }
+    }
+
+    if ($bestHome) {
+        return $bestHome
     }
 
     return $null
@@ -121,10 +204,16 @@ Run-Step "Install Python build dependencies (pyinstaller, flask-cors)" {
     }
 }
 
+$requiredJavaMajor = 21
 $javaReady = $false
 if (Try-Run { & java -version *> $null }) {
-    $javaReady = $true
-    Write-Info "Java already available in PATH."
+    $javaMajor = Get-CurrentJavaMajor
+    if ($null -ne $javaMajor -and $javaMajor -ge $requiredJavaMajor) {
+        $javaReady = $true
+        Write-Info "Java already available in PATH (major=$javaMajor)."
+    } else {
+        Write-Warn "Java is available but major version is below $requiredJavaMajor. Will install/resolve Java $requiredJavaMajor+."
+    }
 }
 
 if (-not $javaReady) {
@@ -137,12 +226,13 @@ if (-not $javaReady) {
 
 if (-not $javaReady) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Run-Step "Install Java 17 via winget (Temurin)" {
-            & winget install EclipseAdoptium.Temurin.17.JDK --accept-package-agreements --accept-source-agreements -e
+        Run-Step "Install Java 21 via winget (Temurin)" {
+            & winget install EclipseAdoptium.Temurin.21.JDK --accept-package-agreements --accept-source-agreements -e
             if ($LASTEXITCODE -ne 0) {
                 $javaHomeFallback = Resolve-JavaHome
-                if ($javaHomeFallback) {
-                    Write-Warn "winget returned non-zero, but Java installation is detected: $javaHomeFallback"
+                $javaMajorFallback = Get-JavaMajorByHome $javaHomeFallback
+                if ($javaHomeFallback -and $javaMajorFallback -ge $requiredJavaMajor) {
+                    Write-Warn "winget returned non-zero, but Java $javaMajorFallback installation is detected: $javaHomeFallback"
                 } else {
                     throw "winget Java install failed."
                 }
@@ -156,6 +246,10 @@ if (-not $javaReady) {
 $javaHome = Resolve-JavaHome
 if (-not $javaHome) {
     throw "Unable to resolve JAVA_HOME after Java install. Re-open terminal and re-run script."
+}
+$javaMajorResolved = Get-JavaMajorByHome $javaHome
+if ($null -eq $javaMajorResolved -or $javaMajorResolved -lt $requiredJavaMajor) {
+    throw "Resolved JAVA_HOME does not satisfy Java $requiredJavaMajor+ requirement: $javaHome"
 }
 $env:JAVA_HOME = $javaHome
 if ($env:Path -notlike "*$javaHome\bin*") {
@@ -171,32 +265,38 @@ Run-Step "Prepare Android SDK root at $SdkRoot" {
 $toolsZip = Join-Path $env:TEMP "cmdline-tools-win-latest.zip"
 $toolsExtract = Join-Path $env:TEMP "android-cmdline-tools-extract"
 $toolsUrl = "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
+$existingSdkManager = Join-Path $SdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"
+$needInstallCmdlineTools = $RefreshCmdlineTools -or -not (Test-Path $existingSdkManager)
 
-Run-Step "Download Android cmdline-tools from Google" {
-    Invoke-WebRequest -Uri $toolsUrl -OutFile $toolsZip
-}
-
-Run-Step "Extract Android cmdline-tools archive" {
-    if (Test-Path $toolsExtract) {
-        Remove-Item -Path $toolsExtract -Recurse -Force
-    }
-    Expand-Archive -Path $toolsZip -DestinationPath $toolsExtract -Force
-}
-
-Run-Step "Install cmdline-tools into SDK root" {
-    $sourceDir = Join-Path $toolsExtract "cmdline-tools"
-    if (Test-Path (Join-Path $sourceDir "cmdline-tools")) {
-        $sourceDir = Join-Path $sourceDir "cmdline-tools"
-    }
-    if (-not (Test-Path $sourceDir)) {
-        throw "cmdline-tools source directory not found after extraction: $sourceDir"
+if ($needInstallCmdlineTools) {
+    Run-Step "Download Android cmdline-tools from Google" {
+        Invoke-WebRequest -Uri $toolsUrl -OutFile $toolsZip
     }
 
-    $latestDir = Join-Path $SdkRoot "cmdline-tools\latest"
-    if (Test-Path $latestDir) {
-        Remove-Item -Path $latestDir -Recurse -Force
+    Run-Step "Extract Android cmdline-tools archive" {
+        if (Test-Path $toolsExtract) {
+            Remove-Item -Path $toolsExtract -Recurse -Force
+        }
+        Expand-Archive -Path $toolsZip -DestinationPath $toolsExtract -Force
     }
-    Copy-Item -Path $sourceDir -Destination $latestDir -Recurse -Force
+
+    Run-Step "Install cmdline-tools into SDK root" {
+        $sourceDir = Join-Path $toolsExtract "cmdline-tools"
+        if (Test-Path (Join-Path $sourceDir "cmdline-tools")) {
+            $sourceDir = Join-Path $sourceDir "cmdline-tools"
+        }
+        if (-not (Test-Path $sourceDir)) {
+            throw "cmdline-tools source directory not found after extraction: $sourceDir"
+        }
+
+        $latestDir = Join-Path $SdkRoot "cmdline-tools\latest"
+        if (Test-Path $latestDir) {
+            Remove-Item -Path $latestDir -Recurse -Force
+        }
+        Copy-Item -Path $sourceDir -Destination $latestDir -Recurse -Force
+    }
+} else {
+    Write-Info "Android cmdline-tools already exists, skip download. Use -RefreshCmdlineTools to force update."
 }
 
 $sdkManager = Join-Path $SdkRoot "cmdline-tools\latest\bin\sdkmanager.bat"

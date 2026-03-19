@@ -19,9 +19,9 @@
       "app_name": "UltimateWeb",
       "web_dir": "comic_frontend_dist",
       "workspace_web_dir": "web",
-      "capacitor_core_version": "latest",
-      "capacitor_cli_version": "latest",
-      "capacitor_android_version": "latest",
+      "capacitor_core_version": "7",
+      "capacitor_cli_version": "7",
+      "capacitor_android_version": "7",
       "gradle_task": "assembleDebug",
       "apk_relative_path": "android/app/build/outputs/apk/debug/app-debug.apk"
     }

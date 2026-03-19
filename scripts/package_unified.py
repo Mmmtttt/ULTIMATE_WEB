@@ -140,6 +140,44 @@ def get_npx_command() -> str:
     return "npx.cmd" if os.name == "nt" else "npx"
 
 
+def resolve_android_java_env() -> Dict[str, str]:
+    env: Dict[str, str] = {}
+    java_home = os.environ.get("JAVA_HOME", "").strip()
+    if java_home:
+        java_bin = Path(java_home) / "bin" / ("java.exe" if os.name == "nt" else "java")
+        if java_bin.exists():
+            env["JAVA_HOME"] = str(Path(java_home))
+
+    if not env and os.name == "nt":
+        candidates = [
+            r"C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot",
+            r"C:\Program Files\Eclipse Adoptium\jdk-21",
+            r"C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot",
+            r"C:\Program Files\Eclipse Adoptium\jdk-17",
+            r"C:\Program Files\Microsoft\jdk-21",
+            r"C:\Program Files\Microsoft\jdk-17",
+        ]
+        for item in candidates:
+            java_bin = Path(item) / "bin" / "java.exe"
+            if java_bin.exists():
+                env["JAVA_HOME"] = item
+                break
+
+    if not env:
+        java_cmd = shutil.which("java")
+        if java_cmd:
+            java_path = Path(java_cmd).resolve()
+            java_home_guess = java_path.parent.parent
+            env["JAVA_HOME"] = str(java_home_guess)
+
+    if "JAVA_HOME" in env:
+        java_bin_dir = str(Path(env["JAVA_HOME"]) / "bin")
+        path_parts = os.environ.get("PATH", "").split(os.pathsep)
+        if java_bin_dir not in path_parts:
+            env["PATH"] = java_bin_dir + os.pathsep + os.environ.get("PATH", "")
+    return env
+
+
 def current_host_target() -> str:
     if os.name == "nt":
         return "windows"
@@ -537,6 +575,15 @@ def package_android(
         staged_target_dir,
         packager_cfg,
     )
+    android_env = resolve_android_java_env()
+    if execute and "JAVA_HOME" not in android_env:
+        return PackageResult(
+            target=target,
+            status="failed",
+            message="android build requires Java, but JAVA_HOME/java was not detected",
+            output_dir=str(target_out_dir),
+            command=["java", "--version"],
+        )
 
     if not execute:
         return PackageResult(
@@ -561,7 +608,7 @@ def package_android(
                     command=cmd,
                 )
         try:
-            code, output = run_cmd(cmd, cwd=cwd)
+            code, output = run_cmd(cmd, cwd=cwd, env=android_env)
         except FileNotFoundError:
             log_path = target_out_dir / "android_build.log"
             logs.append(f"$ {' '.join(cmd)}\n[launcher-error] executable not found in PATH or cwd\n")

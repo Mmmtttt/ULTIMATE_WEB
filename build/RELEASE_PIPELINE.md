@@ -31,4 +31,5 @@ python scripts/release_unified.py --targets linux --execute
 python scripts/release_unified.py --targets android --execute
 ```
 
-Note: desktop builds must run on matching host OS. Android build requires Java + Android SDK.
+Note: desktop builds must run on matching host OS. Android build requires JDK 21 + Android SDK.
+On Windows non-ASCII repo paths, Android packaging auto-stages in `%LOCALAPPDATA%\UltimateWebBuild\android_workspace`.
