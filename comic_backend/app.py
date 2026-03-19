@@ -1,4 +1,4 @@
-import atexit
+﻿import atexit
 import json
 import os
 
@@ -38,9 +38,46 @@ def load_server_config():
 
 
 SERVER_CONFIG = load_server_config()
-HOST = SERVER_CONFIG.get("backend", {}).get("host", "0.0.0.0")
-PORT = SERVER_CONFIG.get("backend", {}).get("port", 5000)
-DEBUG = True
+
+
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _resolve_backend_host():
+    env_host = str(os.environ.get("BACKEND_HOST", "")).strip()
+    if env_host:
+        return env_host
+    return SERVER_CONFIG.get("backend", {}).get("host", "0.0.0.0")
+
+
+def _resolve_backend_port():
+    env_port = str(os.environ.get("BACKEND_PORT", "")).strip()
+    if env_port:
+        try:
+            return int(env_port)
+        except Exception:
+            pass
+    return int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+
+
+def _resolve_backend_debug():
+    env_debug = os.environ.get("BACKEND_DEBUG")
+    if env_debug is not None:
+        return _as_bool(env_debug, default=False)
+    return True
+
+
+HOST = _resolve_backend_host()
+PORT = _resolve_backend_port()
+DEBUG = _resolve_backend_debug()
 
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300
@@ -121,7 +158,7 @@ def frontend_fallback(path):
 
 @app.route('/static/cover/<path:filename>')
 def serve_cover(filename):
-    """提供封面图片，并设置正确的 Content-Type"""
+    """鎻愪緵灏侀潰鍥剧墖锛屽苟璁剧疆姝ｇ‘鐨?Content-Type"""
     response = make_response(send_from_directory(COVER_DIR, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'
@@ -133,7 +170,7 @@ def serve_cover(filename):
 
 @app.route('/static/cover/<platform>/author_cache/<filename>')
 def serve_author_cover(platform, filename):
-    """提供作者更新作品的封面图片"""
+    """鎻愪緵浣滆€呮洿鏂颁綔鍝佺殑灏侀潰鍥剧墖"""
     platform_key = str(platform or "").strip().upper() or "JM"
     new_cache_dir = os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
     response = make_response(send_from_directory(new_cache_dir, filename))
@@ -194,43 +231,59 @@ def init_default_data():
     try:
         list_service = ListAppService()
         list_service.ensure_default_list()
-        app_logger.info("默认清单初始化完成")
+        app_logger.info("Default list initialized")
     except Exception as e:
-        app_logger.error(f"初始化默认清单失败: {e}")
+        app_logger.error(f"Failed to initialize default list: {e}")
 
 
 def init_backup():
-    """初始化定时备份系统"""
+    """Initialize backup scheduler."""
     try:
         init_backup_system()
-        # 注册退出时关闭备份系统
+        # Shutdown backup scheduler when process exits.
         atexit.register(shutdown_backup_system)
-        app_logger.info("定时备份系统初始化完成")
+        app_logger.info("Backup scheduler initialized")
     except Exception as e:
-        app_logger.error(f"初始化定时备份系统失败: {e}")
+        app_logger.error(f"Failed to initialize backup scheduler: {e}")
 
 
 def init_temp_file_cleanup():
-    """清理残留的 json 临时文件，避免 .tmp 持续增长"""
+    """Clean stale JSON temp files on startup."""
     try:
         cleaned = JsonStorage().cleanup_stale_meta_temp_files()
         if cleaned > 0:
-            app_logger.info(f"启动时已清理残留 .tmp 文件: {cleaned} 个")
+            app_logger.info(f"Cleaned stale .tmp files on startup: {cleaned}")
     except Exception as e:
-        app_logger.warning(f"启动清理 .tmp 文件失败: {e}")
-
-
+        app_logger.warning(f"Failed to clean stale .tmp files on startup: {e}")
 def success_response(data=None):
     return {
         "code": 200,
-        "msg": "成功",
+        "msg": "success",
         "data": data
     }
 
 
-if __name__ == '__main__':
+def run_backend_server(host=None, port=None, debug=None):
+    resolved_host = str(host or HOST).strip() or HOST
+    try:
+        resolved_port = int(port if port is not None else PORT)
+    except Exception:
+        resolved_port = PORT
+    resolved_debug = DEBUG if debug is None else bool(debug)
+
     init_temp_file_cleanup()
     init_default_data()
     init_backup()
-    app_logger.info(f"启动服务器，地址: {HOST}:{PORT}")
-    app.run(host=HOST, port=PORT, debug=DEBUG)
+    app_logger.info(f"Starting backend service at {resolved_host}:{resolved_port}")
+    app.run(
+        host=resolved_host,
+        port=resolved_port,
+        debug=resolved_debug,
+        use_reloader=False,
+        threaded=True,
+    )
+
+
+if __name__ == '__main__':
+    run_backend_server()
+

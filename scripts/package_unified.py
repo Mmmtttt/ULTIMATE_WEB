@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -111,14 +112,15 @@ def has_non_ascii_path(path: Path) -> bool:
 
 
 def choose_android_workspace_dir(target_out_dir: Path, staged_target_dir: Path, packager_cfg: Dict) -> Path:
+    workspace_leaf = f"{target_out_dir.parent.name}_{target_out_dir.name}_{staged_target_dir.name}"
     configured_root = str(packager_cfg.get("workspace_root", "")).strip()
     if configured_root:
         root = Path(configured_root).expanduser().resolve()
-        return root / f"{target_out_dir.name}_{staged_target_dir.name}"
+        return root / workspace_leaf
 
     default_workspace = target_out_dir / "android_workspace"
     if os.name != "nt" or not has_non_ascii_path(default_workspace):
-        return default_workspace
+        return default_workspace / workspace_leaf
 
     env_root = os.environ.get("ULTIMATE_ANDROID_WORKSPACE_ROOT", "").strip()
     if env_root:
@@ -129,7 +131,7 @@ def choose_android_workspace_dir(target_out_dir: Path, staged_target_dir: Path, 
             fallback_root = Path(local_appdata) / "UltimateWebBuild" / "android_workspace"
         else:
             fallback_root = Path.home() / "AppData" / "Local" / "UltimateWebBuild" / "android_workspace"
-    return fallback_root / f"{target_out_dir.name}_{staged_target_dir.name}"
+    return fallback_root / workspace_leaf
 
 
 def get_npm_command() -> str:
@@ -172,6 +174,235 @@ def write_android_local_properties(android_project_dir: Path, sdk_dir: str) -> P
     escaped = sdk_dir.replace("\\", "\\\\")
     write_text(local_properties, f"sdk.dir={escaped}\n")
     return local_properties
+
+
+def patch_android_min_sdk(android_project_dir: Path, min_sdk: int) -> None:
+    variables_gradle = android_project_dir / "variables.gradle"
+    if not variables_gradle.exists():
+        return
+    raw = variables_gradle.read_text(encoding="utf-8")
+    patched = re.sub(
+        r"(minSdkVersion\s*=\s*)(\d+)",
+        lambda m: f"{m.group(1)}{max(int(m.group(2)), min_sdk)}",
+        raw,
+    )
+    if patched != raw:
+        write_text(variables_gradle, patched)
+
+
+def ensure_android_project_chaquopy_root(android_project_dir: Path, chaquopy_version: str) -> None:
+    build_gradle = android_project_dir / "build.gradle"
+    if not build_gradle.exists():
+        return
+    raw = build_gradle.read_text(encoding="utf-8")
+    patched = raw
+
+    if "https://chaquo.com/maven" not in patched:
+        patched = patched.replace(
+            "mavenCentral()\n",
+            "mavenCentral()\n        maven { url 'https://chaquo.com/maven' }\n",
+            1,
+        )
+        patched = patched.replace(
+            "mavenCentral()\n",
+            "mavenCentral()\n        maven { url 'https://chaquo.com/maven' }\n",
+            1,
+        )
+
+    classpath_line = f"        classpath 'com.chaquo.python:gradle:{chaquopy_version}'\n"
+    if "com.chaquo.python:gradle" not in patched:
+        marker = "        classpath 'com.google.gms:google-services:4.4.2'\n"
+        if marker in patched:
+            patched = patched.replace(marker, marker + classpath_line, 1)
+        else:
+            patched = patched.replace(
+                "dependencies {\n",
+                "dependencies {\n" + classpath_line,
+                1,
+            )
+
+    if patched != raw:
+        write_text(build_gradle, patched)
+
+
+def ensure_android_project_chaquopy_app(
+    android_project_dir: Path,
+    workspace_dir: Path,
+    packager_cfg: Dict,
+) -> None:
+    app_build_gradle = android_project_dir / "app" / "build.gradle"
+    if not app_build_gradle.exists():
+        return
+    raw = app_build_gradle.read_text(encoding="utf-8")
+    patched = raw
+
+    if "apply plugin: 'com.chaquo.python'" not in patched:
+        patched = patched.replace(
+            "apply plugin: 'com.android.application'\n",
+            "apply plugin: 'com.android.application'\napply plugin: 'com.chaquo.python'\n",
+            1,
+        )
+
+    if "abiFilters" not in patched:
+        patched = patched.replace(
+            "        minSdkVersion rootProject.ext.minSdkVersion\n",
+            "        minSdkVersion rootProject.ext.minSdkVersion\n"
+            "        ndk {\n"
+            "            abiFilters 'arm64-v8a', 'x86_64'\n"
+            "        }\n",
+            1,
+        )
+
+    chaquopy_python = str(packager_cfg.get("chaquopy_python_version", "3.13")).strip() or "3.13"
+    py_exe = str(packager_cfg.get("chaquopy_build_python", "")).strip()
+    if not py_exe:
+        py_exe = sys.executable
+    py_exe = py_exe.replace("\\", "/")
+
+    reqs = packager_cfg.get("embed_backend_requirements")
+    if not isinstance(reqs, list) or not reqs:
+        reqs = [
+            "flask==2.3.0",
+            "flask-cors==4.0.0",
+            "requests>=2.31.0",
+            "PyYAML",
+            "Pillow",
+        ]
+    req_lines = "\n".join([f'                install("{item}")' for item in reqs if str(item).strip()])
+    chaquopy_block = (
+        "\nchaquopy {\n"
+        "    defaultConfig {\n"
+        f'        version = "{chaquopy_python}"\n'
+        f'        buildPython("{py_exe}")\n'
+        "        pip {\n"
+        f"{req_lines}\n"
+        "        }\n"
+        "    }\n"
+        "    sourceSets {\n"
+        "        main {\n"
+        '            srcDirs = ["src/main/python", "../web/backend_source"]\n'
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+    if "chaquopy {" not in patched:
+        if "\nrepositories {" in patched:
+            patched = patched.replace("\nrepositories {", chaquopy_block + "\nrepositories {", 1)
+        else:
+            patched = patched + chaquopy_block
+
+    if patched != raw:
+        write_text(app_build_gradle, patched)
+
+    app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip() or "com.ultimate.web"
+    backend_port = int(packager_cfg.get("backend_port", 5000))
+    third_party_enabled = str(packager_cfg.get("android_backend_enable_third_party", "false")).strip().lower()
+    java_rel = Path(*app_id.split(".")) / "MainActivity.java"
+    java_path = android_project_dir / "app" / "src" / "main" / "java" / java_rel
+    java_source = f"""package {app_id};
+
+import android.os.Bundle;
+import android.util.Log;
+
+import com.chaquo.python.PyObject;
+import com.chaquo.python.Python;
+import com.chaquo.python.android.AndroidPlatform;
+import com.getcapacitor.BridgeActivity;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class MainActivity extends BridgeActivity {{
+    private static final String TAG = "UltimateEmbeddedBackend";
+    private static final AtomicBoolean BACKEND_STARTED = new AtomicBoolean(false);
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {{
+        super.onCreate(savedInstanceState);
+        startEmbeddedBackend();
+    }}
+
+    private void startEmbeddedBackend() {{
+        if (!BACKEND_STARTED.compareAndSet(false, true)) {{
+            return;
+        }}
+        final String filesDir = getApplicationContext().getFilesDir().getAbsolutePath();
+        final int backendPort = {backend_port};
+        new Thread(() -> {{
+            try {{
+                if (!Python.isStarted()) {{
+                    Python.start(new AndroidPlatform(getApplicationContext()));
+                }}
+                PyObject module = Python.getInstance().getModule("ultimate_android_backend");
+                module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "{third_party_enabled}");
+                Log.i(TAG, "Embedded backend startup invoked on port " + backendPort);
+            }} catch (Throwable ex) {{
+                Log.e(TAG, "Failed to start embedded backend", ex);
+            }}
+        }}, "ultimate-backend-thread").start();
+    }}
+}}
+"""
+    write_text(java_path, java_source)
+
+    py_dir = android_project_dir / "app" / "src" / "main" / "python"
+    py_bootstrap = py_dir / "ultimate_android_backend.py"
+    py_source = """import os
+import sys
+import threading
+
+
+_started = False
+_lock = threading.Lock()
+
+
+def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false"):
+    global _started
+    with _lock:
+        if _started:
+            return "already_started"
+        _started = True
+
+    os.environ["BACKEND_RUNTIME_PROFILE"] = "android"
+    os.environ["ANDROID_APP_FILES_DIR"] = str(files_dir or "")
+    os.environ["BACKEND_HOST"] = str(host or "127.0.0.1")
+    os.environ["BACKEND_PORT"] = str(int(port or 5000))
+    os.environ["BACKEND_DEBUG"] = "false"
+    os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
+
+    if "." not in sys.path:
+        sys.path.insert(0, ".")
+
+    import app as backend_app
+
+    backend_app.run_backend_server(host=host, port=int(port or 5000), debug=False)
+    return "started"
+"""
+    write_text(py_bootstrap, py_source)
+
+    workspace_web_dir = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
+    marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
+    if marker_path.exists():
+        try:
+            payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        payload["chaquopy_injected"] = True
+        payload["android_main_activity"] = str(java_path)
+        write_text(marker_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def inject_android_embedded_backend(
+    workspace_dir: Path,
+    packager_cfg: Dict,
+) -> None:
+    android_project_dir = workspace_dir / "android"
+    if not android_project_dir.exists():
+        raise FileNotFoundError(f"android project dir not found: {android_project_dir}")
+    min_sdk = int(packager_cfg.get("chaquopy_min_sdk", 24))
+    chaquopy_version = str(packager_cfg.get("chaquopy_version", "17.0.0")).strip() or "17.0.0"
+    patch_android_min_sdk(android_project_dir, min_sdk)
+    ensure_android_project_chaquopy_root(android_project_dir, chaquopy_version)
+    ensure_android_project_chaquopy_app(android_project_dir, workspace_dir, packager_cfg)
 
 
 def resolve_android_java_env() -> Dict[str, str]:
@@ -638,6 +869,7 @@ def write_android_capacitor_plan(
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
     if embed_backend:
         plan.append(f"- embedded backend api base: `http://127.0.0.1:{backend_port}/api`")
+        plan.append("- embedded backend injection: enabled (Chaquopy + MainActivity backend bootstrap)")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
 
@@ -676,6 +908,7 @@ def package_android(
         staged_target_dir,
         packager_cfg,
     )
+    embed_backend = bool(packager_cfg.get("embed_backend", False))
     android_env = resolve_android_java_env()
     sdk_dir = resolve_android_sdk_dir()
     if execute and "JAVA_HOME" not in android_env:
@@ -710,6 +943,21 @@ def package_android(
     logs: List[str] = []
     for idx, cmd in enumerate(commands, start=1):
         cwd = workspace_dir
+        if embed_backend and idx == 4:
+            try:
+                inject_android_embedded_backend(workspace_dir, packager_cfg)
+                logs.append("$ [internal] inject android embedded backend\n[ok] chaquopy + backend launcher injected\n")
+            except Exception as ex:
+                log_path = target_out_dir / "android_build.log"
+                logs.append(f"$ [internal] inject android embedded backend\n[error] {ex}\n")
+                write_text(log_path, "\n".join(logs))
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android embedded backend injection failed before step {idx}; see {log_path}",
+                    output_dir=str(target_out_dir),
+                    command=["inject_android_embedded_backend"],
+                )
         if idx == len(commands):
             cwd = workspace_dir / "android"
             if not cwd.exists():

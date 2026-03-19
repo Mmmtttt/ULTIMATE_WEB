@@ -56,17 +56,20 @@ export function resolveApiBaseUrl() {
 }
 
 export function resolveBackendOrigin() {
+  const runtimeBase = getRuntimeApiBase()
   const envBase = getEnvApiBase()
-  if (envBase) {
-    if (!isAbsoluteHttpUrl(envBase)) {
+  const candidateBase = runtimeBase || envBase
+
+  if (candidateBase) {
+    if (!isAbsoluteHttpUrl(candidateBase)) {
       return ''
     }
 
     try {
-      const parsed = new URL(envBase)
+      const parsed = new URL(candidateBase)
       return `${parsed.protocol}//${parsed.host}`
     } catch (_) {
-      const matched = envBase.match(/^(https?:\/\/[^/]+)/i)
+      const matched = candidateBase.match(/^(https?:\/\/[^/]+)/i)
       return matched ? matched[1] : ''
     }
   }
