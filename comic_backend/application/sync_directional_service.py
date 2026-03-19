@@ -284,21 +284,35 @@ class DirectionalSyncService:
         delta = self.delta_from_known(remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {})
         datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
 
-        remote_asset_inv = self._request_json(
-            "GET",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
-            headers,
-            None,
-        )
         remote_asset_files = {}
-        if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict):
-            remote_asset_files = remote_asset_inv["data"].get("files", {}) or {}
+        asset_supported = True
+        try:
+            remote_asset_inv = self._request_json(
+                "GET",
+                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                headers,
+                None,
+            )
+            if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict):
+                remote_asset_files = remote_asset_inv["data"].get("files", {}) or {}
+        except RuntimeError as exc:
+            if self._is_http_status_error(exc, (404, 405)):
+                asset_supported = False
+            else:
+                raise
 
         applied = None
         if datasets:
             applied = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
 
-        asset_sync = self._push_assets_to_peer(peer["remote_base_url"], headers, remote_asset_files)
+        if asset_supported:
+            asset_sync = self._push_assets_to_peer(peer["remote_base_url"], headers, remote_asset_files)
+        else:
+            asset_sync = {
+                "status": "unsupported_remote",
+                "file_count": 0,
+                "message": "remote assets inventory endpoint not available",
+            }
         if not datasets and int(asset_sync.get("file_count", 0)) == 0:
             self._touch_peer(peer_id)
             return {"direction": "push", "peer_id": peer_id, "status": "no_change", "asset_sync": asset_sync}
@@ -361,6 +375,12 @@ class DirectionalSyncService:
                     files=files,
                     timeout=self.HTTP_TIMEOUT_SECONDS * 4,
                 )
+            if response.status_code in (404, 405):
+                return {
+                    "status": "unsupported_remote",
+                    "file_count": 0,
+                    "message": f"remote assets apply endpoint http {response.status_code}",
+                }
             if response.status_code >= 400:
                 raise RuntimeError(f"remote assets apply http {response.status_code}: {response.text}")
             payload = response.json()
@@ -390,6 +410,12 @@ class DirectionalSyncService:
             )
             if response.status_code == 204:
                 return {"status": "no_change", "file_count": 0}
+            if response.status_code in (404, 405):
+                return {
+                    "status": "unsupported_remote",
+                    "file_count": 0,
+                    "message": f"remote assets delta endpoint http {response.status_code}",
+                }
             if response.status_code >= 400:
                 raise RuntimeError(f"remote assets delta http {response.status_code}: {response.text}")
 
@@ -409,6 +435,11 @@ class DirectionalSyncService:
                     os.remove(temp_zip)
                 except Exception:
                     pass
+
+    @staticmethod
+    def _is_http_status_error(exc: Exception, status_codes: tuple) -> bool:
+        message = str(exc or "")
+        return any(f"http {code}" in message for code in status_codes)
 
     def _collect_asset_index(self) -> Dict[str, str]:
         index: Dict[str, str] = {}
