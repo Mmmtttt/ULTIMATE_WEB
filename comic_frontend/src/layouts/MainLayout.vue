@@ -76,6 +76,7 @@ const pageTitle = computed(() => {
     case '/preview': return '预览库'
     case '/subscribe': return '订阅'
     case '/mine': return '我的'
+    case '/sync': return 'Data Sync'
     default: return 'Ultimate'
   }
 })

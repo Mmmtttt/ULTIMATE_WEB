@@ -121,6 +121,12 @@ const routes = [
     component: () => import('@/views/SystemConfig.vue')
   },
   {
+    path: '/sync',
+    name: 'SyncCenter',
+    component: () => import('@/views/SyncCenter.vue'),
+    meta: { title: 'Data Sync' }
+  },
+  {
     path: '/trash',
     name: 'Trash',
     component: () => import('@/views/Trash.vue')
