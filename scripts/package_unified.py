@@ -339,7 +339,14 @@ public class MainActivity extends BridgeActivity {{
         if (!BACKEND_STARTED.compareAndSet(false, true)) {{
             return;
         }}
-        final String filesDir = getApplicationContext().getFilesDir().getAbsolutePath();
+        String dataRoot = null;
+        if (getApplicationContext().getExternalFilesDir(null) != null) {{
+            dataRoot = getApplicationContext().getExternalFilesDir(null).getAbsolutePath();
+        }}
+        if (dataRoot == null || dataRoot.trim().isEmpty()) {{
+            dataRoot = getApplicationContext().getFilesDir().getAbsolutePath();
+        }}
+        final String filesDir = dataRoot;
         final int backendPort = {backend_port};
         new Thread(() -> {{
             try {{
