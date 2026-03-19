@@ -31,7 +31,8 @@
         "flask-cors==4.0.0",
         "requests>=2.31.0",
         "PyYAML",
-        "Pillow"
+        "Pillow",
+        "beautifulsoup4"
       ],
       "capacitor_core_version": "7",
       "capacitor_cli_version": "7",

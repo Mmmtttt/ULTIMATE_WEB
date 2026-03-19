@@ -225,11 +225,24 @@ def ensure_android_project_chaquopy_root(android_project_dir: Path, chaquopy_ver
         write_text(build_gradle, patched)
 
 
+def ensure_android_manifest_network(android_project_dir: Path) -> None:
+    manifest = android_project_dir / "app" / "src" / "main" / "AndroidManifest.xml"
+    if not manifest.exists():
+        return
+    raw = manifest.read_text(encoding="utf-8")
+    patched = raw
+    if 'android:usesCleartextTraffic="true"' not in patched and "<application" in patched:
+        patched = patched.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
+    if patched != raw:
+        write_text(manifest, patched)
+
+
 def ensure_android_project_chaquopy_app(
     android_project_dir: Path,
     workspace_dir: Path,
     packager_cfg: Dict,
 ) -> None:
+    workspace_web_dir = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     app_build_gradle = android_project_dir / "app" / "build.gradle"
     if not app_build_gradle.exists():
         return
@@ -267,6 +280,7 @@ def ensure_android_project_chaquopy_app(
             "requests>=2.31.0",
             "PyYAML",
             "Pillow",
+            "beautifulsoup4",
         ]
     req_lines = "\n".join([f'                install("{item}")' for item in reqs if str(item).strip()])
     chaquopy_block = (
@@ -280,7 +294,7 @@ def ensure_android_project_chaquopy_app(
         "    }\n"
         "    sourceSets {\n"
         "        main {\n"
-        '            srcDirs = ["src/main/python", "../web/backend_source"]\n'
+        '            srcDirs = ["src/main/python"]\n'
         "        }\n"
         "    }\n"
         "}\n"
@@ -345,18 +359,60 @@ public class MainActivity extends BridgeActivity {{
     write_text(java_path, java_source)
 
     py_dir = android_project_dir / "app" / "src" / "main" / "python"
+    py_dir.mkdir(parents=True, exist_ok=True)
+    source_backend_dir = workspace_dir / workspace_web_dir / "backend_source"
+    if source_backend_dir.exists():
+        excluded_names = {
+            "__pycache__",
+            ".git",
+            ".idea",
+            ".vscode",
+            "venv",
+            "data",
+            "logs",
+            "output",
+            "third_party",
+        }
+        for item in source_backend_dir.iterdir():
+            if item.name in excluded_names:
+                continue
+            target = py_dir / item.name
+            if item.is_dir():
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(item, target)
+            else:
+                shutil.copy2(item, target)
+
     py_bootstrap = py_dir / "ultimate_android_backend.py"
+    bootstrap_build_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     py_source = """import os
 import sys
 import threading
+import importlib
+import importlib.util
+from datetime import datetime
 
 
 _started = False
 _lock = threading.Lock()
+BOOTSTRAP_BUILD_ID = "__BOOTSTRAP_BUILD_ID__"
+
+
+def _write_boot_log(files_dir, message):
+    try:
+        target_dir = str(files_dir or "").strip() or "."
+        os.makedirs(target_dir, exist_ok=True)
+        log_path = os.path.join(target_dir, "ultimate_backend_boot.log")
+        with open(log_path, "a", encoding="utf-8") as fp:
+            fp.write(f"{datetime.utcnow().isoformat()}Z {message}\\n")
+    except Exception:
+        pass
 
 
 def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false"):
     global _started
+    _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
     with _lock:
         if _started:
             return "already_started"
@@ -368,18 +424,41 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_PORT"] = str(int(port or 5000))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
+    _write_boot_log(files_dir, f"start requested host={host} port={port}")
 
-    if "." not in sys.path:
-        sys.path.insert(0, ".")
+    try:
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+        if module_dir not in sys.path:
+            sys.path.insert(0, module_dir)
+        backend_app = importlib.import_module("app")
+        _write_boot_log(files_dir, f"import app success file={getattr(backend_app, '__file__', None)!r}")
+        if not hasattr(backend_app, "run_backend_server"):
+            app_py = os.path.join(module_dir, "app.py")
+            if os.path.isfile(app_py):
+                spec = importlib.util.spec_from_file_location("ultimate_backend_app_local", app_py)
+                if spec and spec.loader:
+                    local_mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(local_mod)
+                    backend_app = local_mod
+                    _write_boot_log(files_dir, f"fallback local app.py loaded file={app_py!r}")
+        if not hasattr(backend_app, "run_backend_server"):
+            raise AttributeError("module 'app' has no attribute 'run_backend_server'")
+    except Exception as ex:
+        _write_boot_log(files_dir, f"import app failed: {ex!r}")
+        raise
 
-    import app as backend_app
+    try:
+        backend_app.run_backend_server(host="0.0.0.0", port=int(port or 5000), debug=False)
+    except Exception as ex:
+        _write_boot_log(files_dir, f"backend run failed: {ex!r}")
+        raise
 
-    backend_app.run_backend_server(host=host, port=int(port or 5000), debug=False)
+    _write_boot_log(files_dir, "backend started")
     return "started"
 """
+    py_source = py_source.replace("__BOOTSTRAP_BUILD_ID__", bootstrap_build_id)
     write_text(py_bootstrap, py_source)
 
-    workspace_web_dir = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
     if marker_path.exists():
         try:
@@ -402,6 +481,7 @@ def inject_android_embedded_backend(
     chaquopy_version = str(packager_cfg.get("chaquopy_version", "17.0.0")).strip() or "17.0.0"
     patch_android_min_sdk(android_project_dir, min_sdk)
     ensure_android_project_chaquopy_root(android_project_dir, chaquopy_version)
+    ensure_android_manifest_network(android_project_dir)
     ensure_android_project_chaquopy_app(android_project_dir, workspace_dir, packager_cfg)
 
 
