@@ -18,7 +18,7 @@
       <van-cell title="Connect Peer" label="Enter remote backend address and pairing code." />
       <van-field v-model.trim="connectForm.remoteBaseUrl" label="Remote URL" placeholder="http://192.168.1.88:5000" />
       <van-field v-model.trim="connectForm.pairingCode" label="Pairing Code" placeholder="6-digit code" />
-      <van-field v-model.trim="connectForm.requesterBaseUrl" label="Local URL (optional)" placeholder="http://192.168.1.100:5000" />
+      <van-cell title="Local URL" :value="autoRequesterBaseUrl || 'Auto detect failed'" label="Auto-detected from current backend" />
       <div class="group-actions">
         <van-button type="primary" block round :loading="connectingPeer" @click="connectPeer">
           Connect
@@ -86,6 +86,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { syncApi } from '@/api'
+import { resolveBackendOrigin } from '@/runtime/endpoint'
 
 const inviteTtlMinutes = ref(10)
 const creatingInvite = ref(false)
@@ -99,9 +100,21 @@ const peerActionLoading = ref({})
 
 const connectForm = reactive({
   remoteBaseUrl: '',
-  pairingCode: '',
-  requesterBaseUrl: ''
+  pairingCode: ''
 })
+
+const autoRequesterBaseUrl = ref('')
+
+function resolveAutoRequesterBaseUrl() {
+  const backendOrigin = String(resolveBackendOrigin() || '').trim()
+  if (backendOrigin) {
+    return backendOrigin
+  }
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return String(window.location.origin || '').trim()
+  }
+  return ''
+}
 
 function appendLog(text) {
   logs.value.unshift({
@@ -146,14 +159,22 @@ async function connectPeer() {
     showFailToast('Remote URL and pairing code are required')
     return
   }
+
+  const requesterBaseUrl = resolveAutoRequesterBaseUrl()
+  autoRequesterBaseUrl.value = requesterBaseUrl
+  if (!requesterBaseUrl) {
+    showFailToast('Cannot auto-detect local URL')
+    return
+  }
+
   connectingPeer.value = true
   try {
     const res = await syncApi.connectPairing({
       remote_base_url: connectForm.remoteBaseUrl,
       pairing_code: connectForm.pairingCode,
-      requester_base_url: connectForm.requesterBaseUrl
+      requester_base_url: requesterBaseUrl
     })
-    appendLog(`Connected peer: ${res?.data?.peer_id || '-'}`)
+    appendLog(`Connected peer: ${res?.data?.peer_id || '-'}, local=${requesterBaseUrl}`)
     showSuccessToast('Peer connected')
     connectForm.pairingCode = ''
     await loadPeers()
@@ -295,6 +316,7 @@ async function removePeer(peer) {
 }
 
 onMounted(async () => {
+  autoRequesterBaseUrl.value = resolveAutoRequesterBaseUrl()
   await loadPeers()
 })
 </script>
