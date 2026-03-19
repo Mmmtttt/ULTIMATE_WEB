@@ -4,3 +4,4 @@ Pillow
 requests>=2.31.0
 jmcomic
 PyYAML
+beautifulsoup4
