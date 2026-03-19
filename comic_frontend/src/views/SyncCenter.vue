@@ -173,7 +173,9 @@ async function pushToPeer(peer) {
   setPeerActionLoading(peerId, 'push', true)
   try {
     const res = await syncApi.pushDirectional(peerId)
-    appendLog(`Push ${peerId}: ${res?.data?.status || 'completed'}`)
+    const status = res?.data?.status || 'completed'
+    const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
+    appendLog(`Push ${peerId}: ${status}, assets=${assetCount}`)
     showSuccessToast('Push done')
     await loadPeers()
   } catch (error) {
@@ -188,7 +190,9 @@ async function pullFromPeer(peer) {
   setPeerActionLoading(peerId, 'pull', true)
   try {
     const res = await syncApi.pullDirectional(peerId)
-    appendLog(`Pull ${peerId}: ${res?.data?.status || 'completed'}`)
+    const status = res?.data?.status || 'completed'
+    const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
+    appendLog(`Pull ${peerId}: ${status}, assets=${assetCount}`)
     showSuccessToast('Pull done')
     await loadPeers()
   } catch (error) {

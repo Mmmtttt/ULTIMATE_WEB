@@ -1,8 +1,11 @@
 import json
 import os
 import secrets
+import shutil
 import socket
+import tempfile
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
@@ -11,12 +14,18 @@ import requests
 from core.constants import (
     ACTOR_JSON_FILE,
     AUTHOR_JSON_FILE,
+    CACHE_ROOT_DIR,
+    COMIC_DIR,
+    DATA_DIR,
     JSON_FILE,
     LISTS_JSON_FILE,
     META_DIR,
     RECOMMENDATION_JSON_FILE,
+    RECOMMENDATION_CACHE_DIR,
+    STATIC_DIR,
     TAGS_JSON_FILE,
     USER_CONFIG_JSON_FILE,
+    VIDEO_DIR,
     VIDEO_JSON_FILE,
     VIDEO_RECOMMENDATION_JSON_FILE,
 )
@@ -60,6 +69,8 @@ class DirectionalSyncService:
     }
 
     UNION_LIST_FIELDS: Set[str] = {"tag_ids", "list_ids", "actors"}
+    ASSET_ROOT_DIRS: List[str] = [COMIC_DIR, VIDEO_DIR, STATIC_DIR, CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR]
+    ASSET_ALLOWED_PREFIXES: tuple = ("comic/", "video/", "static/", "cache/", "recommendation_cache/")
 
     def __init__(self) -> None:
         os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
@@ -216,6 +227,14 @@ class DirectionalSyncService:
             datasets[name] = {"count": len(set(ids)), "ids": sorted(set(ids))}
         return {"generated_at": _iso(_utc_now()), "device": self._load_store().get("device", {}), "datasets": datasets}
 
+    def asset_inventory(self) -> Dict[str, Any]:
+        files = self._collect_asset_index()
+        return {
+            "generated_at": _iso(_utc_now()),
+            "file_count": len(files),
+            "files": files,
+        }
+
     def delta_from_known(self, known_inventory: Dict[str, Any]) -> Dict[str, Any]:
         known = known_inventory.get("datasets", {}) if isinstance(known_inventory, dict) else {}
         out = {}
@@ -264,12 +283,34 @@ class DirectionalSyncService:
         remote_inv = self._request_json("GET", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"), headers, None)
         delta = self.delta_from_known(remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {})
         datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
-        if not datasets:
+
+        remote_asset_inv = self._request_json(
+            "GET",
+            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+            headers,
+            None,
+        )
+        remote_asset_files = {}
+        if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict):
+            remote_asset_files = remote_asset_inv["data"].get("files", {}) or {}
+
+        applied = None
+        if datasets:
+            applied = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
+
+        asset_sync = self._push_assets_to_peer(peer["remote_base_url"], headers, remote_asset_files)
+        if not datasets and int(asset_sync.get("file_count", 0)) == 0:
             self._touch_peer(peer_id)
-            return {"direction": "push", "peer_id": peer_id, "status": "no_change"}
-        applied = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
+            return {"direction": "push", "peer_id": peer_id, "status": "no_change", "asset_sync": asset_sync}
+
         self._touch_peer(peer_id)
-        return {"direction": "push", "peer_id": peer_id, "status": "completed", "remote_apply": applied.get("data") if isinstance(applied, dict) else None}
+        return {
+            "direction": "push",
+            "peer_id": peer_id,
+            "status": "completed",
+            "remote_apply": applied.get("data") if isinstance(applied, dict) else None,
+            "asset_sync": asset_sync,
+        }
 
     def pull_from_peer(self, peer_id: str) -> Dict[str, Any]:
         peer = self._peer_or_raise(peer_id)
@@ -277,8 +318,180 @@ class DirectionalSyncService:
         local_inventory = self.inventory()
         remote_delta = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"), headers, {"known_inventory": local_inventory})
         applied = self.apply_delta(remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {})
+
+        local_asset_inventory = self.asset_inventory()
+        asset_pull = self._pull_assets_from_peer(peer["remote_base_url"], headers, local_asset_inventory.get("files", {}))
         self._touch_peer(peer_id)
-        return {"direction": "pull", "peer_id": peer_id, "status": "completed", "local_apply": applied}
+        return {
+            "direction": "pull",
+            "peer_id": peer_id,
+            "status": "completed",
+            "local_apply": applied,
+            "asset_sync": asset_pull,
+        }
+
+    def build_asset_delta_zip(self, known_files: Dict[str, str]) -> Dict[str, Any]:
+        local_files = self._collect_asset_index()
+        delta_paths = [path for path, sig in local_files.items() if str((known_files or {}).get(path, "")) != sig]
+        if not delta_paths:
+            return {"zip_path": "", "file_count": 0}
+
+        zip_path = self._create_asset_zip(delta_paths)
+        return {"zip_path": zip_path, "file_count": len(delta_paths)}
+
+    def apply_asset_zip_file(self, zip_path: str) -> Dict[str, Any]:
+        if not zip_path or not os.path.isfile(zip_path):
+            return {"file_count": 0, "status": "no_change"}
+        applied = self._extract_asset_zip(zip_path)
+        return {"file_count": applied, "status": "completed" if applied > 0 else "no_change"}
+
+    def _push_assets_to_peer(self, remote_base_url: str, headers: Dict[str, str], remote_files: Dict[str, str]) -> Dict[str, Any]:
+        delta = self.build_asset_delta_zip(remote_files if isinstance(remote_files, dict) else {})
+        zip_path = str(delta.get("zip_path", "")).strip()
+        file_count = int(delta.get("file_count", 0))
+        if not zip_path or file_count <= 0:
+            return {"status": "no_change", "file_count": 0}
+
+        try:
+            with open(zip_path, "rb") as fp:
+                files = {"package": ("assets_delta.zip", fp, "application/zip")}
+                response = requests.post(
+                    self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/apply"),
+                    headers=headers,
+                    files=files,
+                    timeout=self.HTTP_TIMEOUT_SECONDS * 4,
+                )
+            if response.status_code >= 400:
+                raise RuntimeError(f"remote assets apply http {response.status_code}: {response.text}")
+            payload = response.json()
+            if int(payload.get("code", 500)) != 200:
+                raise RuntimeError(f"remote assets apply failed: {payload.get('msg', 'unknown')}")
+            return {
+                "status": "completed",
+                "file_count": file_count,
+                "remote_apply": payload.get("data"),
+            }
+        finally:
+            if zip_path and os.path.isfile(zip_path):
+                try:
+                    os.remove(zip_path)
+                except Exception:
+                    pass
+
+    def _pull_assets_from_peer(self, remote_base_url: str, headers: Dict[str, str], known_files: Dict[str, str]) -> Dict[str, Any]:
+        temp_zip = ""
+        try:
+            response = requests.post(
+                self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download"),
+                headers=headers,
+                json={"known_files": known_files or {}},
+                timeout=self.HTTP_TIMEOUT_SECONDS * 8,
+                stream=True,
+            )
+            if response.status_code == 204:
+                return {"status": "no_change", "file_count": 0}
+            if response.status_code >= 400:
+                raise RuntimeError(f"remote assets delta http {response.status_code}: {response.text}")
+
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            if "application/json" in content_type:
+                payload = response.json()
+                if int(payload.get("code", 500)) != 200:
+                    raise RuntimeError(f"remote assets delta failed: {payload.get('msg', 'unknown')}")
+                return {"status": "no_change", "file_count": 0}
+
+            temp_zip = self._save_stream_to_temp_zip(response)
+            applied = self._extract_asset_zip(temp_zip)
+            return {"status": "completed" if applied > 0 else "no_change", "file_count": applied}
+        finally:
+            if temp_zip and os.path.isfile(temp_zip):
+                try:
+                    os.remove(temp_zip)
+                except Exception:
+                    pass
+
+    def _collect_asset_index(self) -> Dict[str, str]:
+        index: Dict[str, str] = {}
+        visited: Set[str] = set()
+        data_root = os.path.abspath(DATA_DIR)
+
+        for base_dir in self.ASSET_ROOT_DIRS:
+            if not base_dir:
+                continue
+            root = os.path.abspath(base_dir)
+            if root in visited:
+                continue
+            visited.add(root)
+            if not os.path.isdir(root):
+                continue
+
+            for current_root, _, files in os.walk(root):
+                for filename in files:
+                    abs_path = os.path.abspath(os.path.join(current_root, filename))
+                    if not abs_path.startswith(data_root):
+                        continue
+                    rel_path = os.path.relpath(abs_path, data_root).replace("\\", "/")
+                    if rel_path.startswith("meta_data/"):
+                        continue
+                    try:
+                        stat = os.stat(abs_path)
+                    except Exception:
+                        continue
+                    index[rel_path] = f"{int(stat.st_size)}:{int(stat.st_mtime)}"
+        return index
+
+    def _create_asset_zip(self, rel_paths: List[str]) -> str:
+        os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
+        fd, zip_path = tempfile.mkstemp(prefix="sync_assets_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
+        os.close(fd)
+
+        data_root = os.path.abspath(DATA_DIR)
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for rel in rel_paths:
+                normalized = str(rel or "").replace("\\", "/").lstrip("/")
+                if not normalized:
+                    continue
+                abs_path = os.path.abspath(os.path.join(data_root, normalized))
+                if not abs_path.startswith(data_root):
+                    continue
+                if not os.path.isfile(abs_path):
+                    continue
+                zf.write(abs_path, arcname=normalized)
+        return zip_path
+
+    def _save_stream_to_temp_zip(self, response: requests.Response) -> str:
+        os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
+        fd, zip_path = tempfile.mkstemp(prefix="sync_pull_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
+        os.close(fd)
+        with open(zip_path, "wb") as fp:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    fp.write(chunk)
+        return zip_path
+
+    def _extract_asset_zip(self, zip_path: str) -> int:
+        if not os.path.isfile(zip_path):
+            return 0
+        applied = 0
+        data_root = os.path.abspath(DATA_DIR)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for member in zf.infolist():
+                if member.is_dir():
+                    continue
+                rel = member.filename.replace("\\", "/").lstrip("/")
+                if not rel or rel.startswith("../") or "/../" in rel:
+                    continue
+                if not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
+                    continue
+
+                target = os.path.abspath(os.path.join(data_root, rel))
+                if not target.startswith(data_root):
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(member, "r") as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst, length=1024 * 1024)
+                applied += 1
+        return applied
 
     def _apply_dataset(self, cfg: Dict[str, Any], payload: Any) -> Dict[str, Any]:
         if cfg.get("kind") == "dict":

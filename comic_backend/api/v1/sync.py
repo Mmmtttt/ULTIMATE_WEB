@@ -1,4 +1,7 @@
-from flask import Blueprint, jsonify, request, send_file
+import os
+import tempfile
+
+from flask import Blueprint, after_this_request, jsonify, request, send_file
 
 from application.sync_app_service import SyncAppService
 from application.sync_directional_service import DirectionalSyncService
@@ -182,6 +185,81 @@ def directional_inventory():
     except Exception as exc:
         error_logger.error(f"sync directional inventory failed: {exc}")
         return error_response(500, "directional inventory failed")
+
+
+@sync_bp.route("/directional/assets/inventory", methods=["GET"])
+def directional_assets_inventory():
+    try:
+        token = _extract_sync_token()
+        peer = directional_service.verify_token(token)
+        if not peer:
+            return error_response(401, "invalid sync token")
+        return success_response(directional_service.asset_inventory())
+    except Exception as exc:
+        error_logger.error(f"sync directional assets inventory failed: {exc}")
+        return error_response(500, "directional assets inventory failed")
+
+
+@sync_bp.route("/directional/assets/apply", methods=["POST"])
+def directional_assets_apply():
+    try:
+        token = _extract_sync_token()
+        peer = directional_service.verify_token(token)
+        if not peer:
+            return error_response(401, "invalid sync token")
+
+        package = request.files.get("package")
+        if package is None:
+            return error_response(400, "package file is required")
+
+        fd, temp_path = tempfile.mkstemp(prefix="sync_assets_apply_", suffix=".zip")
+        os.close(fd)
+        package.save(temp_path)
+        try:
+            result = directional_service.apply_asset_zip_file(temp_path)
+        finally:
+            if os.path.isfile(temp_path):
+                os.remove(temp_path)
+        return success_response(result)
+    except Exception as exc:
+        error_logger.error(f"sync directional assets apply failed: {exc}")
+        return error_response(500, "directional assets apply failed")
+
+
+@sync_bp.route("/directional/assets/delta/download", methods=["POST"])
+def directional_assets_delta_download():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = _extract_sync_token(payload)
+        peer = directional_service.verify_token(token)
+        if not peer:
+            return error_response(401, "invalid sync token")
+
+        known_files = payload.get("known_files", {})
+        delta = directional_service.build_asset_delta_zip(known_files if isinstance(known_files, dict) else {})
+        zip_path = str(delta.get("zip_path", "")).strip()
+        file_count = int(delta.get("file_count", 0))
+        if not zip_path or file_count <= 0:
+            return ("", 204)
+
+        @after_this_request
+        def _cleanup(response):
+            try:
+                if os.path.isfile(zip_path):
+                    os.remove(zip_path)
+            except Exception:
+                pass
+            return response
+
+        return send_file(
+            zip_path,
+            as_attachment=True,
+            download_name="assets_delta.zip",
+            mimetype="application/zip",
+        )
+    except Exception as exc:
+        error_logger.error(f"sync directional assets delta download failed: {exc}")
+        return error_response(500, "directional assets delta download failed")
 
 
 @sync_bp.route("/directional/delta", methods=["POST"])
