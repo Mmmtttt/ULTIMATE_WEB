@@ -140,6 +140,40 @@ def get_npx_command() -> str:
     return "npx.cmd" if os.name == "nt" else "npx"
 
 
+def resolve_android_sdk_dir() -> str:
+    for key in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+        value = os.environ.get(key, "").strip()
+        if value and Path(value).exists():
+            return str(Path(value).resolve())
+
+    candidates: List[Path] = []
+    if os.name == "nt":
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            candidates.append(Path(local_appdata) / "Android" / "Sdk")
+        userprofile = os.environ.get("USERPROFILE", "").strip()
+        if userprofile:
+            candidates.append(Path(userprofile) / "AppData" / "Local" / "Android" / "Sdk")
+    else:
+        home = Path.home()
+        candidates.extend([
+            home / "Android" / "Sdk",
+            home / "Library" / "Android" / "sdk",
+        ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate.resolve())
+    return ""
+
+
+def write_android_local_properties(android_project_dir: Path, sdk_dir: str) -> Path:
+    local_properties = android_project_dir / "local.properties"
+    escaped = sdk_dir.replace("\\", "\\\\")
+    write_text(local_properties, f"sdk.dir={escaped}\n")
+    return local_properties
+
+
 def resolve_android_java_env() -> Dict[str, str]:
     env: Dict[str, str] = {}
     java_home = os.environ.get("JAVA_HOME", "").strip()
@@ -202,6 +236,8 @@ def write_desktop_bundle_scripts(
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
         "set SCRIPT_DIR=%~dp0\n"
+        "set FRONTEND_DIST_DIR=%SCRIPT_DIR%frontend_dist\n"
+        "cd /d \"%SCRIPT_DIR%\"\n"
         f"if exist \"%SCRIPT_DIR%bin\\{binary_name}.exe\" (\n"
         f"  \"%SCRIPT_DIR%bin\\{binary_name}.exe\"\n"
         "  exit /b %ERRORLEVEL%\n"
@@ -216,6 +252,8 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        "$env:FRONTEND_DIST_DIR = Join-Path $scriptDir \"frontend_dist\"\n"
+        "Set-Location $scriptDir\n"
         f"$exePath = Join-Path $scriptDir \"bin/{binary_name}.exe\"\n"
         "if (Test-Path $exePath) {\n"
         "    & $exePath\n"
@@ -233,6 +271,8 @@ def write_desktop_bundle_scripts(
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/frontend_dist\"\n"
+        "cd \"$SCRIPT_DIR\"\n"
         f"if [ -x \"$SCRIPT_DIR/bin/{binary_name}\" ]; then\n"
         f"  exec \"$SCRIPT_DIR/bin/{binary_name}\"\n"
         "fi\n"
@@ -248,6 +288,24 @@ def write_desktop_bundle_scripts(
         sh_path.chmod(0o755)
     except OSError:
         pass
+
+    app_bat = (
+        "@echo off\n"
+        "set SCRIPT_DIR=%~dp0\n"
+        "start \"\" \"%SCRIPT_DIR%start_backend.bat\"\n"
+        "timeout /t 2 >nul\n"
+        "start \"\" \"http://127.0.0.1:5000/\"\n"
+    )
+    write_text(bundle_dir / "start_app.bat", app_bat)
+
+    app_ps1 = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+        "Start-Process -FilePath (Join-Path $scriptDir 'start_backend.ps1') -NoNewWindow\n"
+        "Start-Sleep -Seconds 2\n"
+        "Start-Process 'http://127.0.0.1:5000/'\n"
+    )
+    write_text(bundle_dir / "start_app.ps1", app_ps1)
 
 
 def prepare_desktop_release_bundle(
@@ -271,6 +329,10 @@ def prepare_desktop_release_bundle(
     runtime_env_src = staged_target_dir / "runtime.env"
     if runtime_env_src.exists():
         shutil.copy2(runtime_env_src, bundle_dir / "runtime.env")
+
+    server_config_src = staged_target_dir / "server_config.json"
+    if server_config_src.exists():
+        shutil.copy2(server_config_src, bundle_dir / "server_config.json")
 
     manifest_src = staged_target_dir / "package_manifest.json"
     if manifest_src.exists():
@@ -448,6 +510,8 @@ def write_android_capacitor_plan(
 ) -> Tuple[List[List[str]], Path, str]:
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip()
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
+    embed_backend = bool(packager_cfg.get("embed_backend", False))
+    backend_port = int(packager_cfg.get("backend_port", 5000))
     staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
     workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     gradle_task = str(packager_cfg.get("gradle_task", "assembleDebug")).strip() or "assembleDebug"
@@ -466,9 +530,44 @@ def write_android_capacitor_plan(
         raise FileNotFoundError(f"android staged web dir not found: {staged_web_dir}")
     shutil.copytree(staged_web_dir, workspace_dir / workspace_web_dir_name)
 
+    api_base_url = str(packager_cfg.get("api_base_url", "")).strip()
+    if embed_backend and not api_base_url:
+        api_base_url = f"http://127.0.0.1:{backend_port}/api"
+    if api_base_url:
+        runtime_js_path = workspace_dir / workspace_web_dir_name / "runtime-api-base.js"
+        write_text(
+            runtime_js_path,
+            "window.__ULTIMATE_API_BASE_URL = "
+            + json.dumps(api_base_url, ensure_ascii=False)
+            + ";\n",
+        )
+        index_html = workspace_dir / workspace_web_dir_name / "index.html"
+        if index_html.exists():
+            raw = index_html.read_text(encoding="utf-8")
+            marker = '<script src="./runtime-api-base.js"></script>'
+            if marker not in raw:
+                if "</head>" in raw:
+                    raw = raw.replace("</head>", f"  {marker}\n</head>")
+                else:
+                    raw = f"{marker}\n{raw}"
+                write_text(index_html, raw)
+
     staged_backend_dir = staged_target_dir / "comic_backend"
     if staged_backend_dir.exists():
         shutil.copytree(staged_backend_dir, workspace_dir / workspace_web_dir_name / "backend_source")
+        if embed_backend:
+            bootstrap_payload = {
+                "enabled": True,
+                "runtime_profile": "android",
+                "backend_entry": "backend_source/app.py",
+                "backend_port": backend_port,
+                "android_data_env_key": "ANDROID_APP_FILES_DIR",
+                "default_data_subdir": "app_data",
+            }
+            write_text(
+                workspace_dir / workspace_web_dir_name / "backend_bootstrap.json",
+                json.dumps(bootstrap_payload, ensure_ascii=False, indent=2) + "\n",
+            )
 
     runtime_env = staged_target_dir / "runtime.env"
     if runtime_env.exists():
@@ -537,6 +636,8 @@ def write_android_capacitor_plan(
     plan.append(f"- workspace web dir: `{workspace_web_dir_name}`")
     plan.append(f"- workspace dir: `{workspace_dir}`")
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
+    if embed_backend:
+        plan.append(f"- embedded backend api base: `http://127.0.0.1:{backend_port}/api`")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
 
@@ -576,6 +677,7 @@ def package_android(
         packager_cfg,
     )
     android_env = resolve_android_java_env()
+    sdk_dir = resolve_android_sdk_dir()
     if execute and "JAVA_HOME" not in android_env:
         return PackageResult(
             target=target,
@@ -584,6 +686,17 @@ def package_android(
             output_dir=str(target_out_dir),
             command=["java", "--version"],
         )
+    if execute and not sdk_dir:
+        return PackageResult(
+            target=target,
+            status="failed",
+            message="android build requires Android SDK, but ANDROID_SDK_ROOT/ANDROID_HOME was not detected",
+            output_dir=str(target_out_dir),
+            command=["sdkmanager", "--version"],
+        )
+    if sdk_dir:
+        android_env.setdefault("ANDROID_SDK_ROOT", sdk_dir)
+        android_env.setdefault("ANDROID_HOME", sdk_dir)
 
     if not execute:
         return PackageResult(
@@ -607,6 +720,7 @@ def package_android(
                     output_dir=str(target_out_dir),
                     command=cmd,
                 )
+            write_android_local_properties(cwd, sdk_dir)
         try:
             code, output = run_cmd(cmd, cwd=cwd, env=android_env)
         except FileNotFoundError:

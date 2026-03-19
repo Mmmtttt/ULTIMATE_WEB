@@ -27,6 +27,22 @@ def _resolve_data_dir():
     configured_data_dir = storage.get("data_dir", "./comic_backend/data")
     configured_data_dir = str(configured_data_dir or "./comic_backend/data").strip()
     configured_data_dir = os.path.expandvars(os.path.expanduser(configured_data_dir))
+    runtime_profile = str(os.environ.get("BACKEND_RUNTIME_PROFILE", "")).strip().lower()
+    android_files_dir = str(os.environ.get("ANDROID_APP_FILES_DIR", "")).strip()
+
+    if runtime_profile == "android" and android_files_dir:
+        default_values = {
+            "",
+            ".",
+            "./comic_backend/data",
+            "comic_backend/data",
+            "./data",
+            "data",
+        }
+        if configured_data_dir.replace("\\", "/").strip().lower() in default_values:
+            return os.path.abspath(os.path.join(android_files_dir, "app_data"))
+        if not os.path.isabs(configured_data_dir):
+            return os.path.abspath(os.path.join(android_files_dir, configured_data_dir))
 
     if os.path.isabs(configured_data_dir):
         return os.path.abspath(configured_data_dir)

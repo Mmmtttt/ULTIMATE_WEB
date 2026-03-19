@@ -53,14 +53,71 @@ register_blueprints(app)
 app.static_folder = STATIC_DIR
 
 
+def resolve_frontend_dist_dir() -> str:
+    # Priority:
+    # 1) explicit env for packaged desktop bundle
+    # 2) project frontend dist for source run
+    # 3) adjacent frontend_dist (fallback)
+    env_path = str(os.environ.get("FRONTEND_DIST_DIR", "")).strip()
+    if env_path and os.path.isdir(env_path):
+        return os.path.abspath(env_path)
+
+    project_dist = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "comic_frontend", "dist")
+    )
+    if os.path.isdir(project_dist):
+        return project_dist
+
+    adjacent = os.path.abspath(os.path.join(os.getcwd(), "frontend_dist"))
+    if os.path.isdir(adjacent):
+        return adjacent
+    return ""
+
+
+FRONTEND_DIST_DIR = resolve_frontend_dist_dir()
+FRONTEND_ENABLED = bool(FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
+
+
 @app.route('/')
 def index():
+    if FRONTEND_ENABLED:
+        return send_from_directory(FRONTEND_DIST_DIR, "index.html")
     return "Comic Backend API"
 
 
 @app.route('/health')
 def health():
     return success_response({"status": "ok"})
+
+
+@app.route('/<path:path>')
+def frontend_fallback(path):
+    """
+    Serve frontend static assets and SPA routes when frontend_dist is available.
+    Keep API/media/static routes handled by their dedicated endpoints.
+    """
+    if not FRONTEND_ENABLED:
+        return make_response("Not Found", 404)
+
+    normalized = str(path or "").lstrip("/")
+    if not normalized:
+        return send_from_directory(FRONTEND_DIST_DIR, "index.html")
+
+    reserved_prefixes = ("api/", "static/", "media/")
+    if normalized.startswith(reserved_prefixes) or normalized in ("api", "static", "media", "health"):
+        return make_response("Not Found", 404)
+
+    candidate = os.path.abspath(os.path.join(FRONTEND_DIST_DIR, normalized))
+    frontend_root = os.path.abspath(FRONTEND_DIST_DIR)
+    try:
+        if os.path.commonpath([frontend_root, candidate]) != frontend_root:
+            return make_response("Not Found", 404)
+    except Exception:
+        return make_response("Not Found", 404)
+
+    if os.path.isfile(candidate):
+        return send_from_directory(FRONTEND_DIST_DIR, normalized)
+    return send_from_directory(FRONTEND_DIST_DIR, "index.html")
 
 @app.route('/static/cover/<path:filename>')
 def serve_cover(filename):

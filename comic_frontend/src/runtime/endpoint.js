@@ -17,6 +17,18 @@ function getEnvApiBase() {
   return String(import.meta.env.VITE_API_BASE_URL || '').trim()
 }
 
+function getRuntimeApiBase() {
+  if (typeof window === 'undefined') return ''
+  const injected = String(window.__ULTIMATE_API_BASE_URL || '').trim()
+  if (injected) return injected
+  try {
+    const fromStorage = String(window.localStorage?.getItem('ULTIMATE_API_BASE_URL') || '').trim()
+    return fromStorage
+  } catch (_) {
+    return ''
+  }
+}
+
 function getDevBackendOrigin() {
   const location = getLocation()
   if (!location) return ''
@@ -25,6 +37,11 @@ function getDevBackendOrigin() {
 }
 
 export function resolveApiBaseUrl() {
+  const runtimeBase = getRuntimeApiBase()
+  if (runtimeBase) {
+    return trimTrailingSlash(runtimeBase)
+  }
+
   const envBase = getEnvApiBase()
   if (envBase) {
     return trimTrailingSlash(envBase)
