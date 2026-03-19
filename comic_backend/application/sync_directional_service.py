@@ -185,12 +185,46 @@ class DirectionalSyncService:
             }
         )
         store["peers"][peer_id] = peer
+
+        # Remove stale peers pointing to the same remote URL to avoid duplicate entries
+        # with expired tokens after repeated pairing.
+        for existing_id, existing_peer in list(store.get("peers", {}).items()):
+            if existing_id == peer_id:
+                continue
+            existing_url = self._normalize_url(str(existing_peer.get("remote_base_url", "")).strip())
+            if existing_url and existing_url == remote_base:
+                store["peers"].pop(existing_id, None)
+
         self._save_store(store)
         return peer
 
     def list_peers(self) -> List[Dict[str, Any]]:
         store = self._load_store()
-        peers = list(store.get("peers", {}).values())
+        deduped: Dict[str, Dict[str, Any]] = {}
+        for peer in store.get("peers", {}).values():
+            peer_id = str(peer.get("peer_id", "")).strip()
+            key_url = self._normalize_url(str(peer.get("remote_base_url", "")).strip())
+            dedupe_key = key_url or f"peer:{peer_id}"
+            current = deduped.get(dedupe_key)
+            if current is None:
+                deduped[dedupe_key] = peer
+                continue
+
+            current_updated = str(current.get("updated_at", "")).strip()
+            candidate_updated = str(peer.get("updated_at", "")).strip()
+            if candidate_updated > current_updated:
+                deduped[dedupe_key] = peer
+
+        if len(deduped) != len(store.get("peers", {})):
+            new_peers: Dict[str, Dict[str, Any]] = {}
+            for peer in deduped.values():
+                pid = str(peer.get("peer_id", "")).strip()
+                if pid:
+                    new_peers[pid] = peer
+            store["peers"] = new_peers
+            self._save_store(store)
+
+        peers = list(deduped.values())
         peers.sort(key=lambda x: str(x.get("display_name", "")).lower())
         return peers
 
@@ -382,18 +416,53 @@ class DirectionalSyncService:
                 else {}
             )
             data_sync = self._summarize_dataset_delta(datasets if isinstance(datasets, dict) else {})
+            asset_sync = {
+                "status": "unsupported_remote",
+                "file_count": 0,
+                "total_bytes": 0,
+                "total_mb": 0.0,
+                "message": "remote does not support assets estimate endpoint",
+            }
+            try:
+                remote_asset_inv = self._request_json(
+                    "GET",
+                    self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                    headers,
+                    None,
+                )
+                remote_files = (
+                    remote_asset_inv.get("data", {}).get("files", {})
+                    if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict)
+                    else {}
+                )
+                if isinstance(remote_files, dict):
+                    asset_sync = self._estimate_pull_assets_from_remote(
+                        remote_files=remote_files,
+                        local_files=local_files if isinstance(local_files, dict) else {},
+                    )
+            except RuntimeError as asset_exc:
+                if self._is_http_status_error(asset_exc, (404, 405)):
+                    asset_sync = {
+                        "status": "unsupported_remote",
+                        "file_count": 0,
+                        "total_bytes": 0,
+                        "total_mb": 0.0,
+                        "message": "remote does not support assets inventory endpoint",
+                    }
+                else:
+                    asset_sync = {
+                        "status": "estimate_failed",
+                        "file_count": 0,
+                        "total_bytes": 0,
+                        "total_mb": 0.0,
+                        "message": str(asset_exc),
+                    }
             return {
                 "direction": "pull",
                 "peer_id": peer_id,
                 "estimated_at": _iso(_utc_now()),
                 "data_sync": data_sync,
-                "asset_sync": {
-                    "status": "unsupported_remote",
-                    "file_count": 0,
-                    "total_bytes": 0,
-                    "total_mb": 0.0,
-                    "message": "remote does not support assets estimate endpoint",
-                },
+                "asset_sync": asset_sync,
             }
 
     def push_to_peer(self, peer_id: str) -> Dict[str, Any]:
@@ -671,6 +740,40 @@ class DirectionalSyncService:
             "total_bytes": total_bytes,
             "total_mb": round(total_bytes / (1024 * 1024), 2),
         }
+
+    def _estimate_pull_assets_from_remote(self, remote_files: Dict[str, str], local_files: Dict[str, str]) -> Dict[str, Any]:
+        file_count = 0
+        total_bytes = 0
+        local_map = local_files if isinstance(local_files, dict) else {}
+
+        for rel_path, remote_sig in (remote_files or {}).items():
+            rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+            if not rel or not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
+                continue
+            local_sig = str(local_map.get(rel, ""))
+            if local_sig == str(remote_sig):
+                continue
+            file_count += 1
+            total_bytes += self._signature_size(remote_sig)
+
+        return {
+            "status": "estimated",
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+            "total_mb": round(total_bytes / (1024 * 1024), 2),
+        }
+
+    @staticmethod
+    def _signature_size(signature: Any) -> int:
+        text = str(signature or "").strip()
+        if not text:
+            return 0
+        head = text.split(":", 1)[0]
+        try:
+            size = int(head)
+        except Exception:
+            return 0
+        return size if size > 0 else 0
 
     def _collect_asset_index(self) -> Dict[str, str]:
         index: Dict[str, str] = {}
