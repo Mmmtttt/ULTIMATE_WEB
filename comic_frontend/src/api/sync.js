@@ -40,6 +40,34 @@ export const syncApi = {
   getPackageDownloadUrl(sessionId, packageName) {
     const url = `/v1/sync/download/${encodeURIComponent(sessionId)}/${encodeURIComponent(packageName)}`
     return resolveBackendApiUrl(url)
+  },
+
+  createPairingInvite(payload = {}) {
+    return request.post('/v1/sync/pairing/invite', payload)
+  },
+
+  claimPairingInvite(payload = {}) {
+    return request.post('/v1/sync/pairing/claim', payload)
+  },
+
+  connectPairing(payload = {}) {
+    return request.post('/v1/sync/pairing/connect', payload)
+  },
+
+  listPeers() {
+    return request.get('/v1/sync/peers')
+  },
+
+  removePeer(peerId) {
+    return request.delete(`/v1/sync/peers/${encodeURIComponent(peerId)}`)
+  },
+
+  pushDirectional(peerId) {
+    return request.post('/v1/sync/directional/push', { peer_id: peerId })
+  },
+
+  pullDirectional(peerId) {
+    return request.post('/v1/sync/directional/pull', { peer_id: peerId })
   }
 }
 

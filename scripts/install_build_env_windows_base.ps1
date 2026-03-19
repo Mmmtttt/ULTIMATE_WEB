@@ -348,21 +348,22 @@ Run-Step "Write conda base activation scripts for Android SDK env vars" {
     )
     Set-Content -Path $batPath -Value $batLines -Encoding Ascii
 
-    $ps1Lines = @(
-        '$env:JAVA_HOME = "' + $javaHome + '"',
-        '$javaBin = Join-Path $env:JAVA_HOME "bin"',
-        'if ($env:Path -notlike "*$javaBin*") { $env:Path = "$javaBin;$env:Path" }',
-        '$env:ANDROID_SDK_ROOT = "' + $SdkRoot + '"',
-        '$env:ANDROID_HOME = $env:ANDROID_SDK_ROOT',
-        '$androidBins = @(',
-        '  (Join-Path $env:ANDROID_SDK_ROOT "cmdline-tools\latest\bin"),',
-        '  (Join-Path $env:ANDROID_SDK_ROOT "platform-tools")',
-        ')',
-        'foreach ($bin in $androidBins) {',
-        '  if ($env:Path -notlike "*$bin*") { $env:Path = "$bin;$env:Path" }',
-        '}'
-    )
-    Set-Content -Path $ps1Path -Value $ps1Lines -Encoding Ascii
+    $ps1Template = @'
+$env:JAVA_HOME = "{0}"
+$javaBin = Join-Path $env:JAVA_HOME "bin"
+if ($env:Path -notlike "*$javaBin*") { $env:Path = "$javaBin;$env:Path" }
+$env:ANDROID_SDK_ROOT = "{1}"
+$env:ANDROID_HOME = $env:ANDROID_SDK_ROOT
+$androidBins = @(
+  (Join-Path $env:ANDROID_SDK_ROOT "cmdline-tools\latest\bin"),
+  (Join-Path $env:ANDROID_SDK_ROOT "platform-tools")
+)
+foreach ($bin in $androidBins) {
+  if ($env:Path -notlike "*$bin*") { $env:Path = "$bin;$env:Path" }
+}
+'@
+    $ps1Content = [string]::Format($ps1Template, $javaHome, $SdkRoot)
+    Set-Content -Path $ps1Path -Value $ps1Content -Encoding Ascii
 }
 
 if (-not $DryRun) {
