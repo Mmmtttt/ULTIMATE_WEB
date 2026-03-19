@@ -43,6 +43,20 @@
             <div class="peer-meta">URL: {{ peer.remote_base_url || '-' }}</div>
             <div class="peer-meta">Last Sync: {{ peer.last_sync_at || '-' }}</div>
           </div>
+          <div v-if="getPeerTask(peer.peer_id)" class="peer-progress">
+            <div class="peer-progress-head">
+              <span>{{ formatTaskTitle(getPeerTask(peer.peer_id)) }}</span>
+              <span>{{ Number(getPeerTask(peer.peer_id)?.progress || 0) }}%</span>
+            </div>
+            <van-progress
+              :percentage="Math.max(0, Math.min(100, Number(getPeerTask(peer.peer_id)?.progress || 0)))"
+              :show-pivot="false"
+              :stroke-width="6"
+            />
+            <div class="peer-meta">Status: {{ getPeerTask(peer.peer_id)?.status || '-' }} | Stage: {{ getPeerTask(peer.peer_id)?.stage || '-' }}</div>
+            <div class="peer-meta" v-if="getPeerTask(peer.peer_id)?.message">{{ getPeerTask(peer.peer_id)?.message }}</div>
+            <div class="peer-meta" v-if="formatTaskExtra(getPeerTask(peer.peer_id))">{{ formatTaskExtra(getPeerTask(peer.peer_id)) }}</div>
+          </div>
           <div class="peer-actions">
             <van-button size="small" plain type="primary" :loading="isPeerActionLoading(peer.peer_id, 'preview_push')" @click="previewAndConfirm(peer, 'push')">
               Preview Push
@@ -82,7 +96,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { syncApi } from '@/api'
@@ -97,6 +111,9 @@ const inviteInfo = ref(null)
 const peers = ref([])
 const logs = ref([])
 const peerActionLoading = ref({})
+const peerTaskMap = ref({})
+const taskPollingTokens = ref({})
+const pageAlive = ref(true)
 
 const connectForm = reactive({
   remoteBaseUrl: '',
@@ -136,6 +153,50 @@ function setPeerActionLoading(peerId, action, value) {
 
 function isPeerActionLoading(peerId, action) {
   return Boolean(peerActionLoading.value[`${peerId}_${action}`])
+}
+
+function setPeerTask(peerId, task) {
+  peerTaskMap.value = {
+    ...peerTaskMap.value,
+    [peerId]: task || null
+  }
+}
+
+function getPeerTask(peerId) {
+  return peerTaskMap.value[peerId] || null
+}
+
+function formatTaskTitle(task) {
+  const direction = String(task?.direction || '').toUpperCase()
+  if (!direction) {
+    return 'Sync Task'
+  }
+  return `${direction} Task`
+}
+
+function formatTaskExtra(task) {
+  const extra = task?.extra || {}
+  if (!extra || typeof extra !== 'object') {
+    return ''
+  }
+  const parts = []
+  if (Number(extra.record_count || 0) > 0) {
+    parts.push(`records=${Number(extra.record_count || 0)}`)
+  }
+  if (Number(extra.file_count || 0) > 0) {
+    parts.push(`files=${Number(extra.file_count || 0)}`)
+  }
+  if (Number(extra.applied_files || 0) > 0) {
+    parts.push(`applied=${Number(extra.applied_files || 0)}`)
+  }
+  if (Number(extra.downloaded_bytes || 0) > 0) {
+    parts.push(`downloaded=${Math.round(Number(extra.downloaded_bytes || 0) / 1024 / 1024)}MB`)
+  }
+  return parts.join(', ')
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function createInvite() {
@@ -253,42 +314,78 @@ async function previewAndConfirm(peer, direction) {
   }
 }
 
-async function pushToPeer(peer) {
+async function runDirectionalTask(peer, direction) {
   const peerId = peer.peer_id
-  setPeerActionLoading(peerId, 'push', true)
+  const actionKey = direction === 'push' ? 'push' : 'pull'
+  if (!peerId) {
+    showFailToast('Invalid peer')
+    return
+  }
+  if (isPeerActionLoading(peerId, actionKey)) {
+    return
+  }
+
+  const tokenKey = `${peerId}_${actionKey}`
+  const token = `${Date.now()}_${Math.random()}`
+  taskPollingTokens.value = {
+    ...taskPollingTokens.value,
+    [tokenKey]: token
+  }
+
+  setPeerActionLoading(peerId, actionKey, true)
   try {
-    const res = await syncApi.pushDirectional(peerId)
-    const status = res?.data?.status || 'completed'
-    const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
-    const assetStatus = res?.data?.asset_sync?.status || 'unknown'
-    const assetMsg = res?.data?.asset_sync?.message ? `, msg=${res.data.asset_sync.message}` : ''
-    appendLog(`Push ${peerId}: ${status}, asset_status=${assetStatus}, assets=${assetCount}${assetMsg}`)
-    showSuccessToast('Push done')
-    await loadPeers()
+    const startRes = await syncApi.startDirectionalTask(peerId, direction)
+    const task = startRes?.data || {}
+    const taskId = String(task?.task_id || '').trim()
+    if (!taskId) {
+      throw new Error('Task start failed: missing task id')
+    }
+
+    setPeerTask(peerId, task)
+    appendLog(`Task started: ${direction} peer=${peerId}, task=${taskId}`)
+
+    while (pageAlive.value) {
+      if (taskPollingTokens.value[tokenKey] !== token) {
+        break
+      }
+      await sleep(900)
+      const taskRes = await syncApi.getDirectionalTask(taskId)
+      const latestTask = taskRes?.data || {}
+      setPeerTask(peerId, latestTask)
+      const status = String(latestTask?.status || '').toLowerCase()
+
+      if (status === 'completed') {
+        const result = latestTask?.result || {}
+        const assetCount = Number(result?.asset_sync?.file_count || 0)
+        const assetStatus = result?.asset_sync?.status || 'unknown'
+        appendLog(`${direction.toUpperCase()} ${peerId}: completed, asset_status=${assetStatus}, assets=${assetCount}`)
+        showSuccessToast(`${direction.toUpperCase()} done`)
+        await loadPeers()
+        break
+      }
+      if (status === 'failed') {
+        const failedMsg = latestTask?.error?.message || latestTask?.message || `${direction} failed`
+        appendLog(`${direction.toUpperCase()} ${peerId}: failed, msg=${failedMsg}`)
+        showFailToast(failedMsg)
+        break
+      }
+    }
   } catch (error) {
-    showFailToast(error?.message || 'Push failed')
+    showFailToast(error?.message || `${direction} failed`)
   } finally {
-    setPeerActionLoading(peerId, 'push', false)
+    const current = { ...taskPollingTokens.value }
+    delete current[tokenKey]
+    taskPollingTokens.value = current
+    setPeerActionLoading(peerId, actionKey, false)
   }
 }
 
+async function pushToPeer(peer) {
+  await runDirectionalTask(peer, 'push')
+}
+
 async function pullFromPeer(peer) {
-  const peerId = peer.peer_id
-  setPeerActionLoading(peerId, 'pull', true)
-  try {
-    const res = await syncApi.pullDirectional(peerId)
-    const status = res?.data?.status || 'completed'
-    const assetCount = Number(res?.data?.asset_sync?.file_count || 0)
-    const assetStatus = res?.data?.asset_sync?.status || 'unknown'
-    const assetMsg = res?.data?.asset_sync?.message ? `, msg=${res.data.asset_sync.message}` : ''
-    appendLog(`Pull ${peerId}: ${status}, asset_status=${assetStatus}, assets=${assetCount}${assetMsg}`)
-    showSuccessToast('Pull done')
-    await loadPeers()
-  } catch (error) {
-    showFailToast(error?.message || 'Pull failed')
-  } finally {
-    setPeerActionLoading(peerId, 'pull', false)
-  }
+  await runDirectionalTask(peer, 'pull')
 }
 
 async function removePeer(peer) {
@@ -316,8 +413,14 @@ async function removePeer(peer) {
 }
 
 onMounted(async () => {
+  pageAlive.value = true
   autoRequesterBaseUrl.value = resolveAutoRequesterBaseUrl()
   await loadPeers()
+})
+
+onUnmounted(() => {
+  pageAlive.value = false
+  taskPollingTokens.value = {}
 })
 </script>
 
@@ -346,6 +449,23 @@ onMounted(async () => {
 
 .peer-main {
   margin-bottom: 10px;
+}
+
+.peer-progress {
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+}
+
+.peer-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
 }
 
 .peer-name {

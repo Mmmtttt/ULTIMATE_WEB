@@ -4,10 +4,12 @@ import secrets
 import shutil
 import socket
 import tempfile
+import threading
 import uuid
 import zipfile
+import copy
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import requests
 
@@ -72,9 +74,187 @@ class DirectionalSyncService:
     UNION_LIST_FIELDS: Set[str] = {"tag_ids", "list_ids", "actors"}
     ASSET_ROOT_DIRS: List[str] = [COMIC_DIR, VIDEO_DIR, STATIC_DIR, CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR]
     ASSET_ALLOWED_PREFIXES: tuple = ("comic/", "video/", "static/", "cache/", "recommendation_cache/")
+    TASK_MAX_KEEP = 50
+    _TASK_LOCK = threading.Lock()
+    _TASKS: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self) -> None:
         os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
+
+    def start_directional_task(self, peer_id: str, direction: str) -> Dict[str, Any]:
+        direction_key = str(direction or "").strip().lower()
+        if direction_key not in {"push", "pull"}:
+            raise ValueError("direction must be push or pull")
+        self._peer_or_raise(str(peer_id or "").strip())
+
+        now_iso = _iso(_utc_now())
+        task_id = f"sync_task_{uuid.uuid4().hex}"
+        task = {
+            "task_id": task_id,
+            "peer_id": str(peer_id or "").strip(),
+            "direction": direction_key,
+            "status": "queued",
+            "stage": "queued",
+            "progress": 0,
+            "message": "task queued",
+            "extra": {},
+            "result": None,
+            "error": None,
+            "created_at": now_iso,
+            "started_at": "",
+            "updated_at": now_iso,
+            "finished_at": "",
+        }
+
+        with self._TASK_LOCK:
+            self._TASKS[task_id] = task
+            self._prune_tasks_locked()
+
+        thread = threading.Thread(
+            target=self._execute_directional_task,
+            args=(task_id,),
+            daemon=True,
+        )
+        thread.start()
+        return self.get_directional_task(task_id) or task
+
+    def get_directional_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        key = str(task_id or "").strip()
+        if not key:
+            return None
+        with self._TASK_LOCK:
+            task = self._TASKS.get(key)
+            if not isinstance(task, dict):
+                return None
+            return copy.deepcopy(task)
+
+    def _execute_directional_task(self, task_id: str) -> None:
+        task = self.get_directional_task(task_id)
+        if not isinstance(task, dict):
+            return
+
+        peer_id = str(task.get("peer_id", "")).strip()
+        direction = str(task.get("direction", "")).strip().lower()
+        now_iso = _iso(_utc_now())
+        self._update_directional_task(
+            task_id,
+            status="running",
+            stage="starting",
+            progress=1,
+            message=f"{direction} started",
+            started_at=now_iso,
+        )
+
+        def _progress_cb(progress: int, stage: str, message: str = "", extra: Optional[Dict[str, Any]] = None) -> None:
+            self._update_directional_task(
+                task_id,
+                status="running",
+                stage=stage,
+                progress=progress,
+                message=message,
+                extra=extra or {},
+            )
+
+        try:
+            if direction == "push":
+                result = self.push_to_peer(peer_id, progress_cb=_progress_cb)
+            else:
+                result = self.pull_from_peer(peer_id, progress_cb=_progress_cb)
+
+            self._update_directional_task(
+                task_id,
+                status="completed",
+                stage="completed",
+                progress=100,
+                message=f"{direction} completed",
+                result=result,
+                finished_at=_iso(_utc_now()),
+            )
+        except Exception as exc:
+            app_logger.exception(f"[sync] directional task failed task_id={task_id}: {exc}")
+            self._update_directional_task(
+                task_id,
+                status="failed",
+                stage="failed",
+                progress=max(1, int(task.get("progress", 0) or 0)),
+                message=str(exc),
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+                finished_at=_iso(_utc_now()),
+            )
+
+    def _update_directional_task(
+        self,
+        task_id: str,
+        *,
+        status: Optional[str] = None,
+        stage: Optional[str] = None,
+        progress: Optional[int] = None,
+        message: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
+        result: Any = None,
+        error: Any = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> None:
+        with self._TASK_LOCK:
+            task = self._TASKS.get(task_id)
+            if not isinstance(task, dict):
+                return
+            if status is not None:
+                task["status"] = str(status)
+            if stage is not None:
+                task["stage"] = str(stage)
+            if progress is not None:
+                try:
+                    value = int(progress)
+                except Exception:
+                    value = int(task.get("progress", 0) or 0)
+                value = max(0, min(100, value))
+                task["progress"] = max(int(task.get("progress", 0) or 0), value)
+            if message is not None:
+                task["message"] = str(message)
+            if extra is not None:
+                task["extra"] = extra if isinstance(extra, dict) else {}
+            if result is not None:
+                task["result"] = result
+            if error is not None:
+                task["error"] = error
+            if started_at is not None:
+                task["started_at"] = str(started_at)
+            if finished_at is not None:
+                task["finished_at"] = str(finished_at)
+            task["updated_at"] = _iso(_utc_now())
+            self._TASKS[task_id] = task
+
+    def _prune_tasks_locked(self) -> None:
+        if len(self._TASKS) <= self.TASK_MAX_KEEP:
+            return
+        sortable = []
+        for key, task in self._TASKS.items():
+            created = str(task.get("created_at", ""))
+            sortable.append((created, key))
+        sortable.sort()
+        remove_count = max(0, len(self._TASKS) - self.TASK_MAX_KEEP)
+        for _, key in sortable[:remove_count]:
+            self._TASKS.pop(key, None)
+
+    @staticmethod
+    def _report_progress(
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]],
+        progress: int,
+        stage: str,
+        message: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not callable(progress_cb):
+            return
+        try:
+            progress_cb(int(progress), str(stage or ""), str(message or ""), extra if isinstance(extra, dict) else None)
+        except Exception:
+            pass
 
     def create_invite(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         ttl = int(payload.get("ttl_minutes", self.INVITE_TTL_MINUTES) or self.INVITE_TTL_MINUTES)
@@ -465,18 +645,41 @@ class DirectionalSyncService:
                 "asset_sync": asset_sync,
             }
 
-    def push_to_peer(self, peer_id: str) -> Dict[str, Any]:
+    def push_to_peer(
+        self,
+        peer_id: str,
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> Dict[str, Any]:
+        self._report_progress(progress_cb, 2, "prepare", "preparing push task")
         peer = self._peer_or_raise(peer_id)
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        self._report_progress(
+            progress_cb,
+            8,
+            "prepare",
+            "peer resolved",
+            {"remote_base_url": str(peer.get("remote_base_url", ""))},
+        )
         app_logger.info(
             f"[sync] push start peer_id={peer_id} remote={peer.get('remote_base_url', '')}"
         )
+        self._report_progress(progress_cb, 14, "remote_inventory", "fetching remote inventory")
         remote_inv = self._request_json("GET", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"), headers, None)
+        self._report_progress(progress_cb, 20, "data_delta", "calculating data delta")
         delta = self.delta_from_known(remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {})
         datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
+        data_records = self._count_dataset_records(datasets if isinstance(datasets, dict) else {})
+        self._report_progress(
+            progress_cb,
+            28,
+            "data_delta",
+            "data delta prepared",
+            {"dataset_count": len(datasets) if isinstance(datasets, dict) else 0, "record_count": data_records},
+        )
 
         remote_asset_files = {}
         asset_supported = True
+        self._report_progress(progress_cb, 34, "asset_inventory", "fetching remote asset inventory")
         try:
             remote_asset_inv = self._request_json(
                 "GET",
@@ -486,35 +689,61 @@ class DirectionalSyncService:
             )
             if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict):
                 remote_asset_files = remote_asset_inv["data"].get("files", {}) or {}
+            self._report_progress(
+                progress_cb,
+                42,
+                "asset_inventory",
+                "remote asset inventory ready",
+                {"remote_file_count": len(remote_asset_files)},
+            )
         except RuntimeError as exc:
             if self._is_http_status_error(exc, (404, 405)):
                 asset_supported = False
+                self._report_progress(progress_cb, 42, "asset_inventory", "remote does not support assets inventory")
             else:
                 raise
 
         applied = None
         if datasets:
+            self._report_progress(
+                progress_cb,
+                52,
+                "data_apply_remote",
+                "applying data delta on remote",
+                {"record_count": data_records},
+            )
             applied = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
+            self._report_progress(progress_cb, 68, "data_apply_remote", "remote data delta applied")
+        else:
+            self._report_progress(progress_cb, 68, "data_apply_remote", "no data changes")
 
         if asset_supported:
-            asset_sync = self._push_assets_to_peer(peer["remote_base_url"], headers, remote_asset_files)
+            asset_sync = self._push_assets_to_peer(
+                peer["remote_base_url"],
+                headers,
+                remote_asset_files,
+                progress_cb=progress_cb,
+            )
         else:
             asset_sync = {
                 "status": "unsupported_remote",
                 "file_count": 0,
                 "message": "remote assets inventory endpoint not available",
             }
+            self._report_progress(progress_cb, 92, "asset_push", "skip asset push: unsupported remote")
         if not datasets and int(asset_sync.get("file_count", 0)) == 0:
             self._touch_peer(peer_id)
             app_logger.info(
                 f"[sync] push done peer_id={peer_id} status=no_change asset_status={asset_sync.get('status')} asset_files={asset_sync.get('file_count', 0)}"
             )
+            self._report_progress(progress_cb, 100, "completed", "push finished (no changes)")
             return {"direction": "push", "peer_id": peer_id, "status": "no_change", "asset_sync": asset_sync}
 
         self._touch_peer(peer_id)
         app_logger.info(
             f"[sync] push done peer_id={peer_id} status=completed dataset_count={len(datasets)} asset_status={asset_sync.get('status')} asset_files={asset_sync.get('file_count', 0)}"
         )
+        self._report_progress(progress_cb, 100, "completed", "push completed")
         return {
             "direction": "push",
             "peer_id": peer_id,
@@ -523,22 +752,56 @@ class DirectionalSyncService:
             "asset_sync": asset_sync,
         }
 
-    def pull_from_peer(self, peer_id: str) -> Dict[str, Any]:
+    def pull_from_peer(
+        self,
+        peer_id: str,
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> Dict[str, Any]:
+        self._report_progress(progress_cb, 2, "prepare", "preparing pull task")
         peer = self._peer_or_raise(peer_id)
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        self._report_progress(
+            progress_cb,
+            8,
+            "prepare",
+            "peer resolved",
+            {"remote_base_url": str(peer.get("remote_base_url", ""))},
+        )
         app_logger.info(
             f"[sync] pull start peer_id={peer_id} remote={peer.get('remote_base_url', '')}"
         )
+        self._report_progress(progress_cb, 14, "local_inventory", "building local inventory")
         local_inventory = self.inventory()
+        self._report_progress(progress_cb, 22, "remote_delta", "requesting remote delta")
         remote_delta = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"), headers, {"known_inventory": local_inventory})
+        self._report_progress(progress_cb, 36, "remote_delta", "remote delta received")
+        self._report_progress(progress_cb, 44, "data_apply_local", "applying data delta locally")
         applied = self.apply_delta(remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {})
+        self._report_progress(
+            progress_cb,
+            62,
+            "data_apply_local",
+            "local data delta applied",
+            {
+                "total_added": int(applied.get("total_added", 0)),
+                "total_updated": int(applied.get("total_updated", 0)),
+                "total_skipped": int(applied.get("total_skipped", 0)),
+            },
+        )
 
         local_asset_inventory = self.asset_inventory()
-        asset_pull = self._pull_assets_from_peer(peer["remote_base_url"], headers, local_asset_inventory.get("files", {}))
+        self._report_progress(progress_cb, 68, "asset_pull", "pulling assets from remote")
+        asset_pull = self._pull_assets_from_peer(
+            peer["remote_base_url"],
+            headers,
+            local_asset_inventory.get("files", {}),
+            progress_cb=progress_cb,
+        )
         self._touch_peer(peer_id)
         app_logger.info(
             f"[sync] pull done peer_id={peer_id} status=completed added={applied.get('total_added', 0)} updated={applied.get('total_updated', 0)} asset_status={asset_pull.get('status')} asset_files={asset_pull.get('file_count', 0)}"
         )
+        self._report_progress(progress_cb, 100, "completed", "pull completed")
         return {
             "direction": "pull",
             "peer_id": peer_id,
@@ -562,11 +825,19 @@ class DirectionalSyncService:
         applied = self._extract_asset_zip(zip_path)
         return {"file_count": applied, "status": "completed" if applied > 0 else "no_change"}
 
-    def _push_assets_to_peer(self, remote_base_url: str, headers: Dict[str, str], remote_files: Dict[str, str]) -> Dict[str, Any]:
+    def _push_assets_to_peer(
+        self,
+        remote_base_url: str,
+        headers: Dict[str, str],
+        remote_files: Dict[str, str],
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> Dict[str, Any]:
+        self._report_progress(progress_cb, 72, "asset_push", "building asset delta package")
         delta = self.build_asset_delta_zip(remote_files if isinstance(remote_files, dict) else {})
         zip_path = str(delta.get("zip_path", "")).strip()
         file_count = int(delta.get("file_count", 0))
         if not zip_path or file_count <= 0:
+            self._report_progress(progress_cb, 90, "asset_push", "no asset changes")
             return {"status": "no_change", "file_count": 0}
 
         try:
@@ -575,8 +846,22 @@ class DirectionalSyncService:
                 zip_size = int(os.path.getsize(zip_path))
             except Exception:
                 zip_size = 0
+            self._report_progress(
+                progress_cb,
+                78,
+                "asset_push",
+                "asset delta package ready",
+                {"file_count": file_count, "total_bytes": zip_size},
+            )
             app_logger.info(
                 f"[sync] push assets upload start remote={remote_base_url} files={file_count} bytes={zip_size}"
+            )
+            self._report_progress(
+                progress_cb,
+                84,
+                "asset_push_upload",
+                "uploading asset package",
+                {"file_count": file_count, "total_bytes": zip_size},
             )
             with open(zip_path, "rb") as fp:
                 files = {"package": ("assets_delta.zip", fp, "application/zip")}
@@ -587,6 +872,7 @@ class DirectionalSyncService:
                     timeout=self.HTTP_TIMEOUT_SECONDS * 4,
                 )
             if response.status_code in (404, 405):
+                self._report_progress(progress_cb, 90, "asset_push_upload", "remote does not support assets apply")
                 return {
                     "status": "unsupported_remote",
                     "file_count": 0,
@@ -601,6 +887,13 @@ class DirectionalSyncService:
             app_logger.info(
                 f"[sync] push assets upload done remote={remote_base_url} files={file_count}"
             )
+            self._report_progress(
+                progress_cb,
+                96,
+                "asset_push_upload",
+                "asset package uploaded",
+                {"file_count": file_count},
+            )
             return {
                 "status": "completed",
                 "file_count": file_count,
@@ -613,12 +906,25 @@ class DirectionalSyncService:
                 except Exception:
                     pass
 
-    def _pull_assets_from_peer(self, remote_base_url: str, headers: Dict[str, str], known_files: Dict[str, str]) -> Dict[str, Any]:
+    def _pull_assets_from_peer(
+        self,
+        remote_base_url: str,
+        headers: Dict[str, str],
+        known_files: Dict[str, str],
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> Dict[str, Any]:
         temp_zip = ""
         try:
             endpoint = self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download")
             app_logger.info(
                 f"[sync] pull assets request remote={remote_base_url} known_files={len(known_files or {})}"
+            )
+            self._report_progress(
+                progress_cb,
+                72,
+                "asset_pull_request",
+                "requesting remote asset delta",
+                {"known_file_count": len(known_files or {})},
             )
             response = requests.post(
                 endpoint,
@@ -628,6 +934,7 @@ class DirectionalSyncService:
                 stream=True,
             )
             if response.status_code == 204:
+                self._report_progress(progress_cb, 90, "asset_pull", "no remote asset changes")
                 return {"status": "no_change", "file_count": 0}
             if response.status_code in (404, 405):
                 if response.status_code == 405:
@@ -639,8 +946,10 @@ class DirectionalSyncService:
                         stream=True,
                     )
                     if response.status_code == 204:
+                        self._report_progress(progress_cb, 90, "asset_pull", "no remote asset changes")
                         return {"status": "no_change", "file_count": 0}
                 if response.status_code in (404, 405):
+                    self._report_progress(progress_cb, 90, "asset_pull", "remote does not support assets delta")
                     return {
                         "status": "unsupported_remote",
                         "file_count": 0,
@@ -674,7 +983,7 @@ class DirectionalSyncService:
                     f"remote assets delta returned non-zip content-type={content_type}: {body_preview}"
                 )
 
-            temp_zip = self._save_stream_to_temp_zip(response)
+            temp_zip = self._save_stream_to_temp_zip(response, progress_cb=progress_cb)
             if not zipfile.is_zipfile(temp_zip):
                 with open(temp_zip, "rb") as fp:
                     head = fp.read(256)
@@ -682,9 +991,17 @@ class DirectionalSyncService:
                 raise RuntimeError(
                     f"remote assets delta returned invalid zip, content-type={content_type}, head={head_preview}"
                 )
-            applied = self._extract_asset_zip(temp_zip)
+            self._report_progress(progress_cb, 84, "asset_pull_extract", "extracting asset package")
+            applied = self._extract_asset_zip(temp_zip, progress_cb=progress_cb)
             app_logger.info(
                 f"[sync] pull assets apply done remote={remote_base_url} files={applied}"
+            )
+            self._report_progress(
+                progress_cb,
+                96,
+                "asset_pull_extract",
+                "asset package applied",
+                {"file_count": applied},
             )
             return {"status": "completed" if applied > 0 else "no_change", "file_count": applied}
         finally:
@@ -715,6 +1032,16 @@ class DirectionalSyncService:
             "dataset_counts": dataset_counts,
             "total_records": total_records,
         }
+
+    @staticmethod
+    def _count_dataset_records(datasets: Dict[str, Any]) -> int:
+        total = 0
+        for payload in (datasets or {}).values():
+            if isinstance(payload, list):
+                total += len(payload)
+            elif isinstance(payload, dict) and payload:
+                total += 1
+        return total
 
     def _estimate_asset_delta(self, known_files: Dict[str, str]) -> Dict[str, Any]:
         local_files = self._collect_asset_index()
@@ -824,27 +1151,56 @@ class DirectionalSyncService:
                 zf.write(abs_path, arcname=normalized)
         return zip_path
 
-    def _save_stream_to_temp_zip(self, response: requests.Response) -> str:
+    def _save_stream_to_temp_zip(
+        self,
+        response: requests.Response,
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> str:
         os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
         fd, zip_path = tempfile.mkstemp(prefix="sync_pull_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
         os.close(fd)
         total_bytes = 0
+        content_length = 0
+        try:
+            content_length = int(response.headers.get("Content-Length", "0") or 0)
+        except Exception:
+            content_length = 0
+        last_emit_progress = -1
         with open(zip_path, "wb") as fp:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     fp.write(chunk)
                     total_bytes += len(chunk)
+                    if content_length > 0:
+                        ratio = min(float(total_bytes) / float(content_length), 1.0)
+                        progress = 74 + int(ratio * 8)
+                    else:
+                        progress = 74
+                    if progress != last_emit_progress:
+                        last_emit_progress = progress
+                        self._report_progress(
+                            progress_cb,
+                            progress,
+                            "asset_pull_download",
+                            "downloading asset package",
+                            {"downloaded_bytes": total_bytes, "total_bytes": content_length},
+                        )
         app_logger.info(
             f"[sync] pull assets downloaded bytes={total_bytes} temp_zip={zip_path}"
         )
         return zip_path
 
-    def _extract_asset_zip(self, zip_path: str) -> int:
+    def _extract_asset_zip(
+        self,
+        zip_path: str,
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> int:
         if not os.path.isfile(zip_path):
             return 0
         applied = 0
         data_root = os.path.abspath(DATA_DIR)
         with zipfile.ZipFile(zip_path, "r") as zf:
+            candidates = []
             for member in zf.infolist():
                 if member.is_dir():
                     continue
@@ -852,6 +1208,15 @@ class DirectionalSyncService:
                 if not rel or rel.startswith("../") or "/../" in rel:
                     continue
                 if not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
+                    continue
+                candidates.append((member, rel))
+
+            total_candidates = len(candidates)
+            if total_candidates <= 0:
+                return 0
+
+            for idx, (member, rel) in enumerate(candidates, start=1):
+                if member.is_dir():
                     continue
 
                 target = os.path.abspath(os.path.join(data_root, rel))
@@ -861,6 +1226,15 @@ class DirectionalSyncService:
                 with zf.open(member, "r") as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst, length=1024 * 1024)
                 applied += 1
+                ratio = min(float(idx) / float(total_candidates), 1.0)
+                progress = 86 + int(ratio * 8)
+                self._report_progress(
+                    progress_cb,
+                    progress,
+                    "asset_pull_extract",
+                    "extracting asset package",
+                    {"applied_files": applied, "total_files": total_candidates},
+                )
         return applied
 
     def _apply_dataset(self, cfg: Dict[str, Any], payload: Any) -> Dict[str, Any]:

@@ -365,3 +365,34 @@ def directional_pull():
     except Exception as exc:
         error_logger.exception(f"sync directional pull failed: {exc}")
         return error_response(500, f"directional pull failed: {exc}")
+
+
+@sync_bp.route("/directional/task/start", methods=["POST"])
+def directional_task_start():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        direction = str(payload.get("direction", "")).strip().lower()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if direction not in {"push", "pull"}:
+            return error_response(400, "direction must be push or pull")
+        task = directional_service.start_directional_task(peer_id, direction)
+        return success_response(task)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync directional task start failed: {exc}")
+        return error_response(500, f"directional task start failed: {exc}")
+
+
+@sync_bp.route("/directional/task/<task_id>", methods=["GET"])
+def directional_task_status(task_id):
+    try:
+        task = directional_service.get_directional_task(str(task_id or "").strip())
+        if not isinstance(task, dict):
+            return error_response(404, "task not found")
+        return success_response(task)
+    except Exception as exc:
+        error_logger.exception(f"sync directional task status failed: {exc}")
+        return error_response(500, f"directional task status failed: {exc}")

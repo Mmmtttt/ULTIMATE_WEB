@@ -75,6 +75,17 @@ export const syncApi = {
 
   pullDirectional(peerId) {
     return request.post('/v1/sync/directional/pull', { peer_id: peerId })
+  },
+
+  startDirectionalTask(peerId, direction) {
+    return request.post('/v1/sync/directional/task/start', {
+      peer_id: peerId,
+      direction
+    })
+  },
+
+  getDirectionalTask(taskId) {
+    return request.get(`/v1/sync/directional/task/${encodeURIComponent(taskId)}`)
   }
 }
 
