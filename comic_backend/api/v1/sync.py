@@ -222,8 +222,8 @@ def directional_assets_apply():
                 os.remove(temp_path)
         return success_response(result)
     except Exception as exc:
-        error_logger.error(f"sync directional assets apply failed: {exc}")
-        return error_response(500, "directional assets apply failed")
+        error_logger.exception(f"sync directional assets apply failed: {exc}")
+        return error_response(500, f"directional assets apply failed: {exc}")
 
 
 @sync_bp.route("/directional/assets/delta/download", methods=["GET", "POST"])
@@ -258,8 +258,8 @@ def directional_assets_delta_download():
             mimetype="application/zip",
         )
     except Exception as exc:
-        error_logger.error(f"sync directional assets delta download failed: {exc}")
-        return error_response(500, "directional assets delta download failed")
+        error_logger.exception(f"sync directional assets delta download failed: {exc}")
+        return error_response(500, f"directional assets delta download failed: {exc}")
 
 
 @sync_bp.route("/directional/estimate", methods=["POST"])
@@ -278,8 +278,8 @@ def directional_estimate():
         )
         return success_response(result)
     except Exception as exc:
-        error_logger.error(f"sync directional estimate failed: {exc}")
-        return error_response(500, "directional estimate failed")
+        error_logger.exception(f"sync directional estimate failed: {exc}")
+        return error_response(500, f"directional estimate failed: {exc}")
 
 
 @sync_bp.route("/directional/preview", methods=["POST"])
@@ -295,10 +295,14 @@ def directional_preview():
         result = directional_service.estimate_peer_sync(peer_id, direction)
         return success_response(result)
     except ValueError as exc:
-        return error_response(400, str(exc))
+        message = str(exc or "")
+        if message in {"peer not found", "direction must be push or pull"}:
+            return error_response(400, message)
+        error_logger.exception(f"sync directional preview value error: {exc}")
+        return error_response(500, f"directional preview failed: {exc}")
     except Exception as exc:
-        error_logger.error(f"sync directional preview failed: {exc}")
-        return error_response(500, "directional preview failed")
+        error_logger.exception(f"sync directional preview failed: {exc}")
+        return error_response(500, f"directional preview failed: {exc}")
 
 
 @sync_bp.route("/directional/delta", methods=["POST"])
@@ -312,8 +316,8 @@ def directional_delta():
         known_inventory = payload.get("known_inventory", {})
         return success_response(directional_service.delta_from_known(known_inventory))
     except Exception as exc:
-        error_logger.error(f"sync directional delta failed: {exc}")
-        return error_response(500, "directional delta failed")
+        error_logger.exception(f"sync directional delta failed: {exc}")
+        return error_response(500, f"directional delta failed: {exc}")
 
 
 @sync_bp.route("/directional/apply", methods=["POST"])
@@ -327,8 +331,8 @@ def directional_apply():
         result = directional_service.apply_delta(payload)
         return success_response(result)
     except Exception as exc:
-        error_logger.error(f"sync directional apply failed: {exc}")
-        return error_response(500, "directional apply failed")
+        error_logger.exception(f"sync directional apply failed: {exc}")
+        return error_response(500, f"directional apply failed: {exc}")
 
 
 @sync_bp.route("/directional/push", methods=["POST"])
@@ -343,8 +347,8 @@ def directional_push():
     except ValueError as exc:
         return error_response(400, str(exc))
     except Exception as exc:
-        error_logger.error(f"sync directional push failed: {exc}")
-        return error_response(500, "directional push failed")
+        error_logger.exception(f"sync directional push failed: {exc}")
+        return error_response(500, f"directional push failed: {exc}")
 
 
 @sync_bp.route("/directional/pull", methods=["POST"])
@@ -359,5 +363,5 @@ def directional_pull():
     except ValueError as exc:
         return error_response(400, str(exc))
     except Exception as exc:
-        error_logger.error(f"sync directional pull failed: {exc}")
-        return error_response(500, "directional pull failed")
+        error_logger.exception(f"sync directional pull failed: {exc}")
+        return error_response(500, f"directional pull failed: {exc}")

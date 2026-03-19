@@ -29,6 +29,7 @@ from core.constants import (
     VIDEO_JSON_FILE,
     VIDEO_RECOMMENDATION_JSON_FILE,
 )
+from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
 
 
@@ -398,6 +399,9 @@ class DirectionalSyncService:
     def push_to_peer(self, peer_id: str) -> Dict[str, Any]:
         peer = self._peer_or_raise(peer_id)
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        app_logger.info(
+            f"[sync] push start peer_id={peer_id} remote={peer.get('remote_base_url', '')}"
+        )
         remote_inv = self._request_json("GET", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"), headers, None)
         delta = self.delta_from_known(remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {})
         datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
@@ -433,9 +437,15 @@ class DirectionalSyncService:
             }
         if not datasets and int(asset_sync.get("file_count", 0)) == 0:
             self._touch_peer(peer_id)
+            app_logger.info(
+                f"[sync] push done peer_id={peer_id} status=no_change asset_status={asset_sync.get('status')} asset_files={asset_sync.get('file_count', 0)}"
+            )
             return {"direction": "push", "peer_id": peer_id, "status": "no_change", "asset_sync": asset_sync}
 
         self._touch_peer(peer_id)
+        app_logger.info(
+            f"[sync] push done peer_id={peer_id} status=completed dataset_count={len(datasets)} asset_status={asset_sync.get('status')} asset_files={asset_sync.get('file_count', 0)}"
+        )
         return {
             "direction": "push",
             "peer_id": peer_id,
@@ -447,6 +457,9 @@ class DirectionalSyncService:
     def pull_from_peer(self, peer_id: str) -> Dict[str, Any]:
         peer = self._peer_or_raise(peer_id)
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        app_logger.info(
+            f"[sync] pull start peer_id={peer_id} remote={peer.get('remote_base_url', '')}"
+        )
         local_inventory = self.inventory()
         remote_delta = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"), headers, {"known_inventory": local_inventory})
         applied = self.apply_delta(remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {})
@@ -454,6 +467,9 @@ class DirectionalSyncService:
         local_asset_inventory = self.asset_inventory()
         asset_pull = self._pull_assets_from_peer(peer["remote_base_url"], headers, local_asset_inventory.get("files", {}))
         self._touch_peer(peer_id)
+        app_logger.info(
+            f"[sync] pull done peer_id={peer_id} status=completed added={applied.get('total_added', 0)} updated={applied.get('total_updated', 0)} asset_status={asset_pull.get('status')} asset_files={asset_pull.get('file_count', 0)}"
+        )
         return {
             "direction": "pull",
             "peer_id": peer_id,
@@ -485,6 +501,14 @@ class DirectionalSyncService:
             return {"status": "no_change", "file_count": 0}
 
         try:
+            zip_size = 0
+            try:
+                zip_size = int(os.path.getsize(zip_path))
+            except Exception:
+                zip_size = 0
+            app_logger.info(
+                f"[sync] push assets upload start remote={remote_base_url} files={file_count} bytes={zip_size}"
+            )
             with open(zip_path, "rb") as fp:
                 files = {"package": ("assets_delta.zip", fp, "application/zip")}
                 response = requests.post(
@@ -500,10 +524,14 @@ class DirectionalSyncService:
                     "message": f"remote assets apply endpoint http {response.status_code}",
                 }
             if response.status_code >= 400:
-                raise RuntimeError(f"remote assets apply http {response.status_code}: {response.text}")
-            payload = response.json()
+                body_preview = self._response_body_preview(response)
+                raise RuntimeError(f"remote assets apply http {response.status_code}: {body_preview}")
+            payload = self._decode_json_payload(response, "remote assets apply")
             if int(payload.get("code", 500)) != 200:
                 raise RuntimeError(f"remote assets apply failed: {payload.get('msg', 'unknown')}")
+            app_logger.info(
+                f"[sync] push assets upload done remote={remote_base_url} files={file_count}"
+            )
             return {
                 "status": "completed",
                 "file_count": file_count,
@@ -520,6 +548,9 @@ class DirectionalSyncService:
         temp_zip = ""
         try:
             endpoint = self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download")
+            app_logger.info(
+                f"[sync] pull assets request remote={remote_base_url} known_files={len(known_files or {})}"
+            )
             response = requests.post(
                 endpoint,
                 headers=headers,
@@ -547,17 +578,45 @@ class DirectionalSyncService:
                         "message": f"remote assets delta endpoint http {response.status_code}",
                     }
             if response.status_code >= 400:
-                raise RuntimeError(f"remote assets delta http {response.status_code}: {response.text}")
+                body_preview = self._response_body_preview(response)
+                raise RuntimeError(f"remote assets delta http {response.status_code}: {body_preview}")
 
             content_type = str(response.headers.get("Content-Type", "")).lower()
             if "application/json" in content_type:
-                payload = response.json()
+                payload = self._decode_json_payload(response, "remote assets delta")
                 if int(payload.get("code", 500)) != 200:
                     raise RuntimeError(f"remote assets delta failed: {payload.get('msg', 'unknown')}")
+                payload_data = payload.get("data")
+                declared_files = 0
+                if isinstance(payload_data, dict):
+                    try:
+                        declared_files = int(payload_data.get("file_count", 0) or 0)
+                    except Exception:
+                        declared_files = 0
+                if declared_files > 0:
+                    raise RuntimeError(
+                        f"remote assets delta returned json metadata file_count={declared_files}, expected zip stream"
+                    )
                 return {"status": "no_change", "file_count": 0}
 
+            if content_type and "zip" not in content_type and "octet-stream" not in content_type:
+                body_preview = self._response_body_preview(response)
+                raise RuntimeError(
+                    f"remote assets delta returned non-zip content-type={content_type}: {body_preview}"
+                )
+
             temp_zip = self._save_stream_to_temp_zip(response)
+            if not zipfile.is_zipfile(temp_zip):
+                with open(temp_zip, "rb") as fp:
+                    head = fp.read(256)
+                head_preview = head.decode("utf-8", errors="ignore").replace("\n", " ").strip()[:220]
+                raise RuntimeError(
+                    f"remote assets delta returned invalid zip, content-type={content_type}, head={head_preview}"
+                )
             applied = self._extract_asset_zip(temp_zip)
+            app_logger.info(
+                f"[sync] pull assets apply done remote={remote_base_url} files={applied}"
+            )
             return {"status": "completed" if applied > 0 else "no_change", "file_count": applied}
         finally:
             if temp_zip and os.path.isfile(temp_zip):
@@ -666,10 +725,15 @@ class DirectionalSyncService:
         os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
         fd, zip_path = tempfile.mkstemp(prefix="sync_pull_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
         os.close(fd)
+        total_bytes = 0
         with open(zip_path, "wb") as fp:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     fp.write(chunk)
+                    total_bytes += len(chunk)
+        app_logger.info(
+            f"[sync] pull assets downloaded bytes={total_bytes} temp_zip={zip_path}"
+        )
         return zip_path
 
     def _extract_asset_zip(self, zip_path: str) -> int:
@@ -929,10 +993,62 @@ class DirectionalSyncService:
         headers: Optional[Dict[str, str]],
         body: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        response = requests.request(method=method, url=url, headers=headers or {}, json=body, timeout=self.HTTP_TIMEOUT_SECONDS)
-        payload = response.json()
-        if response.status_code >= 400:
-            raise RuntimeError(f"remote http {response.status_code}: {payload}")
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers or {},
+            json=body,
+            timeout=self.HTTP_TIMEOUT_SECONDS,
+        )
+        status = int(response.status_code)
+        content_type = str(response.headers.get("Content-Type", "")).lower()
+
+        payload: Any = None
+        if "application/json" in content_type:
+            try:
+                payload = self._decode_json_payload(response, "remote api")
+            except Exception as exc:
+                text_preview = (response.text or "").strip().replace("\n", " ")[:260]
+                raise RuntimeError(f"remote invalid json http {status}: {exc}; body={text_preview}") from exc
+        else:
+            if response.content:
+                try:
+                    payload = self._decode_json_payload(response, "remote api")
+                except Exception:
+                    text_preview = (response.text or "").strip().replace("\n", " ")[:260]
+                    if status >= 400:
+                        raise RuntimeError(f"remote http {status}: {text_preview}")
+                    raise RuntimeError(f"remote non-json response http {status}: {text_preview}")
+            else:
+                payload = {}
+
+        if status >= 400:
+            raise RuntimeError(f"remote http {status}: {payload}")
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"remote api payload is not object: type={type(payload).__name__}")
         if int(payload.get("code", 500)) != 200:
             raise RuntimeError(f"remote api error: {payload.get('msg', 'unknown')}")
         return payload
+
+    @staticmethod
+    def _decode_json_payload(response: requests.Response, context: str) -> Dict[str, Any]:
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise RuntimeError(
+                f"{context} invalid json http {int(response.status_code)}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"{context} payload is not object: type={type(payload).__name__}")
+        return payload
+
+    @staticmethod
+    def _response_body_preview(response: requests.Response, max_len: int = 260) -> str:
+        try:
+            text = response.text
+        except Exception:
+            try:
+                text = bytes(response.content or b"").decode("utf-8", errors="ignore")
+            except Exception:
+                text = ""
+        return str(text or "").strip().replace("\n", " ")[:max_len]
