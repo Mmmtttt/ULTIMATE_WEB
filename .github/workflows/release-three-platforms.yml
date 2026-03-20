@@ -34,7 +34,10 @@ jobs:
 
     steps:
       - name: checkout code
-        uses: actions/checkout@v4.2.1  # 适配Node24的最新稳定版
+        uses: actions/checkout@v4.2.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
       - name: setup python 3.13
         uses: actions/setup-python@v5.1.1  # 适配Node24的最新稳定版
