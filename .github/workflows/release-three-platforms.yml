@@ -36,10 +36,10 @@ jobs:
       - name: checkout code
         uses: actions/checkout@v4.2.1  # 适配Node24的最新稳定版
 
-      - name: setup python 3.12
+      - name: setup python 3.13
         uses: actions/setup-python@v5.1.1  # 适配Node24的最新稳定版
         with:
-          python-version: "3.12"  # 升级到Python 3.12，解决f-string反斜杠问题
+          python-version: "3.13"  # 升级到Python 3.13，解决f-string反斜杠问题
           cache: "pip"  # 可选：缓存pip依赖，加速构建
 
       - name: setup node.js 20
@@ -96,21 +96,19 @@ jobs:
       - name: run unified release script
         shell: bash
         run: |
-          # 打印环境信息，便于排查问题
-          echo "Python version: $(python --version)"
-          echo "Node version: $(node --version)"
-          echo "Java version: $(java --version 2>&1 | head -n1)"
-          export ANDROID_BUILD_VERBOSE=1
-          # 执行发布脚本
-          python scripts/release_unified.py \
-            --targets "${{ matrix.target }}" \
-            --execute \
-            --build-output output/ci_stage \
-            --package-output output/ci_packages
-          # 新增：如果日志文件存在，实时打印最后100行（快速排查）
-          if [ -f "output/ci_packages/android/android_build.log" ]; then
-            echo "=== Last 100 lines of android_build.log ==="
-            tail -100 output/ci_packages/android/android_build.log
+          # 打印环境信息（简化版，避免语法错误）
+          python --version
+          node --version
+          java --version 2>&1 | head -n1
+          # 执行发布脚本（单行命令，避免多行换行问题）
+          python scripts/release_unified.py --targets "${{ matrix.target }}" --execute --build-output output/ci_stage --package-output output/ci_packages
+          # 打印安卓日志（仅安卓平台）
+          if [ "${{ matrix.build_android }}" = "true" ]; then
+            if [ -f "output/ci_packages/android/android_build.log" ]; then
+              echo "=== Android Build Log ==="
+              cat output/ci_packages/android/android_build.log
+            fi
+          fi
 
       # 新增：上传安卓构建日志（无论成功/失败都执行）
       - name: upload android build logs (if failed)
