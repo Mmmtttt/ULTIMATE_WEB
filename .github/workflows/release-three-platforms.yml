@@ -100,12 +100,28 @@ jobs:
           echo "Python version: $(python --version)"
           echo "Node version: $(node --version)"
           echo "Java version: $(java --version 2>&1 | head -n1)"
+          export ANDROID_BUILD_VERBOSE=1
           # 执行发布脚本
           python scripts/release_unified.py \
             --targets "${{ matrix.target }}" \
             --execute \
             --build-output output/ci_stage \
             --package-output output/ci_packages
+          # 新增：如果日志文件存在，实时打印最后100行（快速排查）
+          if [ -f "output/ci_packages/android/android_build.log" ]; then
+            echo "=== Last 100 lines of android_build.log ==="
+            tail -100 output/ci_packages/android/android_build.log
+
+      # 新增：上传安卓构建日志（无论成功/失败都执行）
+      - name: upload android build logs (if failed)
+        if: ${{ matrix.build_android && always() }}  # 仅安卓平台执行，且失败也运行
+        uses: actions/upload-artifact@v4.3.4
+        with:
+          name: android-build-logs
+          path: |
+            output/ci_packages/android/android_build.log
+            output/ci_packages/packaging_summary.json  # 同时上传汇总文件
+          if-no-files-found: warn  # 日志文件不存在也不报错
 
       - name: print packaging summary
         shell: bash
