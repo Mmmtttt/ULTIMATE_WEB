@@ -69,7 +69,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: "gradle"  # 可选：缓存gradle依赖
 
       - name: setup android sdk (android only)
         if: ${{ matrix.build_android }}
@@ -88,6 +87,11 @@ jobs:
             "build-tools;34.0.0"
           # 验证安装结果，确保依赖安装成功
           sdkmanager --list | grep -E "android-34|build-tools;34.0.0"
+          # 新增：验证安卓环境变量（确保ANDROID_HOME正确）
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "PATH: $PATH"
+          # 验证adb是否可用（确认SDK安装成功）
+          adb --version || echo "adb not found, check SDK installation"
 
       - name: run unified release script
         shell: bash
