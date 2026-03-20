@@ -690,6 +690,9 @@ def write_pyinstaller_scripts(
     dist_dir = out_dir / "dist"
     work_dir = out_dir / "build"
     spec_dir = out_dir / "spec"
+    # 平台兼容的路径分隔符
+    sep = ";" if os.name == "nt" else ":"
+    
     cmd = [
         "python",
         "-m",
@@ -705,6 +708,20 @@ def write_pyinstaller_scripts(
         str(work_dir),
         "--specpath",
         str(spec_dir),
+        "--collect-all", "flask",
+        "--collect-all", "flask_cors",
+        "--collect-all", "requests",
+        "--collect-all", "PyYAML",
+        "--collect-all", "Pillow",
+        "--collect-all", "beautifulsoup4",
+        # 打包所有third_party子库
+        f"--add-data", f"comic_backend/third_party/JMComic-Crawler-Python{sep}third_party/JMComic-Crawler-Python",
+        f"--add-data", f"comic_backend/third_party/Missav{sep}third_party/Missav",
+        f"--add-data", f"comic_backend/third_party/Picacomic-Crawler{sep}third_party/Picacomic-Crawler",
+        f"--add-data", f"comic_backend/third_party/javdb-api-scraper{sep}third_party/javdb-api-scraper",
+        # 打包third_party目录下的其他文件
+        f"--add-data", f"comic_backend/third_party/*.py{sep}third_party",
+        f"--add-data", f"comic_backend/third_party/*.md{sep}third_party",
         entry,
     ]
 
