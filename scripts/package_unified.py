@@ -749,6 +749,7 @@ def package_pyinstaller(
     runtime_env = parse_runtime_env(staged_target_dir / "runtime.env")
     binary_name = str(packager_cfg.get("binary_name", f"ultimate_backend_{target}")).strip()
     entry = str(packager_cfg.get("entry", "comic_backend/app.py")).strip()
+    frontend_dist_dir = str(packager_cfg.get("frontend_dist_dir", "comic_frontend_dist")).strip()
 
     cmd = write_pyinstaller_scripts(
         out_dir=target_out_dir,
@@ -811,6 +812,12 @@ def package_pyinstaller(
         built_binary = built_binary.with_suffix(".exe")
     if built_binary.exists():
         shutil.copy2(built_binary, bundle_dir / "bin" / built_binary.name)
+
+    # Copy frontend dist if available
+    frontend_source_dir = staged_target_dir / frontend_dist_dir
+    if frontend_source_dir.exists():
+        frontend_target_dir = bundle_dir / "frontend_dist"
+        shutil.copytree(frontend_source_dir, frontend_target_dir, ignore=shutil.ignore_patterns("__pycache__"))
 
     return PackageResult(
         target=target,

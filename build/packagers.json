@@ -5,13 +5,17 @@
       "type": "pyinstaller",
       "binary_name": "ultimate_backend_windows",
       "entry": "comic_backend/app.py",
-      "mode": "onefile"
+      "mode": "onefile",
+      "frontend_dist_dir": "comic_frontend_dist",
+      "frontend_serve_path": "/"
     },
     "linux": {
       "type": "pyinstaller",
       "binary_name": "ultimate_backend_linux",
       "entry": "comic_backend/app.py",
-      "mode": "onefile"
+      "mode": "onefile",
+      "frontend_dist_dir": "comic_frontend_dist",
+      "frontend_serve_path": "/"
     },
     "android": {
       "type": "capacitor",

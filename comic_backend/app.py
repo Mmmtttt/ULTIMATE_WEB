@@ -1,4 +1,4 @@
-﻿import atexit
+import atexit
 import json
 import os
 
@@ -104,6 +104,13 @@ def resolve_frontend_dist_dir() -> str:
     )
     if os.path.isdir(project_dist):
         return project_dist
+
+    # Check relative to app.py directory for bundled desktop
+    bundled_dist = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "frontend_dist")
+    )
+    if os.path.isdir(bundled_dist):
+        return bundled_dist
 
     adjacent = os.path.abspath(os.path.join(os.getcwd(), "frontend_dist"))
     if os.path.isdir(adjacent):
