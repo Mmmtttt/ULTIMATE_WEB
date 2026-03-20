@@ -12,6 +12,9 @@ jobs:
   build_targets:
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    # 强制使用Node.js 24运行Action，解决弃用警告
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
       fail-fast: false
       matrix:
@@ -30,69 +33,82 @@ jobs:
             build_desktop: false
 
     steps:
-      - name: checkout
-        # 升级到支持Node24的最新版（v4.2.1）
-        uses: actions/checkout@v4.2.1
+      - name: checkout code
+        uses: actions/checkout@v4.2.1  # 适配Node24的最新稳定版
 
-      - name: setup-python
-        # 升级到支持Node24的最新版（v5.1.1）
-        uses: actions/setup-python@v5.1.1
+      - name: setup python 3.12
+        uses: actions/setup-python@v5.1.1  # 适配Node24的最新稳定版
         with:
-          python-version: "3.11"
+          python-version: "3.12"  # 升级到Python 3.12，解决f-string反斜杠问题
+          cache: "pip"  # 可选：缓存pip依赖，加速构建
 
-      - name: setup-node
-        # 升级到支持Node24的最新版（v4.0.2）
-        uses: actions/setup-node@v4.0.2
+      - name: setup node.js 20
+        uses: actions/setup-node@v4.0.2  # 适配Node24的最新稳定版
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: comic_frontend/package-lock.json
 
-      - name: install-backend-dependencies
+      - name: install backend dependencies (desktop only)
         if: ${{ matrix.build_desktop }}
         shell: bash
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r comic_backend/requirements.txt pyinstaller
 
-      - name: install-frontend-dependencies
+      - name: install frontend dependencies
         shell: bash
-        run: npm ci --prefix comic_frontend
+        run: |
+          cd comic_frontend
+          npm ci --no-audit --no-fund  # 更严格的依赖安装，避免警告
+          npm run build  # 可选：提前构建前端，便于排查问题
 
-      - name: setup-java
+      - name: setup java (android only)
         if: ${{ matrix.build_android }}
-        # 升级到支持Node24的最新版（v4.2.1）
-        uses: actions/setup-java@v4.2.1
+        uses: actions/setup-java@v4.2.1  # 适配Node24的最新稳定版
         with:
           distribution: temurin
           java-version: "21"
+          cache: "gradle"  # 可选：缓存gradle依赖
 
-      - name: setup-android-sdk
+      - name: setup android sdk (android only)
         if: ${{ matrix.build_android }}
-        # android-actions/setup-android@v3本身已支持Node24，无需升级
         uses: android-actions/setup-android@v3
 
-      - name: install-android-platforms
+      - name: install android platforms (android only)
         if: ${{ matrix.build_android }}
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          # 修复Broken pipe问题：用echo y替代yes，不屏蔽输出便于排查
+          echo "y" | sdkmanager --licenses
+          # 安装指定安卓版本，添加--verbose查看详细日志
+          sdkmanager --verbose \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+          # 验证安装结果，确保依赖安装成功
+          sdkmanager --list | grep -E "android-34|build-tools;34.0.0"
 
-      - name: run-unified-release
+      - name: run unified release script
         shell: bash
         run: |
+          # 打印环境信息，便于排查问题
+          echo "Python version: $(python --version)"
+          echo "Node version: $(node --version)"
+          echo "Java version: $(java --version 2>&1 | head -n1)"
+          # 执行发布脚本
           python scripts/release_unified.py \
             --targets "${{ matrix.target }}" \
             --execute \
             --build-output output/ci_stage \
             --package-output output/ci_packages
 
-      - name: print-packaging-summary
+      - name: print packaging summary
         shell: bash
-        run: cat "output/ci_packages/packaging_summary.json"
+        run: |
+          cat "output/ci_packages/packaging_summary.json" || echo "Summary file not found"
 
-      - name: verify-target-status
+      - name: verify target build status
         shell: bash
         run: |
           python scripts/verify_packaging_summary.py \
@@ -100,27 +116,28 @@ jobs:
             --target "${{ matrix.target }}" \
             --require-status built
 
-      - name: upload-target-artifact
-        # 升级到支持Node24的最新版（v4.3.4）
-        uses: actions/upload-artifact@v4.3.4
+      - name: upload target artifact
+        uses: actions/upload-artifact@v4.3.4  # 适配Node24的最新稳定版
         with:
           name: ultimate-${{ matrix.target }}
           path: output/ci_packages/${{ matrix.target }}
           if-no-files-found: error
+          retention-days: 14  # 可选：设置产物保留天数
 
   collect_artifacts:
     name: collect-artifacts
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     needs: build_targets
     steps:
-      - name: download-all-target-artifacts
-        # 升级到支持Node24的最新版（v4.1.7）
-        uses: actions/download-artifact@v4.1.7
+      - name: download all target artifacts
+        uses: actions/download-artifact@v4.1.7  # 适配Node24的最新稳定版
         with:
           pattern: ultimate-*
           path: output/release_bundle
 
-      - name: generate-release-manifest
+      - name: generate release manifest (SHA256)
         shell: bash
         run: |
           python - <<'PY'
@@ -129,23 +146,28 @@ jobs:
           from pathlib import Path
 
           root = Path("output/release_bundle")
+          root.mkdir(parents=True, exist_ok=True)
           lines = []
-          for path in sorted(root.rglob("*")):
-              if not path.is_file():
-                  continue
-              sha = hashlib.sha256(path.read_bytes()).hexdigest()
-              rel = path.relative_to(root).as_posix()
-              lines.append(f"{sha}  {rel}")
 
-          manifest = root / "RELEASE_MANIFEST_SHA256.txt"
-          manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print(f"manifest: {manifest}")
+          for path in sorted(root.rglob("*")):
+              if path.is_file():
+                  with open(path, "rb") as f:
+                      sha256 = hashlib.sha256(f.read()).hexdigest()
+                  rel_path = path.relative_to(root).as_posix()
+                  lines.append(f"{sha256}  {rel_path}")
+
+          manifest_file = root / "RELEASE_MANIFEST_SHA256.txt"
+          with open(manifest_file, "w", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+
+          print(f"Generated manifest: {manifest_file}")
+          print(manifest_file.read_text(encoding="utf-8"))
           PY
 
-      - name: upload-merged-release-bundle
-        # 升级到支持Node24的最新版（v4.3.4）
+      - name: upload merged release bundle
         uses: actions/upload-artifact@v4.3.4
         with:
           name: ultimate-release-bundle
           path: output/release_bundle
           if-no-files-found: error
+          retention-days: 14
