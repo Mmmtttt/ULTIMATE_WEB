@@ -1605,9 +1605,9 @@ class VideoAppService(BaseContentAppService):
         thread = threading.Thread(target=download, daemon=True)
         thread.start()
 
-    def cache_thumbnail_images_async(self, video_id: str, thumbnail_images: List[str], source: str = "local"):
+    def cache_thumbnail_images_async(self, video_id: str, thumbnail_images: List[str], source: str = "local", force: bool = False):
         source_key = self._normalize_preview_source(source)
-        if not self._allow_asset_cache_for_source(source_key):
+        if not force and not self._allow_asset_cache_for_source(source_key):
             app_logger.info(f"预览库资源下载已关闭，跳过缩略图缓存: id={video_id}")
             return
 

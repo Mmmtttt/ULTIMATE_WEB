@@ -761,13 +761,36 @@ def _refresh_preview_video_now(video_id: str, source: str = "local", force_downl
         video_service._remove_preview_video_file(old_local_preview)
     video_service.update_preview_video_local(video_id, "", source=source_key)
 
-    if force_download or _should_auto_download_preview_assets(source_key):
+    cover_url = str((detail or {}).get("cover_url", "") or "").strip()
+    thumbnail_images = (detail or {}).get("thumbnail_images", [])
+    
+    app_logger.info(f"刷新预览视频: video_id={video_id}, source={source_key}, force_download={force_download}, cover_url={cover_url}, thumbnail_count={len(thumbnail_images)}")
+    
+    if force_download:
+        app_logger.info(f"强制下载模式: 开始下载封面、缩略图和预览视频")
+        if cover_url:
+            video_service.cache_cover_to_static_async(video_id, cover_url, source=source_key)
+        
+        if thumbnail_images:
+            video_service.cache_thumbnail_images_async(video_id, thumbnail_images, source=source_key, force=True)
+        
         video_service.cache_preview_video_async(
             video_id,
             refreshed_preview,
             source=source_key,
             force=force_download
         )
+    elif _should_auto_download_preview_assets(source_key):
+        app_logger.info(f"自动下载模式: 使用_schedule_video_asset_cache")
+        _schedule_video_asset_cache(
+            video_id=video_id,
+            source=source_key,
+            cover_url=cover_url,
+            preview_video=refreshed_preview,
+            thumbnail_images=thumbnail_images,
+        )
+    else:
+        app_logger.info(f"自动下载已关闭，跳过资源下载")
 
     latest_video = repo.get_by_id(video_id)
     latest_data = latest_video.to_dict() if latest_video and hasattr(latest_video, "to_dict") else {}
