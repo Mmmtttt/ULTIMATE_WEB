@@ -31,15 +31,18 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        # 升级到支持Node24的最新版（v4.2.1）
+        uses: actions/checkout@v4.2.1
 
       - name: setup-python
-        uses: actions/setup-python@v5
+        # 升级到支持Node24的最新版（v5.1.1）
+        uses: actions/setup-python@v5.1.1
         with:
           python-version: "3.11"
 
       - name: setup-node
-        uses: actions/setup-node@v4
+        # 升级到支持Node24的最新版（v4.0.2）
+        uses: actions/setup-node@v4.0.2
         with:
           node-version: "20"
           cache: "npm"
@@ -58,13 +61,15 @@ jobs:
 
       - name: setup-java
         if: ${{ matrix.build_android }}
-        uses: actions/setup-java@v4
+        # 升级到支持Node24的最新版（v4.2.1）
+        uses: actions/setup-java@v4.2.1
         with:
           distribution: temurin
           java-version: "21"
 
       - name: setup-android-sdk
         if: ${{ matrix.build_android }}
+        # android-actions/setup-android@v3本身已支持Node24，无需升级
         uses: android-actions/setup-android@v3
 
       - name: install-android-platforms
@@ -96,7 +101,8 @@ jobs:
             --require-status built
 
       - name: upload-target-artifact
-        uses: actions/upload-artifact@v4
+        # 升级到支持Node24的最新版（v4.3.4）
+        uses: actions/upload-artifact@v4.3.4
         with:
           name: ultimate-${{ matrix.target }}
           path: output/ci_packages/${{ matrix.target }}
@@ -108,7 +114,8 @@ jobs:
     needs: build_targets
     steps:
       - name: download-all-target-artifacts
-        uses: actions/download-artifact@v4
+        # 升级到支持Node24的最新版（v4.1.7）
+        uses: actions/download-artifact@v4.1.7
         with:
           pattern: ultimate-*
           path: output/release_bundle
@@ -136,7 +143,8 @@ jobs:
           PY
 
       - name: upload-merged-release-bundle
-        uses: actions/upload-artifact@v4
+        # 升级到支持Node24的最新版（v4.3.4）
+        uses: actions/upload-artifact@v4.3.4
         with:
           name: ultimate-release-bundle
           path: output/release_bundle
