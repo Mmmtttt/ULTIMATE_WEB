@@ -33,11 +33,23 @@ jobs:
             build_desktop: false
 
     steps:
-      - name: checkout code
+      - name: setup ssh for private submodules (desktop only)
+        if: ${{ matrix.build_desktop }}
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+
+      - name: checkout code (desktop with submodules)
+        if: ${{ matrix.build_desktop }}
         uses: actions/checkout@v4.2.1
         with:
           submodules: recursive
           fetch-depth: 0
+          ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+
+      - name: checkout code (android without submodules)
+        if: ${{ matrix.build_android }}
+        uses: actions/checkout@v4.2.1
 
       - name: setup python 3.13
         uses: actions/setup-python@v5.1.1  # 适配Node24的最新稳定版
