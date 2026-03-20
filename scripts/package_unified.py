@@ -642,7 +642,10 @@ def prepare_desktop_release_bundle(
     if backend_src.exists():
         shutil.copytree(backend_src, bundle_dir / "backend_source")
     if frontend_dist.exists():
-        shutil.copytree(frontend_dist, bundle_dir / "frontend_dist")
+        frontend_target = bundle_dir / "frontend_dist"
+        if frontend_target.exists():
+            shutil.rmtree(frontend_target)
+        shutil.copytree(frontend_dist, frontend_target)
 
     runtime_env_src = staged_target_dir / "runtime.env"
     if runtime_env_src.exists():
@@ -817,6 +820,8 @@ def package_pyinstaller(
     frontend_source_dir = staged_target_dir / frontend_dist_dir
     if frontend_source_dir.exists():
         frontend_target_dir = bundle_dir / "frontend_dist"
+        if frontend_target_dir.exists():
+            shutil.rmtree(frontend_target_dir)
         shutil.copytree(frontend_source_dir, frontend_target_dir, ignore=shutil.ignore_patterns("__pycache__"))
 
     return PackageResult(
