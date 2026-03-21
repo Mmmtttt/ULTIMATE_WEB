@@ -129,6 +129,17 @@ jobs:
             output/ci_packages/packaging_summary.json  # 同时上传汇总文件
           if-no-files-found: warn  # 日志文件不存在也不报错
 
+      # 新增：上传桌面端构建日志（无论成功/失败都执行）
+      - name: upload desktop build logs (if failed)
+        if: ${{ matrix.build_desktop && always() }}
+        uses: actions/upload-artifact@v4.3.4
+        with:
+          name: desktop-build-logs-${{ matrix.target }}
+          path: |
+            output/ci_packages/${{ matrix.target }}/pyinstaller.log
+            output/ci_packages/packaging_summary.json
+          if-no-files-found: warn
+
       - name: print packaging summary
         shell: bash
         run: |

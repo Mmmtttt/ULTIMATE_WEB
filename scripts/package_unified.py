@@ -719,9 +719,6 @@ def write_pyinstaller_scripts(
         f"--add-data", f"comic_backend/third_party/Missav{sep}third_party/Missav",
         f"--add-data", f"comic_backend/third_party/Picacomic-Crawler{sep}third_party/Picacomic-Crawler",
         f"--add-data", f"comic_backend/third_party/javdb-api-scraper{sep}third_party/javdb-api-scraper",
-        # 打包third_party目录下的其他文件
-        f"--add-data", f"comic_backend/third_party/*.py{sep}third_party",
-        f"--add-data", f"comic_backend/third_party/*.md{sep}third_party",
         entry,
     ]
 
