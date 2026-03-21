@@ -33,19 +33,12 @@ jobs:
             build_desktop: false
 
     steps:
-      - name: setup ssh for private submodules (desktop only)
-        if: ${{ matrix.build_desktop }}
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
-
       - name: checkout code (desktop with submodules)
         if: ${{ matrix.build_desktop }}
         uses: actions/checkout@v4.2.1
         with:
           submodules: recursive
           fetch-depth: 0
-          ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
 
       - name: checkout code (android without submodules)
         if: ${{ matrix.build_android }}
