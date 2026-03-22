@@ -33,3 +33,22 @@ python scripts/release_unified.py --targets android --execute
 
 Note: desktop builds must run on matching host OS. Android build requires JDK 21 + Android SDK.
 On Windows non-ASCII repo paths, Android packaging auto-stages in `%LOCALAPPDATA%\UltimateWebBuild\android_workspace`.
+
+## Windows local packaging (venv only)
+
+Use this helper on Windows to package from a clean local `venv` (no conda dependency):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release_windows_local_venv.ps1
+```
+
+Optional arguments:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release_windows_local_venv.ps1 `
+  -VenvDir .venv-packaging-win `
+  -BuildOutput output/local_stage `
+  -PackageOutput output/local_packages
+```
+
+This script is only for local packaging and does not change GitHub Actions workflow behavior.
