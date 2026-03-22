@@ -695,6 +695,7 @@ def write_pyinstaller_scripts(
     
     # 使用绝对路径确保PyInstaller能找到文件
     staged_backend = staged_target_dir / "comic_backend"
+    server_config_src = staged_target_dir / "server_config.json"
     
     cmd = [
         "python",
@@ -724,6 +725,10 @@ def write_pyinstaller_scripts(
         f"--add-data", f"{staged_backend / 'third_party' / 'javdb-api-scraper'}{sep}third_party/javdb-api-scraper",
         entry,
     ]
+    
+    if server_config_src.exists():
+        cmd.insert(-1, f"--add-data")
+        cmd.insert(-1, f"{server_config_src}{sep}.")
 
     ps1 = (
         "$ErrorActionPreference = 'Stop'\n"

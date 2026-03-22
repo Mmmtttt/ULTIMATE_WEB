@@ -1,6 +1,7 @@
 import atexit
 import json
 import os
+import sys
 
 from flask import Flask, make_response, send_from_directory
 from flask_cors import CORS
@@ -22,8 +23,15 @@ from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
 
 
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def load_server_config():
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'server_config.json')
+    base_dir = get_base_dir()
+    config_path = os.path.join(base_dir, 'server_config.json')
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
