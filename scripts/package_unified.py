@@ -554,6 +554,8 @@ def write_desktop_bundle_scripts(
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
         "set SCRIPT_DIR=%~dp0\n"
+        "set SERVER_CONFIG_PATH=%SCRIPT_DIR%server_config.json\n"
+        "set BACKEND_DEBUG=false\n"
         "set FRONTEND_DIST_DIR=%SCRIPT_DIR%frontend_dist\n"
         "cd /d \"%SCRIPT_DIR%\"\n"
         f"if exist \"%SCRIPT_DIR%bin\\{binary_name}.exe\" (\n"
@@ -570,6 +572,8 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        "$env:SERVER_CONFIG_PATH = Join-Path $scriptDir \"server_config.json\"\n"
+        "$env:BACKEND_DEBUG = \"false\"\n"
         "$env:FRONTEND_DIST_DIR = Join-Path $scriptDir \"frontend_dist\"\n"
         "Set-Location $scriptDir\n"
         f"$exePath = Join-Path $scriptDir \"bin/{binary_name}.exe\"\n"
@@ -589,6 +593,8 @@ def write_desktop_bundle_scripts(
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "export SERVER_CONFIG_PATH=\"$SCRIPT_DIR/server_config.json\"\n"
+        "export BACKEND_DEBUG=\"false\"\n"
         "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/frontend_dist\"\n"
         "cd \"$SCRIPT_DIR\"\n"
         f"if [ -x \"$SCRIPT_DIR/bin/{binary_name}\" ]; then\n"
@@ -610,18 +616,33 @@ def write_desktop_bundle_scripts(
     app_bat = (
         "@echo off\n"
         "set SCRIPT_DIR=%~dp0\n"
+        "set APP_PORT=5000\n"
+        "if exist \"%SCRIPT_DIR%server_config.json\" (\n"
+        "  for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"$p=5000; $cfgPath=Join-Path '%SCRIPT_DIR%' 'server_config.json'; if (Test-Path -LiteralPath $cfgPath) { try { $cfg = Get-Content -LiteralPath $cfgPath -Raw ^| ConvertFrom-Json; if ($cfg.backend.port -ne $null) { $p = [int]$cfg.backend.port } } catch {} }; Write-Output $p\"`) do set APP_PORT=%%I\n"
+        ")\n"
         "start \"\" \"%SCRIPT_DIR%start_backend.bat\"\n"
         "timeout /t 2 >nul\n"
-        "start \"\" \"http://127.0.0.1:5000/\"\n"
+        "start \"\" \"http://127.0.0.1:%APP_PORT%/\"\n"
     )
     write_text(bundle_dir / "start_app.bat", app_bat)
 
     app_ps1 = (
         "$ErrorActionPreference = 'Stop'\n"
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+        "$configPath = Join-Path $scriptDir 'server_config.json'\n"
+        "$appPort = 5000\n"
+        "if (Test-Path $configPath) {\n"
+        "    try {\n"
+        "        $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json\n"
+        "        if ($null -ne $cfg.backend.port) {\n"
+        "            $appPort = [int]$cfg.backend.port\n"
+        "        }\n"
+        "    } catch {\n"
+        "    }\n"
+        "}\n"
         "Start-Process -FilePath (Join-Path $scriptDir 'start_backend.ps1') -NoNewWindow\n"
         "Start-Sleep -Seconds 2\n"
-        "Start-Process 'http://127.0.0.1:5000/'\n"
+        "Start-Process (\"http://127.0.0.1:{0}/\" -f $appPort)\n"
     )
     write_text(bundle_dir / "start_app.ps1", app_ps1)
 
@@ -718,6 +739,7 @@ def write_pyinstaller_scripts(
         "--collect-all", "yaml",
         "--collect-all", "PIL",
         "--collect-all", "bs4",
+        "--hidden-import", "_multiprocessing",
         # 打包所有third_party子库（使用绝对路径）
         f"--add-data", f"{staged_backend / 'third_party' / 'JMComic-Crawler-Python'}{sep}third_party/JMComic-Crawler-Python",
         f"--add-data", f"{staged_backend / 'third_party' / 'Missav'}{sep}third_party/Missav",

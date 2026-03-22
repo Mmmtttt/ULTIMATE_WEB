@@ -1,10 +1,77 @@
 import json
 import os
+import sys
 
 
-BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_ROOT, ".."))
-SERVER_CONFIG_PATH = os.path.join(PROJECT_ROOT, "server_config.json")
+DEFAULT_SERVER_CONFIG = {
+    "backend": {"host": "0.0.0.0", "port": 5000},
+    "frontend": {"host": "0.0.0.0", "port": 5173},
+    "storage": {"data_dir": "./comic_backend/data"},
+}
+
+
+def _expand_path(path_value: str) -> str:
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(str(path_value or "").strip())))
+
+
+def _default_server_config_path() -> str:
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+        if os.path.basename(exe_dir).lower() == "bin":
+            return os.path.abspath(os.path.join(exe_dir, "..", "server_config.json"))
+        return os.path.abspath(os.path.join(exe_dir, "server_config.json"))
+
+    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    source_project_root = os.path.abspath(os.path.join(source_backend_root, ".."))
+    return os.path.abspath(os.path.join(source_project_root, "server_config.json"))
+
+
+def resolve_server_config_path() -> str:
+    env_override = str(os.environ.get("SERVER_CONFIG_PATH", "")).strip()
+    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    source_project_root = os.path.abspath(os.path.join(source_backend_root, ".."))
+    candidates = []
+
+    if env_override:
+        candidates.append(_expand_path(env_override))
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+        candidates.append(os.path.abspath(os.path.join(exe_dir, "server_config.json")))
+        candidates.append(os.path.abspath(os.path.join(exe_dir, "..", "server_config.json")))
+
+    candidates.append(os.path.abspath(os.path.join(source_project_root, "server_config.json")))
+    candidates.append(os.path.abspath(os.path.join(os.getcwd(), "server_config.json")))
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+
+    if env_override:
+        return _expand_path(env_override)
+    return _default_server_config_path()
+
+
+SERVER_CONFIG_PATH = resolve_server_config_path()
+PROJECT_ROOT = os.path.abspath(os.path.dirname(SERVER_CONFIG_PATH))
+
+
+def _resolve_backend_root() -> str:
+    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if not getattr(sys, "frozen", False):
+        return source_backend_root
+
+    candidates = (
+        os.path.join(PROJECT_ROOT, "backend_source"),
+        os.path.join(PROJECT_ROOT, "comic_backend"),
+    )
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return os.path.abspath(candidate)
+    return os.path.abspath(PROJECT_ROOT)
+
+
+BACKEND_ROOT = _resolve_backend_root()
 
 
 def _load_server_config():
@@ -14,11 +81,7 @@ def _load_server_config():
                 return json.load(f)
         except Exception:
             pass
-    return {
-        "backend": {"host": "0.0.0.0", "port": 5000},
-        "frontend": {"host": "0.0.0.0", "port": 5173},
-        "storage": {"data_dir": "./comic_backend/data"}
-    }
+    return dict(DEFAULT_SERVER_CONFIG)
 
 
 def _resolve_data_dir():

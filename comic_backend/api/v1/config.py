@@ -14,6 +14,7 @@ from core.constants import (
     DATA_DIR,
     JM_PICTURES_DIR,
     PK_PICTURES_DIR,
+    PROJECT_ROOT,
     SERVER_CONFIG_PATH,
     VIDEO_RECOMMENDATION_CACHE_DIR,
     VIDEO_RECOMMENDATION_JSON_FILE,
@@ -27,7 +28,7 @@ from infrastructure.recommendation_cache_manager import recommendation_cache_man
 config_bp = Blueprint('config', __name__)
 config_service = ConfigAppService()
 
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+_PROJECT_ROOT = PROJECT_ROOT
 _STATIC_PAGE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', 'static_pages')
 )

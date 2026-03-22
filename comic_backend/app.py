@@ -14,6 +14,7 @@ from core.constants import (
     COVER_DIR,
     DATA_DIR,
     RECOMMENDATION_CACHE_DIR,
+    SERVER_CONFIG_PATH,
     STATIC_DIR,
     VIDEO_DIR,
     ensure_storage_layout,
@@ -23,18 +24,10 @@ from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
 
 
-def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def load_server_config():
-    base_dir = get_base_dir()
-    config_path = os.path.join(base_dir, 'server_config.json')
-    if os.path.exists(config_path):
+    if os.path.exists(SERVER_CONFIG_PATH):
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(SERVER_CONFIG_PATH, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception:
             pass
@@ -80,7 +73,7 @@ def _resolve_backend_debug():
     env_debug = os.environ.get("BACKEND_DEBUG")
     if env_debug is not None:
         return _as_bool(env_debug, default=False)
-    return True
+    return not getattr(sys, "frozen", False)
 
 
 HOST = _resolve_backend_host()
