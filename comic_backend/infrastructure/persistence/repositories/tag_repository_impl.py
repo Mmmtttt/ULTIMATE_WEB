@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from domain.tag import Tag, TagRepository
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import error_logger
@@ -10,25 +10,83 @@ from core.constants import TAGS_JSON_FILE
 class TagJsonRepository(TagRepository):
     def __init__(self, storage: JsonStorage = None):
         self._storage = storage or JsonStorage(TAGS_JSON_FILE)
+
+    @staticmethod
+    def _normalize_content_type(value) -> str:
+        if isinstance(value, ContentType):
+            return value.value
+        text = str(value or "").strip().lower()
+        if text in {ContentType.COMIC.value, ContentType.VIDEO.value}:
+            return text
+        return ContentType.COMIC.value
+
+    def _normalize_tags_schema(self, data: dict) -> Tuple[dict, bool]:
+        if not isinstance(data, dict):
+            data = {}
+        tags = data.get("tags", [])
+        changed = False
+        if not isinstance(tags, list):
+            tags = []
+            data["tags"] = tags
+            changed = True
+
+        for item in tags:
+            if not isinstance(item, dict):
+                continue
+            normalized_type = self._normalize_content_type(item.get("content_type"))
+            if item.get("content_type") != normalized_type:
+                item["content_type"] = normalized_type
+                changed = True
+        return data, changed
+
+    def _read_with_normalized_tags(self) -> Dict:
+        data = self._storage.read()
+        normalized, changed = self._normalize_tags_schema(data)
+        if changed:
+            normalized["last_updated"] = get_current_time()
+            self._storage.write(normalized)
+        return normalized
+
+    def ensure_content_type_schema(self) -> Dict[str, int]:
+        data = self._storage.read()
+        if not isinstance(data, dict):
+            data = {}
+        tags = data.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
+        updated_count = 0
+        for item in tags:
+            if not isinstance(item, dict):
+                continue
+            normalized_type = self._normalize_content_type(item.get("content_type"))
+            if item.get("content_type") != normalized_type:
+                item["content_type"] = normalized_type
+                updated_count += 1
+        if updated_count > 0:
+            data["tags"] = tags
+            data["last_updated"] = get_current_time()
+            self._storage.write(data)
+        return {"updated_count": updated_count}
     
     def get_by_id(self, tag_id: str) -> Optional[Tag]:
-        data = self._storage.read()
+        data = self._read_with_normalized_tags()
         tags = data.get("tags", [])
         tag_data = next((t for t in tags if t["id"] == tag_id), None)
         return Tag.from_dict(tag_data) if tag_data else None
     
     def get_all(self, content_type: ContentType = None) -> List[Tag]:
-        data = self._storage.read()
+        data = self._read_with_normalized_tags()
         tags = data.get("tags", [])
         
         if content_type:
-            tags = [t for t in tags if t.get("content_type", ContentType.COMIC.value) == content_type.value]
+            normalized_target_type = self._normalize_content_type(content_type)
+            tags = [t for t in tags if self._normalize_content_type(t.get("content_type")) == normalized_target_type]
         
         return [Tag.from_dict(t) for t in tags]
     
     def save(self, tag: Tag) -> bool:
         try:
-            data = self._storage.read()
+            data = self._read_with_normalized_tags()
             tags = data.get("tags", [])
             
             index = next((i for i, t in enumerate(tags) if t["id"] == tag.id), -1)
@@ -48,7 +106,7 @@ class TagJsonRepository(TagRepository):
     
     def delete(self, tag_id: str) -> bool:
         try:
-            data = self._storage.read()
+            data = self._read_with_normalized_tags()
             tags = data.get("tags", [])
             comics = data.get("comics", [])
             videos = data.get("videos", [])
@@ -80,11 +138,12 @@ class TagJsonRepository(TagRepository):
             return False
     
     def exists_by_name(self, name: str, content_type: ContentType = None) -> bool:
-        data = self._storage.read()
+        data = self._read_with_normalized_tags()
         tags = data.get("tags", [])
         
         if content_type:
-            tags = [t for t in tags if t.get("content_type", ContentType.COMIC.value) == content_type.value]
+            normalized_target_type = self._normalize_content_type(content_type)
+            tags = [t for t in tags if self._normalize_content_type(t.get("content_type")) == normalized_target_type]
         
         return any(t.get("name") == name for t in tags)
     
@@ -104,7 +163,7 @@ class TagJsonRepository(TagRepository):
         if self.exists_by_name(name, content_type):
             return None
         
-        data = self._storage.read()
+        data = self._read_with_normalized_tags()
         tags = data.get("tags", [])
         tag_id = self._get_next_tag_id(tags)
         

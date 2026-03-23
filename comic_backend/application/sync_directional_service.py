@@ -1296,6 +1296,11 @@ class DirectionalSyncService:
 
             row_copy = dict(raw_row)
             row_copy["id"] = target_id
+            if dataset_name == "tags":
+                content_type = str(row_copy.get("content_type", "comic") or "").strip().lower()
+                if content_type not in {"comic", "video"}:
+                    content_type = "comic"
+                row_copy["content_type"] = content_type
             if semantic_key:
                 semantic_to_existing_id[semantic_key] = target_id
             used_ids.add(target_id)

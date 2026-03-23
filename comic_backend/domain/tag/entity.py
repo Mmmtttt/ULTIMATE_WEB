@@ -13,13 +13,20 @@ class Tag:
     
     @classmethod
     def from_dict(cls, data: dict) -> "Tag":
-        content_type = data.get("content_type", ContentType.COMIC)
-        if isinstance(content_type, str):
-            content_type = ContentType(content_type)
+        content_type = data.get("content_type", ContentType.COMIC.value)
+        if isinstance(content_type, ContentType):
+            normalized_content_type = content_type
+        elif isinstance(content_type, str):
+            try:
+                normalized_content_type = ContentType(content_type)
+            except ValueError:
+                normalized_content_type = ContentType.COMIC
+        else:
+            normalized_content_type = ContentType.COMIC
         return cls(
             id=data.get("id", ""),
             name=data.get("name", ""),
-            content_type=content_type,
+            content_type=normalized_content_type,
             create_time=data.get("create_time", "")
         )
     

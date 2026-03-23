@@ -383,6 +383,8 @@ class TaskManager:
         max_tag_num = 0
         
         for tag in existing_tags:
+            if self._normalize_tag_content_type(tag) != "comic":
+                continue
             tag_name_to_id[tag["name"]] = tag["id"]
             existing_tag_ids.add(tag["id"])
             if tag["id"].startswith("tag_"):
@@ -421,6 +423,7 @@ class TaskManager:
                     new_tags.append({
                         "id": new_id,
                         "name": tag_name,
+                        "content_type": "comic",
                         "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
                     })
                 

@@ -3,6 +3,7 @@ import time
 from typing import Dict, List, Any, Optional, Tuple
 from core.platform import Platform, add_platform_prefix, PLATFORM_PREFIXES
 from core.utils import normalize_total_page
+from core.enums import ContentType
 
 
 class MetaDataAdapter:
@@ -48,6 +49,11 @@ class MetaDataAdapter:
         max_tag_num = 0
         
         for tag in self.existing_tags:
+            tag_content_type = str(tag.get("content_type", ContentType.COMIC.value) or "").strip().lower()
+            if tag_content_type not in {ContentType.COMIC.value, ContentType.VIDEO.value}:
+                tag_content_type = ContentType.COMIC.value
+            if tag_content_type != ContentType.COMIC.value:
+                continue
             tag_name_to_id[tag["name"]] = tag["id"]
             existing_tag_ids.add(tag["id"])
             if tag["id"].startswith("tag_"):
@@ -76,6 +82,7 @@ class MetaDataAdapter:
                 result["tags"].append({
                     "id": new_id,
                     "name": tag_name,
+                    "content_type": ContentType.COMIC.value,
                     "create_time": time.strftime("%Y-%m-%dT%H:%M:%S")
                 })
         

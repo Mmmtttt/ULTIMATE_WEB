@@ -22,6 +22,7 @@ from core.constants import (
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 
 
 def load_server_config():
@@ -263,6 +264,19 @@ def init_temp_file_cleanup():
             app_logger.info(f"Cleaned stale .tmp files on startup: {cleaned}")
     except Exception as e:
         app_logger.warning(f"Failed to clean stale .tmp files on startup: {e}")
+
+
+def init_tag_schema():
+    """Backfill missing tag content_type to keep tag schema consistent."""
+    try:
+        result = TagJsonRepository().ensure_content_type_schema()
+        updated_count = int((result or {}).get("updated_count", 0))
+        if updated_count > 0:
+            app_logger.info(f"Tag schema normalized: updated {updated_count} tags with missing content_type")
+    except Exception as e:
+        app_logger.warning(f"Failed to normalize tag schema on startup: {e}")
+
+
 def success_response(data=None):
     return {
         "code": 200,
@@ -280,6 +294,7 @@ def run_backend_server(host=None, port=None, debug=None):
     resolved_debug = DEBUG if debug is None else bool(debug)
 
     init_temp_file_cleanup()
+    init_tag_schema()
     init_default_data()
     init_backup()
     app_logger.info(f"Starting backend service at {resolved_host}:{resolved_port}")

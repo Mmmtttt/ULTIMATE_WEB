@@ -68,6 +68,7 @@ tests/
   - integration: `test_list_create_bind_remove_delete_persistence.py`
 - tag_management
   - integration: `test_tag_add_edit_bind_delete_persistence.py`
+  - integration: `test_tag_content_type_schema_backfill.py`（新增，覆盖缺失 content_type 自动回填）
 - trash_management
   - e2e: `comic_move_to_trash_and_restore.spec.js`
   - integration: `test_video_trash_lifecycle_persistence.py`
