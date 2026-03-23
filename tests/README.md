@@ -166,3 +166,30 @@ tests/
   - 预览下载头：`VideoAppService._build_preview_video_headers`（JAVDB Referer/Cookie）
 - E2E 看护点：
   - 用户在 `VideoTagSearch` 页面完成“选标签 -> 搜索 -> 选择结果 -> 导入”，并断言请求参数和导入 body。
+
+## 14. Third-party Coverage Matrix (2026-03-23 Latest)
+- Current status: `tests/features/third_party_integration/` has `40` integration cases + `2` E2E cases.
+- Covered import flows:
+  - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
+  - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`.
+  - List: `platform/import`, `platform/sync`, `import/sync favorites` for `JAVDB/JM/PK`.
+- Covered search flows:
+  - Comic third-party keyword search (`platform=all`, invalid platform guard).
+  - Video third-party keyword search (`platform=all`, page parameter contract).
+  - Video JAVDB tag search (tag parsing, invalid tag IDs, cookie-required branch).
+  - E2E "search next page" via `/video-tag-search` load-more path.
+- Covered playback/download flows:
+  - `play-urls` for local/recommendation data source.
+  - `/video/proxy/*` and `/video/proxy2` forwarding contract (query/body/header/referer).
+  - `/video/preview-video/refresh` end-to-end backend chain (frontend request -> third-party detail -> cache scheduling).
+  - `VideoAppService._build_preview_video_headers` cookie/referer isolation behavior.
+- Covered list sync/import with third-party:
+  - Tracking list creation/update persistence (`platform`, `platform_list_id`, `import_source`).
+  - De-dup for sync (existing bound video codes and existing bound comic IDs).
+- Covered author/creator third-party:
+  - Author works search contract (`jmcomic/picacomic` mapping).
+  - New works enrichment (`get_album_by_id`).
+  - Batch detail route and service contract.
+- Residual risk notes (next priority):
+  - Add E2E for third-party playback UI action path (button click -> play request) when stable selectors are available.
+  - Add timeout/retry branch guards for long-running third-party adapter failures.

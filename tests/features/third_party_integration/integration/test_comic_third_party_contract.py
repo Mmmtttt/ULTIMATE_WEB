@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
-from tests.shared.runtime_data import find_by_id, load_json
+from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
 @pytest.mark.integration
@@ -289,3 +290,300 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
     assert captured["keyword"] == "idol"
     assert int(captured["max_pages"]) == 3
     assert captured["adapter_name"] == "picacomic"
+
+
+@pytest.mark.integration
+def test_comic_import_online_by_favorite_forwards_get_favorites_contract(third_party_client, monkeypatch):
+    """
+    用例描述:
+    - 用例目的: 看护漫画在线导入(by_favorite)对 third_party.get_favorites 的调用契约，防止平台适配器映射或收藏夹导入链路回归。
+    - 测试步骤:
+      1. mock external_api.get_favorites 记录 adapter_name 并返回收藏漫画。
+      2. mock platform_service.download_album 返回下载成功。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_favorite, platform=JM, target=home)。
+      4. 校验调用参数与导入结果。
+    - 预期结果:
+      1. HTTP 200 且业务 code=200。
+      2. get_favorites 收到 adapter_name='jmcomic'。
+      3. comics_database.json 新增对应前缀化漫画 ID。
+    - 历史变更:
+      - 2026-03-23: 初始创建，覆盖收藏夹在线导入契约。
+    """
+    client = third_party_client["client"]
+    meta_dir = third_party_client["meta_dir"]
+    external_api = importlib.import_module("third_party.external_api")
+    platform_service_module = importlib.import_module("third_party.platform_service")
+    captured = {}
+
+    def fake_get_favorites(adapter_name=None):
+        captured["adapter_name"] = adapter_name
+        return {
+            "albums": [
+                {"album_id": "778811", "title": "Favorite Album", "author": "Fav Author", "pages": 11, "tags": []}
+            ]
+        }
+
+    class FakePlatformService:
+        def download_album(self, platform, original_id, download_dir=None, show_progress=True):
+            captured["download"] = {
+                "platform": getattr(platform, "value", str(platform)),
+                "original_id": str(original_id),
+                "download_dir": str(download_dir or ""),
+                "show_progress": show_progress,
+            }
+            return {"local_pages": 6}, True
+
+    monkeypatch.setattr(external_api, "get_favorites", fake_get_favorites)
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    response = client.post(
+        "/api/v1/comic/import/online",
+        json={
+            "import_type": "by_favorite",
+            "target": "home",
+            "platform": "JM",
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["imported_count"] == 1
+    assert payload["data"]["downloaded_count"] == 1
+    assert captured["adapter_name"] == "jmcomic"
+    assert captured["download"]["platform"] == "JM"
+    assert captured["download"]["original_id"] == "778811"
+
+    comics = load_json(meta_dir / "comics_database.json").get("comics", [])
+    imported = find_by_id(comics, "JM778811")
+    assert imported is not None
+    assert int(imported["total_page"]) == 6
+
+
+@pytest.mark.integration
+def test_comic_import_online_recommendation_saves_cover_and_preview_contract(third_party_client, monkeypatch):
+    """
+    用例描述:
+    - 用例目的: 看护漫画在线导入 recommendation 分支与第三方封面/预览图接口的交互契约，防止目标库导入后字段缺失。
+    - 测试步骤:
+      1. mock get_album_by_id 返回单条漫画详情。
+      2. mock platform_service.download_cover/get_preview_image_urls。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_id,target=recommendation,platform=PK)。
+      4. 校验 recommendations_database.json 中 cover_path/preview_image_urls/preview_pages。
+    - 预期结果:
+      1. HTTP 200 且业务 code=200。
+      2. recommendation 记录带有静态封面路径和预览图 URL。
+    - 历史变更:
+      - 2026-03-23: 初始创建，覆盖推荐库在线导入契约。
+    """
+    client = third_party_client["client"]
+    data_dir = third_party_client["data_dir"]
+    meta_dir = third_party_client["meta_dir"]
+    external_api = importlib.import_module("third_party.external_api")
+    platform_service_module = importlib.import_module("third_party.platform_service")
+    captured = {"cover": [], "preview": []}
+
+    monkeypatch.setattr(
+        external_api,
+        "get_album_by_id",
+        lambda comic_id, adapter_name: {
+            "albums": [
+                {
+                    "album_id": str(comic_id),
+                    "title": "Rec Album",
+                    "author": "Rec Author",
+                    "pages": 10,
+                    "tags": ["Action"],
+                }
+            ]
+        },
+    )
+
+    class FakePlatformService:
+        def download_cover(self, platform, album_id, save_path, show_progress=False):
+            captured["cover"].append(
+                {
+                    "platform": getattr(platform, "value", str(platform)),
+                    "album_id": str(album_id),
+                    "save_path": str(save_path),
+                    "show_progress": show_progress,
+                }
+            )
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b"\xff\xd8\xff\xd9")
+            return {"ok": True}, True
+
+        def get_preview_image_urls(self, platform, album_id, preview_pages):
+            captured["preview"].append(
+                {
+                    "platform": getattr(platform, "value", str(platform)),
+                    "album_id": str(album_id),
+                    "preview_pages": list(preview_pages),
+                }
+            )
+            return [f"https://preview.example/{album_id}/{page}.jpg" for page in preview_pages]
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    response = client.post(
+        "/api/v1/comic/import/online",
+        json={
+            "import_type": "by_id",
+            "target": "recommendation",
+            "platform": "PK",
+            "comic_id": "990011",
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["imported_count"] == 1
+
+    recommendations = load_json(meta_dir / "recommendations_database.json").get("recommendations", [])
+    imported = find_by_id(recommendations, "PK990011")
+    assert imported is not None
+    assert str(imported.get("cover_path", "")).startswith("/static/cover/PK/990011.jpg")
+    assert imported.get("preview_image_urls")
+    assert imported.get("preview_pages")
+    assert captured["cover"][0]["platform"] == "PK"
+    assert captured["preview"][0]["platform"] == "PK"
+    assert (data_dir / "static" / "cover" / "PK" / "990011.jpg").exists()
+
+
+@pytest.mark.integration
+def test_comic_update_check_and_download_forward_platform_contract(third_party_client, monkeypatch):
+    """
+    用例描述:
+    - 用例目的: 看护漫画“在线更新检查/下载”与第三方平台服务交互契约，防止远程页数判断和下载调用参数回归。
+    - 测试步骤:
+      1. mock platform_service.get_album_by_id 返回 remote pages=5。
+      2. mock download_album 在隔离漫画目录补齐新页文件。
+      3. 调用 POST /api/v1/comic/update/check 与 /api/v1/comic/update/download。
+      4. 校验 has_update、download 参数、落盘 total_page。
+    - 预期结果:
+      1. 更新检查返回 has_update=true。
+      2. 下载调用包含正确 platform/original_id/download_dir。
+      3. comics_database.json 对应 total_page 更新为 5。
+    - 历史变更:
+      - 2026-03-23: 初始创建，覆盖在线更新第三方调用契约。
+    """
+    client = third_party_client["client"]
+    data_dir = third_party_client["data_dir"]
+    meta_dir = third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("third_party.platform_service")
+    calls = {"meta": [], "download": []}
+
+    class FakePlatformService:
+        def get_album_by_id(self, platform, album_id):
+            calls["meta"].append({"platform": getattr(platform, "value", str(platform)), "album_id": str(album_id)})
+            return {"albums": [{"album_id": str(album_id), "pages": 5}]}
+
+        def download_album(self, platform, album_id, download_dir=None, show_progress=False, **kwargs):
+            calls["download"].append(
+                {
+                    "platform": getattr(platform, "value", str(platform)),
+                    "album_id": str(album_id),
+                    "download_dir": str(download_dir or ""),
+                    "show_progress": show_progress,
+                    "kwargs": kwargs,
+                }
+            )
+            comic_dir = Path(data_dir) / "comic" / "JM" / str(album_id)
+            comic_dir.mkdir(parents=True, exist_ok=True)
+            # 补齐到 5 页，模拟第三方下载后本地文件变更
+            for page in (4, 5):
+                (comic_dir / f"{page:03d}.png").write_bytes(
+                    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+                    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
+                    b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+                )
+            return {"local_pages": 5}, True
+
+        def download_cover(self, platform, album_id, save_path, show_progress=False):
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(b"\xff\xd8\xff\xd9")
+            return {"ok": True}, True
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    check_resp = client.post("/api/v1/comic/update/check", json={"comic_id": "JM100001"})
+    check_payload = check_resp.get_json()
+    assert check_resp.status_code == 200
+    assert check_payload["code"] == 200
+    assert check_payload["data"]["has_update"] is True
+    assert check_payload["data"]["remote_total_page"] == 5
+
+    download_resp = client.post("/api/v1/comic/update/download", json={"comic_id": "JM100001"})
+    download_payload = download_resp.get_json()
+    assert download_resp.status_code == 200
+    assert download_payload["code"] == 200
+    assert download_payload["data"]["had_update"] is True
+    assert download_payload["data"]["local_page_count"] == 5
+
+    assert calls["meta"][0]["platform"] == "JM"
+    assert calls["meta"][0]["album_id"] == "100001"
+    assert calls["download"][0]["platform"] == "JM"
+    assert calls["download"][0]["album_id"] == "100001"
+    assert calls["download"][0]["show_progress"] is False
+    assert calls["download"][0]["kwargs"].get("decode_images") is True
+
+    comics = load_json(meta_dir / "comics_database.json").get("comics", [])
+    updated = find_by_id(comics, "JM100001")
+    assert updated is not None
+    assert int(updated["total_page"]) == 5
+
+
+@pytest.mark.integration
+def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_client, monkeypatch):
+    """
+    用例描述:
+    - 用例目的: 看护漫画异步批量导入(by_list)任务创建契约，防止批量 ID、平台、目标库参数透传错误。
+    - 测试步骤:
+      1. mock task_manager.create_task 记录参数并返回固定 task_id。
+      2. 调用 POST /api/v1/comic/import/async(import_type=by_list)。
+      3. 校验 create_task 收到 comic_ids/target/platform 等参数。
+    - 预期结果:
+      1. HTTP 200 且业务 code=200。
+      2. 返回 task_id 与 mock 一致。
+      3. create_task 参数与请求完全一致。
+    - 历史变更:
+      - 2026-03-23: 初始创建，覆盖异步批量导入任务契约。
+    """
+    client = third_party_client["client"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    captured = {}
+
+    def fake_create_task(platform, import_type, target, comic_id=None, keyword=None, comic_ids=None):
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+            }
+        )
+        return "task-batch-001"
+
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
+
+    response = client.post(
+        "/api/v1/comic/import/async",
+        json={
+            "import_type": "by_list",
+            "target": "recommendation",
+            "platform": "PK",
+            "comic_ids": ["5566", "7788", "9911"],
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["task_id"] == "task-batch-001"
+    assert captured["platform"] == "PK"
+    assert captured["import_type"] == "by_list"
+    assert captured["target"] == "recommendation"
+    assert captured["comic_ids"] == ["5566", "7788", "9911"]

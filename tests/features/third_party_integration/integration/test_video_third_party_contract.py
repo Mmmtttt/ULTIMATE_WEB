@@ -223,6 +223,41 @@ def test_video_javdb_search_by_tags_rejects_invalid_tag_ids(third_party_client):
 
 
 @pytest.mark.integration
+def test_video_javdb_search_by_tags_requires_login_cookie(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard the "tag search requires login" branch so missing/expired cookie does not silently query third-party.
+    - Steps:
+      1. Mock `get_video_adapter` and force `_is_javdb_tag_search_available` to return False.
+      2. Call `GET /api/v1/video/third-party/javdb/search-by-tags` with valid `tag_ids`.
+      3. Verify business error code and message.
+    - Expected:
+      1. HTTP 200 with business `code=401`.
+      2. Error message indicates login/cookie is required.
+    - History:
+      - 2026-03-23: Added to cover cookie-required contract branch.
+    """
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+
+    class FakeAdapter:
+        api = SimpleNamespace()
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda *args, **kwargs: FakeAdapter())
+    monkeypatch.setattr(video_api, "_is_javdb_tag_search_available", lambda *_args, **_kwargs: False)
+
+    response = client.get(
+        "/api/v1/video/third-party/javdb/search-by-tags",
+        query_string=[("tag_ids", "c1=23"), ("page", "1")],
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 401
+    assert "cookie" in str(payload["msg"]).lower() or "登录" in str(payload["msg"])
+
+
+@pytest.mark.integration
 def test_video_third_party_detail_actor_search_and_works_contract(third_party_client, monkeypatch):
     """
     用例描述:
@@ -374,6 +409,84 @@ def test_video_third_party_import_home_normalizes_id_and_calls_expected_dependen
     assert schedule_calls[0]["video_id"] == "JAVDBABP123"
     assert schedule_calls[0]["source"] == "local"
     assert schedule_calls[0]["allow_preview_video"] is True
+
+
+@pytest.mark.integration
+def test_video_third_party_import_home_falls_back_to_get_video_by_code(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard fallback contract when `get_video_detail` misses and adapter uses `get_video_by_code`.
+    - Steps:
+      1. Mock adapter `get_video_detail` -> None and `get_video_by_code` -> valid detail with canonical `video_id`.
+      2. Mock import and cache scheduling dependencies.
+      3. Call `POST /api/v1/video/third-party/import` to home target.
+      4. Verify fallback call path and imported ID mapping.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. Adapter receives fallback call with original lookup value.
+      3. Imported record uses canonical `video_id` returned by fallback detail.
+    - History:
+      - 2026-03-23: Added fallback branch coverage for third-party import.
+    """
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+    tag_service_module = __import__("application.tag_app_service", fromlist=["TagAppService"])
+    calls = {"detail": [], "fallback": []}
+    imported_payloads = []
+
+    class FakeAdapter:
+        def get_video_detail(self, video_id):
+            calls["detail"].append(video_id)
+            return None
+
+        def get_video_by_code(self, code):
+            calls["fallback"].append(code)
+            return {
+                "video_id": "ABP-123",
+                "title": "Fallback title",
+                "code": "ABP-123",
+                "actors": ["Actor-Y"],
+                "tags": ["TagA"],
+                "cover_url": "https://assets.example/cover-fallback.jpg",
+                "thumbnail_images": [],
+                "preview_video": "https://assets.example/preview-fallback.m3u8",
+                "magnets": [],
+            }
+
+    class FakeTagService:
+        def get_tag_list(self, *_args, **_kwargs):
+            return _ok_result([{"id": "tag_1", "name": "TagA"}])
+
+        def create_tag(self, tag_name, *_args, **_kwargs):
+            return _ok_result({"id": f"created_{tag_name}"})
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda *args, **kwargs: FakeAdapter())
+    monkeypatch.setattr(tag_service_module, "TagAppService", FakeTagService)
+    monkeypatch.setattr(video_api.video_service, "get_video_by_code", lambda _code: _error_result("not found"))
+    monkeypatch.setattr(
+        video_api.video_service,
+        "import_video",
+        lambda payload: imported_payloads.append(payload) or _ok_result(payload),
+    )
+    monkeypatch.setattr(
+        video_api.video_service,
+        "apply_recent_import_tags",
+        lambda ids, source="local", clear_previous=True: _ok_result({"ids": ids, "source": source}),
+    )
+    monkeypatch.setattr(video_api, "_schedule_video_asset_cache", lambda **_kwargs: None)
+
+    response = client.post(
+        "/api/v1/video/third-party/import",
+        json={"video_id": "ABP123", "target": "home", "platform": "javdb"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert calls["detail"] == ["ABP123"]
+    assert calls["fallback"] == ["ABP123"]
+    assert imported_payloads[0]["id"] == "JAVDBABP-123"
+    assert imported_payloads[0]["code"] == "ABP-123"
 
 
 @pytest.mark.integration

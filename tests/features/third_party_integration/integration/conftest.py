@@ -65,6 +65,11 @@ def third_party_client():
         "third_party_config_path": Path(prepared["third_party_config_path"]),
         "comic_api": importlib.import_module("api.v1.comic"),
         "video_api": importlib.import_module("api.v1.video"),
+        "list_api": importlib.import_module("api.v1.list"),
+        "author_api": importlib.import_module("api.v1.author"),
+        "actor_api": importlib.import_module("api.v1.actor"),
+        "list_service_module": importlib.import_module("application.list_app_service"),
+        "author_service_module": importlib.import_module("application.author_app_service"),
         "video_service_module": importlib.import_module("application.video_app_service"),
     }
 
