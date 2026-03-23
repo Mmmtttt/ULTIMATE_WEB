@@ -29,3 +29,8 @@ tests/test.txt
 comic_backend/venv
 
 output/*
+
+# test runtime and reports
+tests/.runtime/
+tests/playwright-report/
+tests/test-results/
