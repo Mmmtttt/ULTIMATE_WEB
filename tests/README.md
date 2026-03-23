@@ -22,9 +22,30 @@
 - Windows 包装：[`run_test_gate.ps1`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\run_test_gate.ps1)
 - Linux/macOS 包装：[`run_test_gate.sh`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\run_test_gate.sh)
 
-### 2.3 首个真实功能用例（library_browse）
-- E2E：[`library_open_detail.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\e2e\library_open_detail.spec.js)
-- Integration：[`test_progress_persistence.py`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\integration\test_progress_persistence.py)
+### 2.3 已落地主用例（含高优先级扩展）
+- library_browse / E2E：
+  - [`library_open_detail.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\e2e\library_open_detail.spec.js)
+  - [`library_open_video_detail.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\e2e\library_open_video_detail.spec.js)
+  - [`library_sort_by_score.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\e2e\library_sort_by_score.spec.js)
+- library_browse / Integration：
+  - [`test_progress_persistence.py`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\library_browse\integration\test_progress_persistence.py)
+- global_search / E2E：
+  - [`global_search_local_comic_open_detail.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\global_search\e2e\global_search_local_comic_open_detail.spec.js)
+- list_management：
+  - E2E：
+    - [`list_manage_create_custom_list.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\list_management\e2e\list_manage_create_custom_list.spec.js)
+    - [`comic_detail_add_to_custom_list.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\list_management\e2e\comic_detail_add_to_custom_list.spec.js)
+  - Integration：
+    - [`test_list_create_bind_remove_delete_persistence.py`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\list_management\integration\test_list_create_bind_remove_delete_persistence.py)
+- tag_management / Integration：
+  - [`test_tag_add_edit_bind_delete_persistence.py`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\tag_management\integration\test_tag_add_edit_bind_delete_persistence.py)
+- trash_management：
+  - E2E：
+    - [`comic_move_to_trash_and_restore.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\trash_management\e2e\comic_move_to_trash_and_restore.spec.js)
+  - Integration：
+    - [`test_video_trash_lifecycle_persistence.py`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\trash_management\integration\test_video_trash_lifecycle_persistence.py)
+- system_config / E2E：
+  - [`system_config_updates_reader_preferences.spec.js`](D:\code\临时并行开发目录\第二\ULTIMATE_WEB\tests\features\system_config\e2e\system_config_updates_reader_preferences.spec.js)
 
 ---
 
@@ -158,6 +179,30 @@ tests/
 3. 出参映射
 4. 失败重试/降级行为
 
+### 7.4 用例描述规范（新增强制）
+- 每个用例前必须写“用例描述”，不允许省略。
+- 必填字段：
+1. 用例目的
+2. 测试步骤
+3. 预期结果
+4. 历史变更（`YYYY-MM-DD + 变更说明`）
+- 位置要求：
+1. E2E：写在 `test(...)` 前的块注释中。
+2. Integration：写在测试函数 docstring 中。
+- 推荐模板：
+```text
+用例描述:
+- 用例目的: ...
+- 测试步骤:
+  1. ...
+  2. ...
+- 预期结果:
+  1. ...
+  2. ...
+- 历史变更:
+  - 2026-03-23: 初始创建，覆盖 ...
+```
+
 ---
 
 ## 8. AI 提示词规范（强约束版本）
@@ -173,6 +218,7 @@ tests/
 ## 9. 全面覆盖计划（功能维度，深入版）
 ### 9.1 覆盖总策略
 - E2E : Integration 目标比例 = **80 : 20**
+- 当前已落地比例（累计）约 **67 : 33**，后续批次继续向 80 : 20 收敛。
 - 每个功能最少 1 条主路径 E2E + 1 条关键异常 E2E。
 - 仅对复杂后端逻辑补集成测试（文件写入、多表联动、并发、幂等等）。
 
@@ -248,6 +294,50 @@ tests/features/<feature_name>/
 3. 实际输出
 4. 关键信息定位（接口/文件/页面节点）
 
+### 9.6 本批次新增的 10 条高优先级用例
+1. `library_browse/e2e/library_open_video_detail.spec.js`
+   - 风险看护：模式切换后视频主路径不可用、详情请求参数错。
+2. `library_browse/e2e/library_sort_by_score.spec.js`
+   - 风险看护：排序 UI 失效、后端排序参数丢失。
+3. `global_search/e2e/global_search_local_comic_open_detail.spec.js`
+   - 风险看护：本地搜索链路回归、搜索结果跳转错误。
+4. `list_management/e2e/list_manage_create_custom_list.spec.js`
+   - 风险看护：清单创建入口失效、创建后列表不刷新。
+5. `list_management/e2e/comic_detail_add_to_custom_list.spec.js`
+   - 风险看护：详情页加清单失败、绑定后列表展示不一致。
+6. `trash_management/e2e/comic_move_to_trash_and_restore.spec.js`
+   - 风险看护：移入回收站/恢复链路断裂，用户内容丢失风险。
+7. `system_config/e2e/system_config_updates_reader_preferences.spec.js`
+   - 风险看护：阅读偏好修改不落库、配置 API 契约漂移。
+8. `list_management/integration/test_list_create_bind_remove_delete_persistence.py`
+   - 风险看护：清单全生命周期与 JSON 落盘不一致。
+9. `tag_management/integration/test_tag_add_edit_bind_delete_persistence.py`
+   - 风险看护：标签 CRUD/绑定链路回归，标签删除后脏引用。
+10. `trash_management/integration/test_video_trash_lifecycle_persistence.py`
+   - 风险看护：视频回收站生命周期与落盘状态错乱。
+
+### 9.7 后续全覆盖开发计划（给后续 AI 的执行路线）
+1. 漫画导入链路（by_id/by_search/by_list/async task）补齐：
+   - E2E 主路径 + Integration 导入任务状态落盘。
+2. 漫画详情扩展能力补齐：
+   - 下载、检查更新、更新下载、作者订阅。
+3. 标签能力补齐到“批量页面操作”：
+   - E2E 覆盖批量加/批量移除 + Integration 校验跨源（home/recommendation）一致性。
+4. 清单能力补齐到“视频 + 收藏 + 详情筛选”：
+   - E2E 覆盖视频清单、收藏清单详情、清单内筛选排序。
+5. 回收站能力补齐到“批量操作 + 永久删除”：
+   - E2E 覆盖批量恢复/删除，Integration 校验文件资产清理。
+6. 视频播放链路补齐：
+   - E2E 覆盖详情加载、播放地址获取、预览资源刷新入口。
+7. 搜索链路补齐：
+   - 本地/预览/远程三分支分别覆盖，远程分支使用 mock/stub。
+8. 系统设置与缓存管理补齐：
+   - E2E 覆盖缓存面板操作入口，Integration 校验 cache/info 与清理结果。
+9. 同步中心补齐：
+   - Integration 优先覆盖 pairing、directional/push/pull、冲突策略、幂等。
+10. 第三方契约专项：
+   - 统一使用 mock/stub，不接真实外网，固定断言入参/出参/错误分支。
+
 ---
 
 ## 10. 执行命令
@@ -262,7 +352,7 @@ tests/features/<feature_name>/
 ---
 
 ## 11. 当前状态
-- 已完成门禁基础设施、隔离数据工厂、首个功能用例、CI 接入。
+- 已完成门禁基础设施、隔离数据工厂、CI 接入，并落地高优先级 10 条新增真实用例（累计 12 条）。
 - 现阶段已验证：
 1. 集成测试可通过
 2. E2E 可通过

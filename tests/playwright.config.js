@@ -13,7 +13,8 @@ module.exports = defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // E2E cases share the same isolated runtime backend process; keep single worker for determinism.
+  workers: 1,
   reporter: [
     ["list"],
     ["html", { outputFolder: path.join(__dirname, "playwright-report"), open: "never" }],

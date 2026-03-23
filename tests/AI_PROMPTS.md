@@ -11,10 +11,18 @@
 5. Integration 只允许使用 Pytest，通过后端 HTTP 接口验证，并断言文件系统持久化结果。
 6. 第三方库不直接测试实现，只测试后端与第三方的交互契约（可用 mock/stub）。
 7. 代码风格：优先复用 tests/shared/test_constants.py，避免散落硬编码。
-8. 新增后必须本地可跑：
+8. 每个“测试用例”前都必须写完整用例描述，至少包含：
+   - 用例目的
+   - 测试步骤
+   - 预期结果
+   - 历史变更（日期 + 变更说明）
+9. 新增后必须本地可跑：
    - python -m pytest tests/features -m integration
    - python tests/tools/run_e2e.py
-9. 产出必须包含：修改文件清单、用例覆盖点、如何运行、失败如何定位。
+10. 用例描述写法：
+   - E2E: 写在 test(...) 前的块注释中。
+   - Integration: 写在测试函数 docstring 中。
+11. 产出必须包含：修改文件清单、用例覆盖点、如何运行、失败如何定位。
 ```
 
 ## 2) 新增“功能主路径”E2E 提示词
@@ -97,4 +105,41 @@ tests/features/<feature_name>/integration/test_<case_name>.py
 4. 运行命令
 5. 已验证结果（通过/失败）
 6. 风险与后续建议
+```
+
+## 8) 用例描述模板（强制复用）
+```text
+[E2E 模板]
+/**
+ * 用例描述:
+ * - 用例目的: <一句话描述守护目标>
+ * - 测试步骤:
+ *   1. ...
+ *   2. ...
+ * - 预期结果:
+ *   1. ...
+ *   2. ...
+ * - 历史变更:
+ *   - YYYY-MM-DD: 初始创建，<覆盖点>
+ *   - YYYY-MM-DD: <后续修改说明>
+ */
+test("<业务行为命名>", async ({ page }) => { ... })
+
+[Integration 模板]
+@pytest.mark.integration
+def test_<case_name>(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: <一句话描述守护目标>
+    - 测试步骤:
+      1. ...
+      2. ...
+    - 预期结果:
+      1. ...
+      2. ...
+    - 历史变更:
+      - YYYY-MM-DD: 初始创建，<覆盖点>
+      - YYYY-MM-DD: <后续修改说明>
+    """
+    ...
 ```
