@@ -36,7 +36,14 @@ async function deleteRecommendationIfExists(request, recommendationId) {
   });
 }
 
-async function addRecommendation(request, recommendationId, title, totalPage = 3) {
+async function addRecommendation(
+  request,
+  recommendationId,
+  title,
+  totalPage = 3,
+  options = {},
+) {
+  const { currentPage = 1 } = options;
   await deleteRecommendationIfExists(request, recommendationId);
   const response = await request.post(`${BACKEND_BASE_URL}/api/v1/recommendation/add`, {
     data: {
@@ -44,7 +51,7 @@ async function addRecommendation(request, recommendationId, title, totalPage = 3
       title,
       author: "Reader Gate Bot",
       total_page: totalPage,
-      current_page: 1,
+      current_page: currentPage,
       score: 8.5,
       cover_path: "/static/cover/JM/100001.png",
       tag_ids: ["tag_action"],
@@ -209,4 +216,39 @@ test("preview reader falls back to error state when uncached download is unavail
         item.body.includes(`"recommendation_id":"${UNCACHED_RECOMMENDATION_ID}"`),
     ),
   ).toBeTruthy();
+});
+
+/**
+ * 用例描述:
+ * - 用例目的: 看护“预览漫画详情 -> 继续阅读”入口，确保会按保存进度进入阅读页并正确显示页码。
+ * - 测试步骤:
+ *   1. 新增带 current_page=2 的推荐漫画并写入缓存页。
+ *   2. 打开推荐详情页并点击“继续阅读”按钮。
+ *   3. 校验进入 recommendation-reader 后页码为 2/3。
+ * - 预期结果:
+ *   1. 路由跳转到 /recommendation-reader/{id}。
+ *   2. 阅读页定位到 current_page（2/3）。
+ * - 历史变更:
+ *   - 2026-03-24: 初始创建，补齐预览详情入口继续阅读看护。
+ */
+test("recommendation detail continue reading opens reader at saved progress", async ({
+  page,
+  request,
+}) => {
+  const runtimeDataDir = await getRuntimeDataDir(request);
+  const recommendationId = "JM910003";
+
+  await addRecommendation(request, recommendationId, "Reader Gate Detail Continue", 3, {
+    currentPage: 2,
+  });
+  await seedRecommendationCache(runtimeDataDir, recommendationId, 3);
+
+  await page.goto(`/recommendation/${recommendationId}`);
+  const readButton = page.locator(".read-button");
+  await expect(readButton).toBeVisible();
+  await readButton.click();
+
+  await expect(page).toHaveURL(new RegExp(`/recommendation-reader/${recommendationId}$`));
+  await page.keyboard.press("m");
+  await waitPageIndicator(page, "2/3");
 });
