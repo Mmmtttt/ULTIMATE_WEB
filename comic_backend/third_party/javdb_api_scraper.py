@@ -6,26 +6,35 @@ import sys
 import os
 import re
 import json
+import importlib.util
 from typing import List
 import requests
 from html import unescape
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+from core.constants import THIRD_PARTY_CONFIG_PATH
 
 _javdb_path = os.path.join(os.path.dirname(__file__), 'javdb-api-scraper')
+_javdb_utils_path = os.path.abspath(os.path.join(_javdb_path, "utils.py"))
 
 # 确保 javdb-api-scraper 路径在最前面，优先于 comic_backend/utils
 if _javdb_path in sys.path:
     sys.path.remove(_javdb_path)
 sys.path.insert(0, _javdb_path)
 
-# 清除可能已缓存的错误 utils 模块
-if 'utils' in sys.modules:
-    # 检查是否是错误的 utils 模块
-    cached_utils = sys.modules['utils']
-    if hasattr(cached_utils, '__file__') and cached_utils.__file__:
-        if 'comic_backend\\utils' in cached_utils.__file__ or 'comic_backend/utils' in cached_utils.__file__:
-            del sys.modules['utils']
+# 确保 `import utils` 始终命中 javdb-api-scraper/utils.py
+cached_utils = sys.modules.get('utils')
+if cached_utils is not None:
+    cached_file = os.path.abspath(str(getattr(cached_utils, '__file__', '') or ''))
+    if cached_file != _javdb_utils_path:
+        del sys.modules['utils']
+
+if os.path.exists(_javdb_utils_path) and 'utils' not in sys.modules:
+    spec = importlib.util.spec_from_file_location('utils', _javdb_utils_path)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules['utils'] = module
 
 # 现在导入 javdb_api，它会使用 javdb-api-scraper/utils.py
 import javdb_api
@@ -78,7 +87,7 @@ def _looks_like_preview_media_url(raw_url: str) -> bool:
 def _load_javdb_cookies_from_third_party_config() -> dict:
     """从 comic_backend/third_party_config.json 读取 JAVDB cookies。"""
     try:
-        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'third_party_config.json')
+        config_path = THIRD_PARTY_CONFIG_PATH
         if not os.path.exists(config_path):
             return {}
 

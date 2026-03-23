@@ -5,9 +5,11 @@ JAVDB API 适配器实现
 import sys
 import os
 import logging
+import importlib.util
 from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
 from core.platform import Platform
+from core.constants import THIRD_PARTY_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ class JavdbAdapter(BaseAdapter):
                 os.path.dirname(__file__),
                 'javdb-api-scraper'
             )
+            javdb_utils_path = os.path.abspath(os.path.join(javdb_path, "utils.py"))
             logger.info(f"JAVDB API 路径: {javdb_path}")
             
             # 确保 javdb-api-scraper 路径在最前面，优先于 comic_backend/utils
@@ -50,13 +53,21 @@ class JavdbAdapter(BaseAdapter):
                 sys.path.remove(javdb_path)
             sys.path.insert(0, javdb_path)
             
-            # 清除可能已缓存的错误 utils 模块
-            if 'utils' in sys.modules:
-                cached_utils = sys.modules['utils']
-                if hasattr(cached_utils, '__file__') and cached_utils.__file__:
-                    if 'comic_backend\\utils' in cached_utils.__file__ or 'comic_backend/utils' in cached_utils.__file__:
-                        logger.info(f"清除已缓存的错误 utils 模块: {cached_utils.__file__}")
-                        del sys.modules['utils']
+            # 强制 `import utils` 命中 javdb-api-scraper/utils.py，避免与其他 utils 包冲突
+            cached_utils = sys.modules.get('utils')
+            if cached_utils is not None:
+                cached_file = os.path.abspath(str(getattr(cached_utils, '__file__', '') or ''))
+                if cached_file != javdb_utils_path:
+                    logger.info(f"清除冲突 utils 模块: {cached_file}")
+                    del sys.modules['utils']
+
+            if os.path.exists(javdb_utils_path) and 'utils' not in sys.modules:
+                spec = importlib.util.spec_from_file_location('utils', javdb_utils_path)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    sys.modules['utils'] = module
+                    logger.info(f"已绑定 javdb utils 模块: {javdb_utils_path}")
             
             from javdb_api import JavdbAPI
             domain_index = self.get_config('domain_index', 0)
@@ -76,10 +87,7 @@ class JavdbAdapter(BaseAdapter):
     def _load_cookies_from_config(self):
         """从 third_party_config.json 读取并设置 cookies"""
         try:
-            config_path = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                'third_party_config.json'
-            )
+            config_path = THIRD_PARTY_CONFIG_PATH
             
             if not os.path.exists(config_path):
                 logger.warning(f"未找到配置文件: {config_path}")

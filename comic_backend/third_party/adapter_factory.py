@@ -7,7 +7,13 @@ from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
 from .picacomic_adapter import PicacomicAdapter
 from .javdb_adapter import JavdbAdapter
-from core.constants import DATA_DIR, JM_PICTURES_DIR, PK_PICTURES_DIR, normalize_to_data_dir
+from core.constants import (
+    DATA_DIR,
+    JM_PICTURES_DIR,
+    PK_PICTURES_DIR,
+    THIRD_PARTY_CONFIG_PATH,
+    normalize_to_data_dir,
+)
 
 
 class AdapterFactory:
@@ -92,13 +98,7 @@ class AdapterConfig:
         Args:
             config_path: 配置文件路径
         """
-        import os
-        default_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__),
-            '..',
-            'third_party_config.json'
-        ))
-        self.config_path = config_path or default_path
+        self.config_path = config_path or THIRD_PARTY_CONFIG_PATH
         self._config: Dict[str, Any] = {}
         self._load_config()
     

@@ -74,6 +74,37 @@ def _resolve_backend_root() -> str:
 BACKEND_ROOT = _resolve_backend_root()
 
 
+def resolve_third_party_config_path() -> str:
+    env_override = str(os.environ.get("THIRD_PARTY_CONFIG_PATH", "")).strip()
+    candidates = []
+
+    if env_override:
+        candidates.append(_expand_path(env_override))
+
+    candidates.extend(
+        [
+            os.path.abspath(os.path.join(BACKEND_ROOT, "third_party_config.json")),
+            os.path.abspath(os.path.join(PROJECT_ROOT, "backend_source", "third_party_config.json")),
+            os.path.abspath(os.path.join(PROJECT_ROOT, "comic_backend", "third_party_config.json")),
+            os.path.abspath(os.path.join(PROJECT_ROOT, "third_party_config.json")),
+            os.path.abspath(os.path.join(os.getcwd(), "backend_source", "third_party_config.json")),
+            os.path.abspath(os.path.join(os.getcwd(), "comic_backend", "third_party_config.json")),
+            os.path.abspath(os.path.join(os.getcwd(), "third_party_config.json")),
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+
+    if env_override:
+        return _expand_path(env_override)
+    return os.path.abspath(os.path.join(BACKEND_ROOT, "third_party_config.json"))
+
+
+THIRD_PARTY_CONFIG_PATH = resolve_third_party_config_path()
+
+
 def _load_server_config():
     if os.path.exists(SERVER_CONFIG_PATH):
         try:

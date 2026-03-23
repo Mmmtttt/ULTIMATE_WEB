@@ -29,6 +29,7 @@ from core.utils import get_current_time, generate_id
 from core.constants import (
     DATA_DIR,
     STATIC_DIR,
+    THIRD_PARTY_CONFIG_PATH,
     JAVDB_COVER_DIR,
     JAVBUS_COVER_DIR,
     VIDEO_CACHE_DIR,
@@ -921,8 +922,7 @@ class VideoAppService(BaseContentAppService):
     @staticmethod
     def _load_javdb_cookie_header() -> str:
         try:
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            config_path = os.path.join(project_root, "third_party_config.json")
+            config_path = THIRD_PARTY_CONFIG_PATH
             if not os.path.exists(config_path):
                 return ""
 
