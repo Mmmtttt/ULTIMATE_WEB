@@ -678,3 +678,323 @@ def test_directional_pull_remaps_tag_list_ids_and_verifies_each_transferred_asse
         assert _wait_for_no_zip_files(source_zip_dir), f"source still has temp zip files: {list(source_zip_dir.glob('*.zip'))}"
     if target_zip_dir.is_dir():
         assert _wait_for_no_zip_files(target_zip_dir), f"target still has temp zip files: {list(target_zip_dir.glob('*.zip'))}"
+
+
+def _wait_for_directional_task(base_url: str, task_id: str, timeout_seconds: int = 180) -> dict:
+    deadline = time.time() + timeout_seconds
+    last_payload: dict = {}
+    while time.time() < deadline:
+        payload = _request_ok("GET", f"{base_url}/api/v1/sync/directional/task/{task_id}", timeout=10)
+        last_payload = payload if isinstance(payload, dict) else {}
+        status = str(last_payload.get("status", "")).strip().lower()
+        if status in {"completed", "failed"}:
+            return last_payload
+        time.sleep(0.5)
+    raise TimeoutError(f"directional task timeout: {task_id}, last={last_payload}")
+
+
+@pytest.mark.integration
+def test_sync_session_meta_only_layer_exports_only_meta_package(single_sync_runtime):
+    """
+    用例描述:
+    - 用例目的: 看护 session 分层开关在 `layers=["meta"]` 时不会误打包 media/cache/cover。
+    - 测试步骤:
+      1. 调用 /api/v1/sync/session/start，传入 layers=["meta"] 且 include_* 全部 true。
+      2. 校验 packages 只有 meta 包，并下载检查 zip 条目均在 meta_data/ 下。
+      3. 调用 /api/v1/sync/session/finish，校验导出目录被清理。
+    - 预期结果:
+      1. 仅返回 1 个 meta 类型包。
+      2. meta.zip 内条目全部以 meta_data/ 开头。
+      3. finish 后会话导出目录不存在。
+    - 历史变更:
+      - 2026-03-24: 初始创建，覆盖分层打包开关守卫场景。
+    """
+    base_url = single_sync_runtime["base_url"]
+    data_dir: Path = single_sync_runtime["data_dir"]
+
+    session_data = _request_ok(
+        "POST",
+        f"{base_url}/api/v1/sync/session/start",
+        json_body={
+            "layers": ["meta"],
+            "include_media": True,
+            "include_cache": True,
+            "include_cover": True,
+            "include_meta": True,
+        },
+        timeout=40,
+    )
+    session_id = str(session_data.get("session_id", "")).strip()
+    assert session_id
+
+    packages = session_data.get("packages", [])
+    assert isinstance(packages, list)
+    assert len(packages) == 1
+    only = packages[0]
+    assert str(only.get("type") or only.get("kind") or "").strip() == "meta"
+
+    package_name = str(only.get("name") or only.get("file") or "").strip()
+    assert package_name
+    download_resp = requests.get(
+        f"{base_url}/api/v1/sync/download/{session_id}/{package_name}",
+        timeout=40,
+    )
+    assert download_resp.status_code == 200
+
+    tmp_zip = data_dir / "cache" / f"sync_meta_only_{uuid4().hex[:8]}.zip"
+    try:
+        tmp_zip.write_bytes(download_resp.content)
+        with zipfile.ZipFile(tmp_zip, "r") as zip_fp:
+            entries = [item for item in zip_fp.namelist() if item]
+            assert entries
+            assert all(item.startswith("meta_data/") for item in entries)
+    finally:
+        if tmp_zip.exists():
+            tmp_zip.unlink()
+
+    finish_data = _request_ok(
+        "POST",
+        f"{base_url}/api/v1/sync/session/finish",
+        json_body={"session_id": session_id, "status": "completed"},
+        timeout=20,
+    )
+    assert finish_data.get("session_id") == session_id
+    assert bool(finish_data.get("exports_cleaned")) is True
+    assert not (data_dir / "cache" / "sync_exports" / session_id).exists()
+
+
+@pytest.mark.integration
+def test_sync_api_guards_return_expected_codes(single_sync_runtime):
+    """
+    用例描述:
+    - 用例目的: 看护同步 API 的参数校验和 token 鉴权守卫，避免无效请求误入业务主流程。
+    - 测试步骤:
+      1. 调用 finish_session 且缺少 session_id。
+      2. 调用 directional pull 且缺少 peer_id。
+      3. 调用 directional inventory/assets inventory 且缺少或错误 token。
+      4. 调用 pairing connect 且缺少必要参数。
+    - 预期结果:
+      1. 返回业务错误码 400/401，且错误信息明确。
+      2. 不会返回 code=200 的成功业务结果。
+    - 历史变更:
+      - 2026-03-24: 初始创建，覆盖同步入口守卫。
+    """
+    base_url = single_sync_runtime["base_url"]
+
+    finish_resp = requests.post(
+        f"{base_url}/api/v1/sync/session/finish",
+        json={},
+        timeout=10,
+    )
+    assert finish_resp.status_code == 200
+    finish_payload = finish_resp.json()
+    assert finish_payload.get("code") == 400
+    assert "session_id is required" in str(finish_payload.get("msg", ""))
+
+    pull_resp = requests.post(
+        f"{base_url}/api/v1/sync/directional/pull",
+        json={},
+        timeout=10,
+    )
+    assert pull_resp.status_code == 200
+    pull_payload = pull_resp.json()
+    assert pull_payload.get("code") == 400
+    assert "peer_id is required" in str(pull_payload.get("msg", ""))
+
+    inv_resp = requests.get(
+        f"{base_url}/api/v1/sync/directional/inventory",
+        timeout=10,
+    )
+    assert inv_resp.status_code == 200
+    inv_payload = inv_resp.json()
+    assert inv_payload.get("code") == 401
+    assert "invalid sync token" in str(inv_payload.get("msg", ""))
+
+    assets_inv_resp = requests.get(
+        f"{base_url}/api/v1/sync/directional/assets/inventory",
+        headers={"X-Sync-Token": "invalid-token"},
+        timeout=10,
+    )
+    assert assets_inv_resp.status_code == 200
+    assets_inv_payload = assets_inv_resp.json()
+    assert assets_inv_payload.get("code") == 401
+    assert "invalid sync token" in str(assets_inv_payload.get("msg", ""))
+
+    connect_resp = requests.post(
+        f"{base_url}/api/v1/sync/pairing/connect",
+        json={"remote_base_url": "http://127.0.0.1:1"},
+        timeout=10,
+    )
+    assert connect_resp.status_code == 200
+    connect_payload = connect_resp.json()
+    assert connect_payload.get("code") == 400
+    assert "pairing_code is required" in str(connect_payload.get("msg", ""))
+
+
+@pytest.mark.integration
+def test_directional_push_task_flow_syncs_data_and_assets(dual_sync_runtime):
+    """
+    用例描述:
+    - 用例目的: 看护 directional push 与异步 task 接口主链路，确保 target->source 的数据和资产同步可用。
+    - 测试步骤:
+      1. 在 target 注入唯一 tag/list/comic 和真实资源文件。
+      2. source 发邀请码，target connect 后先调用 preview(push)。
+      3. target 调用 directional/task/start(direction=push) 并轮询 task 状态至完成。
+      4. 校验 source 侧元数据与文件均已同步，再执行一次 push 校验 no_change 幂等。
+    - 预期结果:
+      1. task 最终 completed，包含 push 结果。
+      2. source 出现新增 comic/tag/list，且 comic 引用了正确 tag/list。
+      3. source 新增资源文件存在且内容哈希与 target 一致。
+      4. 二次 push 返回 no_change 且 asset file_count=0。
+    - 历史变更:
+      - 2026-03-24: 初始创建，补齐 push + directional task 覆盖。
+    """
+    source = dual_sync_runtime["source"]
+    target = dual_sync_runtime["target"]
+    source_base = source["base_url"]
+    target_base = target["base_url"]
+    source_data: Path = source["data_dir"]
+    target_data: Path = target["data_dir"]
+
+    source_tags_path = source["meta_dir"] / "tags_database.json"
+    source_lists_path = source["meta_dir"] / "lists_database.json"
+    source_comics_path = source["meta_dir"] / "comics_database.json"
+    target_tags_path = target["meta_dir"] / "tags_database.json"
+    target_lists_path = target["meta_dir"] / "lists_database.json"
+    target_comics_path = target["meta_dir"] / "comics_database.json"
+
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    suffix = uuid4().hex[:8]
+    comic_id = f"JM_PUSH_{suffix.upper()}"
+    tag_id = f"tag_push_{suffix}"
+    list_id = f"list_push_{suffix}"
+    tag_name = f"sync-push-tag-{suffix}"
+    list_name = f"sync-push-list-{suffix}"
+
+    target_tags = load_json(target_tags_path)
+    target_lists = load_json(target_lists_path)
+    target_comics = load_json(target_comics_path)
+    _upsert_by_id(
+        target_tags.setdefault("tags", []),
+        {"id": tag_id, "name": tag_name, "content_type": "comic", "create_time": now},
+    )
+    _upsert_by_id(
+        target_lists.setdefault("lists", []),
+        {"id": list_id, "name": list_name, "content_type": "comic", "is_default": False, "create_time": now},
+    )
+    _upsert_by_id(
+        target_comics.setdefault("comics", []),
+        {
+            "id": comic_id,
+            "title": f"Push Comic {suffix}",
+            "title_jp": "",
+            "author": "Push Tester",
+            "desc": "Directional push integration guard.",
+            "cover_path": f"/static/cover/JM/{comic_id}.jpg",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 8.7,
+            "tag_ids": [tag_id],
+            "list_ids": [list_id],
+            "create_time": now,
+            "last_read_time": now,
+            "is_deleted": False,
+        },
+    )
+    _update_total(target_comics, "comics", "total_comics")
+    target_tags["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    target_lists["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(target_tags_path, target_tags)
+    save_json(target_lists_path, target_lists)
+    save_json(target_comics_path, target_comics)
+
+    page_rel = f"comic/JM/{comic_id}/001.png"
+    cover_rel = f"static/cover/JM/{comic_id}.jpg"
+    _write_binary(target_data, page_rel, f"push-page-{suffix}".encode("utf-8"))
+    _write_binary(target_data, cover_rel, f"push-cover-{suffix}".encode("utf-8"))
+    expected_hashes = {
+        page_rel: _sha256(target_data / page_rel.replace("/", os.sep)),
+        cover_rel: _sha256(target_data / cover_rel.replace("/", os.sep)),
+    }
+    assert not (source_data / page_rel.replace("/", os.sep)).exists()
+    assert not (source_data / cover_rel.replace("/", os.sep)).exists()
+
+    invite_data = _request_ok(
+        "POST",
+        f"{source_base}/api/v1/sync/pairing/invite",
+        json_body={"ttl_minutes": 10},
+        timeout=10,
+    )
+    pairing_code = str(invite_data.get("pairing_code", "")).strip()
+    assert pairing_code
+
+    connect_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/pairing/connect",
+        json_body={
+            "remote_base_url": source_base,
+            "pairing_code": pairing_code,
+            "requester_base_url": target_base,
+        },
+        timeout=20,
+    )
+    peer_id = str(connect_data.get("peer_id", "")).strip()
+    assert peer_id
+
+    preview_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/directional/preview",
+        json_body={"peer_id": peer_id, "direction": "push"},
+        timeout=20,
+    )
+    assert preview_data.get("direction") == "push"
+    data_sync = preview_data.get("data_sync", {})
+    asset_sync = preview_data.get("asset_sync", {})
+    assert int(data_sync.get("total_records", 0)) > 0
+    assert int(asset_sync.get("file_count", 0)) >= 2
+
+    task_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/directional/task/start",
+        json_body={"peer_id": peer_id, "direction": "push"},
+        timeout=20,
+    )
+    task_id = str(task_data.get("task_id", "")).strip()
+    assert task_id
+    finished_task = _wait_for_directional_task(target_base, task_id, timeout_seconds=180)
+    assert finished_task.get("status") == "completed"
+    assert finished_task.get("progress") == 100
+    result = finished_task.get("result", {})
+    assert isinstance(result, dict)
+    assert result.get("status") == "completed"
+    assert result.get("direction") == "push"
+
+    source_comics = load_json(source_comics_path).get("comics", [])
+    source_tags = load_json(source_tags_path).get("tags", [])
+    source_lists = load_json(source_lists_path).get("lists", [])
+    pushed_comic = find_by_id(source_comics, comic_id)
+    assert pushed_comic is not None
+
+    pushed_tag = next((item for item in source_tags if item.get("name") == tag_name), None)
+    pushed_list = next((item for item in source_lists if item.get("name") == list_name), None)
+    assert pushed_tag is not None
+    assert pushed_list is not None
+    assert pushed_tag.get("id") in (pushed_comic.get("tag_ids") or [])
+    assert pushed_list.get("id") in (pushed_comic.get("list_ids") or [])
+
+    for rel, expected_hash in expected_hashes.items():
+        source_file = source_data / rel.replace("/", os.sep)
+        assert source_file.exists(), f"missing pushed file: {rel}"
+        assert _sha256(source_file) == expected_hash, f"hash mismatch for pushed file: {rel}"
+
+    push_again = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/directional/push",
+        json_body={"peer_id": peer_id},
+        timeout=180,
+    )
+    assert push_again.get("status") == "completed"
+    remote_apply_again = push_again.get("remote_apply", {})
+    assert int(remote_apply_again.get("total_added", 0)) == 0
+    assert int(remote_apply_again.get("total_updated", 0)) == 0
+    assert int(push_again.get("asset_sync", {}).get("file_count", 0)) == 0

@@ -78,7 +78,7 @@ tests/
 - system_config
   - e2e: `system_config_updates_reader_preferences.spec.js`
 - sync_center
-  - integration: `test_sync_center_guard.py`（新增，覆盖 session 分层打包/清理 + 双端 directional pull tag/list 映射与资产幂等）
+  - integration: `test_sync_center_guard.py`（新增，覆盖 session 分层打包/清理 + 双端 directional pull tag/list 映射与资产幂等 + meta-only 分层守卫 + API 鉴权参数守卫 + directional push/task 主链路）
 
 ## 7. 排序/筛选强看护（本次重点）
 ### 7.1 强看护定义
