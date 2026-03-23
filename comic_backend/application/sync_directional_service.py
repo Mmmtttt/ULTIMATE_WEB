@@ -433,13 +433,19 @@ class DirectionalSyncService:
                 datasets[name] = {"count": 1 if isinstance(payload, dict) and payload else 0}
                 continue
             ids = []
+            semantic_keys = []
             for item in payload if isinstance(payload, list) else []:
                 if not isinstance(item, dict):
                     continue
                 item_id = str(item.get(cfg.get("id_key", "id"), "")).strip()
                 if item_id:
                     ids.append(item_id)
+                semantic_key = self._semantic_record_key(name, item)
+                if semantic_key:
+                    semantic_keys.append(semantic_key)
             datasets[name] = {"count": len(set(ids)), "ids": sorted(set(ids))}
+            if semantic_keys:
+                datasets[name]["keys"] = sorted(set(semantic_keys))
         return {"generated_at": _iso(_utc_now()), "device": self._load_store().get("device", {}), "datasets": datasets}
 
     def asset_inventory(self) -> Dict[str, Any]:
@@ -465,6 +471,12 @@ class DirectionalSyncService:
                     rid = str(raw or "").strip()
                     if rid:
                         known_ids.add(rid)
+            known_keys = set()
+            if isinstance(known.get(name), dict):
+                for raw_key in known[name].get("keys", []):
+                    key = str(raw_key or "").strip()
+                    if key:
+                        known_keys.add(key)
             rows = []
             dataset_path = str(cfg.get("root_key", "") or name)
             emitted_keys: Set[str] = set()
@@ -472,9 +484,25 @@ class DirectionalSyncService:
                 if not isinstance(item, dict):
                     continue
                 row_id = str(item.get(cfg.get("id_key", "id"), "")).strip()
-                if not row_id or row_id in known_ids:
+                if not row_id:
                     continue
-                record_key = self._dataset_record_key(dataset_path, row_id)
+                should_emit = False
+                if name in {"tags", "lists"}:
+                    semantic_key = self._semantic_record_key(name, item)
+                    # Backward compatibility: when remote peer does not expose semantic keys,
+                    # send full tags/lists so id collision can still be reconciled.
+                    if known_keys:
+                        if semantic_key:
+                            should_emit = semantic_key not in known_keys
+                        else:
+                            should_emit = row_id not in known_ids
+                    else:
+                        should_emit = True
+                else:
+                    should_emit = row_id not in known_ids
+                if not should_emit:
+                    continue
+                record_key = self._dataset_delta_emit_key(dataset_path, name, item, row_id)
                 if record_key in emitted_keys:
                     continue
                 emitted_keys.add(record_key)
@@ -487,8 +515,15 @@ class DirectionalSyncService:
         incoming = payload.get("datasets", {}) if isinstance(payload, dict) else {}
         if not isinstance(incoming, dict):
             incoming = {}
+        incoming_copy = copy.deepcopy(incoming)
+        remap = self._resolve_tag_list_id_remap(incoming_copy)
+        self._apply_reference_remap(
+            incoming_copy,
+            remap.get("tag_id_map", {}) if isinstance(remap, dict) else {},
+            remap.get("list_id_map", {}) if isinstance(remap, dict) else {},
+        )
         summary = {"applied_at": _iso(_utc_now()), "dataset_stats": {}, "total_added": 0, "total_updated": 0, "total_skipped": 0}
-        for name, incoming_payload in incoming.items():
+        for name, incoming_payload in incoming_copy.items():
             cfg = self.DATASETS.get(name)
             if not cfg:
                 continue
@@ -497,6 +532,13 @@ class DirectionalSyncService:
             summary["total_added"] += int(stats.get("added", 0))
             summary["total_updated"] += int(stats.get("updated", 0))
             summary["total_skipped"] += int(stats.get("skipped", 0))
+        if remap.get("tag_conflicts", 0) or remap.get("list_conflicts", 0):
+            summary["id_remap"] = {
+                "tag_conflicts": int(remap.get("tag_conflicts", 0)),
+                "list_conflicts": int(remap.get("list_conflicts", 0)),
+                "tag_remapped": int(remap.get("tag_remapped", 0)),
+                "list_remapped": int(remap.get("list_remapped", 0)),
+            }
         return summary
 
     def estimate_delta_for_known(self, known_inventory: Dict[str, Any], known_files: Dict[str, str]) -> Dict[str, Any]:
@@ -1123,6 +1165,202 @@ class DirectionalSyncService:
             if rel:
                 normalized.add(rel)
         return normalized
+
+    def _dataset_delta_emit_key(self, dataset_path: str, dataset_name: str, row: Dict[str, Any], row_id: str) -> str:
+        semantic_key = self._semantic_record_key(dataset_name, row)
+        if semantic_key:
+            return f"{dataset_path}::semantic::{semantic_key}"
+        return self._dataset_record_key(dataset_path, row_id)
+
+    @staticmethod
+    def _normalized_text(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    def _semantic_record_key(self, dataset_name: str, row: Dict[str, Any]) -> str:
+        if not isinstance(row, dict):
+            return ""
+        name = str(dataset_name or "").strip().lower()
+        if name == "tags":
+            content_type = self._normalized_text(row.get("content_type", "comic")) or "comic"
+            tag_name = self._normalized_text(row.get("name"))
+            if not tag_name:
+                return ""
+            return f"{content_type}|{tag_name}"
+        if name == "lists":
+            content_type = self._normalized_text(row.get("content_type", "comic")) or "comic"
+            platform = str(row.get("platform", "") or "").strip().upper()
+            platform_list_id = str(row.get("platform_list_id", "") or "").strip()
+            import_source = self._normalized_text(row.get("import_source", ""))
+            if platform and platform_list_id:
+                return f"remote|{content_type}|{platform}|{platform_list_id}|{import_source}"
+            list_name = self._normalized_text(row.get("name"))
+            if not list_name:
+                return ""
+            return f"local|{content_type}|{list_name}"
+        return ""
+
+    def _resolve_tag_list_id_remap(self, incoming: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(incoming, dict):
+            return {
+                "tag_id_map": {},
+                "list_id_map": {},
+                "tag_conflicts": 0,
+                "list_conflicts": 0,
+                "tag_remapped": 0,
+                "list_remapped": 0,
+            }
+
+        tag_result = self._resolve_dataset_id_collisions("tags", incoming.get("tags"))
+        list_result = self._resolve_dataset_id_collisions("lists", incoming.get("lists"))
+
+        if isinstance(incoming.get("tags"), list):
+            incoming["tags"] = tag_result["rows"]
+        if isinstance(incoming.get("lists"), list):
+            incoming["lists"] = list_result["rows"]
+
+        return {
+            "tag_id_map": tag_result["id_map"],
+            "list_id_map": list_result["id_map"],
+            "tag_conflicts": int(tag_result["conflicts"]),
+            "list_conflicts": int(list_result["conflicts"]),
+            "tag_remapped": int(tag_result["remapped"]),
+            "list_remapped": int(list_result["remapped"]),
+        }
+
+    def _resolve_dataset_id_collisions(self, dataset_name: str, incoming_rows: Any) -> Dict[str, Any]:
+        rows = incoming_rows if isinstance(incoming_rows, list) else []
+        if dataset_name not in {"tags", "lists"}:
+            return {"rows": rows, "id_map": {}, "conflicts": 0, "remapped": 0}
+
+        cfg = self.DATASETS.get(dataset_name, {})
+        existing_rows = self._read_dataset(cfg) if cfg else []
+        if not isinstance(existing_rows, list):
+            existing_rows = []
+
+        existing_by_id: Dict[str, Dict[str, Any]] = {}
+        semantic_to_existing_id: Dict[str, str] = {}
+        used_ids: Set[str] = set()
+
+        for item in existing_rows:
+            if not isinstance(item, dict):
+                continue
+            item_id = str(item.get("id", "")).strip()
+            if not item_id:
+                continue
+            existing_by_id[item_id] = item
+            used_ids.add(item_id)
+            semantic_key = self._semantic_record_key(dataset_name, item)
+            if semantic_key and semantic_key not in semantic_to_existing_id:
+                semantic_to_existing_id[semantic_key] = item_id
+
+        id_map: Dict[str, str] = {}
+        resolved_rows: List[Dict[str, Any]] = []
+        resolved_idx: Dict[str, Dict[str, Any]] = {}
+        seen_source_ids: Set[str] = set()
+        conflicts = 0
+        remapped = 0
+
+        prefix = "tag_sync" if dataset_name == "tags" else "list_sync"
+
+        for raw_row in rows:
+            if not isinstance(raw_row, dict):
+                continue
+            source_id = str(raw_row.get("id", "")).strip()
+            if not source_id or source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            semantic_key = self._semantic_record_key(dataset_name, raw_row)
+
+            target_id = source_id
+            existing_same_id = existing_by_id.get(source_id)
+            if existing_same_id is not None:
+                existing_key = self._semantic_record_key(dataset_name, existing_same_id)
+                if semantic_key and existing_key and semantic_key != existing_key:
+                    conflicts += 1
+                    alias_id = semantic_to_existing_id.get(semantic_key, "")
+                    if alias_id:
+                        target_id = alias_id
+                    else:
+                        target_id = self._allocate_unique_id(prefix, used_ids)
+                else:
+                    target_id = source_id
+            else:
+                alias_id = semantic_to_existing_id.get(semantic_key, "") if semantic_key else ""
+                if alias_id:
+                    target_id = alias_id
+                elif source_id in used_ids:
+                    target_id = self._allocate_unique_id(prefix, used_ids)
+                else:
+                    target_id = source_id
+                    used_ids.add(target_id)
+
+            id_map[source_id] = target_id
+            if target_id != source_id:
+                remapped += 1
+
+            row_copy = dict(raw_row)
+            row_copy["id"] = target_id
+            if semantic_key:
+                semantic_to_existing_id[semantic_key] = target_id
+            used_ids.add(target_id)
+
+            existing_row = resolved_idx.get(target_id)
+            if existing_row is None:
+                resolved_idx[target_id] = row_copy
+                resolved_rows.append(row_copy)
+            else:
+                self._merge_row(existing_row, row_copy)
+
+        return {
+            "rows": resolved_rows,
+            "id_map": id_map,
+            "conflicts": conflicts,
+            "remapped": remapped,
+        }
+
+    @staticmethod
+    def _allocate_unique_id(prefix: str, used_ids: Set[str]) -> str:
+        base_prefix = str(prefix or "sync").strip() or "sync"
+        while True:
+            candidate = f"{base_prefix}_{uuid.uuid4().hex[:12]}"
+            if candidate in used_ids:
+                continue
+            used_ids.add(candidate)
+            return candidate
+
+    def _apply_reference_remap(self, incoming: Dict[str, Any], tag_id_map: Dict[str, str], list_id_map: Dict[str, str]) -> None:
+        if not isinstance(incoming, dict):
+            return
+        for payload in incoming.values():
+            if not isinstance(payload, list):
+                continue
+            for row in payload:
+                if not isinstance(row, dict):
+                    continue
+                if isinstance(row.get("tag_ids"), list):
+                    row["tag_ids"] = self._remap_id_list(row.get("tag_ids"), tag_id_map)
+                if isinstance(row.get("list_ids"), list):
+                    row["list_ids"] = self._remap_id_list(row.get("list_ids"), list_id_map)
+
+    @staticmethod
+    def _remap_id_list(values: Any, id_map: Dict[str, str]) -> List[Any]:
+        if not isinstance(values, list):
+            return []
+        mapping = id_map if isinstance(id_map, dict) else {}
+        result: List[Any] = []
+        seen: Set[str] = set()
+        for value in values:
+            source = str(value or "").strip()
+            if not source:
+                continue
+            mapped = str(mapping.get(source, source)).strip()
+            if not mapped:
+                continue
+            if mapped in seen:
+                continue
+            seen.add(mapped)
+            result.append(mapped)
+        return result
 
     def _collect_asset_index(self) -> Dict[str, str]:
         index: Dict[str, str] = {}
