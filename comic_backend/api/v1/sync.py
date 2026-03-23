@@ -39,6 +39,7 @@ def _extract_sync_token(payload=None):
 
 
 @sync_bp.route("/session", methods=["POST"])
+@sync_bp.route("/session/start", methods=["POST"])
 def create_session():
     try:
         payload = request.get_json(silent=True) or {}
@@ -49,6 +50,10 @@ def create_session():
             "status": session.get("status", "open"),
             "created_at": session.get("created_at"),
             "expires_at": session.get("expires_at"),
+            "snapshot_version": session.get("snapshot_version", ""),
+            "snapshot_generated_at": session.get("snapshot_generated_at", ""),
+            "server_data_root_fingerprint": session.get("server_data_root_fingerprint", ""),
+            "storage_roots": session.get("storage_roots", {}),
             "manifest_path": f"/api/v1/sync/manifest/{session['session_id']}",
             "packages": session.get("packages", []),
         })
@@ -57,10 +62,12 @@ def create_session():
         return error_response(500, "create sync session failed")
 
 
+@sync_bp.route("/manifest", methods=["GET"])
 @sync_bp.route("/manifest/<session_id>", methods=["GET"])
-def get_manifest(session_id):
+def get_manifest(session_id=None):
     try:
-        manifest = sync_service.get_manifest(str(session_id or "").strip())
+        resolved_session_id = str(session_id or request.args.get("session_id", "")).strip()
+        manifest = sync_service.get_manifest(resolved_session_id)
         if not manifest:
             return error_response(404, "session not found or expired")
         return success_response(manifest)
