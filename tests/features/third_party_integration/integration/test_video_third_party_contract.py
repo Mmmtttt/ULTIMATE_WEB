@@ -490,6 +490,135 @@ def test_video_third_party_import_home_falls_back_to_get_video_by_code(third_par
 
 
 @pytest.mark.integration
+def test_video_third_party_import_home_rejects_duplicate_code(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard duplicate branch for home import: if local library already has same video `code`,
+      third-party import must fail fast and skip downstream write calls.
+    - Steps:
+      1. Mock adapter detail with code `ABP-123`.
+      2. Mock `video_service.get_video_by_code` to return existing record.
+      3. Call `POST /api/v1/video/third-party/import` to home target.
+      4. Ensure `import_video` is not executed.
+    - Expected:
+      1. HTTP 200 with business `code=400`.
+      2. Error message indicates duplicate/existing video.
+      3. No import write call occurs.
+    - History:
+      - 2026-03-23: Added duplicate-code guard for home third-party import.
+    """
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+    called = {"import_video": 0}
+
+    class FakeAdapter:
+        def get_video_detail(self, _video_id):
+            return {
+                "video_id": "ABP123",
+                "title": "Duplicate Video",
+                "code": "ABP-123",
+                "actors": ["Actor-D"],
+                "tags": ["TagA"],
+                "cover_url": "https://assets.example/dup-cover.jpg",
+                "thumbnail_images": [],
+                "preview_video": "",
+                "magnets": [],
+            }
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda *_args, **_kwargs: FakeAdapter())
+    monkeypatch.setattr(
+        video_api.video_service,
+        "get_video_by_code",
+        lambda _code: _ok_result({"id": "JAVDBEXIST001", "code": "ABP-123"}),
+    )
+    monkeypatch.setattr(
+        video_api.video_service,
+        "import_video",
+        lambda _payload: called.__setitem__("import_video", called["import_video"] + 1) or _ok_result({}),
+    )
+
+    response = client.post(
+        "/api/v1/video/third-party/import",
+        json={"video_id": "ABP123", "target": "home", "platform": "javdb"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 400
+    assert "存在" in str(payload["msg"])
+    assert called["import_video"] == 0
+
+
+@pytest.mark.integration
+def test_video_third_party_import_recommendation_rejects_duplicate_code(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard duplicate branch for recommendation import: existing preview DB code should block duplicate writes.
+    - Steps:
+      1. Seed isolated `video_recommendations_database.json` with code `DUP-001`.
+      2. Mock adapter detail returning the same code.
+      3. Call `POST /api/v1/video/third-party/import` with target recommendation.
+      4. Assert API rejects duplicate and DB size remains unchanged.
+    - Expected:
+      1. HTTP 200 with business `code=400`.
+      2. Error message indicates duplicate.
+      3. Recommendation DB keeps a single `DUP-001` entry.
+    - History:
+      - 2026-03-23: Added duplicate-code guard for recommendation third-party import.
+    """
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+    meta_dir = third_party_client["meta_dir"]
+    db_path = meta_dir / "video_recommendations_database.json"
+
+    db_payload = load_json(db_path)
+    db_payload.setdefault("video_recommendations", []).append(
+        {
+            "id": "JAVDBDUP001",
+            "title": "Existing Dup",
+            "code": "DUP-001",
+            "actors": [],
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": "2026-03-23T00:00:00",
+            "last_access_time": "2026-03-23T00:00:00",
+            "is_deleted": False,
+        }
+    )
+    save_json(db_path, db_payload)
+
+    class FakeAdapter:
+        def get_video_detail(self, _video_id):
+            return {
+                "video_id": "DUP001",
+                "title": "Duplicate Recommendation",
+                "code": "DUP-001",
+                "actors": ["Actor-R"],
+                "tags": ["TagA"],
+                "cover_url": "https://assets.example/dup-rec-cover.jpg",
+                "thumbnail_images": [],
+                "preview_video": "",
+                "magnets": [],
+            }
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda *_args, **_kwargs: FakeAdapter())
+
+    response = client.post(
+        "/api/v1/video/third-party/import",
+        json={"video_id": "DUP001", "target": "recommendation", "platform": "javdb"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 400
+    assert "存在" in str(payload["msg"])
+
+    refreshed = load_json(db_path).get("video_recommendations", [])
+    dup_codes = [item for item in refreshed if (item.get("code") or "").strip().upper() == "DUP-001"]
+    assert len(dup_codes) == 1
+
+
+@pytest.mark.integration
 def test_preview_video_refresh_route_forwards_required_contract(third_party_client, monkeypatch):
     """
     用例描述:

@@ -53,6 +53,7 @@ tests/
   - E2E: `python tests/tools/run_e2e.py`
 
 说明：E2E 必须优先通过 `run_e2e.py` 执行。该脚本会显式启动前后端并在结束后强制回收进程与端口，避免服务常驻。
+另外：若本地 Python 环境缺少 `flask_cors`，`run_e2e.py` 会在测试启动阶段注入 no-op fallback（仅测试进程生效），不影响生产代码。
 
 ## 6. 已落地用例（当前）
 - library_browse
@@ -160,39 +161,49 @@ tests/
   - `tests/ci-artifacts/integration-junit.xml`
   - `tests/playwright-report` 与 `tests/test-results`
 
-## 13. 第三方接口高优先级覆盖（2026-03-23 更新）
+## 13. 第三方接口高优先级覆盖（2026-03-24 更新）
 新增功能目录：`tests/features/third_party_integration/`
 
 - Integration 看护点：
   - 漫画：`/comic/third-party/config`、`/comic/search-third-party`、`/comic/import/online`
-  - 视频：`/video/third-party/search`、`/video/third-party/javdb/cookie-status`、`/video/third-party/javdb/search-by-tags`、`/video/third-party/detail`、`/video/third-party/actor/search`、`/video/third-party/actor/works`、`/video/third-party/import`、`/video/preview-video/refresh`
+  - 视频：`/video/third-party/search`、`/video/third-party/javdb/cookie-status`、`/video/third-party/javdb/search-by-tags`、`/video/third-party/detail`、`/video/third-party/actor/search`、`/video/third-party/actor/works`、`/video/third-party/import`、`/video/preview-video/refresh`、`/video/actor/search-works`、`/video/actor/works/<actor_id>`、`/video/actor/works-cache/clear`
+  - 清单：`/list/platform/lists`、`/list/platform/list/detail`、`/list/import`、`/list/sync`、`/list/import/favorites`、`/list/sync/favorites`
+  - 作者/演员：`/author/search-works`、`/author/check-updates`、`/author/new-works`、`/author/works`、`/actor/search-works`、`/actor/check-updates`、`/actor/new-works`、`/actor/works`、`/actor/videos`
+  - 推荐与系统配置：`/recommendation/cache/download`、`/config/system`（third-party 路径更新回调）
   - 预览下载头：`VideoAppService._build_preview_video_headers`（JAVDB Referer/Cookie）
 - E2E 看护点：
   - 用户在 `VideoTagSearch` 页面完成“选标签 -> 搜索 -> 选择结果 -> 导入”，并断言请求参数和导入 body。
+  - 用户在 `VideoDetail` 与 `VideoRecommendationDetail` 页面完成“点击播放”，并断言 `play-urls` 请求与 `proxy2` 播放地址映射契约。
 
-## 14. Third-party Coverage Matrix (2026-03-23 Latest)
-- Current status: `tests/features/third_party_integration/` has `40` integration cases + `2` E2E cases.
+## 14. Third-party Coverage Matrix (2026-03-24 Latest)
+- Current status: `tests/features/third_party_integration/` has `61` integration cases + `4` E2E cases.
 - Covered import flows:
   - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
-  - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`.
-  - List: `platform/import`, `platform/sync`, `import/sync favorites` for `JAVDB/JM/PK`.
+  - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`, duplicate-code guards (`home` and `recommendation`).
+  - List: `platform/import`, `platform/sync`, `platform/list/detail`, `import/sync favorites` for `JAVDB/JM/PK`.
 - Covered search flows:
   - Comic third-party keyword search (`platform=all`, invalid platform guard).
   - Video third-party keyword search (`platform=all`, page parameter contract).
   - Video JAVDB tag search (tag parsing, invalid tag IDs, cookie-required branch).
+  - Actor third-party search/update chain (`actor` and `video actor` route entries + service adapter calls).
   - E2E "search next page" via `/video-tag-search` load-more path.
 - Covered playback/download flows:
   - `play-urls` for local/recommendation data source.
+  - E2E click-to-play chain guards:
+    - Local detail `/video/:id` click -> `GET /api/v1/video/{id}/play-urls` -> player visible -> `video.src` mapped to `/api/v1/video/proxy2?...`.
+    - Recommendation detail `/video-recommendation/:id` click -> `GET /api/v1/video/recommendation/{id}/play-urls` -> player visible -> `video.src` mapped to `/api/v1/video/proxy2?...`.
   - `/video/proxy/*` and `/video/proxy2` forwarding contract (query/body/header/referer).
   - `/video/preview-video/refresh` end-to-end backend chain (frontend request -> third-party detail -> cache scheduling).
+  - `/recommendation/cache/download` unavailable branch + third-party download argument contract.
   - `VideoAppService._build_preview_video_headers` cookie/referer isolation behavior.
 - Covered list sync/import with third-party:
   - Tracking list creation/update persistence (`platform`, `platform_list_id`, `import_source`).
   - De-dup for sync (existing bound video codes and existing bound comic IDs).
+  - JM favorites branch via `/list/import` and non-favorites detail route forwarding.
 - Covered author/creator third-party:
   - Author works search contract (`jmcomic/picacomic` mapping).
-  - New works enrichment (`get_album_by_id`).
-  - Batch detail route and service contract.
+  - Author new works enrichment (`get_album_by_id`), check-updates persistence, works runtime-guard/cache-only branches.
+  - Actor check-updates persistence, new-works delta slicing, works/videos/search route contracts.
+  - Video actor works cache clear contract (`/api/v1/video/actor/works-cache/clear`).
 - Residual risk notes (next priority):
-  - Add E2E for third-party playback UI action path (button click -> play request) when stable selectors are available.
   - Add timeout/retry branch guards for long-running third-party adapter failures.

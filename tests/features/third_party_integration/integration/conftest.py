@@ -4,6 +4,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -25,6 +26,27 @@ def _reset_backend_modules() -> None:
     ]
     for name in module_names:
         sys.modules.pop(name, None)
+
+
+def _ensure_flask_cors_available() -> None:
+    try:
+        importlib.import_module("flask_cors")
+        return
+    except Exception:
+        pass
+
+    fallback = ModuleType("flask_cors")
+
+    class _NoOpCORS:
+        def __init__(self, app=None, *args, **kwargs):
+            if app is not None:
+                self.init_app(app, *args, **kwargs)
+
+        def init_app(self, app, *args, **kwargs):
+            return app
+
+    fallback.CORS = _NoOpCORS
+    sys.modules["flask_cors"] = fallback
 
 
 @pytest.fixture(scope="module")
@@ -53,6 +75,7 @@ def third_party_client():
         sys.path.insert(0, str(fake_deps_root))
         inserted_fake_deps_path = True
 
+    _ensure_flask_cors_available()
     _reset_backend_modules()
     backend_app = importlib.import_module("app")
     backend_app.app.config.update(TESTING=True)

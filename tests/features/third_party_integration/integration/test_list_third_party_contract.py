@@ -449,3 +449,123 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     assert sync_captured["source"] == "local"
     assert len(sync_captured["works"]) == 1
     assert sync_captured["works"][0]["album_id"] == "100889"
+
+
+@pytest.mark.integration
+def test_list_platform_list_detail_javdb_forwards_get_list_detail_contract(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard `/api/v1/list/platform/list/detail` non-favorites branch for JAVDB:
+      route/service must forward `platform/list_id` to `platform_service.get_list_detail`.
+    - Steps:
+      1. Mock `list_service._get_platform_service().get_list_detail` and record inputs.
+      2. Call `GET /api/v1/list/platform/list/detail?platform=JAVDB&list_id=remote-l-11`.
+      3. Assert forwarded arguments and response payload.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. Third-party call receives `Platform.JAVDB` and `remote-l-11`.
+      3. Response data contains mocked works list.
+    - History:
+      - 2026-03-23: Added non-favorites list-detail third-party contract guard.
+    """
+    client = third_party_client["client"]
+    list_api = third_party_client["list_api"]
+    captured = {}
+
+    class FakePlatformService:
+        def get_list_detail(self, platform, list_id):
+            captured["platform"] = getattr(platform, "value", str(platform))
+            captured["list_id"] = list_id
+            return {
+                "list_id": list_id,
+                "list_name": "Remote List 11",
+                "total": 2,
+                "works": [
+                    {"video_id": "9911", "code": "TP-9911", "title": "Remote-1"},
+                    {"video_id": "9912", "code": "TP-9912", "title": "Remote-2"},
+                ],
+            }
+
+    monkeypatch.setattr(list_api.list_service, "_get_platform_service", lambda: FakePlatformService())
+
+    response = client.get(
+        "/api/v1/list/platform/list/detail",
+        query_string={"platform": "JAVDB", "list_id": "remote-l-11"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert captured == {"platform": "JAVDB", "list_id": "remote-l-11"}
+    assert payload["data"]["works"][0]["code"] == "TP-9911"
+    assert payload["data"]["total"] == 2
+
+
+@pytest.mark.integration
+def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_contract(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard `/api/v1/list/import` comic favorites branch (`platform=JM`, `platform_list_id=favorites`):
+      favorites fetch mapping and importer invocation contract.
+    - Steps:
+      1. Mock platform service `get_favorites_basic`.
+      2. Mock `list_service._import_comics` to capture args.
+      3. Call `POST /api/v1/list/import` for JM favorites.
+      4. Assert mapped works, platform/source args, and tracking-list persistence.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. `_import_comics` receives mapped favorites works and `Platform.JM`.
+      3. Persisted tracking list includes `platform=JM`, `platform_list_id=favorites`, `import_source=preview`.
+    - History:
+      - 2026-03-23: Added JM favorites branch contract guard for platform list import API.
+    """
+    client = third_party_client["client"]
+    list_api = third_party_client["list_api"]
+    meta_dir = third_party_client["meta_dir"]
+    captured = {}
+
+    class FakePlatformService:
+        def get_favorites_basic(self, _platform):
+            return {
+                "albums": [
+                    {"album_id": "551001", "title": "Fav-X", "author": "AX", "cover_url": "u1", "tags": ["t1"]},
+                    {"comic_id": "551002", "title": "Fav-Y", "author": "AY", "cover_url": "u2", "tags": ["t2"]},
+                ]
+            }
+
+    def fake_import_comics(works, target_list_id, source, platform):
+        captured["works"] = works
+        captured["target_list_id"] = target_list_id
+        captured["source"] = source
+        captured["platform"] = getattr(platform, "value", str(platform))
+        return _ok_result({"imported_count": len(works), "skipped_count": 0, "total_count": len(works)})
+
+    monkeypatch.setattr(list_api.list_service, "_get_platform_service", lambda: FakePlatformService())
+    monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import_comics)
+
+    response = client.post(
+        "/api/v1/list/import",
+        json={
+            "platform": "JM",
+            "platform_list_id": "favorites",
+            "platform_list_name": "MyFav",
+            "source": "preview",
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert captured["platform"] == "JM"
+    assert captured["source"] == "preview"
+    assert len(captured["works"]) == 2
+    assert captured["works"][0]["album_id"] == "551001"
+    assert captured["works"][1]["comic_id"] == "551002"
+    assert payload["data"]["list_id"] == captured["target_list_id"]
+
+    lists = load_json(meta_dir / "lists_database.json").get("lists", [])
+    created = next((item for item in lists if item.get("id") == captured["target_list_id"]), None)
+    assert created is not None
+    assert created["platform"] == "JM"
+    assert created["platform_list_id"] == "favorites"
+    assert created["import_source"] == "preview"
