@@ -466,12 +466,19 @@ class DirectionalSyncService:
                     if rid:
                         known_ids.add(rid)
             rows = []
+            dataset_path = str(cfg.get("root_key", "") or name)
+            emitted_keys: Set[str] = set()
             for item in payload if isinstance(payload, list) else []:
                 if not isinstance(item, dict):
                     continue
                 row_id = str(item.get(cfg.get("id_key", "id"), "")).strip()
-                if row_id and row_id not in known_ids:
-                    rows.append(item)
+                if not row_id or row_id in known_ids:
+                    continue
+                record_key = self._dataset_record_key(dataset_path, row_id)
+                if record_key in emitted_keys:
+                    continue
+                emitted_keys.add(record_key)
+                rows.append(item)
             if rows:
                 out[name] = rows
         return {"generated_at": _iso(_utc_now()), "datasets": out}
@@ -812,7 +819,8 @@ class DirectionalSyncService:
 
     def build_asset_delta_zip(self, known_files: Dict[str, str]) -> Dict[str, Any]:
         local_files = self._collect_asset_index()
-        delta_paths = [path for path, sig in local_files.items() if str((known_files or {}).get(path, "")) != sig]
+        known_paths = self._normalize_file_path_keys(known_files if isinstance(known_files, dict) else {})
+        delta_paths = [path for path in local_files.keys() if path not in known_paths]
         if not delta_paths:
             return {"zip_path": "", "file_count": 0}
 
@@ -1048,10 +1056,10 @@ class DirectionalSyncService:
         file_count = 0
         total_bytes = 0
         data_root = os.path.abspath(DATA_DIR)
-        known = known_files if isinstance(known_files, dict) else {}
+        known_paths = self._normalize_file_path_keys(known_files if isinstance(known_files, dict) else {})
 
-        for rel_path, signature in local_files.items():
-            if str(known.get(rel_path, "")) == signature:
+        for rel_path in local_files.keys():
+            if rel_path in known_paths:
                 continue
             abs_path = os.path.abspath(os.path.join(data_root, rel_path.replace("/", os.sep)))
             try:
@@ -1071,14 +1079,13 @@ class DirectionalSyncService:
     def _estimate_pull_assets_from_remote(self, remote_files: Dict[str, str], local_files: Dict[str, str]) -> Dict[str, Any]:
         file_count = 0
         total_bytes = 0
-        local_map = local_files if isinstance(local_files, dict) else {}
+        local_paths = self._normalize_file_path_keys(local_files if isinstance(local_files, dict) else {})
 
         for rel_path, remote_sig in (remote_files or {}).items():
             rel = str(rel_path or "").replace("\\", "/").lstrip("/")
             if not rel or not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
                 continue
-            local_sig = str(local_map.get(rel, ""))
-            if local_sig == str(remote_sig):
+            if rel in local_paths:
                 continue
             file_count += 1
             total_bytes += self._signature_size(remote_sig)
@@ -1101,6 +1108,21 @@ class DirectionalSyncService:
         except Exception:
             return 0
         return size if size > 0 else 0
+
+    @staticmethod
+    def _dataset_record_key(dataset_path: str, row_id: str) -> str:
+        return f"{str(dataset_path or '').strip()}::{str(row_id or '').strip()}"
+
+    @staticmethod
+    def _normalize_file_path_keys(files: Dict[str, Any]) -> Set[str]:
+        normalized: Set[str] = set()
+        if not isinstance(files, dict):
+            return normalized
+        for raw in files.keys():
+            rel = str(raw or "").replace("\\", "/").lstrip("/")
+            if rel:
+                normalized.add(rel)
+        return normalized
 
     def _collect_asset_index(self) -> Dict[str, str]:
         index: Dict[str, str] = {}
@@ -1265,6 +1287,7 @@ class DirectionalSyncService:
         storage = JsonStorage(cfg["file"])
         stats = {"added": 0, "updated": 0, "skipped": 0, "status": "applied"}
         id_key = cfg.get("id_key", "id")
+        dataset_path = str(cfg.get("root_key", "") or "")
 
         def _updater(data: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(data, dict):
@@ -1278,6 +1301,7 @@ class DirectionalSyncService:
                     rid = str(row.get(id_key, "")).strip()
                     if rid:
                         idx[rid] = row
+            incoming_seen_keys: Set[str] = set()
             for row in incoming_rows:
                 if not isinstance(row, dict):
                     stats["skipped"] += 1
@@ -1286,6 +1310,11 @@ class DirectionalSyncService:
                 if not rid:
                     stats["skipped"] += 1
                     continue
+                incoming_key = self._dataset_record_key(dataset_path, rid)
+                if incoming_key in incoming_seen_keys:
+                    stats["skipped"] += 1
+                    continue
+                incoming_seen_keys.add(incoming_key)
                 existing = idx.get(rid)
                 if existing is None:
                     new_row = dict(row)
