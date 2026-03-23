@@ -133,6 +133,7 @@ class JMComicAdapter(BaseAdapter):
     def _get_search_client(self) -> Tuple[Any, bool]:
         """
         Build search client with login-first strategy.
+        Prefer API login path first because html endpoint may be blocked by anti-bot (403).
         Returns:
             (client, is_logged_in_search)
         """
@@ -142,26 +143,6 @@ class JMComicAdapter(BaseAdapter):
         password = self.get_config('password')
 
         if username and password:
-            now_ts = time.time()
-            html_cooldown_seconds = 300
-            html_on_cooldown = (
-                self._html_search_probe_ok is False
-                and (now_ts - self._html_search_probe_ts) < html_cooldown_seconds
-            )
-
-            if html_on_cooldown:
-                app_logger.info(
-                    f"JM search html probe skipped (cooldown), "
-                    f"user={self._mask_username(username)}"
-                )
-            else:
-                html_client = self._build_html_search_client(username, password)
-                self._html_search_probe_ts = now_ts
-                if html_client is not None:
-                    self._html_search_probe_ok = True
-                    return html_client, True
-                self._html_search_probe_ok = False
-
             try:
                 client = get_client(username=username, password=password)
                 client_key = getattr(client, 'client_key', type(client).__name__)
@@ -192,6 +173,27 @@ class JMComicAdapter(BaseAdapter):
                 guest_key = getattr(guest, 'client_key', type(guest).__name__)
                 app_logger.info(f"JM search fallback client=guest({guest_key})")
                 return guest, False
+
+            # API login is unavailable; try html client as secondary fallback.
+            now_ts = time.time()
+            html_cooldown_seconds = 300
+            html_on_cooldown = (
+                self._html_search_probe_ok is False
+                and (now_ts - self._html_search_probe_ts) < html_cooldown_seconds
+            )
+
+            if html_on_cooldown:
+                app_logger.info(
+                    f"JM search html probe skipped (cooldown), "
+                    f"user={self._mask_username(username)}"
+                )
+            else:
+                html_client = self._build_html_search_client(username, password)
+                self._html_search_probe_ts = now_ts
+                if html_client is not None:
+                    self._html_search_probe_ok = True
+                    return html_client, True
+                self._html_search_probe_ok = False
 
         app_logger.info("JM search using guest mode (missing credentials)")
         guest = get_client(username='', password='')
@@ -251,8 +253,8 @@ class JMComicAdapter(BaseAdapter):
             )
             return client
         except Exception as e:
-            error_logger.error(
-                f"JM search html login failed, fallback to api. "
+            app_logger.info(
+                f"JM search html login unavailable, keep api path. "
                 f"user={self._mask_username(username)}, error={e}"
             )
             return None
