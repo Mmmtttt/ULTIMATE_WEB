@@ -42,11 +42,31 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: comic_frontend
 
+      - name: Prepare test artifact directory
+        run: mkdir -p tests/ci-artifacts
+
       - name: Run backend integration tests
-        run: python -m pytest tests/features -m integration
+        id: integration_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest tests/features -m integration --junitxml=tests/ci-artifacts/integration-junit.xml 2>&1 | tee tests/ci-artifacts/integration.log
 
       - name: Run frontend E2E tests
-        run: python tests/tools/run_e2e.py
+        id: e2e_tests
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python tests/tools/run_e2e.py 2>&1 | tee tests/ci-artifacts/e2e.log
+
+      - name: Upload integration and gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-gate-logs
+          path: tests/ci-artifacts
+          if-no-files-found: ignore
 
       - name: Upload Playwright report
         if: always()
@@ -63,3 +83,13 @@ jobs:
           name: playwright-test-results
           path: tests/test-results
           if-no-files-found: ignore
+
+      - name: Enforce gate status
+        if: always()
+        run: |
+          echo "integration outcome: ${{ steps.integration_tests.outcome }}"
+          echo "e2e outcome: ${{ steps.e2e_tests.outcome }}"
+          if [ "${{ steps.integration_tests.outcome }}" != "success" ] || [ "${{ steps.e2e_tests.outcome }}" != "success" ]; then
+            echo "::error::Test gate failed. Check uploaded logs and reports."
+            exit 1
+          fi

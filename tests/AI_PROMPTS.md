@@ -140,3 +140,34 @@ def test_<case_name>(integration_runtime):
 - [ ] 通过 python -m pytest tests/features -m integration
 - [ ] 通过 python tests/tools/run_e2e.py
 ```
+## 9) 第三方接口专项提示词（新增，最高优先级）
+```text
+请为 tests/features/third_party_integration/ 增加或增强第三方接口看护用例，必须覆盖：
+1. 漫画接口：
+   - /api/v1/comic/third-party/config（配置读写、cookie_string 解析、非法 adapter）
+   - /api/v1/comic/search-third-party（platform=all/指定平台、参数透传）
+   - /api/v1/comic/import/online（by_id/by_search，adapter_name、platform_service 调用入参）
+2. 视频接口：
+   - /api/v1/video/third-party/search
+   - /api/v1/video/third-party/javdb/cookie-status
+   - /api/v1/video/third-party/javdb/search-by-tags
+   - /api/v1/video/third-party/detail
+   - /api/v1/video/third-party/actor/search
+   - /api/v1/video/third-party/actor/works
+   - /api/v1/video/third-party/import
+   - /api/v1/video/preview-video/refresh
+3. 在线播放头部契约：
+   - VideoAppService._build_preview_video_headers 对 javdb URL 必须携带 Referer 与 Cookie
+4. 不访问真实第三方网络，统一使用 mock/stub。
+5. 每个用例都要写“用例描述（目的/步骤/预期/历史变更）”。
+6. 断言必须包含：调用方式、关键入参、返回映射、异常分支。
+```
+
+## 10) CI 闸门专项提示词（新增）
+```text
+请确保 test-gate 工作流满足：
+1. Integration 和 E2E 都要执行完（即使前者失败也不能中断后者）。
+2. 只要任一测试失败，最终工作流必须失败（红叉）。
+3. 必须上传失败排查日志和报告（integration.log/e2e.log/junit/playwright report）。
+4. 不允许影响现有 release-three-platforms 工作流。
+```

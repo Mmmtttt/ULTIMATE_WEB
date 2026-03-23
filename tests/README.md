@@ -148,3 +148,21 @@ tests/
 - 定位维度：前端参数组装 / 后端逻辑 / 文件落盘 / 第三方契约
 
 推荐在断言文案中直接带上关键 ID、参数和值，方便 CI 失败时快速定位。
+## 12. CI 闸门行为（2026-03-23 更新）
+- GitHub `test-gate` 工作流中，Integration 与 E2E 两段都必须执行完，不因前一段失败而中断。
+- 最终结果以汇总 gate 为准：只要任一测试段失败，workflow 必须失败并显示红叉。
+- 失败排查信息必须回传：
+  - `tests/ci-artifacts/integration.log`
+  - `tests/ci-artifacts/e2e.log`
+  - `tests/ci-artifacts/integration-junit.xml`
+  - `tests/playwright-report` 与 `tests/test-results`
+
+## 13. 第三方接口高优先级覆盖（2026-03-23 更新）
+新增功能目录：`tests/features/third_party_integration/`
+
+- Integration 看护点：
+  - 漫画：`/comic/third-party/config`、`/comic/search-third-party`、`/comic/import/online`
+  - 视频：`/video/third-party/search`、`/video/third-party/javdb/cookie-status`、`/video/third-party/javdb/search-by-tags`、`/video/third-party/detail`、`/video/third-party/actor/search`、`/video/third-party/actor/works`、`/video/third-party/import`、`/video/preview-video/refresh`
+  - 预览下载头：`VideoAppService._build_preview_video_headers`（JAVDB Referer/Cookie）
+- E2E 看护点：
+  - 用户在 `VideoTagSearch` 页面完成“选标签 -> 搜索 -> 选择结果 -> 导入”，并断言请求参数和导入 body。

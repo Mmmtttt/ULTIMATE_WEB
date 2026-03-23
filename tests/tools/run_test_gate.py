@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run test gate locally: integration tests then E2E tests."""
+"""Run test gate locally: always run integration + E2E, fail if any one fails."""
 
 from __future__ import annotations
 
@@ -16,9 +16,12 @@ from tests.shared.test_constants import REPO_ROOT
 from tests.tools.prepare_test_env import prepare_profile
 
 
-def _run(cmd: list[str], cwd: Path) -> int:
+def _run(cmd: list[str], cwd: Path, log_path: Path) -> int:
     print(f"[test-gate] running: {' '.join(cmd)}")
-    completed = subprocess.run(cmd, cwd=str(cwd))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as fp:
+        completed = subprocess.run(cmd, cwd=str(cwd), stdout=fp, stderr=subprocess.STDOUT)
+    print(f"[test-gate] log written: {log_path}")
     return int(completed.returncode or 0)
 
 
@@ -32,6 +35,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     repo_root = Path(REPO_ROOT)
+    artifact_dir = repo_root / "tests" / ".runtime" / "gate-logs"
     final_code = 0
 
     if not args.skip_integration:
@@ -39,19 +43,25 @@ def main() -> int:
         code = _run(
             [sys.executable, "-m", "pytest", "tests/features", "-m", "integration"],
             cwd=repo_root,
+            log_path=artifact_dir / "integration.log",
         )
         if code != 0:
-            return code
+            final_code = code
 
     if not args.skip_e2e:
         prepare_profile("e2e", clean=True)
         code = _run(
             [sys.executable, "tests/tools/run_e2e.py"],
             cwd=repo_root,
+            log_path=artifact_dir / "e2e.log",
         )
         if code != 0:
             final_code = code
 
+    if final_code != 0:
+        print("[test-gate] failed. See logs under tests/.runtime/gate-logs/")
+    else:
+        print("[test-gate] passed.")
     return final_code
 
 
