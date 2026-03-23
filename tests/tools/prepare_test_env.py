@@ -33,6 +33,18 @@ PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgN6QHdwAAAAASUVORK5CYII="
 )
 
+# 1x1 white JPEG
+JPG_1X1 = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxISEhUTEhIVFhUVFRUVFRUVFRUVFRUVFRUXFhUV"
+    "FRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OFQ8PFS0dFR0tLS0tLS0tLS0tLS0t"
+    "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAQMBIgACEQEDEQH/xAAXAAEB"
+    "AQEAAAAAAAAAAAAAAAAAAQID/8QAFhEBAQEAAAAAAAAAAAAAAAAAAAER/9oADAMBAAIQAxAAAAG8gP/"
+    "EABgQAQEAAwAAAAAAAAAAAAAAAAERAAIx/9oACAEBAAEFAjJkWf/EABYRAQEBAAAAAAAAAAAAAAAAAAAB"
+    "Ef/aAAgBAwEBPwGn/8QAFhEBAQEAAAAAAAAAAAAAAAAAABEh/9oACAECAQE/Acf/xAAaEAADAQEBAQAAAA"
+    "AAAAAAAAABAhEAITFB/9oACAEBAAY/Aq4mV6P/xAAbEAACAgMBAAAAAAAAAAAAAAABEQAhMUFhcf/aAAgB"
+    "AQABPyFq2hQ6dYF2jP/Z"
+)
+
 
 def _write_json(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +54,11 @@ def _write_json(path: Path, payload: Dict) -> None:
 def _write_png(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(PNG_1X1)
+
+
+def _write_jpg(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(JPG_1X1)
 
 
 def _seed_meta_data(meta_dir: Path) -> None:
@@ -207,8 +224,26 @@ def _seed_media(data_dir: Path) -> None:
         for page in range(1, page_count + 1):
             _write_png(comic_dir / f"{page:03d}.png")
         _write_png(data_dir / "static" / "cover" / "JM" / f"{original_id}.png")
+        _write_jpg(data_dir / "static" / "cover" / "JM" / f"{original_id}.jpg")
 
     _write_png(data_dir / "static" / "cover" / "JAVDB" / "900001.png")
+    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900001.jpg")
+    _write_jpg(data_dir / "static" / "default" / "default_cover.jpg")
+
+
+def _write_manifest(runtime_root: Path, data_dir: Path, profile: str) -> None:
+    media_files = sorted(
+        str(path.relative_to(runtime_root)).replace("\\", "/")
+        for path in data_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}
+    )
+    manifest = {
+        "profile": profile,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "media_file_count": len(media_files),
+        "media_files": media_files,
+    }
+    _write_json(runtime_root / "seed_manifest.json", manifest)
 
 
 def _seed_structures(data_dir: Path) -> None:
@@ -241,6 +276,7 @@ def prepare_profile(profile: str, clean: bool = True) -> Dict[str, str]:
     _seed_structures(data_dir)
     _seed_meta_data(meta_dir)
     _seed_media(data_dir)
+    _write_manifest(runtime_root, data_dir, profile)
 
     _write_json(
         server_config_path,
