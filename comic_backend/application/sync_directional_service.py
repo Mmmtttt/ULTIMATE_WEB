@@ -74,6 +74,7 @@ class DirectionalSyncService:
     UNION_LIST_FIELDS: Set[str] = {"tag_ids", "list_ids", "actors"}
     ASSET_ROOT_DIRS: List[str] = [COMIC_DIR, VIDEO_DIR, STATIC_DIR, CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR]
     ASSET_ALLOWED_PREFIXES: tuple = ("comic/", "video/", "static/", "cache/", "recommendation_cache/")
+    ASSET_EXCLUDED_PREFIXES: tuple = ("cache/sync_assets/", "cache/sync_exports/")
     TASK_MAX_KEEP = 50
     _TASK_LOCK = threading.Lock()
     _TASKS: Dict[str, Dict[str, Any]] = {}
@@ -488,16 +489,9 @@ class DirectionalSyncService:
                     continue
                 should_emit = False
                 if name in {"tags", "lists"}:
-                    semantic_key = self._semantic_record_key(name, item)
-                    # Backward compatibility: when remote peer does not expose semantic keys,
-                    # send full tags/lists so id collision can still be reconciled.
-                    if known_keys:
-                        if semantic_key:
-                            should_emit = semantic_key not in known_keys
-                        else:
-                            should_emit = row_id not in known_ids
-                    else:
-                        should_emit = True
+                    # Always emit tags/lists records so receiver can build a complete
+                    # source_id -> target_id remap map for referenced tag_ids/list_ids.
+                    should_emit = True
                 else:
                     should_emit = row_id not in known_ids
                 if not should_emit:
@@ -1127,6 +1121,8 @@ class DirectionalSyncService:
             rel = str(rel_path or "").replace("\\", "/").lstrip("/")
             if not rel or not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
                 continue
+            if self._is_excluded_asset_rel_path(rel):
+                continue
             if rel in local_paths:
                 continue
             file_count += 1
@@ -1385,6 +1381,8 @@ class DirectionalSyncService:
                     rel_path = os.path.relpath(abs_path, data_root).replace("\\", "/")
                     if rel_path.startswith("meta_data/"):
                         continue
+                    if self._is_excluded_asset_rel_path(rel_path):
+                        continue
                     try:
                         stat = os.stat(abs_path)
                     except Exception:
@@ -1469,6 +1467,8 @@ class DirectionalSyncService:
                     continue
                 if not rel.startswith(self.ASSET_ALLOWED_PREFIXES):
                     continue
+                if self._is_excluded_asset_rel_path(rel):
+                    continue
                 candidates.append((member, rel))
 
             total_candidates = len(candidates)
@@ -1496,6 +1496,19 @@ class DirectionalSyncService:
                     {"applied_files": applied, "total_files": total_candidates},
                 )
         return applied
+
+    def _is_excluded_asset_rel_path(self, rel_path: str) -> bool:
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+        if not rel:
+            return True
+        for prefix in self.ASSET_EXCLUDED_PREFIXES:
+            normalized = str(prefix or "").replace("\\", "/").lstrip("/")
+            if not normalized:
+                continue
+            normalized = normalized.rstrip("/") + "/"
+            if rel.startswith(normalized):
+                return True
+        return False
 
     def _apply_dataset(self, cfg: Dict[str, Any], payload: Any) -> Dict[str, Any]:
         if cfg.get("kind") == "dict":

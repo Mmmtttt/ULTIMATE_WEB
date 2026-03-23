@@ -1,7 +1,9 @@
 import os
 import tempfile
+import time
+import threading
 
-from flask import Blueprint, after_this_request, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_file
 
 from application.sync_app_service import SyncAppService
 from application.sync_directional_service import DirectionalSyncService
@@ -249,21 +251,28 @@ def directional_assets_delta_download():
         if not zip_path or file_count <= 0:
             return ("", 204)
 
-        @after_this_request
-        def _cleanup(response):
-            try:
-                if os.path.isfile(zip_path):
-                    os.remove(zip_path)
-            except Exception:
-                pass
-            return response
-
-        return send_file(
+        response = send_file(
             zip_path,
             as_attachment=True,
             download_name="assets_delta.zip",
             mimetype="application/zip",
         )
+        def _cleanup_on_close() -> None:
+            for _ in range(100):
+                try:
+                    if os.path.isfile(zip_path):
+                        os.remove(zip_path)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+                except Exception:
+                    return
+        def _schedule_cleanup() -> None:
+            thread = threading.Thread(target=_cleanup_on_close, daemon=True)
+            thread.start()
+        response.call_on_close(_schedule_cleanup)
+        _schedule_cleanup()
+        return response
     except Exception as exc:
         error_logger.exception(f"sync directional assets delta download failed: {exc}")
         return error_response(500, f"directional assets delta download failed: {exc}")

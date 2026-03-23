@@ -43,10 +43,15 @@ def third_party_client():
     os.environ.update(env_overrides)
 
     backend_root = Path(REPO_ROOT) / "comic_backend"
+    fake_deps_root = Path(REPO_ROOT) / "tests" / "shared" / "fake_deps"
     inserted_backend_path = False
+    inserted_fake_deps_path = False
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
         inserted_backend_path = True
+    if str(fake_deps_root) not in sys.path:
+        sys.path.insert(0, str(fake_deps_root))
+        inserted_fake_deps_path = True
 
     _reset_backend_modules()
     backend_app = importlib.import_module("app")
@@ -76,6 +81,11 @@ def third_party_client():
     try:
         yield context
     finally:
+        if inserted_fake_deps_path:
+            try:
+                sys.path.remove(str(fake_deps_root))
+            except ValueError:
+                pass
         if inserted_backend_path:
             try:
                 sys.path.remove(str(backend_root))

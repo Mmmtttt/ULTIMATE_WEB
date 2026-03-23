@@ -62,6 +62,8 @@ class TaskManager:
     
     _instance = None
     _lock = threading.Lock()
+    COMIC_RECENT_IMPORT_TAG_ID = "tag_recent_import"
+    COMIC_RECENT_IMPORT_TAG_NAME = "最近导入"
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -518,16 +520,72 @@ class TaskManager:
         except Exception as e:
             error_logger.error(f"下载封面失败 {album_id}: {e}")
             return ""
+
+    @staticmethod
+    def _normalize_tag_content_type(tag: Dict[str, Any]) -> str:
+        value = str((tag or {}).get("content_type", "comic") or "").strip().lower()
+        return value or "comic"
+
+    def _ensure_comic_recent_import_tag_id(self, tag_db_data: Dict[str, Any]) -> Optional[str]:
+        from datetime import datetime
+
+        tags = tag_db_data.setdefault("tags", [])
+        if not isinstance(tags, list):
+            tags = []
+            tag_db_data["tags"] = tags
+
+        configured = next(
+            (
+                tag for tag in tags
+                if isinstance(tag, dict)
+                and str(tag.get("id", "")).strip() == self.COMIC_RECENT_IMPORT_TAG_ID
+            ),
+            None,
+        )
+        if configured and self._normalize_tag_content_type(configured) == "comic":
+            if str(configured.get("name", "")).strip() != self.COMIC_RECENT_IMPORT_TAG_NAME:
+                configured["name"] = self.COMIC_RECENT_IMPORT_TAG_NAME
+            configured["content_type"] = "comic"
+            return self.COMIC_RECENT_IMPORT_TAG_ID
+
+        for tag in tags:
+            if not isinstance(tag, dict):
+                continue
+            if self._normalize_tag_content_type(tag) != "comic":
+                continue
+            if str(tag.get("name", "")).strip() == self.COMIC_RECENT_IMPORT_TAG_NAME:
+                tag_id = str(tag.get("id", "")).strip()
+                if tag_id:
+                    return tag_id
+
+        new_tag_id = self.COMIC_RECENT_IMPORT_TAG_ID
+        existing_ids = {
+            str(tag.get("id", "")).strip()
+            for tag in tags
+            if isinstance(tag, dict)
+        }
+        if new_tag_id in existing_ids:
+            suffix = 1
+            while f"{new_tag_id}_{suffix}" in existing_ids:
+                suffix += 1
+            new_tag_id = f"{new_tag_id}_{suffix}"
+
+        tags.append(
+            {
+                "id": new_tag_id,
+                "name": self.COMIC_RECENT_IMPORT_TAG_NAME,
+                "content_type": "comic",
+                "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        )
+        app_logger.info(f"创建漫画系统标签: {self.COMIC_RECENT_IMPORT_TAG_NAME} ({new_tag_id})")
+        return new_tag_id
     
     def _save_to_database(self, converted_data: Dict, target: str) -> int:
         """保存到数据库"""
         from infrastructure.persistence.json_storage import JsonStorage
-        from datetime import datetime
         from core.constants import TAGS_JSON_FILE
         from core.utils import normalize_total_page
-        
-        RECENT_IMPORT_TAG_ID = "tag_recent_import"
-        RECENT_IMPORT_TAG_NAME = "最近导入"
         
         if target == 'home':
             json_file = JSON_FILE
@@ -549,36 +607,29 @@ class TaskManager:
         # 处理tag保存到独立的标签数据库
         tag_storage = JsonStorage(TAGS_JSON_FILE)
         tag_db_data = tag_storage.read()
-        
-        # 确保最近导入tag
+
+        recent_import_tag_id = ""
         if actual_new_comics:
-            existing_tag_ids = {t['id'] for t in tag_db_data.get('tags', [])}
-            if RECENT_IMPORT_TAG_ID not in existing_tag_ids:
-                tag_db_data.setdefault('tags', []).append({
-                    "id": RECENT_IMPORT_TAG_ID,
-                    "name": RECENT_IMPORT_TAG_NAME,
-                    "create_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                })
-                app_logger.info(f"创建系统标签: {RECENT_IMPORT_TAG_NAME}")
-            
+            recent_import_tag_id = self._ensure_comic_recent_import_tag_id(tag_db_data) or ""
+
             # 清除旧漫画的最近导入tag
-            for comic in db_data.get(comics_key, []):
-                if RECENT_IMPORT_TAG_ID in comic.get('tag_ids', []):
-                    comic['tag_ids'].remove(RECENT_IMPORT_TAG_ID)
-            
-            app_logger.info(f"清除旧漫画的'{RECENT_IMPORT_TAG_NAME}'标签")
+            if recent_import_tag_id:
+                for comic in db_data.get(comics_key, []):
+                    if recent_import_tag_id in comic.get('tag_ids', []):
+                        comic['tag_ids'].remove(recent_import_tag_id)
+                app_logger.info(f"清除旧漫画的'{self.COMIC_RECENT_IMPORT_TAG_NAME}'标签")
         
         # 添加新漫画并设置最近导入tag
         for comic in actual_new_comics:
             comic['total_page'] = normalize_total_page(comic.get('total_page', 0))
-            if RECENT_IMPORT_TAG_ID not in comic.get('tag_ids', []):
-                comic.setdefault('tag_ids', []).append(RECENT_IMPORT_TAG_ID)
+            if recent_import_tag_id and recent_import_tag_id not in comic.get('tag_ids', []):
+                comic.setdefault('tag_ids', []).append(recent_import_tag_id)
             
             db_data.setdefault(comics_key, []).append(comic)
             existing_ids.add(comic['id'])
         
-        if actual_new_comics:
-            app_logger.info(f"为 {len(actual_new_comics)} 个新漫画添加'{RECENT_IMPORT_TAG_NAME}'标签")
+        if actual_new_comics and recent_import_tag_id:
+            app_logger.info(f"为 {len(actual_new_comics)} 个新漫画添加'{self.COMIC_RECENT_IMPORT_TAG_NAME}'标签")
         
         # 保存新tag到主数据库
         new_tags = converted_data.get('tags', [])

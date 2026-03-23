@@ -31,6 +31,13 @@ def integration_runtime() -> dict:
     prepared = prepare_profile(INTEGRATION_PROFILE, clean=True)
 
     env = os.environ.copy()
+    fake_deps_dir = Path(REPO_ROOT) / "tests" / "shared" / "fake_deps"
+    existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
+    env["PYTHONPATH"] = (
+        f"{fake_deps_dir}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(fake_deps_dir)
+    )
     env.update(
         {
             "SERVER_CONFIG_PATH": prepared["server_config_path"],
