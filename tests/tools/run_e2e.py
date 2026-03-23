@@ -8,7 +8,6 @@ import re
 import signal
 import subprocess
 import sys
-import textwrap
 import time
 from pathlib import Path
 
@@ -47,46 +46,6 @@ def _spawn_process(command: list[str], cwd: Path, env: dict, log_file: Path) -> 
         start_new_session=True,
     )
     return process, fp
-
-
-def _build_backend_command(backend_app: Path) -> list[str]:
-    """
-    Build a backend launch command that tolerates missing optional dependency `flask_cors`
-    in constrained local environments. This fallback is test-only and no-op for CORS behavior.
-    """
-    bootstrap = textwrap.dedent(
-        f"""
-        import importlib
-        import pathlib
-        import runpy
-        import sys
-        import types
-
-        backend_app = pathlib.Path(r"{str(backend_app)}")
-        backend_root = str(backend_app.parent)
-        if backend_root not in sys.path:
-            sys.path.insert(0, backend_root)
-
-        try:
-            importlib.import_module("flask_cors")
-        except Exception:
-            fallback = types.ModuleType("flask_cors")
-
-            class _NoOpCORS:
-                def __init__(self, app=None, *args, **kwargs):
-                    if app is not None:
-                        self.init_app(app, *args, **kwargs)
-
-                def init_app(self, app, *args, **kwargs):
-                    return app
-
-            fallback.CORS = _NoOpCORS
-            sys.modules["flask_cors"] = fallback
-
-        runpy.run_path(str(backend_app), run_name="__main__")
-        """
-    ).strip()
-    return [sys.executable, "-c", bootstrap]
 
 
 def _kill_process_tree(process: subprocess.Popen | None) -> None:
@@ -146,6 +105,13 @@ def main() -> int:
     repo_root = Path(REPO_ROOT)
 
     backend_env = os.environ.copy()
+    fake_deps_dir = Path(REPO_ROOT) / "tests" / "shared" / "fake_deps"
+    existing_pythonpath = str(backend_env.get("PYTHONPATH", "")).strip()
+    backend_env["PYTHONPATH"] = (
+        f"{fake_deps_dir}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(fake_deps_dir)
+    )
     backend_env.update(
         {
             "SERVER_CONFIG_PATH": prepared["server_config_path"],
@@ -175,7 +141,7 @@ def main() -> int:
 
     try:
         backend_proc, backend_fp = _spawn_process(
-            _build_backend_command(repo_root / "comic_backend" / "app.py"),
+            [sys.executable, str(repo_root / "comic_backend" / "app.py")],
             cwd=repo_root,
             env=backend_env,
             log_file=runtime_root / "backend-e2e.log",
