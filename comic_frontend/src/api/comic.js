@@ -1,13 +1,13 @@
 ﻿/**
- * 婕敾鐩稿叧 API
+ * 漫画相关 API
  */
 import request from './request'
 import { triggerBlobDownload } from '@/runtime/browser'
 
 export const comicApi = {
   /**
-   * 鍒濆鍖栨极鐢绘暟鎹?
-   * @param {object} data - 鍒濆鍖栨暟鎹?
+   * 初始化漫画数据
+   * @param {object} data - 初始化数据
    * @returns {Promise}
    */
   init: (data) => {
@@ -15,11 +15,11 @@ export const comicApi = {
   },
   
   /**
-   * 鑾峰彇婕敾鍒楄〃
-   * @param {object} params - 鏌ヨ鍙傛暟
-   * @param {string} params.sort_type - 鎺掑簭绫诲瀷锛坈reate_time/score/read_time锛?
-   * @param {number} params.min_score - 鏈€浣庤瘎鍒?
-   * @param {number} params.max_score - 鏈€楂樿瘎鍒?
+   * 获取漫画列表
+   * @param {object} params - 查询参数
+   * @param {string} params.sort_type - 排序类型（create_time/score/read_time）
+   * @param {number} params.min_score - 最低评分
+   * @param {number} params.max_score - 最高评分
    * @returns {Promise}
    */
   getList: (params = {}) => {
@@ -38,8 +38,8 @@ export const comicApi = {
   },
   
   /**
-   * 鑾峰彇婕敾璇︽儏
-   * @param {string} comicId - 婕敾ID
+   * 获取漫画详情
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   getDetail: (comicId) => {
@@ -49,8 +49,8 @@ export const comicApi = {
   },
   
   /**
-   * 鑾峰彇婕敾鍥剧墖鍒楄〃
-   * @param {string} comicId - 婕敾ID
+   * 获取漫画图片列表
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   getImages: (comicId) => {
@@ -60,9 +60,9 @@ export const comicApi = {
   },
   
   /**
-   * 淇濆瓨闃呰杩涘害
-   * @param {string} comicId - 婕敾ID
-   * @param {number} currentPage - 褰撳墠椤电爜
+   * 保存阅读进度
+   * @param {string} comicId - 漫画ID
+   * @param {number} currentPage - 当前页码
    * @returns {Promise}
    */
   saveProgress: (comicId, currentPage) => {
@@ -73,9 +73,9 @@ export const comicApi = {
   },
   
   /**
-   * 鏇存柊璇勫垎
-   * @param {string} comicId - 婕敾ID
-   * @param {number} score - 璇勫垎
+   * 更新评分
+   * @param {string} comicId - 漫画ID
+   * @param {number} score - 评分
    * @returns {Promise}
    */
   updateScore: (comicId, score) => {
@@ -86,9 +86,9 @@ export const comicApi = {
   },
   
   /**
-   * 缁戝畾鏍囩
-   * @param {string} comicId - 婕敾ID
-   * @param {string[]} tagIdList - 鏍囩ID鍒楄〃
+   * 绑定标签
+   * @param {string} comicId - 漫画ID
+   * @param {string[]} tagIdList - 标签ID列表
    * @returns {Promise}
    */
   bindTags: (comicId, tagIdList) => {
@@ -99,9 +99,9 @@ export const comicApi = {
   },
   
   /**
-   * 鎵归噺娣诲姞鏍囩
-   * @param {string[]} comicIds - 婕敾ID鏁扮粍
-   * @param {string[]} tagIds - 鏍囩ID鏁扮粍
+   * 批量添加标签
+   * @param {string[]} comicIds - 漫画ID数组
+   * @param {string[]} tagIds - 标签ID数组
    * @returns {Promise}
    */
   batchAddTags: (comicIds, tagIds) => {
@@ -112,9 +112,9 @@ export const comicApi = {
   },
   
   /**
-   * 鎵归噺绉婚櫎鏍囩
-   * @param {string[]} comicIds - 婕敾ID鏁扮粍
-   * @param {string[]} tagIds - 鏍囩ID鏁扮粍
+   * 批量移除标签
+   * @param {string[]} comicIds - 漫画ID数组
+   * @param {string[]} tagIds - 标签ID数组
    * @returns {Promise}
    */
   batchRemoveTags: (comicIds, tagIds) => {
@@ -125,9 +125,9 @@ export const comicApi = {
   },
   
   /**
-   * 缂栬緫婕敾淇℃伅
-   * @param {string} comicId - 婕敾ID
-   * @param {object} data - 缂栬緫鏁版嵁
+   * 编辑漫画信息
+   * @param {string} comicId - 漫画ID
+   * @param {object} data - 编辑数据
    * @returns {Promise}
    */
   editComic: (comicId, data) => {
@@ -138,8 +138,8 @@ export const comicApi = {
   },
   
   /**
-   * 鎼滅储婕敾
-   * @param {string} keyword - 鎼滅储鍏抽敭璇?
+   * 搜索漫画
+   * @param {string} keyword - 搜索关键词
    * @returns {Promise}
    */
   search: (keyword) => {
@@ -149,11 +149,11 @@ export const comicApi = {
   },
   
   /**
-   * 绗笁鏂瑰钩鍙版悳绱㈡极鐢?
-   * @param {string} keyword - 鎼滅储鍏抽敭璇?
-   * @param {string} platform - 骞冲彴锛圝M/PK/all锛?
-   * @param {number} page - 椤电爜
-   * @param {number} limit - 鏁伴噺
+   * 第三方平台搜索漫画
+   * @param {string} keyword - 搜索关键词
+   * @param {string} platform - 平台（JM/PK/all）
+   * @param {number} page - 页码
+   * @param {number} limit - 数量
    * @returns {Promise}
    */
   searchThirdParty: (keyword, platform = 'all', page = 1, limit = 20) => {
@@ -163,11 +163,11 @@ export const comicApi = {
   },
   
   /**
-   * 缁煎悎绛涢€夋极鐢?
-   * @param {string[]} includeTagIds - 鍖呭惈鏍囩ID鏁扮粍
-   * @param {string[]} excludeTagIds - 鎺掗櫎鏍囩ID鏁扮粍
-   * @param {string[]} authors - 浣滆€呭悕绉版暟缁?
-   * @param {string[]} listIds - 娓呭崟ID鏁扮粍
+   * 综合筛选漫画
+   * @param {string[]} includeTagIds - 包含标签ID数组
+   * @param {string[]} excludeTagIds - 排除标签ID数组
+   * @param {string[]} authors - 作者名称数组
+   * @param {string[]} listIds - 清单ID数组
    * @returns {Promise}
    */
   filter: (includeTagIds = [], excludeTagIds = [], authors = [], listIds = []) => {
@@ -180,7 +180,7 @@ export const comicApi = {
   },
   
   /**
-   * 鑾峰彇婕敾鏍囩鍒楄〃
+   * 获取漫画标签列表
    * @returns {Promise}
    */
   getTags: () => {
@@ -188,8 +188,8 @@ export const comicApi = {
   },
   
   /**
-   * 鎸夋帓搴忔柟寮忚幏鍙栧垪琛?
-   * @param {string} sortType - 鎺掑簭绫诲瀷锛坈reate_time/score/read_time锛?
+   * 按排序方式获取列表
+   * @param {string} sortType - 排序类型（create_time/score/read_time）
    * @returns {Promise}
    */
   getListBySort: (sortType) => {
@@ -199,9 +199,9 @@ export const comicApi = {
   },
   
   /**
-   * 鎸夎瘎鍒嗚寖鍥寸瓫閫?
-   * @param {number} minScore - 鏈€浣庡垎
-   * @param {number} maxScore - 鏈€楂樺垎
+   * 按评分范围筛选
+   * @param {number} minScore - 最低分
+   * @param {number} maxScore - 最高分
    * @returns {Promise}
    */
   filterByScore: (minScore, maxScore) => {
@@ -222,7 +222,7 @@ export const comicApi = {
   },
   
   /**
-   * 鏁寸悊鏁版嵁搴?
+   * 整理数据库
    * @returns {Promise}
    */
   organizeDatabase: () => {
@@ -230,7 +230,8 @@ export const comicApi = {
   },
 
   /**
-   * 妫€鏌ユ极鐢绘槸鍚︽湁鍙笅杞芥洿鏂?   * @param {string} comicId - 婕敾ID
+   * 检查漫画是否有可下载更新
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   checkUpdate: (comicId) => {
@@ -240,8 +241,9 @@ export const comicApi = {
   },
 
   /**
-   * 涓嬭浇婕敾鏇存柊骞跺洖鍐欐湰鍦伴〉鏁?   * @param {string} comicId - 婕敾ID
-   * @param {boolean} force - 鏄惁寮哄埗涓嬭浇
+   * 下载漫画更新并回写本地页数
+   * @param {string} comicId - 漫画ID
+   * @param {boolean} force - 是否强制下载
    * @returns {Promise}
    */
   downloadUpdate: (comicId, force = false) => {
@@ -287,7 +289,7 @@ export const comicApi = {
   },
   
   /**
-   * 鑾峰彇绗笁鏂瑰簱閰嶇疆
+   * 获取第三方库配置
    * @returns {Promise}
    */
   getThirdPartyConfig: () => {
@@ -295,22 +297,22 @@ export const comicApi = {
   },
   
   /**
-   * 淇濆瓨绗笁鏂瑰簱閰嶇疆
-   * @param {object} data - 閰嶇疆鏁版嵁
-   * @param {string} data.adapter - 閫傞厤鍣ㄥ悕绉?
-   * @param {string} data.username - 鐢ㄦ埛鍚?
-   * @param {string} data.password - 瀵嗙爜
-   * @param {string} data.download_dir - 涓嬭浇鐩綍
+   * 保存第三方库配置
+   * @param {object} data - 配置数据
+   * @param {string} data.adapter - 适配器名称
+   * @param {string} data.username - 用户名
+   * @param {string} data.password - 密码
+   * @param {string} data.download_dir - 下载目录
    * @returns {Promise}
    */
   saveThirdPartyConfig: (data) => {
     return request.post('/v1/comic/third-party/config', data)
   },
   
-  // ==================== 鍥炴敹绔欑浉鍏?====================
+  // ==================== 回收站相关 ====================
   
   /**
-   * 鑾峰彇鍥炴敹绔欐极鐢诲垪琛?
+   * 获取回收站漫画列表
    * @returns {Promise}
    */
   getTrashList: () => {
@@ -318,8 +320,8 @@ export const comicApi = {
   },
   
   /**
-   * 绉诲姩婕敾鍒板洖鏀剁珯
-   * @param {string} comicId - 婕敾ID
+   * 移动漫画到回收站
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   moveToTrash: (comicId) => {
@@ -327,8 +329,8 @@ export const comicApi = {
   },
   
   /**
-   * 浠庡洖鏀剁珯鎭㈠婕敾
-   * @param {string} comicId - 婕敾ID
+   * 从回收站恢复漫画
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   restoreFromTrash: (comicId) => {
@@ -336,8 +338,8 @@ export const comicApi = {
   },
   
   /**
-   * 鎵归噺绉诲姩婕敾鍒板洖鏀剁珯
-   * @param {string[]} comicIds - 婕敾ID鏁扮粍
+   * 批量移动漫画到回收站
+   * @param {string[]} comicIds - 漫画ID数组
    * @returns {Promise}
    */
   batchMoveToTrash: (comicIds) => {
@@ -345,8 +347,8 @@ export const comicApi = {
   },
   
   /**
-   * 鎵归噺浠庡洖鏀剁珯鎭㈠婕敾
-   * @param {string[]} comicIds - 婕敾ID鏁扮粍
+   * 批量从回收站恢复漫画
+   * @param {string[]} comicIds - 漫画ID数组
    * @returns {Promise}
    */
   batchRestoreFromTrash: (comicIds) => {
@@ -354,8 +356,8 @@ export const comicApi = {
   },
   
   /**
-   * 姘镐箙鍒犻櫎婕敾
-   * @param {string} comicId - 婕敾ID
+   * 永久删除漫画
+   * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
   deletePermanently: (comicId) => {
@@ -363,8 +365,8 @@ export const comicApi = {
   },
   
   /**
-   * 鎵归噺姘镐箙鍒犻櫎婕敾
-   * @param {string[]} comicIds - 婕敾ID鏁扮粍
+   * 批量永久删除漫画
+   * @param {string[]} comicIds - 漫画ID数组
    * @returns {Promise}
    */
   batchDeletePermanently: (comicIds) => {
@@ -373,8 +375,7 @@ export const comicApi = {
 }
 
 /**
- * @deprecated 璇蜂娇鐢?tagApi锛屼繚鐣欐瀵煎嚭浠ヤ繚鎸佸悜鍚庡吋瀹?
- * 浠?./tag.js 瀵煎叆 tagApi
+ * @deprecated 请使用 tagApi，保留此导出以保持向后兼容
+ * 从 ./tag.js 导入 tagApi
  */
 export { tagApi } from './tag'
-

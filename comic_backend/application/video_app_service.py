@@ -89,7 +89,7 @@ class VideoAppService(BaseContentAppService):
             app_logger.info(f"创建视频系统标签: {self.RECENT_IMPORT_TAG_NAME} ({new_tag.id})")
             return new_tag.id
 
-        error_logger.error("������Ƶ��������ǩʧ��")
+        error_logger.error("创建视频系统标签失败")
         return None
 
     def apply_recent_import_tags(
@@ -105,11 +105,11 @@ class VideoAppService(BaseContentAppService):
                     "tag_id": None,
                     "updated_count": 0,
                     "cleared_count": 0
-                }, "���������������ǩ")
+                }, "无需更新最近导入标签")
 
             tag_id = self._ensure_recent_import_tag_id()
             if not tag_id:
-                return ServiceResult.error("������������ǩʧ��")
+                return ServiceResult.error("创建最近导入标签失败")
 
             repo = self._get_repo_by_source(source)
 
@@ -133,17 +133,17 @@ class VideoAppService(BaseContentAppService):
                     updated_count += 1
 
             app_logger.info(
-                f"更新视频最近导入标签完�? source={source}, tag_id={tag_id}, "
+                f"更新视频最近导入标签完成: source={source}, tag_id={tag_id}, "
                 f"cleared={cleared_count}, updated={updated_count}"
             )
             return ServiceResult.ok({
                 "tag_id": tag_id,
                 "updated_count": updated_count,
                 "cleared_count": cleared_count
-            }, "������������ǩ�ɹ�")
+            }, "更新最近导入标签成功")
         except Exception as e:
-            error_logger.error(f"更新视频最近导入标签失�? {e}")
-            return ServiceResult.error("������������ǩʧ��")
+            error_logger.error(f"更新视频最近导入标签失败: {e}")
+            return ServiceResult.error("更新最近导入标签失败")
     
     def get_video_list(
         self,
@@ -180,7 +180,7 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 video_list.append(video_info)
             
-            app_logger.info(f"��ȡ��Ƶ�б�ɹ����� {len(video_list)} ����Ƶ")
+            app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
             return ServiceResult.ok(video_list)
         except Exception as e:
             error_logger.error(f"获取视频列表失败: {e}")
@@ -190,7 +190,7 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("��Ƶ������")
+                return ServiceResult.error("视频不存在")
             
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -209,7 +209,7 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_code(code)
             if not video:
-                return ServiceResult.error("��Ƶ������")
+                return ServiceResult.error("视频不存在")
             return ServiceResult.ok(video.to_dict())
         except Exception as e:
             error_logger.error(f"根据番号获取视频失败: {e}")
@@ -229,7 +229,7 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"搜索成功: 关键�?'{keyword}', 结果数量: {len(results)}")
+            app_logger.info(f"搜索成功: 关键词'{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
             error_logger.error(f"搜索失败: {e}")
@@ -251,14 +251,14 @@ class VideoAppService(BaseContentAppService):
         try:
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("��Ƶ������")
+                return ServiceResult.error("视频不存在")
             
             self._cleanup_video_files(video)
             
             success = self._video_repo.delete(video_id)
             if success:
-                app_logger.info(f"视频已永久删�? {video_id}")
-                return ServiceResult.ok({"message": "��Ƶ������ɾ��"})
+                app_logger.info(f"视频已永久删除: {video_id}")
+                return ServiceResult.ok({"message": "视频已永久删除"})
             return ServiceResult.error("删除失败")
         except Exception as e:
             error_logger.error(f"永久删除视频失败: {e}")
@@ -270,7 +270,7 @@ class VideoAppService(BaseContentAppService):
         return [platform_dir]
     
     def _cleanup_video_files(self, video):
-        """������Ƶ��ص������ļ�"""
+        """清理视频相关的本地文件"""
         from core.constants import COVER_DIR
         
         if video.cover_path:
@@ -282,7 +282,7 @@ class VideoAppService(BaseContentAppService):
             if os.path.exists(cover_path_full):
                 try:
                     os.remove(cover_path_full)
-                    app_logger.info(f"已删除视频封�? {cover_path_full}")
+                    app_logger.info(f"已删除视频封面: {cover_path_full}")
                 except Exception as e:
                     error_logger.error(f"删除视频封面失败: {e}")
         
@@ -291,7 +291,7 @@ class VideoAppService(BaseContentAppService):
                 continue
             try:
                 shutil.rmtree(video_dir)
-                app_logger.info(f"已删除视频目�? {video_dir}")
+                app_logger.info(f"已删除视频目录: {video_dir}")
             except Exception as e:
                 error_logger.error(f"删除视频目录失败: {e}")
 
@@ -532,11 +532,11 @@ class VideoAppService(BaseContentAppService):
                     "skipped_items": skipped_items,
                     "failed_items": failed_items
                 },
-                f"导入完成：成�?{imported_count}，跳�?{skipped_count}，失�?{failed_count}"
+                f"导入完成：成功{imported_count}，跳过{skipped_count}，失败{failed_count}"
             )
         except Exception as e:
             error_logger.error(f"migrate recommendation videos to local failed: {e}")
-            return ServiceResult.error("���뱾�ؿ�ʧ��")
+            return ServiceResult.error("导入本地库失败")
 
     def get_trash_list(self) -> ServiceResult:
         try:
@@ -544,8 +544,8 @@ class VideoAppService(BaseContentAppService):
             trash_list = [v.to_dict() for v in videos if v.is_deleted]
             return ServiceResult.ok(trash_list)
         except Exception as e:
-            error_logger.error(f"获取回收站列表失�? {e}")
-            return ServiceResult.error("��ȡ����վʧ��")
+            error_logger.error(f"获取回收站列表失败: {e}")
+            return ServiceResult.error("获取回收站失败")
     
     def get_videos_by_tag(self, tag_id: str) -> ServiceResult:
         try:
@@ -574,11 +574,11 @@ class VideoAppService(BaseContentAppService):
         try:
             for tag_id in tag_ids:
                 if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存�? {tag_id}")
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
             
             video = self._video_repo.get_by_id(video_id)
             if not video:
-                return ServiceResult.error("��Ƶ������")
+                return ServiceResult.error("视频不存在")
             
             video.bind_tags(tag_ids)
             
@@ -665,11 +665,11 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"筛选成�? 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
+            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
-            error_logger.error(f"筛选失�? {e}")
-            return ServiceResult.error("ɸѡʧ��")
+            error_logger.error(f"筛选失败: {e}")
+            return ServiceResult.error("筛选失败")
     
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
@@ -684,17 +684,17 @@ class VideoAppService(BaseContentAppService):
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
             
-            app_logger.info(f"筛选成�? 包含 {include_tags}, 排除 {exclude_tags}, 作�?{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
+            app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
-            error_logger.error(f"筛选失�? {e}")
-            return ServiceResult.error("ɸѡʧ��")
+            error_logger.error(f"筛选失败: {e}")
+            return ServiceResult.error("筛选失败")
     
     def batch_add_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
             for tag_id in tag_ids:
                 if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存�? {tag_id}")
+                    return ServiceResult.error(f"标签不存在: {tag_id}")
             
             updated_count = 0
             for video_id in video_ids:
@@ -705,10 +705,10 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("û���ҵ���Ч����Ƶ")
+                return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"批量添加标签成功: {updated_count}个视�? 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"�ɹ�Ϊ {updated_count} ����Ƶ��ӱ�ǩ")
+            app_logger.info(f"批量添加标签成功: {updated_count}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为 {updated_count} 个视频添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
             return ServiceResult.error("批量添加标签失败")
@@ -724,10 +724,10 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("û���ҵ���Ч����Ƶ")
+                return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"批量移除标签成功: {updated_count}个视�? 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"�ɹ��� {updated_count} ����Ƶ�Ƴ���ǩ")
+            app_logger.info(f"批量移除标签成功: {updated_count}个视频, 标签: {tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为 {updated_count} 个视频移除标签")
         except Exception as e:
             error_logger.error(f"批量移除标签失败: {e}")
             return ServiceResult.error("批量移除标签失败")
@@ -1183,7 +1183,7 @@ class VideoAppService(BaseContentAppService):
                             downloaded_total += len(chunk)
                             if downloaded_total > self.PREVIEW_VIDEO_MAX_BYTES:
                                 app_logger.warning(
-                                    f"预览 HLS 资源过大，停止缓�? id={video_id}, bytes={downloaded_total}"
+                                    f"预览 HLS 资源过大，停止缓存: id={video_id}, bytes={downloaded_total}"
                                 )
                                 return ""
                             f.write(chunk)
@@ -1351,7 +1351,7 @@ class VideoAppService(BaseContentAppService):
                         return ""
                     downloaded_bytes += len(chunk)
                     if downloaded_bytes > self.PREVIEW_VIDEO_MAX_BYTES:
-                        app_logger.warning(f"预览视频过大，跳过缓�? id={video_id}, bytes={downloaded_bytes}")
+                        app_logger.warning(f"预览视频过大，跳过缓存: id={video_id}, bytes={downloaded_bytes}")
                         f.close()
                         try:
                             os.remove(tmp_path)
@@ -1797,13 +1797,13 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("û���ҵ���Ч����Ƶ")
+                return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"�����������վ�ɹ�: {updated_count}����Ƶ")
+            app_logger.info(f"批量移入回收站成功: {updated_count}个视频")
             return ServiceResult.ok({"updated_count": updated_count}, f"已将{updated_count}个视频移入回收站")
         except Exception as e:
-            error_logger.error(f"批量移入回收站失�? {e}")
-            return ServiceResult.error("�����������վʧ��")
+            error_logger.error(f"批量移入回收站失败: {e}")
+            return ServiceResult.error("批量移入回收站失败")
     
     def batch_restore_from_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复视频"""
@@ -1817,10 +1817,10 @@ class VideoAppService(BaseContentAppService):
                         updated_count += 1
             
             if updated_count == 0:
-                return ServiceResult.error("û���ҵ���Ч����Ƶ")
+                return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"�����ӻ���վ�ָ��ɹ�: {updated_count}����Ƶ")
-            return ServiceResult.ok({"updated_count": updated_count}, f"�ѻָ� {updated_count} ����Ƶ")
+            app_logger.info(f"批量从回收站恢复成功: {updated_count}个视频")
+            return ServiceResult.ok({"updated_count": updated_count}, f"已恢复 {updated_count} 个视频")
         except Exception as e:
             error_logger.error(f"批量从回收站恢复失败: {e}")
             return ServiceResult.error("批量从回收站恢复失败")
@@ -1837,10 +1837,10 @@ class VideoAppService(BaseContentAppService):
                     deleted_count += 1
             
             if deleted_count == 0:
-                return ServiceResult.error("û���ҵ���Ч����Ƶ")
+                return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"��������ɾ���ɹ�: {deleted_count}����Ƶ")
-            return ServiceResult.ok({"deleted_count": deleted_count}, f"������ɾ�� {deleted_count} ����Ƶ")
+            app_logger.info(f"批量永久删除成功: {deleted_count}个视频")
+            return ServiceResult.ok({"deleted_count": deleted_count}, f"已永久删除 {deleted_count} 个视频")
         except Exception as e:
             error_logger.error(f"批量永久删除失败: {e}")
             return ServiceResult.error("批量永久删除失败")

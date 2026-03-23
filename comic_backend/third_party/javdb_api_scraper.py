@@ -327,7 +327,7 @@ class JavdbAdapter(_JavdbAdapter):
 class JavbusAdapter(_JavbusAdapter):
     BASE_URL = "https://www.javbus.com"
 
-    """鍦ㄥ寘瑁呭眰淇 JavBus 缂╃暐鍥炬贩鏉傞棶棰樸€?"""
+    """在包装层修正 JavBus 缩略图混乱问题。"""
 
     def _extract_preview_video(self, detail: dict, video_id: str, movie_type: str = None) -> str:
         preview_video = _normalize_preview_video_url(

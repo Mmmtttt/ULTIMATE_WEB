@@ -103,7 +103,7 @@
       </div>
     </van-action-sheet>
     
-    <!-- 楂樼骇绛涢€夐潰鏉?-->
+    <!-- 高级筛选面板 -->
     <van-popup 
       v-model:show="showFilterPanel" 
       :position="isDesktop ? 'center' : 'bottom'" 

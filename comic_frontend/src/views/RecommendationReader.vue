@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="comic-reader" :style="{ background: background }" ref="readerRoot">
     <van-nav-bar 
       class="reader-nav"
@@ -29,7 +29,7 @@
     </div>
     
     <div v-else class="reader-content" ref="readerContent" @click.self="toggleMenuVisibility">
-      <!-- 宸﹀彸缈婚〉妯″紡 -->
+      <!-- 左右翻页模式 -->
       <div 
         v-if="pageMode === 'left_right'" 
         class="left-right-mode" 
@@ -62,7 +62,7 @@
         </div>
       </div>
       
-      <!-- 涓婁笅缈婚〉妯″紡 -->
+      <!-- 上下翻页模式 -->
       <div 
         v-else 
         class="up-down-mode" 
@@ -95,7 +95,7 @@
         </div>
       </div>
       
-      <!-- 涓婁笅缈婚〉妯″紡 -->
+      <!-- 缩放覆盖层 -->
       <div 
         v-if="supportsTouch && isZoomMode" 
         class="zoom-overlay"
@@ -122,13 +122,13 @@
         </div>
       </div>
       
-      <!-- 鐢佃剳绔缉鏀炬彁绀?-->
+      <!-- 电脑端缩放提示 -->
       <div v-if="!isMobile && zoomLevel > 1" class="desktop-zoom-info">
         {{ Math.round(zoomLevel * 100) }}% | Ctrl+滚轮缩放 | 双击重置
       </div>
     </div>
     
-    <!-- 搴曢儴鎺у埗鏍?-->
+    <!-- 底部控制栏 -->
     <div v-if="showMenu" class="control-bar">
       <div class="progress-section">
         <span class="page-indicator">{{ Math.round(currentPage) }} / {{ totalPage }}</span>
@@ -1850,7 +1850,7 @@ onUnmounted(() => {
   margin-top: -1px;
 }
 
-/* 鎵嬫満绔缉鏀捐鐩栧眰 */
+/* 手机端缩放覆盖层 */
 .zoom-overlay {
   position: absolute;
   top: 0;
@@ -1904,7 +1904,7 @@ onUnmounted(() => {
   z-index: 101;
 }
 
-/* 鐢佃剳绔缉鏀炬彁绀?*/
+/* 电脑端缩放提示 */
 .desktop-zoom-info {
   position: fixed;
   bottom: 20px;

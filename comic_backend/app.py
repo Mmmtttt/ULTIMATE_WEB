@@ -167,7 +167,7 @@ def frontend_fallback(path):
 
 @app.route('/static/cover/<path:filename>')
 def serve_cover(filename):
-    """鎻愪緵灏侀潰鍥剧墖锛屽苟璁剧疆姝ｇ‘鐨?Content-Type"""
+    """提供封面图片，并设置正确的Content-Type"""
     response = make_response(send_from_directory(COVER_DIR, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):
         response.headers['Content-Type'] = 'image/jpeg'
@@ -179,7 +179,7 @@ def serve_cover(filename):
 
 @app.route('/static/cover/<platform>/author_cache/<filename>')
 def serve_author_cover(platform, filename):
-    """鎻愪緵浣滆€呮洿鏂颁綔鍝佺殑灏侀潰鍥剧墖"""
+    """提供作者更新作品的封面图片"""
     platform_key = str(platform or "").strip().upper() or "JM"
     new_cache_dir = os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
     response = make_response(send_from_directory(new_cache_dir, filename))
