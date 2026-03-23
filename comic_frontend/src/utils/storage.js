@@ -31,7 +31,12 @@ export function getItem(key, defaultValue = null, type = StorageType.LOCAL) {
     if (raw === null) {
       return defaultValue
     }
-    return JSON.parse(raw)
+    try {
+      return JSON.parse(raw)
+    } catch {
+      // Backward compatibility: old entries may be stored as plain text.
+      return raw
+    }
   } catch (error) {
     console.error('Storage getItem error:', error)
     return defaultValue

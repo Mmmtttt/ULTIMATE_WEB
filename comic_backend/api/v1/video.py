@@ -11,7 +11,7 @@ from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, FeatureNotFound
 import re
 import threading
 import time
@@ -1019,7 +1019,10 @@ def _search_javdb_by_tag_params(adapter, page: int, tag_params):
     if _is_javdb_login_page(html_text):
         raise PermissionError("JAVDB 标签搜索需要登录")
 
-    soup = BeautifulSoup(html_text, "lxml")
+    try:
+        soup = BeautifulSoup(html_text, "lxml")
+    except FeatureNotFound:
+        soup = BeautifulSoup(html_text, "html.parser")
     items = soup.select('div.item a')
 
     parse_work = getattr(adapter.api, "_parse_work_item", None)

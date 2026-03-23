@@ -5,3 +5,4 @@ requests>=2.31.0
 jmcomic
 PyYAML
 beautifulsoup4
+lxml>=4.9.0
