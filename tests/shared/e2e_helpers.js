@@ -27,10 +27,28 @@ function hasApiCall(requests, matcher) {
   return requests.some((item) => item.url.includes(matcher));
 }
 
+async function getMediaTitles(page) {
+  const titles = await page.locator(".media-card .media-title").allTextContents();
+  return titles.map((item) => item.trim()).filter(Boolean);
+}
+
 async function confirmDialog(page) {
-  const confirmButton = page.getByRole("button", { name: /确认|确定/ });
-  await expect(confirmButton.first()).toBeVisible();
-  await confirmButton.first().click();
+  const candidates = [
+    page.getByRole("button", { name: /确认|确定|Confirm|OK/i }),
+    page.locator(".van-dialog__confirm"),
+    page.locator(".van-button--primary"),
+  ];
+
+  for (const locator of candidates) {
+    const first = locator.first();
+    const visible = await first.isVisible().catch(() => false);
+    if (visible) {
+      await first.click();
+      return;
+    }
+  }
+
+  throw new Error("confirm dialog button not found");
 }
 
 module.exports = {
@@ -38,5 +56,6 @@ module.exports = {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  getMediaTitles,
   confirmDialog,
 };

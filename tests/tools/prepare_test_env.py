@@ -17,14 +17,28 @@ if str(BOOTSTRAP_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(BOOTSTRAP_REPO_ROOT))
 
 from tests.shared.test_constants import (
+    FIFTH_COMIC_ID,
+    FIFTH_COMIC_ORIGINAL_ID,
+    FIFTH_COMIC_TITLE,
+    FOURTH_COMIC_ID,
+    FOURTH_COMIC_ORIGINAL_ID,
+    FOURTH_COMIC_TITLE,
     PRIMARY_COMIC_ID,
     PRIMARY_COMIC_ORIGINAL_ID,
     PRIMARY_COMIC_TITLE,
+    PRIMARY_VIDEO_ID,
     REPO_ROOT,
     RUNTIME_ROOT,
     SECONDARY_COMIC_ID,
     SECONDARY_COMIC_ORIGINAL_ID,
     SECONDARY_COMIC_TITLE,
+    SECONDARY_VIDEO_ID,
+    SECONDARY_VIDEO_TITLE,
+    THIRD_COMIC_ID,
+    THIRD_COMIC_ORIGINAL_ID,
+    THIRD_COMIC_TITLE,
+    THIRD_VIDEO_ID,
+    THIRD_VIDEO_TITLE,
 )
 
 
@@ -68,7 +82,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
     comics_payload = {
         "collection_name": "Test Comics",
         "user": "test-user",
-        "total_comics": 2,
+        "total_comics": 5,
         "last_updated": today,
         "comics": [
             {
@@ -82,7 +96,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "current_page": 1,
                 "score": 8.5,
                 "tag_ids": ["tag_action"],
-                "list_ids": [],
+                "list_ids": ["list_favorites_comic"],
                 "create_time": now,
                 "last_read_time": now,
                 "is_deleted": False,
@@ -98,6 +112,54 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "current_page": 1,
                 "score": 7,
                 "tag_ids": ["tag_story"],
+                "list_ids": [],
+                "create_time": now,
+                "last_read_time": now,
+                "is_deleted": False,
+            },
+            {
+                "id": THIRD_COMIC_ID,
+                "title": THIRD_COMIC_TITLE,
+                "title_jp": "",
+                "author": "Tester C",
+                "desc": "High score action comic.",
+                "cover_path": f"/static/cover/JM/{THIRD_COMIC_ORIGINAL_ID}.png",
+                "total_page": 5,
+                "current_page": 5,
+                "score": 9.8,
+                "tag_ids": ["tag_action", "tag_drama"],
+                "list_ids": ["list_curated_comic"],
+                "create_time": now,
+                "last_read_time": now,
+                "is_deleted": False,
+            },
+            {
+                "id": FOURTH_COMIC_ID,
+                "title": FOURTH_COMIC_TITLE,
+                "title_jp": "",
+                "author": "Tester D",
+                "desc": "Drama only comic for include-tag filter.",
+                "cover_path": f"/static/cover/JM/{FOURTH_COMIC_ORIGINAL_ID}.png",
+                "total_page": 4,
+                "current_page": 1,
+                "score": 6.2,
+                "tag_ids": ["tag_drama"],
+                "list_ids": ["list_curated_comic"],
+                "create_time": now,
+                "last_read_time": now,
+                "is_deleted": False,
+            },
+            {
+                "id": FIFTH_COMIC_ID,
+                "title": FIFTH_COMIC_TITLE,
+                "title_jp": "",
+                "author": "Tester B",
+                "desc": "Low score action comic for score-range filter.",
+                "cover_path": f"/static/cover/JM/{FIFTH_COMIC_ORIGINAL_ID}.png",
+                "total_page": 3,
+                "current_page": 1,
+                "score": 4.1,
+                "tag_ids": ["tag_action", "tag_story"],
                 "list_ids": [],
                 "create_time": now,
                 "last_read_time": now,
@@ -121,11 +183,11 @@ def _seed_meta_data(meta_dir: Path) -> None:
     videos_payload = {
         "collection_name": "Test Videos",
         "user": "test-user",
-        "total_videos": 1,
+        "total_videos": 3,
         "last_updated": today,
         "videos": [
             {
-                "id": "JAVDB900001",
+                "id": PRIMARY_VIDEO_ID,
                 "code": "TEST-900001",
                 "title": "Seed Video",
                 "creator": "Video Creator",
@@ -139,7 +201,39 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "create_time": now,
                 "last_read_time": now,
                 "is_deleted": False,
-            }
+            },
+            {
+                "id": SECONDARY_VIDEO_ID,
+                "code": "TEST-900002",
+                "title": SECONDARY_VIDEO_TITLE,
+                "creator": "Video Creator B",
+                "actors": ["Actor B"],
+                "cover_path": "/static/cover/JAVDB/900002.png",
+                "thumbnail_images": [],
+                "video_url": "",
+                "score": 9.3,
+                "tag_ids": ["tag_video", "tag_video_action"],
+                "list_ids": ["list_curated_video"],
+                "create_time": now,
+                "last_read_time": now,
+                "is_deleted": False,
+            },
+            {
+                "id": THIRD_VIDEO_ID,
+                "code": "TEST-900003",
+                "title": THIRD_VIDEO_TITLE,
+                "creator": "Video Creator C",
+                "actors": ["Actor C"],
+                "cover_path": "/static/cover/JAVDB/900003.png",
+                "thumbnail_images": [],
+                "video_url": "",
+                "score": 5.6,
+                "tag_ids": ["tag_video_story"],
+                "list_ids": [],
+                "create_time": now,
+                "last_read_time": now,
+                "is_deleted": False,
+            },
         ],
     }
 
@@ -158,7 +252,10 @@ def _seed_meta_data(meta_dir: Path) -> None:
         "tags": [
             {"id": "tag_action", "name": "Action", "content_type": "comic", "create_time": now},
             {"id": "tag_story", "name": "Story", "content_type": "comic", "create_time": now},
+            {"id": "tag_drama", "name": "Drama", "content_type": "comic", "create_time": now},
             {"id": "tag_video", "name": "VideoTag", "content_type": "video", "create_time": now},
+            {"id": "tag_video_action", "name": "VideoAction", "content_type": "video", "create_time": now},
+            {"id": "tag_video_story", "name": "VideoStory", "content_type": "video", "create_time": now},
         ],
     }
 
@@ -181,6 +278,22 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "desc": "Default video favorites",
                 "content_type": "video",
                 "is_default": True,
+                "create_time": now,
+            },
+            {
+                "id": "list_curated_comic",
+                "name": "Curated Comic List",
+                "desc": "Seeded custom comic list for filter assertions",
+                "content_type": "comic",
+                "is_default": False,
+                "create_time": now,
+            },
+            {
+                "id": "list_curated_video",
+                "name": "Curated Video List",
+                "desc": "Seeded custom video list for filter assertions",
+                "content_type": "video",
+                "is_default": False,
                 "create_time": now,
             },
         ],
@@ -219,6 +332,9 @@ def _seed_media(data_dir: Path) -> None:
     for original_id, page_count in (
         (PRIMARY_COMIC_ORIGINAL_ID, 3),
         (SECONDARY_COMIC_ORIGINAL_ID, 2),
+        (THIRD_COMIC_ORIGINAL_ID, 5),
+        (FOURTH_COMIC_ORIGINAL_ID, 4),
+        (FIFTH_COMIC_ORIGINAL_ID, 3),
     ):
         comic_dir = data_dir / "comic" / "JM" / original_id
         for page in range(1, page_count + 1):
@@ -228,6 +344,10 @@ def _seed_media(data_dir: Path) -> None:
 
     _write_png(data_dir / "static" / "cover" / "JAVDB" / "900001.png")
     _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900001.jpg")
+    _write_png(data_dir / "static" / "cover" / "JAVDB" / "900002.png")
+    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900002.jpg")
+    _write_png(data_dir / "static" / "cover" / "JAVDB" / "900003.png")
+    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900003.jpg")
     _write_jpg(data_dir / "static" / "default" / "default_cover.jpg")
 
 
