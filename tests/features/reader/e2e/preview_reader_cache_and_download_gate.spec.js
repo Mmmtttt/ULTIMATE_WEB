@@ -124,6 +124,18 @@ async function waitPageIndicator(page, expectedText) {
     .toContain(expectedText.replace(/\s+/g, ""));
 }
 
+async function showReaderMenuByKeyboard(page) {
+  await expect(page.locator(".reader-content")).toBeVisible();
+  await expect(page.locator(".comic-image").first()).toBeVisible();
+  await page.keyboard.press("m");
+  const controlBar = page.locator(".control-bar");
+  const visible = await controlBar.isVisible().catch(() => false);
+  if (!visible) {
+    await page.locator(".reader-content").click({ position: { x: 12, y: 12 } });
+  }
+  await expect(controlBar).toBeVisible();
+}
+
 /**
  * 用例描述:
  * - 用例目的: 看护“预览阅读页命中本地缓存”分支，确保不会误触发整本下载，并保持进度上报链路。
@@ -427,6 +439,6 @@ test("recommendation detail continue reading opens reader at saved progress", as
   await readButton.click();
 
   await expect(page).toHaveURL(new RegExp(`/recommendation-reader/${recommendationId}$`));
-  await page.keyboard.press("m");
+  await showReaderMenuByKeyboard(page);
   await waitPageIndicator(page, "2/3");
 });

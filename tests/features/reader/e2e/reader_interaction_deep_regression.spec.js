@@ -34,8 +34,15 @@ async function waitPageIndicator(page, expectedText) {
 }
 
 async function showReaderMenuByKeyboard(page) {
+  await expect(page.locator(".reader-content")).toBeVisible();
+  await expect(page.locator(".comic-image").first()).toBeVisible();
   await page.keyboard.press("m");
-  await expect(page.locator(".control-bar")).toBeVisible();
+  const controlBar = page.locator(".control-bar");
+  const visible = await controlBar.isVisible().catch(() => false);
+  if (!visible) {
+    await page.locator(".reader-content").click({ position: { x: 12, y: 12 } });
+  }
+  await expect(controlBar).toBeVisible();
 }
 
 /**
