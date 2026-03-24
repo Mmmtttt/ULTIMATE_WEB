@@ -284,6 +284,8 @@ let restoreRetryCount = 0
 let pageUpdateRafId = 0
 let inertiaRafId = 0
 let restoreBootstrapTimer = null
+let scrollObservationToken = 0
+let restoreSessionToken = 0
 
 const comicId = computed(() => route.params.id)
 
@@ -403,6 +405,7 @@ const syncScrollFromZoomState = () => {
   const nextLeft = Math.min(maxLeft, Math.max(0, nextLeftRaw))
   const nextTop = Math.min(maxTop, Math.max(0, nextTopRaw))
 
+  invalidateScrollObservation()
   markProgrammaticScroll(120)
   container.scrollTo({
     left: nextLeft,
@@ -519,6 +522,28 @@ const markProgrammaticScroll = (duration = 220) => {
   }, duration)
 }
 
+const clearScrollCommitTimer = () => {
+  if (scrollIdleTimer) {
+    clearTimeout(scrollIdleTimer)
+    scrollIdleTimer = null
+  }
+}
+
+const nextScrollObservation = () => {
+  scrollObservationToken += 1
+  return scrollObservationToken
+}
+
+const invalidateScrollObservation = () => {
+  nextScrollObservation()
+  clearScrollCommitTimer()
+}
+
+const nextRestoreSessionToken = () => {
+  restoreSessionToken += 1
+  return restoreSessionToken
+}
+
 const getPageElements = (container) => {
   if (!container) return []
   const selector = pageMode.value === 'left_right' ? '.page' : '.up-down-page'
@@ -543,6 +568,11 @@ const getRectAxisStart = (rect) => {
 const getRectAxisEnd = (rect) => {
   if (!rect) return 0
   return pageMode.value === 'left_right' ? rect.right : rect.bottom
+}
+
+const getRectAxisCenter = (rect) => {
+  if (!rect) return 0
+  return (getRectAxisStart(rect) + getRectAxisEnd(rect)) / 2
 }
 
 const getPageElementByNumber = (container, page) => {
@@ -597,22 +627,82 @@ const estimatePageFromScroll = (container) => {
   const pages = getPageElements(container)
   if (!pages.length || totalPage.value <= 0) return 1
 
+  const safeCurrentPage = clampPage(currentPage.value, totalPage.value)
   const containerRect = container.getBoundingClientRect()
-  const leadingEdge = getRectAxisStart(containerRect)
+  const viewportStart = getRectAxisStart(containerRect)
+  const viewportEnd = getRectAxisEnd(containerRect)
+  const viewportCenter = getRectAxisCenter(containerRect)
   const epsilon = 0.5
+
+  if (isSinglePageBrowsing.value) {
+    let bestPage = safeCurrentPage
+    let bestDistance = Number.POSITIVE_INFINITY
+    let bestVisible = -1
+
+    for (let index = 0; index < pages.length; index += 1) {
+      const rect = pages[index].getBoundingClientRect()
+      const extent = pageMode.value === 'left_right' ? rect.width : rect.height
+      if (extent <= 0) continue
+
+      const pageStart = getRectAxisStart(rect)
+      const pageEnd = getRectAxisEnd(rect)
+      const visibleExtent = Math.max(0, Math.min(pageEnd, viewportEnd) - Math.max(pageStart, viewportStart))
+      const centerDistance = Math.abs(getRectAxisCenter(rect) - viewportCenter)
+
+      if (
+        centerDistance < bestDistance - epsilon ||
+        (Math.abs(centerDistance - bestDistance) <= epsilon && visibleExtent > bestVisible + epsilon)
+      ) {
+        bestPage = index + 1
+        bestDistance = centerDistance
+        bestVisible = visibleExtent
+      }
+    }
+
+    return clampPage(bestPage, totalPage.value)
+  }
+
+  let bestPage = safeCurrentPage
+  let bestVisible = -1
+  let bestDistance = Number.POSITIVE_INFINITY
 
   for (let index = 0; index < pages.length; index += 1) {
     const rect = pages[index].getBoundingClientRect()
     const extent = pageMode.value === 'left_right' ? rect.width : rect.height
     if (extent <= 0) continue
 
-    const end = getRectAxisEnd(rect)
-    if (end > leadingEdge + epsilon) {
+    const pageStart = getRectAxisStart(rect)
+    const pageEnd = getRectAxisEnd(rect)
+    const visibleExtent = Math.max(0, Math.min(pageEnd, viewportEnd) - Math.max(pageStart, viewportStart))
+    if (visibleExtent <= 0 && bestVisible >= 0) {
+      continue
+    }
+
+    const centerDistance = Math.abs(getRectAxisCenter(rect) - viewportCenter)
+    if (
+      visibleExtent > bestVisible + epsilon ||
+      (Math.abs(visibleExtent - bestVisible) <= epsilon && centerDistance < bestDistance - epsilon)
+    ) {
+      bestPage = index + 1
+      bestVisible = visibleExtent
+      bestDistance = centerDistance
+    }
+  }
+
+  if (bestVisible > 0) {
+    return clampPage(bestPage, totalPage.value)
+  }
+
+  for (let index = 0; index < pages.length; index += 1) {
+    const rect = pages[index].getBoundingClientRect()
+    const extent = pageMode.value === 'left_right' ? rect.width : rect.height
+    if (extent <= 0) continue
+    if (getRectAxisEnd(rect) > viewportStart + epsilon) {
       return clampPage(index + 1, totalPage.value)
     }
   }
 
-  return clampPage(currentPage.value, totalPage.value)
+  return safeCurrentPage
 }
 
 const flushProgressSave = async (page) => {
@@ -647,12 +737,16 @@ const scheduleProgressSave = (page, immediate = false) => {
   }, 1600)
 }
 
-const commitReadingPage = (page, immediateProgress = false) => {
+const writeDisplayedPage = (page) => {
   if (totalPage.value <= 0) return 1
   const safePage = clampPage(page, totalPage.value)
-
   currentPage.value = safePage
   sliderPage.value = safePage
+  return safePage
+}
+
+const commitReadingPage = (page, immediateProgress = false) => {
+  const safePage = writeDisplayedPage(page)
 
   if (safePage !== lastCommittedPage.value) {
     lastCommittedPage.value = safePage
@@ -663,12 +757,11 @@ const commitReadingPage = (page, immediateProgress = false) => {
   return safePage
 }
 
-const scheduleScrollCommit = () => {
-  if (scrollIdleTimer) {
-    clearTimeout(scrollIdleTimer)
-  }
+const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
+  clearScrollCommitTimer()
 
   scrollIdleTimer = setTimeout(() => {
+    if (observationToken !== scrollObservationToken) return
     if (isProgrammaticScroll.value || totalPage.value <= 0) return
     commitReadingPage(currentPage.value)
   }, 220)
@@ -802,7 +895,8 @@ const startRestoreBootstrap = (duration = 2200) => {
   }, duration)
 }
 
-const scheduleRestoreRetry = (delay) => {
+const scheduleRestoreRetry = (delay, restoreSession = restoreSessionToken) => {
+  if (restoreSession !== restoreSessionToken) return
   if (pendingRestorePage.value == null) return
 
   restoreRetryCount += 1
@@ -818,23 +912,27 @@ const scheduleRestoreRetry = (delay) => {
 
   clearRestoreRetry()
   restoreRetryTimer = setTimeout(() => {
-    void tryRestorePendingPage()
+    void tryRestorePendingPage(restoreSession)
   }, nextDelay)
 }
 
-const tryRestorePendingPage = async () => {
+const tryRestorePendingPage = async (restoreSession = restoreSessionToken) => {
+  if (restoreSession !== restoreSessionToken) return
   if (pendingRestorePage.value == null || totalPage.value <= 0) return
 
   const targetPage = clampPage(pendingRestorePage.value, totalPage.value)
   await nextTick()
   await nextAnimationFrame()
+  if (restoreSession !== restoreSessionToken) return
+
   const containerBeforeJump = activeContainer.value
   if (!containerBeforeJump) {
-    scheduleRestoreRetry(120)
+    scheduleRestoreRetry(120, restoreSession)
     return
   }
 
-  await jumpToPage(targetPage, false)
+  await jumpToPage(targetPage, false, { reason: 'restore' })
+  if (restoreSession !== restoreSessionToken) return
 
   const container = activeContainer.value
   if (container && isScrollAlignedWithPage(container, targetPage)) {
@@ -844,7 +942,7 @@ const tryRestorePendingPage = async () => {
     return
   }
 
-  scheduleRestoreRetry()
+  scheduleRestoreRetry(undefined, restoreSession)
 }
 
 const handlePageImageLoad = (pageNum) => {
@@ -854,7 +952,7 @@ const handlePageImageLoad = (pageNum) => {
   if (pageNum <= pendingPage + 1) {
     restoreRetryCount = 0
     clearRestoreRetry()
-    void tryRestorePendingPage()
+    void tryRestorePendingPage(restoreSessionToken)
   }
 }
 
@@ -864,11 +962,13 @@ const loadImages = async () => {
   resetZoomState()
   singlePageSwipeActive.value = false
   singlePageSwipeStartAt.value = 0
+  invalidateScrollObservation()
   pendingRestorePage.value = null
   isRestoreBootstrap.value = false
   restoreRetryCount = 0
   clearRestoreRetry()
   clearRestoreBootstrap()
+  const restoreSession = nextRestoreSessionToken()
   loadedPages.value = new Set()
   loadingPages.value = new Set()
   loadQueue.value = []
@@ -903,7 +1003,7 @@ const loadImages = async () => {
 
     await nextTick()
     await nextAnimationFrame()
-    void tryRestorePendingPage()
+    void tryRestorePendingPage(restoreSession)
   } catch (err) {
     error.value = true
     console.error('加载图片失败:', err)
@@ -912,14 +1012,20 @@ const loadImages = async () => {
   }
 }
 
-const jumpToPage = async (page, smooth = true) => {
+const jumpToPage = async (page, smooth = true, options = {}) => {
   if (totalPage.value <= 0) return
+  const reason = options.reason || 'navigation'
   const targetPage = clampPage(page, totalPage.value)
   const behavior = smooth ? 'smooth' : 'auto'
 
-  currentPage.value = targetPage
-  sliderPage.value = targetPage
-  lastCommittedPage.value = targetPage
+  if (reason !== 'restore' && pendingRestorePage.value != null) {
+    pendingRestorePage.value = null
+    restoreRetryCount = 0
+    clearRestoreRetry()
+    nextRestoreSessionToken()
+  }
+  invalidateScrollObservation()
+  commitReadingPage(targetPage, !smooth)
 
   if (!activeContainer.value) {
     await nextTick()
@@ -935,44 +1041,40 @@ const jumpToPage = async (page, smooth = true) => {
     markProgrammaticScroll(smooth ? 260 : 120)
     scrollToPosition(container, scrollPosition, behavior)
   }
-
-  preloadImages(targetPage)
-  scheduleProgressSave(targetPage, !smooth)
 }
 
 const prevPage = () => {
   const targetPage = Math.max(1, clampPage(currentPage.value, totalPage.value) - 1)
-  void jumpToPage(targetPage)
+  void jumpToPage(targetPage, true, { reason: 'step' })
 }
 
 const nextPage = () => {
   const targetPage = Math.min(totalPage.value, clampPage(currentPage.value, totalPage.value) + 1)
-  void jumpToPage(targetPage)
+  void jumpToPage(targetPage, true, { reason: 'step' })
 }
 
 const handleSliderChange = () => {
   const page = parseInt(sliderPage.value, 10)
   if (page >= 1 && page <= totalPage.value) {
-    void jumpToPage(page, false)
+    void jumpToPage(page, false, { reason: 'slider' })
   }
 }
 
 const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
+  const observationToken = nextScrollObservation()
 
   if (pendingRestorePage.value != null) {
     const lockedPage = clampPage(pendingRestorePage.value, totalPage.value)
-    currentPage.value = lockedPage
-    sliderPage.value = lockedPage
+    writeDisplayedPage(lockedPage)
     return
   }
 
   const estimatedPage = estimatePageFromScroll(container)
-  currentPage.value = estimatedPage
-  sliderPage.value = estimatedPage
+  writeDisplayedPage(estimatedPage)
 
-  scheduleScrollCommit()
+  scheduleScrollCommit(observationToken)
 }
 
 const handleScroll = () => {
@@ -1013,12 +1115,11 @@ const togglePageMode = async () => {
   const anchorPage = clampPage(currentPage.value, totalPage.value)
   pageMode.value = pageMode.value === 'left_right' ? 'up_down' : 'left_right'
   configStore.setPageMode(pageMode.value)
-  currentPage.value = anchorPage
-  sliderPage.value = anchorPage
+  writeDisplayedPage(anchorPage)
 
   await nextTick()
   await nextAnimationFrame()
-  await jumpToPage(anchorPage, false)
+  await jumpToPage(anchorPage, false, { reason: 'mode-switch' })
 }
 
 const enterZoomMode = () => {
@@ -1372,7 +1473,7 @@ const alignToCurrentPageAfterViewportChange = () => {
   resizeAlignTimer = setTimeout(async () => {
     if (totalPage.value <= 0) return
     const anchorPage = clampPage(currentPage.value, totalPage.value)
-    await jumpToPage(anchorPage, false)
+    await jumpToPage(anchorPage, false, { reason: 'viewport-align' })
   }, 140)
 }
 
@@ -1533,11 +1634,11 @@ const handleKeydown = (event) => {
       break
     case 'Home':
       event.preventDefault()
-      void jumpToPage(1, false)
+      void jumpToPage(1, false, { reason: 'keyboard' })
       break
     case 'End':
       event.preventDefault()
-      void jumpToPage(totalPage.value, false)
+      void jumpToPage(totalPage.value, false, { reason: 'keyboard' })
       break
     case 'm':
     case 'M':
@@ -1711,7 +1812,7 @@ onUnmounted(() => {
 }
 
 .left-right-mode.single-page-mode .page-track-horizontal {
-  width: 100%;
+  width: max-content;
   min-width: 100%;
 }
 
@@ -1842,7 +1943,7 @@ onUnmounted(() => {
 
 .left-right-mode.single-page-mode .page,
 .up-down-mode.single-page-mode .up-down-page {
-  scroll-snap-align: start;
+  scroll-snap-align: center;
   scroll-snap-stop: always;
 }
 
