@@ -503,10 +503,6 @@ onMounted(() => {
   gap: 8px;
 }
 
-.video-mode :deep(.media-cover) {
-  aspect-ratio: 16 / 9;
-}
-
 .filter-panel {
   height: 100%;
   display: flex;

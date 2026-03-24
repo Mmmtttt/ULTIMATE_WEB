@@ -125,7 +125,7 @@
               :class="{ selected: isResultSelected(item) }"
               @click="toggleResultSelection(item)"
             >
-              <div class="card-cover">
+              <div class="card-cover video-cover-landscape">
                 <van-image
                   :src="getCoverUrl(item)"
                   fit="cover"
@@ -665,11 +665,16 @@ onMounted(async () => {
 
 .card-cover {
   position: relative;
+  aspect-ratio: 2 / 3;
+}
+
+.remote-results-grid.video-mode .card-cover.video-cover-landscape {
+  aspect-ratio: 16 / 9;
 }
 
 .cover-image {
   width: 100%;
-  height: 120px;
+  height: 100%;
   display: block;
 }
 
@@ -791,8 +796,17 @@ onMounted(async () => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .cover-image {
-    height: 108px;
+  .remote-results-grid.video-mode .card-cover.video-cover-landscape {
+    aspect-ratio: 3 / 2;
+  }
+
+  .remote-results-grid.video-mode .card-title {
+    font-size: 12px;
+    min-height: 32px;
+  }
+
+  .remote-results-grid.video-mode .card-code {
+    font-size: 11px;
   }
 }
 

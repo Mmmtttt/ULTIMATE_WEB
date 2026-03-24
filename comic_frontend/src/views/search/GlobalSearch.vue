@@ -51,10 +51,16 @@
               :class="{ selected: isSelected(item) }"
               @click="toggleSelection(item)"
             >
-              <div class="card-cover">
+              <div
+                class="card-cover"
+                :class="{
+                  'video-cover-landscape': isVideoMode && !isJavbusPlatform(item),
+                  'video-cover-portrait': isVideoMode && isJavbusPlatform(item)
+                }"
+              >
                 <van-image 
                   :src="getCoverUrl(item)" 
-                  fit="cover" 
+                  :fit="getCoverFit(item)"
                   class="cover-image"
                   lazy-load
                 />
@@ -192,6 +198,18 @@ const isAllRemoteSelected = computed(() => {
 
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
+}
+
+function isJavbusPlatform(item) {
+  const platform = String(item?.platform || '').trim().toLowerCase()
+  return platform === 'javbus'
+}
+
+function getCoverFit(item) {
+  if (isVideoMode.value && isJavbusPlatform(item)) {
+    return 'contain'
+  }
+  return 'cover'
 }
 
 function formatScore(score) {
@@ -616,8 +634,12 @@ onMounted(() => {
   background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
 }
 
-.remote-results-grid.video-mode .card-cover {
-  aspect-ratio: 16/9;
+.remote-results-grid.video-mode .card-cover.video-cover-landscape {
+  aspect-ratio: 16 / 9;
+}
+
+.remote-results-grid.video-mode .card-cover.video-cover-portrait {
+  aspect-ratio: 2 / 3;
 }
 
 .cover-image {
@@ -720,6 +742,19 @@ onMounted(() => {
   .remote-results-grid {
     gap: 10px;
     padding: 10px;
+  }
+
+  .remote-results-grid.video-mode .card-cover.video-cover-landscape {
+    aspect-ratio: 3 / 2;
+  }
+
+  .remote-results-grid.video-mode .card-title {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .remote-results-grid.video-mode .card-author {
+    font-size: 11px;
   }
 
   .floating-import-bar {

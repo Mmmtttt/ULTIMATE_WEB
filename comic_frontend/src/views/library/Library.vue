@@ -114,9 +114,21 @@
       </div>
     </van-action-sheet>
 
-    <van-popup v-model:show="showFilterPanel" position="right" :style="{ width: '80%', height: '100%' }">
-      <div class="filter-panel-content">
-        <h3>高级筛选</h3>
+    <van-popup
+      v-model:show="showFilterPanel"
+      :position="isDesktop ? 'center' : 'bottom'"
+      round
+      :style="isDesktop ? { width: '700px', height: '85vh' } : { height: '80%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="高级筛选" left-text="关闭" @click-left="showFilterPanel = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="applyFilters">
+              确定
+            </van-button>
+          </template>
+        </van-nav-bar>
+
         <AdvancedFilter
           v-model:include-tags="includeTags"
           v-model:exclude-tags="excludeTags"
@@ -129,9 +141,6 @@
           :lists="availableLists"
           :is-video-mode="isVideoMode"
         />
-        <div class="filter-actions">
-          <van-button block type="primary" @click="applyFilters">应用</van-button>
-        </div>
       </div>
     </van-popup>
 
@@ -147,6 +156,7 @@ import MediaGrid from '@/components/common/MediaGrid.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
+import { useDevice } from '@/composables/useDevice'
 import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
@@ -156,6 +166,7 @@ const comicStore = useComicStore()
 const videoStore = useVideoStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
+const { isDesktop } = useDevice()
 
 // State
 const showSortPanel = ref(false)
@@ -618,31 +629,19 @@ onMounted(() => {
   gap: 8px;
 }
 
-.video-mode :deep(.media-cover) {
-  aspect-ratio: 16 / 9;
-}
-
-.filter-panel-content {
-  padding: 18px 16px 16px;
+.filter-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-.filter-panel-content h3 {
-  font-size: 17px;
-  color: var(--text-strong);
-  margin: 0;
+.filter-panel :deep(.advanced-filter) {
+  flex: 1;
+  overflow-y: auto;
 }
 
-.filter-actions {
-  margin-top: auto;
-  padding-top: 10px;
-}
-
-.filter-actions :deep(.van-button) {
-  height: 42px;
+.filter-panel :deep(.van-nav-bar) {
+  border-radius: 14px 14px 0 0;
 }
 
 .view-mode-sheet {

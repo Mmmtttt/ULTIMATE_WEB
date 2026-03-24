@@ -4,14 +4,19 @@
       v-for="item in items" 
       :key="item.id" 
       class="media-card"
-      :class="{ 'list-mode-card': isListMode }"
+      :class="{
+        'list-mode-card': isListMode,
+        'video-item': isVideoItem(item),
+        'video-platform-javbus': isJavbusPlatform(item),
+        'video-platform-javdb': isVideoItem(item) && !isJavbusPlatform(item)
+      }"
       @click="$emit('click', item)"
     >
       <template v-if="!isListMode">
         <div class="media-cover">
           <van-image 
             :src="getCoverUrl(item)" 
-            fit="cover" 
+            :fit="resolveCoverFit(item)"
             class="cover-image"
             lazy-load
           />
@@ -154,7 +159,27 @@ function isSelected(item) {
 }
 
 function isVideoItem(item) {
-  return item.actors && item.actors.length > 0
+  const platform = String(item?.platform || '').trim().toLowerCase()
+  return Boolean(
+    (Array.isArray(item?.actors) && item.actors.length > 0) ||
+    platform === 'javdb' ||
+    platform === 'javbus' ||
+    item?.video_id ||
+    item?.preview_video ||
+    item?.preview_video_local
+  )
+}
+
+function isJavbusPlatform(item) {
+  const platform = String(item?.platform || '').trim().toLowerCase()
+  return platform === 'javbus'
+}
+
+function resolveCoverFit(item) {
+  if (isVideoItem(item) && isJavbusPlatform(item)) {
+    return 'contain'
+  }
+  return 'cover'
 }
 
 function formatScore(score) {
@@ -271,6 +296,14 @@ function displaySubtitle(item) {
   background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
 }
 
+.media-card.video-item.video-platform-javdb .media-cover {
+  aspect-ratio: 16 / 9;
+}
+
+.media-card.video-item.video-platform-javbus .media-cover {
+  aspect-ratio: 2 / 3;
+}
+
 .cover-image {
   width: 100%;
   height: 100%;
@@ -343,14 +376,22 @@ function displaySubtitle(item) {
 
 .play-btn {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 8px;
+  right: 8px;
+  transform: none;
   color: #fff;
-  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.65);
-  z-index: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  z-index: 2;
   pointer-events: none;
-  animation: playPulse 2s ease-in-out infinite;
+  opacity: 0.92;
+  background: rgba(20, 31, 49, 0.28);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @keyframes playPulse {
@@ -501,6 +542,33 @@ function displaySubtitle(item) {
 
   .media-title {
     font-size: 13px;
+  }
+
+  .media-card.video-item .media-info {
+    padding: 7px 8px 9px;
+  }
+
+  .media-card.video-item .media-title {
+    font-size: 12px;
+    line-height: 1.35;
+    margin-bottom: 3px;
+  }
+
+  .media-card.video-item .media-subtitle {
+    font-size: 10px;
+    margin-bottom: 3px;
+  }
+
+  .media-card.video-item .media-meta {
+    font-size: 10px;
+  }
+
+  .media-card.video-item.video-platform-javdb .media-cover {
+    aspect-ratio: 3 / 2;
+  }
+
+  .media-card.video-item .play-btn {
+    display: none;
   }
 }
 
