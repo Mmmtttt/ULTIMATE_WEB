@@ -207,3 +207,43 @@ tests/
   - Video actor works cache clear contract (`/api/v1/video/actor/works-cache/clear`).
 - Residual risk notes (next priority):
   - Add timeout/retry branch guards for long-running third-party adapter failures.
+
+## 15. Reader Regression Coverage (2026-03-24 Latest)
+- New E2E suite directory: `tests/features/reader/e2e/`
+- New integration suite directory: `tests/features/reader/integration/`
+- Added E2E cases:
+  - `local_reader_core_regression.spec.js`
+    - route `?page=` restore for local reader
+    - page-mode toggle keeps anchor page
+    - progress persistence request contract (`/api/v1/comic/progress`)
+    - configured default page mode takes effect on first render
+  - `preview_reader_cache_and_download_gate.spec.js`
+    - cached recommendation-reader path uses `/recommendation/cache/image`
+    - cached path must not trigger `/recommendation/cache/download`
+    - uncached + runtime third-party disabled fallback enters reader error state
+    - recommendation detail "continue reading" opens reader at saved progress
+  - `reader_interaction_deep_regression.spec.js`
+    - preload order around focus page (regression guard for `calculateLoadSequence`)
+    - horizontal/vertical seamless page stitching (gap tolerance guard)
+    - desktop interactions: paging, Ctrl+wheel zoom, pan transform, fullscreen toggle
+    - local comic detail "continue reading" route + progress restore
+    - mobile touch path: pinch zoom and touch pan transform changes
+- Added integration cases:
+  - `test_recommendation_reader_contract.py`
+    - recommendation cache status/image/detail contract consistency
+    - recommendation progress persistence and invalid-page validation
+- Data strategy for reader cases:
+  - Reuses isolated runtime seed assets from `prepare_test_env.py`
+  - For recommendation reader cache path, tests write real PNG files into runtime cache directories and verify frontend fetches those files through backend cache-image APIs.
+
+## 16. Reader Single-Page + Progressive Download Gates (2026-03-24)
+- Added E2E: `tests/features/reader/e2e/local_reader_core_regression.spec.js`
+  - `local reader single-page mode renders one page and keeps paging flow`
+  - Guards that `singlePageBrowsing=true` renders exactly one page in local reader and page turn still works.
+- Added E2E: `tests/features/reader/e2e/preview_reader_cache_and_download_gate.spec.js`
+  - `preview reader single-page mode renders one page and keeps paging flow`
+  - Guards that preview reader also honors `singlePageBrowsing=true` with single-page rendering + correct page turn.
+  - `preview reader progressively renders cached pages before download call finishes`
+  - Guards progressive reading behavior: reader can render cached pages before `/api/v1/recommendation/cache/download` response completes.
+- Updated E2E: `tests/features/system_config/e2e/system_config_updates_reader_preferences.spec.js`
+  - Now also asserts config PUT body includes `"single_page_browsing":true`.

@@ -234,6 +234,7 @@ class JsonStorage:
                     "default_background": "white",
                     "auto_hide_toolbar": True,
                     "show_page_number": True,
+                    "single_page_browsing": False,
                     "cache_config": {
                         "recommendation_cache_max_size_mb": 5120,
                         "cache_ttl_seconds": 3600
@@ -269,7 +270,8 @@ class JsonStorage:
                 comics_key: [],
                 "user_config": {
                     "default_page_mode": "left_right",
-                    "default_background": "dark" if is_recommendation else "white"
+                    "default_background": "dark" if is_recommendation else "white",
+                    "single_page_browsing": False
                 }
             }
     

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="comic-reader" :style="{ background: background }" ref="readerRoot">
     <van-nav-bar 
       class="reader-nav"
@@ -29,10 +29,14 @@
     </div>
     
     <div v-else class="reader-content" ref="readerContent" @click.self="toggleMenuVisibility">
+      <div v-if="downloadProgress" class="download-progress download-progress-inline">
+        {{ downloadProgress }}
+      </div>
       <!-- 左右翻页模式 -->
       <div 
         v-if="pageMode === 'left_right'" 
         class="left-right-mode" 
+        :class="{ 'single-page-mode': isSinglePageBrowsing }"
         ref="leftRightContainer"
         :style="getContainerStyle"
         @scroll="handleScroll"
@@ -44,17 +48,17 @@
       >
         <div class="page-track page-track-horizontal" :style="getContentStyle">
           <div 
-            v-for="(image, index) in images" 
-            :key="index"
+            v-for="(pageNum, index) in displayedPageNumbers" 
+            :key="`lr-${pageNum}-${index}`"
             class="page"
           >
             <img 
-              :src="getImageSrc(index)" 
+              :src="getImageSrc(pageNum)" 
               class="comic-image"
               decoding="async"
-              :loading="getImageLoading(index)"
+              :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(index)"
+              @load="handlePageImageLoad(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -66,6 +70,7 @@
       <div 
         v-else 
         class="up-down-mode" 
+        :class="{ 'single-page-mode': isSinglePageBrowsing }"
         ref="upDownContainer" 
         :style="getContainerStyle"
         @scroll="handleScroll"
@@ -77,17 +82,17 @@
       >
         <div class="page-track page-track-vertical" :style="getContentStyle">
           <div 
-            v-for="(image, index) in images" 
-            :key="index" 
+            v-for="(pageNum, index) in displayedPageNumbers" 
+            :key="`ud-${pageNum}-${index}`" 
             class="up-down-page"
           >
             <img 
-              :src="getImageSrc(index)" 
+              :src="getImageSrc(pageNum)" 
               class="comic-image"
               decoding="async"
-              :loading="getImageLoading(index)"
+              :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(index)"
+              @load="handlePageImageLoad(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -215,6 +220,10 @@ const sliderPage = ref(1)
 
 const downloadProgress = ref('')
 const isCached = ref(false)
+const declaredTotalPage = ref(0)
+const cachedPageSet = ref(new Set())
+const activeDownloadInProgress = ref(false)
+const deferredRestorePage = ref(null)
 
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
@@ -268,10 +277,15 @@ const detectTouchSupport = () => {
 const isProgrammaticScroll = ref(false)
 const isMobile = ref(detectMobileDevice())
 const supportsTouch = ref(detectTouchSupport())
+const isSinglePageBrowsing = computed(() => Boolean(configStore.singlePageBrowsing))
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 const pendingRestorePage = ref(null)
 const isRestoreBootstrap = ref(false)
+const singlePageSwipeActive = ref(false)
+const singlePageSwipeStartX = ref(0)
+const singlePageSwipeStartY = ref(0)
+const singlePageSwipeStartAt = ref(0)
 
 let saveProgressTimer = null
 let scrollIdleTimer = null
@@ -283,6 +297,7 @@ let restoreRetryCount = 0
 let pageUpdateRafId = 0
 let inertiaRafId = 0
 let restoreBootstrapTimer = null
+let cacheStatusPollTimer = null
 
 const recommendationId = computed(() => route.params.id)
 
@@ -293,6 +308,14 @@ const activeContainer = computed(() =>
 const currentZoomImage = computed(() => {
   const pageIndex = clampPage(currentPage.value, totalPage.value) - 1
   return images.value[pageIndex] || ''
+})
+
+const displayedPageNumbers = computed(() => {
+  if (totalPage.value <= 0) return []
+  if (isSinglePageBrowsing.value) {
+    return [clampPage(currentPage.value, totalPage.value)]
+  }
+  return Array.from({ length: totalPage.value }, (_, index) => index + 1)
 })
 
 const getContainerStyle = computed(() => {
@@ -422,6 +445,104 @@ const normalizePageList = (value, fallbackTotal = 0) => {
   const total = normalizePageCount(value) || normalizePageCount(fallbackTotal)
   if (total <= 0) return []
   return Array.from({ length: total }, (_, index) => index + 1)
+}
+
+const clearCacheStatusPolling = () => {
+  if (cacheStatusPollTimer) {
+    clearInterval(cacheStatusPollTimer)
+    cacheStatusPollTimer = null
+  }
+}
+
+const updateDownloadProgressText = (cachedCount, totalCount, running = false) => {
+  if (!running) {
+    downloadProgress.value = ''
+    return
+  }
+
+  const safeCached = Math.max(0, Number(cachedCount) || 0)
+  const safeTotal = Math.max(safeCached, Number(totalCount) || 0)
+  if (safeTotal > 0) {
+    downloadProgress.value = `正在下载漫画到缓存... 已缓存 ${safeCached}/${safeTotal} 页`
+  } else {
+    downloadProgress.value = '正在下载漫画到缓存...'
+  }
+}
+
+const applyCachedPages = (cachedPages) => {
+  const normalized = normalizePageList(cachedPages, declaredTotalPage.value)
+  cachedPageSet.value = new Set(normalized)
+
+  if (!recommendationId.value) {
+    images.value = []
+    totalPage.value = 0
+    return
+  }
+
+  images.value = normalized.map((pageNum) =>
+    recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
+  )
+  totalPage.value = images.value.length
+
+  if (totalPage.value > 0) {
+    const current = clampPage(currentPage.value, totalPage.value)
+    currentPage.value = current
+    sliderPage.value = current
+  }
+
+  if (!activeDownloadInProgress.value && !loading.value) {
+    downloadProgress.value = ''
+  }
+}
+
+const tryApplyDeferredRestorePage = async () => {
+  if (deferredRestorePage.value == null || totalPage.value <= 0) return
+  if (totalPage.value < deferredRestorePage.value) return
+
+  const target = clampPage(deferredRestorePage.value, totalPage.value)
+  deferredRestorePage.value = null
+  await jumpToPage(target, false)
+}
+
+const refreshCacheStatus = async () => {
+  if (!recommendationId.value) {
+    return { isCached: false, cachedPages: [] }
+  }
+
+  try {
+    const cacheStatus = await recommendationApi.getCacheStatus(recommendationId.value)
+    if (cacheStatus.code !== 200) {
+      return { isCached: false, cachedPages: [] }
+    }
+
+    const rawPages = cacheStatus.data?.cached_pages || []
+    const cachedPages = normalizePageList(rawPages, declaredTotalPage.value)
+    applyCachedPages(cachedPages)
+
+    return {
+      isCached: Boolean(cacheStatus.data?.is_cached) || cachedPages.length > 0,
+      cachedPages
+    }
+  } catch (error) {
+    return { isCached: false, cachedPages: [] }
+  }
+}
+
+const waitForFirstCachedPage = async (timeoutMs = 30000) => {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const status = await refreshCacheStatus()
+    if (status.cachedPages.length > 0) {
+      return status.cachedPages
+    }
+    if (!activeDownloadInProgress.value) {
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, 220))
+  }
+
+  return []
 }
 
 const resetZoomState = () => {
@@ -708,6 +829,9 @@ const rebuildLoadQueue = (centerPage) => {
 
   const nextQueue = []
   for (const pageNum of sequence) {
+    if (cachedPageSet.value.size > 0 && !cachedPageSet.value.has(pageNum)) {
+      continue
+    }
     if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
       continue
     }
@@ -766,12 +890,12 @@ const preloadImages = (startPage) => {
   processLoadQueue()
 }
 
-const getImageSrc = (index) => {
-  const pageNum = index + 1
-  if (!loadedPages.value.has(pageNum)) {
+const getImageSrc = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  if (!loadedPages.value.has(safePage)) {
     return ''
   }
-  return images.value[index] || ''
+  return images.value[safePage - 1] || ''
 }
 
 const getLoadFocusPage = () => {
@@ -780,12 +904,12 @@ const getLoadFocusPage = () => {
   return clampPage(focus, totalPage.value)
 }
 
-const getImageLoading = (index) => {
-  const pageNum = index + 1
+const getImageLoading = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
   const focusPage = getLoadFocusPage()
   const eagerStart = Math.max(1, focusPage - 1)
   const eagerEnd = Math.min(totalPage.value, focusPage + 4)
-  return pageNum >= eagerStart && pageNum <= eagerEnd ? 'eager' : 'lazy'
+  return safePage >= eagerStart && safePage <= eagerEnd ? 'eager' : 'lazy'
 }
 
 const clearRestoreRetry = () => {
@@ -849,6 +973,13 @@ const tryRestorePendingPage = async () => {
 
   await jumpToPage(targetPage, false)
 
+  if (isSinglePageBrowsing.value) {
+    pendingRestorePage.value = null
+    restoreRetryCount = 0
+    clearRestoreRetry()
+    return
+  }
+
   const container = activeContainer.value
   if (container && isScrollAlignedWithPage(container, targetPage)) {
     pendingRestorePage.value = null
@@ -860,11 +991,10 @@ const tryRestorePendingPage = async () => {
   scheduleRestoreRetry()
 }
 
-const handlePageImageLoad = (index) => {
+const handlePageImageLoad = (pageNum) => {
   const pendingPage = pendingRestorePage.value
   if (pendingPage == null) return
 
-  const pageNum = index + 1
   if (pageNum <= pendingPage + 1) {
     restoreRetryCount = 0
     clearRestoreRetry()
@@ -872,16 +1002,42 @@ const handlePageImageLoad = (index) => {
   }
 }
 
+const bootstrapReaderAtPage = async (initialPage) => {
+  const safeInitial = clampPage(initialPage, totalPage.value)
+  currentPage.value = safeInitial
+  sliderPage.value = safeInitial
+  lastCommittedPage.value = safeInitial
+  lastSavedPage.value = safeInitial
+  pendingRestorePage.value = safeInitial
+  restoreRetryCount = 0
+  clearRestoreRetry()
+  startRestoreBootstrap()
+  preloadImages(safeInitial)
+  await nextTick()
+  await nextAnimationFrame()
+  void tryRestorePendingPage()
+}
+
 const loadImages = async () => {
   loading.value = true
   error.value = false
   downloadProgress.value = ''
   resetZoomState()
+  singlePageSwipeActive.value = false
+  singlePageSwipeStartAt.value = 0
   pendingRestorePage.value = null
+  deferredRestorePage.value = null
   isRestoreBootstrap.value = false
   restoreRetryCount = 0
   clearRestoreRetry()
   clearRestoreBootstrap()
+  clearCacheStatusPolling()
+  activeDownloadInProgress.value = false
+  isCached.value = false
+  declaredTotalPage.value = 0
+  cachedPageSet.value = new Set()
+  images.value = []
+  totalPage.value = 0
   loadedPages.value = new Set()
   loadingPages.value = new Set()
   loadQueue.value = []
@@ -889,61 +1045,111 @@ const loadImages = async () => {
   try {
     const recommendation = await recommendationStore.fetchRecommendationDetail(recommendationId.value)
     const routePage = Number(route.query.page)
-    let initialPage = Number.isFinite(routePage) && routePage > 0 ? routePage : recommendation?.current_page || 1
-    totalPage.value = normalizePageCount(recommendation?.total_page || 0)
+    const desiredPage =
+      Number.isFinite(routePage) && routePage > 0
+        ? routePage
+        : recommendation?.current_page || 1
+    declaredTotalPage.value = normalizePageCount(recommendation?.total_page || 0)
 
-    const cacheStatus = await recommendationApi.getCacheStatus(recommendationId.value)
-    let cachedPages = []
+    const initialStatus = await refreshCacheStatus()
+    isCached.value = initialStatus.isCached
 
-    if (cacheStatus.code === 200 && cacheStatus.data?.is_cached) {
-      isCached.value = true
-      cachedPages = normalizePageList(cacheStatus.data.cached_pages || [], totalPage.value)
-    } else {
-      isCached.value = false
-      downloadProgress.value = '正在下载漫画到缓存...'
-
-      const result = await recommendationApi.downloadToCache(recommendationId.value)
-      if (result.code !== 200) {
-        throw new Error(result.msg || 'download to cache failed')
+    if (initialStatus.cachedPages.length > 0) {
+      let initialPage = clampPage(desiredPage, totalPage.value)
+      if (desiredPage > totalPage.value) {
+        deferredRestorePage.value = desiredPage
+        initialPage = totalPage.value
       }
-
-      downloadProgress.value = '下载完成，正在加载...'
-      isCached.value = true
-      const fallbackTotal = normalizePageCount(result.data?.total_pages || totalPage.value)
-      cachedPages = normalizePageList(result.data?.cached_pages || [], fallbackTotal)
+      await bootstrapReaderAtPage(initialPage)
+      loading.value = false
+      downloadProgress.value = ''
+      void tryApplyDeferredRestorePage()
+      return
     }
 
-    if (cachedPages.length === 0) {
+    activeDownloadInProgress.value = true
+    updateDownloadProgressText(0, declaredTotalPage.value, true)
+    clearCacheStatusPolling()
+    cacheStatusPollTimer = setInterval(() => {
+      void refreshCacheStatus().then((status) => {
+        isCached.value = status.isCached
+        updateDownloadProgressText(
+          status.cachedPages.length,
+          declaredTotalPage.value || status.cachedPages.length,
+          activeDownloadInProgress.value
+        )
+        if (!loading.value && totalPage.value > 0) {
+          preloadImages(clampPage(currentPage.value, totalPage.value))
+          void tryApplyDeferredRestorePage()
+        }
+      })
+    }, 650)
+
+    const downloadPromise = recommendationApi.downloadToCache(recommendationId.value)
+    void downloadPromise
+      .then(async (result) => {
+        if (result.code !== 200) {
+          throw new Error(result.msg || 'download to cache failed')
+        }
+        const fallbackTotal = normalizePageCount(result.data?.total_pages || declaredTotalPage.value)
+        declaredTotalPage.value = Math.max(declaredTotalPage.value, fallbackTotal)
+        activeDownloadInProgress.value = false
+        const latestStatus = await refreshCacheStatus()
+        isCached.value = latestStatus.isCached
+        updateDownloadProgressText(
+          latestStatus.cachedPages.length,
+          declaredTotalPage.value || latestStatus.cachedPages.length,
+          false
+        )
+        clearCacheStatusPolling()
+        if (!loading.value && totalPage.value > 0) {
+          preloadImages(clampPage(currentPage.value, totalPage.value))
+          await tryApplyDeferredRestorePage()
+        }
+      })
+      .catch(async (downloadError) => {
+        activeDownloadInProgress.value = false
+        clearCacheStatusPolling()
+        const latestStatus = await refreshCacheStatus()
+        isCached.value = latestStatus.isCached
+
+        if (latestStatus.cachedPages.length === 0 && loading.value) {
+          error.value = true
+          loading.value = false
+          downloadProgress.value = ''
+        } else if (!loading.value && latestStatus.cachedPages.length > 0) {
+          downloadProgress.value = '下载失败，已显示已缓存页面'
+          setTimeout(() => {
+            if (!activeDownloadInProgress.value) {
+              downloadProgress.value = ''
+            }
+          }, 2400)
+        }
+        console.error('下载漫画到缓存失败:', downloadError)
+      })
+
+    const firstCachedPages = await waitForFirstCachedPage(45000)
+    if (firstCachedPages.length === 0) {
       throw new Error('empty cache pages')
     }
 
-    images.value = cachedPages.map((pageNum) =>
-      recommendationApi.getCachedImageUrl(recommendationId.value, pageNum)
-    )
+    let initialPage = clampPage(desiredPage, totalPage.value)
+    if (desiredPage > totalPage.value) {
+      deferredRestorePage.value = desiredPage
+      initialPage = totalPage.value
+    }
 
-    totalPage.value = images.value.length
-    initialPage = clampPage(initialPage, totalPage.value)
-
-    currentPage.value = initialPage
-    sliderPage.value = initialPage
-    lastCommittedPage.value = initialPage
-    lastSavedPage.value = initialPage
-    pendingRestorePage.value = initialPage
-    restoreRetryCount = 0
-    clearRestoreRetry()
-    startRestoreBootstrap()
-
-    preloadImages(initialPage)
-
-    await nextTick()
-    await nextAnimationFrame()
-    void tryRestorePendingPage()
+    await bootstrapReaderAtPage(initialPage)
+    loading.value = false
+    updateDownloadProgressText(totalPage.value, declaredTotalPage.value || totalPage.value, true)
+    void tryApplyDeferredRestorePage()
   } catch (err) {
     error.value = true
-    console.error('加载图片失败:', err)
-  } finally {
-    loading.value = false
+    clearCacheStatusPolling()
+    activeDownloadInProgress.value = false
     downloadProgress.value = ''
+    console.error('加载图片失败:', err)
+    loading.value = false
   }
 }
 
@@ -955,6 +1161,12 @@ const jumpToPage = async (page, smooth = true) => {
   currentPage.value = targetPage
   sliderPage.value = targetPage
   lastCommittedPage.value = targetPage
+
+  if (isSinglePageBrowsing.value) {
+    preloadImages(targetPage)
+    scheduleProgressSave(targetPage, !smooth)
+    return
+  }
 
   if (!activeContainer.value) {
     await nextTick()
@@ -996,6 +1208,13 @@ const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
 
+  if (isSinglePageBrowsing.value) {
+    const lockedPage = clampPage(currentPage.value, totalPage.value)
+    currentPage.value = lockedPage
+    sliderPage.value = lockedPage
+    return
+  }
+
   if (pendingRestorePage.value != null) {
     const lockedPage = clampPage(pendingRestorePage.value, totalPage.value)
     currentPage.value = lockedPage
@@ -1011,6 +1230,8 @@ const updatePageFromScroll = () => {
 }
 
 const handleScroll = () => {
+  if (isSinglePageBrowsing.value) return
+
   if (!getWindow()) {
     updatePageFromScroll()
     return
@@ -1174,6 +1395,20 @@ const handleWheel = (event) => {
     return
   }
 
+  if (isSinglePageBrowsing.value) {
+    event.preventDefault()
+    const axisDelta =
+      pageMode.value === 'left_right'
+        ? (Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY)
+        : (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX)
+    if (axisDelta > 8) {
+      nextPage()
+    } else if (axisDelta < -8) {
+      prevPage()
+    }
+    return
+  }
+
   if (isMobile.value) return
 
   if (pageMode.value === 'left_right' && leftRightContainer.value) {
@@ -1199,6 +1434,15 @@ const handleReaderTouchStart = (event) => {
     touchPinchLastDistance.value = getTouchDistance(event.touches[0], event.touches[1])
     touchPinchLastCenterX.value = center.x
     touchPinchLastCenterY.value = center.y
+    return
+  }
+
+  if (isSinglePageBrowsing.value && event.touches.length === 1 && zoomLevel.value <= 1) {
+    const touch = event.touches[0]
+    singlePageSwipeActive.value = true
+    singlePageSwipeStartX.value = touch.clientX
+    singlePageSwipeStartY.value = touch.clientY
+    singlePageSwipeStartAt.value = Date.now()
     return
   }
 
@@ -1238,6 +1482,10 @@ const handleReaderTouchMove = (event) => {
     return
   }
 
+  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
+    return
+  }
+
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     event.preventDefault()
     const touch = event.touches[0]
@@ -1274,6 +1522,32 @@ const handleReaderTouchMove = (event) => {
 
 const handleReaderTouchEnd = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
+
+  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
+    const touch = event.changedTouches && event.changedTouches[0] ? event.changedTouches[0] : null
+    if (touch) {
+      const deltaX = touch.clientX - singlePageSwipeStartX.value
+      const deltaY = touch.clientY - singlePageSwipeStartY.value
+      const axisDelta = pageMode.value === 'left_right' ? deltaX : deltaY
+      const crossDelta = pageMode.value === 'left_right' ? deltaY : deltaX
+      const elapsed = Math.max(1, Date.now() - singlePageSwipeStartAt.value)
+      const fastSwipe = Math.abs(axisDelta) / elapsed >= 0.35
+      if (
+        Math.abs(axisDelta) >= 36 &&
+        Math.abs(axisDelta) >= Math.abs(crossDelta) * 1.2 &&
+        (fastSwipe || Math.abs(axisDelta) >= 56)
+      ) {
+        if (axisDelta < 0) {
+          nextPage()
+        } else {
+          prevPage()
+        }
+      }
+    }
+    singlePageSwipeActive.value = false
+    singlePageSwipeStartAt.value = 0
+    return
+  }
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     clearPanInertia()
@@ -1661,6 +1935,7 @@ onUnmounted(() => {
   if (resizeAlignTimer) {
     clearTimeout(resizeAlignTimer)
   }
+  clearCacheStatusPolling()
   clearRestoreRetry()
   clearRestoreBootstrap()
   clearPanInertia()
@@ -1704,6 +1979,19 @@ onUnmounted(() => {
   color: #999;
 }
 
+.download-progress-inline {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0;
+  z-index: 1000;
+  padding: 6px 12px;
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+}
+
 .reader-content {
   height: var(--reader-vh, 100dvh);
   overflow: hidden;
@@ -1745,6 +2033,10 @@ onUnmounted(() => {
 
 .left-right-mode::-webkit-scrollbar {
   display: none;
+}
+
+.left-right-mode.single-page-mode {
+  scroll-snap-type: x mandatory;
 }
 
 .page-track {
@@ -1831,6 +2123,10 @@ onUnmounted(() => {
   display: none;
 }
 
+.up-down-mode.single-page-mode {
+  scroll-snap-type: y mandatory;
+}
+
 .up-down-page {
   width: 100%;
   height: auto;
@@ -1848,6 +2144,17 @@ onUnmounted(() => {
 
 .up-down-page + .up-down-page {
   margin-top: -1px;
+}
+
+.left-right-mode.single-page-mode .page,
+.up-down-mode.single-page-mode .up-down-page {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.left-right-mode.single-page-mode .page + .page,
+.up-down-mode.single-page-mode .up-down-page + .up-down-page {
+  margin: 0;
 }
 
 /* 手机端缩放覆盖层 */
@@ -2029,5 +2336,6 @@ onUnmounted(() => {
   }
 }
 </style>
+
 
 

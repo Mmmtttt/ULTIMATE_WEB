@@ -78,6 +78,32 @@ async function seedRecommendationCache(runtimeDataDir, recommendationId, pageCou
   }
 }
 
+async function seedRecommendationCachePage(runtimeDataDir, recommendationId, pageNum) {
+  const originalId = recommendationId.replace(/^JM/, "");
+  const cacheDir = path.join(
+    runtimeDataDir,
+    "recommendation_cache",
+    "comic",
+    "JM",
+    originalId,
+  );
+  await fs.mkdir(cacheDir, { recursive: true });
+  const file = path.join(cacheDir, `${String(pageNum).padStart(3, "0")}.png`);
+  await fs.writeFile(file, PNG_1X1);
+}
+
+async function clearRecommendationCache(runtimeDataDir, recommendationId) {
+  const originalId = recommendationId.replace(/^JM/, "");
+  const cacheDir = path.join(
+    runtimeDataDir,
+    "recommendation_cache",
+    "comic",
+    "JM",
+    originalId,
+  );
+  await fs.rm(cacheDir, { recursive: true, force: true });
+}
+
 async function openReaderAndShowMenu(page, url) {
   await page.goto(url);
   await expect(page.locator(".reader-content")).toBeVisible();
@@ -185,6 +211,158 @@ test("preview reader uses cached pages and skips full download call", async ({
  * - 历史变更:
  *   - 2026-03-24: 初始创建，锁定现阶段未缓存失败分支表现。
  */
+/**
+ * 用例描述:
+ * - 用例目的: 看护预览阅读页在单页浏览模式下的核心行为，确保仅渲染当前页且翻页链路可用。
+ * - 测试步骤:
+ *   1. 注入 singlePageBrowsing=true 配置并准备 3 页缓存推荐漫画。
+ *   2. 打开 /recommendation-reader/{id}?page=2 并展示控制栏。
+ *   3. 校验 single-page-mode 生效、仅渲染一张图片、初始页为 2/3。
+ *   4. 翻到下一页，校验仍仅渲染一张图片且 URL 切换到 page_num=3。
+ * - 预期结果:
+ *   1. 预览阅读容器带有 single-page-mode 类。
+ *   2. `.comic-image` 数量始终为 1。
+ *   3. 页码与图片 URL 随翻页正确更新。
+ * - 历史变更:
+ *   - 2026-03-24: 新增，覆盖预览阅读单页模式门禁。
+ */
+test("preview reader single-page mode renders one page and keeps paging flow", async ({
+  page,
+  request,
+}) => {
+  const runtimeDataDir = await getRuntimeDataDir(request);
+  const recommendationId = "JM910004";
+
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "comic_config",
+      JSON.stringify({
+        defaultPageMode: "left_right",
+        defaultBackground: "white",
+        autoHideToolbar: true,
+        showPageNumber: true,
+        autoDownloadPreviewImportAssets: true,
+        singlePageBrowsing: true,
+      }),
+    );
+  });
+
+  await addRecommendation(request, recommendationId, "Reader Gate Preview Single Page", 3, {
+    currentPage: 2,
+  });
+  await seedRecommendationCache(runtimeDataDir, recommendationId, 3);
+
+  await openReaderAndShowMenu(page, `/recommendation-reader/${recommendationId}?page=2`);
+  await expect(page.locator(".left-right-mode.single-page-mode")).toBeVisible();
+  await waitPageIndicator(page, "2/3");
+
+  await expect
+    .poll(() => page.locator(".left-right-mode .comic-image").count())
+    .toBe(1);
+  await expect
+    .poll(async () => {
+      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
+      return src || "";
+    })
+    .toContain(`/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=2`);
+
+  await page.keyboard.press("ArrowRight");
+  await waitPageIndicator(page, "3/3");
+  await expect
+    .poll(() => page.locator(".left-right-mode .comic-image").count())
+    .toBe(1);
+  await expect
+    .poll(async () => {
+      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
+      return src || "";
+    })
+    .toContain(`/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=3`);
+});
+
+/**
+ * 用例描述:
+ * - 用例目的: 看护「预览库后端下载中，前端先展示已下载页」能力，确保不再阻塞到全量下载结束。
+ * - 测试步骤:
+ *   1. 创建未缓存推荐漫画，清理其缓存目录。
+ *   2. 拦截 cache/download 请求并延迟返回成功，模拟后端长耗时下载。
+ *   3. 在请求悬而未决期间分批写入第 1/2/3 页真实缓存图片。
+ *   4. 校验阅读页已先可见、页数会随缓存增长且仍处于“下载中”状态。
+ * - 预期结果:
+ *   1. 在 cache/download 返回前，阅读内容已渲染（非 error）。
+ *   2. 页码总数从 1 增长到 >=2，且下载进度提示仍可见。
+ *   3. cache/download 最终返回后页面保持可读。
+ * - 历史变更:
+ *   - 2026-03-24: 新增，覆盖预览阅读异步下载渐进显示门禁。
+ */
+test("preview reader progressively renders cached pages before download call finishes", async ({
+  page,
+  request,
+}) => {
+  const runtimeDataDir = await getRuntimeDataDir(request);
+  const recommendationId = "JM910005";
+
+  await addRecommendation(request, recommendationId, "Reader Gate Progressive Cache", 5, {
+    currentPage: 2,
+  });
+  await clearRecommendationCache(runtimeDataDir, recommendationId);
+
+  let downloadResponded = false;
+  await page.route("**/api/v1/recommendation/cache/download", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+    downloadResponded = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 200,
+        msg: "ok",
+        data: {
+          status: "downloaded",
+          total_pages: 5,
+          cached_pages: [1, 2, 3, 4, 5],
+        },
+      }),
+    });
+  });
+
+  const seedTask = (async () => {
+    await page.waitForTimeout(700);
+    await seedRecommendationCachePage(runtimeDataDir, recommendationId, 1);
+    await page.waitForTimeout(1700);
+    await seedRecommendationCachePage(runtimeDataDir, recommendationId, 2);
+    await page.waitForTimeout(1700);
+    await seedRecommendationCachePage(runtimeDataDir, recommendationId, 3);
+  })();
+
+  await page.goto(`/recommendation-reader/${recommendationId}?page=2`);
+  await expect(page.locator(".loading")).toBeVisible();
+  await expect(page.locator(".reader-content")).toBeVisible({ timeout: 9000 });
+  await expect(page.locator(".error")).toHaveCount(0);
+
+  await page.keyboard.press("m");
+  await expect(page.locator(".control-bar")).toBeVisible();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const indicator = document.querySelector(".page-indicator");
+        const text = (indicator?.textContent || "").replace(/\s+/g, "");
+        const parts = text.split("/");
+        return Number(parts[1] || 0);
+      }),
+    )
+    .toBeGreaterThanOrEqual(2);
+
+  expect(downloadResponded).toBeFalsy();
+  await expect(page.locator(".download-progress-inline")).toBeVisible();
+
+  await seedTask;
+  await expect
+    .poll(() => downloadResponded, { timeout: 10000 })
+    .toBeTruthy();
+  await expect(page.locator(".reader-content")).toBeVisible();
+});
+
 test("preview reader falls back to error state when uncached download is unavailable", async ({
   page,
   request,

@@ -30,6 +30,7 @@
       <div 
         v-if="pageMode === 'left_right'" 
         class="left-right-mode" 
+        :class="{ 'single-page-mode': isSinglePageBrowsing }"
         ref="leftRightContainer"
         :style="getContainerStyle"
         @scroll="handleScroll"
@@ -41,17 +42,17 @@
       >
         <div class="page-track page-track-horizontal" :style="getContentStyle">
           <div 
-            v-for="(image, index) in images" 
-            :key="index"
+            v-for="(pageNum, index) in displayedPageNumbers" 
+            :key="`lr-${pageNum}-${index}`"
             class="page"
           >
             <img 
-              :src="getImageSrc(index)" 
+              :src="getImageSrc(pageNum)" 
               class="comic-image"
               decoding="async"
-              :loading="getImageLoading(index)"
+              :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(index)"
+              @load="handlePageImageLoad(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -63,6 +64,7 @@
       <div 
         v-else 
         class="up-down-mode" 
+        :class="{ 'single-page-mode': isSinglePageBrowsing }"
         ref="upDownContainer" 
         :style="getContainerStyle"
         @scroll="handleScroll"
@@ -74,17 +76,17 @@
       >
         <div class="page-track page-track-vertical" :style="getContentStyle">
           <div 
-            v-for="(image, index) in images" 
-            :key="index" 
+            v-for="(pageNum, index) in displayedPageNumbers" 
+            :key="`ud-${pageNum}-${index}`" 
             class="up-down-page"
           >
             <img 
-              :src="getImageSrc(index)" 
+              :src="getImageSrc(pageNum)" 
               class="comic-image"
               decoding="async"
-              :loading="getImageLoading(index)"
+              :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(index)"
+              @load="handlePageImageLoad(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
@@ -262,10 +264,15 @@ const detectTouchSupport = () => {
 const isProgrammaticScroll = ref(false)
 const isMobile = ref(detectMobileDevice())
 const supportsTouch = ref(detectTouchSupport())
+const isSinglePageBrowsing = computed(() => Boolean(configStore.singlePageBrowsing))
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 const pendingRestorePage = ref(null)
 const isRestoreBootstrap = ref(false)
+const singlePageSwipeActive = ref(false)
+const singlePageSwipeStartX = ref(0)
+const singlePageSwipeStartY = ref(0)
+const singlePageSwipeStartAt = ref(0)
 
 let saveProgressTimer = null
 let scrollIdleTimer = null
@@ -287,6 +294,14 @@ const activeContainer = computed(() =>
 const currentZoomImage = computed(() => {
   const pageIndex = clampPage(currentPage.value, totalPage.value) - 1
   return images.value[pageIndex] || ''
+})
+
+const displayedPageNumbers = computed(() => {
+  if (totalPage.value <= 0) return []
+  if (isSinglePageBrowsing.value) {
+    return [clampPage(currentPage.value, totalPage.value)]
+  }
+  return Array.from({ length: totalPage.value }, (_, index) => index + 1)
 })
 
 const getContainerStyle = computed(() => {
@@ -741,12 +756,12 @@ const preloadImages = (startPage) => {
   processLoadQueue()
 }
 
-const getImageSrc = (index) => {
-  const pageNum = index + 1
-  if (!loadedPages.value.has(pageNum)) {
+const getImageSrc = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  if (!loadedPages.value.has(safePage)) {
     return ''
   }
-  return images.value[index] || ''
+  return images.value[safePage - 1] || ''
 }
 
 const getLoadFocusPage = () => {
@@ -755,12 +770,12 @@ const getLoadFocusPage = () => {
   return clampPage(focus, totalPage.value)
 }
 
-const getImageLoading = (index) => {
-  const pageNum = index + 1
+const getImageLoading = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
   const focusPage = getLoadFocusPage()
   const eagerStart = Math.max(1, focusPage - 1)
   const eagerEnd = Math.min(totalPage.value, focusPage + 4)
-  return pageNum >= eagerStart && pageNum <= eagerEnd ? 'eager' : 'lazy'
+  return safePage >= eagerStart && safePage <= eagerEnd ? 'eager' : 'lazy'
 }
 
 const clearRestoreRetry = () => {
@@ -824,6 +839,13 @@ const tryRestorePendingPage = async () => {
 
   await jumpToPage(targetPage, false)
 
+  if (isSinglePageBrowsing.value) {
+    pendingRestorePage.value = null
+    restoreRetryCount = 0
+    clearRestoreRetry()
+    return
+  }
+
   const container = activeContainer.value
   if (container && isScrollAlignedWithPage(container, targetPage)) {
     pendingRestorePage.value = null
@@ -835,11 +857,10 @@ const tryRestorePendingPage = async () => {
   scheduleRestoreRetry()
 }
 
-const handlePageImageLoad = (index) => {
+const handlePageImageLoad = (pageNum) => {
   const pendingPage = pendingRestorePage.value
   if (pendingPage == null) return
 
-  const pageNum = index + 1
   if (pageNum <= pendingPage + 1) {
     restoreRetryCount = 0
     clearRestoreRetry()
@@ -851,6 +872,8 @@ const loadImages = async () => {
   loading.value = true
   error.value = false
   resetZoomState()
+  singlePageSwipeActive.value = false
+  singlePageSwipeStartAt.value = 0
   pendingRestorePage.value = null
   isRestoreBootstrap.value = false
   restoreRetryCount = 0
@@ -908,6 +931,12 @@ const jumpToPage = async (page, smooth = true) => {
   sliderPage.value = targetPage
   lastCommittedPage.value = targetPage
 
+  if (isSinglePageBrowsing.value) {
+    preloadImages(targetPage)
+    scheduleProgressSave(targetPage, !smooth)
+    return
+  }
+
   if (!activeContainer.value) {
     await nextTick()
     await nextAnimationFrame()
@@ -948,6 +977,13 @@ const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
 
+  if (isSinglePageBrowsing.value) {
+    const lockedPage = clampPage(currentPage.value, totalPage.value)
+    currentPage.value = lockedPage
+    sliderPage.value = lockedPage
+    return
+  }
+
   if (pendingRestorePage.value != null) {
     const lockedPage = clampPage(pendingRestorePage.value, totalPage.value)
     currentPage.value = lockedPage
@@ -963,6 +999,8 @@ const updatePageFromScroll = () => {
 }
 
 const handleScroll = () => {
+  if (isSinglePageBrowsing.value) return
+
   if (!getWindow()) {
     updatePageFromScroll()
     return
@@ -1126,6 +1164,20 @@ const handleWheel = (event) => {
     return
   }
 
+  if (isSinglePageBrowsing.value) {
+    event.preventDefault()
+    const axisDelta =
+      pageMode.value === 'left_right'
+        ? (Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY)
+        : (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX)
+    if (axisDelta > 8) {
+      nextPage()
+    } else if (axisDelta < -8) {
+      prevPage()
+    }
+    return
+  }
+
   if (isMobile.value) return
 
   if (pageMode.value === 'left_right' && leftRightContainer.value) {
@@ -1151,6 +1203,15 @@ const handleReaderTouchStart = (event) => {
     touchPinchLastDistance.value = getTouchDistance(event.touches[0], event.touches[1])
     touchPinchLastCenterX.value = center.x
     touchPinchLastCenterY.value = center.y
+    return
+  }
+
+  if (isSinglePageBrowsing.value && event.touches.length === 1 && zoomLevel.value <= 1) {
+    const touch = event.touches[0]
+    singlePageSwipeActive.value = true
+    singlePageSwipeStartX.value = touch.clientX
+    singlePageSwipeStartY.value = touch.clientY
+    singlePageSwipeStartAt.value = Date.now()
     return
   }
 
@@ -1190,6 +1251,10 @@ const handleReaderTouchMove = (event) => {
     return
   }
 
+  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
+    return
+  }
+
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     event.preventDefault()
     const touch = event.touches[0]
@@ -1226,6 +1291,32 @@ const handleReaderTouchMove = (event) => {
 
 const handleReaderTouchEnd = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
+
+  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
+    const touch = event.changedTouches && event.changedTouches[0] ? event.changedTouches[0] : null
+    if (touch) {
+      const deltaX = touch.clientX - singlePageSwipeStartX.value
+      const deltaY = touch.clientY - singlePageSwipeStartY.value
+      const axisDelta = pageMode.value === 'left_right' ? deltaX : deltaY
+      const crossDelta = pageMode.value === 'left_right' ? deltaY : deltaX
+      const elapsed = Math.max(1, Date.now() - singlePageSwipeStartAt.value)
+      const fastSwipe = Math.abs(axisDelta) / elapsed >= 0.35
+      if (
+        Math.abs(axisDelta) >= 36 &&
+        Math.abs(axisDelta) >= Math.abs(crossDelta) * 1.2 &&
+        (fastSwipe || Math.abs(axisDelta) >= 56)
+      ) {
+        if (axisDelta < 0) {
+          nextPage()
+        } else {
+          prevPage()
+        }
+      }
+    }
+    singlePageSwipeActive.value = false
+    singlePageSwipeStartAt.value = 0
+    return
+  }
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     clearPanInertia()
@@ -1692,6 +1783,10 @@ onUnmounted(() => {
   display: none;
 }
 
+.left-right-mode.single-page-mode {
+  scroll-snap-type: x mandatory;
+}
+
 .page-track {
   will-change: transform;
 }
@@ -1776,6 +1871,10 @@ onUnmounted(() => {
   display: none;
 }
 
+.up-down-mode.single-page-mode {
+  scroll-snap-type: y mandatory;
+}
+
 .up-down-page {
   width: 100%;
   height: auto;
@@ -1793,6 +1892,17 @@ onUnmounted(() => {
 
 .up-down-page + .up-down-page {
   margin-top: -1px;
+}
+
+.left-right-mode.single-page-mode .page,
+.up-down-mode.single-page-mode .up-down-page {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.left-right-mode.single-page-mode .page + .page,
+.up-down-mode.single-page-mode .up-down-page + .up-down-page {
+  margin: 0;
 }
 
 /* 手机端缩放覆盖层 */

@@ -45,6 +45,7 @@ class UserConfig:
     auto_hide_toolbar: bool = True
     show_page_number: bool = True
     auto_download_preview_assets_for_preview_import: bool = True
+    single_page_browsing: bool = False
     cache_config: CacheConfig = None
     
     def __post_init__(self):
@@ -71,6 +72,7 @@ class UserConfig:
                 "auto_download_preview_assets_for_preview_import",
                 True
             ),
+            single_page_browsing=data.get("single_page_browsing", False),
             cache_config=cache_config
         )
     
@@ -81,6 +83,7 @@ class UserConfig:
             "auto_hide_toolbar": self.auto_hide_toolbar,
             "show_page_number": self.show_page_number,
             "auto_download_preview_assets_for_preview_import": self.auto_download_preview_assets_for_preview_import,
+            "single_page_browsing": self.single_page_browsing,
             "cache_config": self.cache_config.to_dict() if self.cache_config else CacheConfig().to_dict()
         }
     
@@ -107,6 +110,9 @@ class UserConfig:
             self.auto_download_preview_assets_for_preview_import = bool(
                 kwargs['auto_download_preview_assets_for_preview_import']
             )
+
+        if 'single_page_browsing' in kwargs:
+            self.single_page_browsing = bool(kwargs['single_page_browsing'])
         
         if 'cache_config' in kwargs:
             cache_config_data = kwargs['cache_config']
@@ -124,6 +130,7 @@ class UserConfig:
         self.auto_hide_toolbar = True
         self.show_page_number = True
         self.auto_download_preview_assets_for_preview_import = True
+        self.single_page_browsing = False
         self.cache_config = CacheConfig()
 
 

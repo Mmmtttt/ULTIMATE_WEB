@@ -16,6 +16,7 @@ export const useConfigStore = defineStore('config', () => {
   const autoHideToolbar = ref(DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR)
   const showPageNumber = ref(DEFAULT_CONFIG.SHOW_PAGE_NUMBER)
   const autoDownloadPreviewImportAssets = ref(DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS)
+  const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
   const loading = ref(false)
 
   const normalizePageMode = (mode) => {
@@ -56,7 +57,8 @@ export const useConfigStore = defineStore('config', () => {
     defaultBackground: defaultBackground.value,
     autoHideToolbar: autoHideToolbar.value,
     showPageNumber: showPageNumber.value,
-    autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value
+    autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value,
+    singlePageBrowsing: singlePageBrowsing.value
   }))
 
   const isLeftRightMode = computed(() => defaultPageMode.value === PAGE_MODE.LEFT_RIGHT)
@@ -101,6 +103,7 @@ export const useConfigStore = defineStore('config', () => {
       saved.autoDownloadPreviewImportAssets ??
       DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     )
+    singlePageBrowsing.value = saved.singlePageBrowsing ?? DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
     applyAppTheme(defaultBackground.value)
   }
 
@@ -120,6 +123,10 @@ export const useConfigStore = defineStore('config', () => {
       autoDownloadPreviewImportAssets.value = (
         serverConfig.auto_download_preview_assets_for_preview_import ??
         DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
+      )
+      singlePageBrowsing.value = (
+        serverConfig.single_page_browsing ??
+        DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
       )
       saveConfig()
       applyAppTheme(defaultBackground.value)
@@ -143,7 +150,8 @@ export const useConfigStore = defineStore('config', () => {
         default_background: defaultBackground.value,
         auto_hide_toolbar: autoHideToolbar.value,
         show_page_number: showPageNumber.value,
-        auto_download_preview_assets_for_preview_import: autoDownloadPreviewImportAssets.value
+        auto_download_preview_assets_for_preview_import: autoDownloadPreviewImportAssets.value,
+        single_page_browsing: singlePageBrowsing.value
       }
       const res = await configApi.update(payload)
       return res.code === 200
@@ -191,12 +199,18 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setSinglePageBrowsing(value) {
+    singlePageBrowsing.value = !!value
+    saveConfig()
+  }
+
   async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
     autoHideToolbar.value = DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR
     showPageNumber.value = DEFAULT_CONFIG.SHOW_PAGE_NUMBER
     autoDownloadPreviewImportAssets.value = DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
+    singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
     saveConfig()
     applyAppTheme(defaultBackground.value)
     await saveConfigToServer()
@@ -218,6 +232,9 @@ export const useConfigStore = defineStore('config', () => {
     if (newConfig.autoDownloadPreviewImportAssets !== undefined) {
       setAutoDownloadPreviewImportAssets(newConfig.autoDownloadPreviewImportAssets)
     }
+    if (newConfig.singlePageBrowsing !== undefined) {
+      setSinglePageBrowsing(newConfig.singlePageBrowsing)
+    }
   }
 
   loadConfig()
@@ -228,6 +245,7 @@ export const useConfigStore = defineStore('config', () => {
     autoHideToolbar,
     showPageNumber,
     autoDownloadPreviewImportAssets,
+    singlePageBrowsing,
     loading,
 
     config,
@@ -249,6 +267,7 @@ export const useConfigStore = defineStore('config', () => {
     setAutoHideToolbar,
     setShowPageNumber,
     setAutoDownloadPreviewImportAssets,
+    setSinglePageBrowsing,
     resetConfig,
     updateConfig
   }

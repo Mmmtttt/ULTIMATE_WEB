@@ -18,6 +18,11 @@
           </van-cell>
         </van-cell-group>
       </van-radio-group>
+      <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页漫画（可继续缩放、滑动与翻页）">
+        <template #right-icon>
+          <van-switch v-model="singlePageBrowsingValue" @change="updateSinglePageBrowsing" />
+        </template>
+      </van-cell>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -166,6 +171,7 @@ import { useConfigStore } from '@/stores'
 const configStore = useConfigStore()
 
 const pageModeValue = ref('left_right')
+const singlePageBrowsingValue = ref(false)
 const backgroundValue = ref('white')
 const autoDownloadPreviewImportAssets = ref(true)
 
@@ -208,6 +214,7 @@ const runtimeDataDirLabel = computed(() => {
 
 function initValues() {
   pageModeValue.value = configStore.defaultPageMode
+  singlePageBrowsingValue.value = configStore.singlePageBrowsing
   backgroundValue.value = configStore.defaultBackground
   autoDownloadPreviewImportAssets.value = configStore.autoDownloadPreviewImportAssets
 }
@@ -308,6 +315,14 @@ async function updateBackground() {
   const ok = await configStore.saveConfigToServer()
   if (!ok) {
     showFailToast('默认背景色保存失败')
+  }
+}
+
+async function updateSinglePageBrowsing() {
+  configStore.setSinglePageBrowsing(singlePageBrowsingValue.value)
+  const ok = await configStore.saveConfigToServer()
+  if (!ok) {
+    showFailToast('单页浏览设置保存失败')
   }
 }
 
