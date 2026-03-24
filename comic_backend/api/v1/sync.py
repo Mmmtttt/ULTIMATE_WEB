@@ -131,9 +131,11 @@ def create_pairing_invite():
         payload = request.get_json(silent=True) or {}
         invite = directional_service.create_invite(payload)
         return success_response(invite)
+    except ValueError as exc:
+        return error_response(400, str(exc))
     except Exception as exc:
-        error_logger.error(f"sync create pairing invite failed: {exc}")
-        return error_response(500, "create pairing invite failed")
+        error_logger.exception(f"sync create pairing invite failed: {exc}")
+        return error_response(500, f"create pairing invite failed: {exc}")
 
 
 @sync_bp.route("/pairing/claim", methods=["POST"])

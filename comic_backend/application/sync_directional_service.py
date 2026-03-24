@@ -258,7 +258,11 @@ class DirectionalSyncService:
             pass
 
     def create_invite(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        ttl = int(payload.get("ttl_minutes", self.INVITE_TTL_MINUTES) or self.INVITE_TTL_MINUTES)
+        ttl_raw = payload.get("ttl_minutes", self.INVITE_TTL_MINUTES)
+        try:
+            ttl = int(ttl_raw or self.INVITE_TTL_MINUTES)
+        except Exception:
+            ttl = self.INVITE_TTL_MINUTES
         ttl = max(1, min(ttl, self.INVITE_TTL_MINUTES_MAX))
         now = _utc_now()
 
@@ -1699,6 +1703,7 @@ class DirectionalSyncService:
         return store
 
     def _save_store(self, store: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
         with open(self.STORE_FILE, "w", encoding="utf-8") as f:
             json.dump(store, f, ensure_ascii=False, indent=2)
 
