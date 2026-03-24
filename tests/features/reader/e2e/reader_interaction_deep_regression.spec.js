@@ -66,6 +66,7 @@ test("reader preloads around focus page and keeps seamless page stitching", asyn
   await expect(page.locator(".reader-content")).toBeVisible();
   await showReaderMenuByKeyboard(page);
   await waitPageIndicator(page, "3/5");
+  await expect(page.locator(".left-right-mode .page")).toHaveCount(TOTAL_PAGE);
 
   await expect
     .poll(() => {
@@ -109,6 +110,7 @@ test("reader preloads around focus page and keeps seamless page stitching", asyn
   await page.locator(".mode-btn").click();
   await expect(page.locator(".up-down-mode")).toBeVisible();
   await waitPageIndicator(page, "3/5");
+  await expect(page.locator(".up-down-mode .up-down-page")).toHaveCount(TOTAL_PAGE);
 
   const verticalGaps = await page.evaluate(() => {
     const pages = Array.from(document.querySelectorAll(".up-down-mode .up-down-page"));

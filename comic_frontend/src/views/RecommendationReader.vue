@@ -312,9 +312,6 @@ const currentZoomImage = computed(() => {
 
 const displayedPageNumbers = computed(() => {
   if (totalPage.value <= 0) return []
-  if (isSinglePageBrowsing.value) {
-    return [clampPage(currentPage.value, totalPage.value)]
-  }
   return Array.from({ length: totalPage.value }, (_, index) => index + 1)
 })
 
@@ -973,13 +970,6 @@ const tryRestorePendingPage = async () => {
 
   await jumpToPage(targetPage, false)
 
-  if (isSinglePageBrowsing.value) {
-    pendingRestorePage.value = null
-    restoreRetryCount = 0
-    clearRestoreRetry()
-    return
-  }
-
   const container = activeContainer.value
   if (container && isScrollAlignedWithPage(container, targetPage)) {
     pendingRestorePage.value = null
@@ -1162,12 +1152,6 @@ const jumpToPage = async (page, smooth = true) => {
   sliderPage.value = targetPage
   lastCommittedPage.value = targetPage
 
-  if (isSinglePageBrowsing.value) {
-    preloadImages(targetPage)
-    scheduleProgressSave(targetPage, !smooth)
-    return
-  }
-
   if (!activeContainer.value) {
     await nextTick()
     await nextAnimationFrame()
@@ -1208,13 +1192,6 @@ const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
 
-  if (isSinglePageBrowsing.value) {
-    const lockedPage = clampPage(currentPage.value, totalPage.value)
-    currentPage.value = lockedPage
-    sliderPage.value = lockedPage
-    return
-  }
-
   if (pendingRestorePage.value != null) {
     const lockedPage = clampPage(pendingRestorePage.value, totalPage.value)
     currentPage.value = lockedPage
@@ -1230,8 +1207,6 @@ const updatePageFromScroll = () => {
 }
 
 const handleScroll = () => {
-  if (isSinglePageBrowsing.value) return
-
   if (!getWindow()) {
     updatePageFromScroll()
     return
@@ -1395,20 +1370,6 @@ const handleWheel = (event) => {
     return
   }
 
-  if (isSinglePageBrowsing.value) {
-    event.preventDefault()
-    const axisDelta =
-      pageMode.value === 'left_right'
-        ? (Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY)
-        : (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX)
-    if (axisDelta > 8) {
-      nextPage()
-    } else if (axisDelta < -8) {
-      prevPage()
-    }
-    return
-  }
-
   if (isMobile.value) return
 
   if (pageMode.value === 'left_right' && leftRightContainer.value) {
@@ -1434,15 +1395,6 @@ const handleReaderTouchStart = (event) => {
     touchPinchLastDistance.value = getTouchDistance(event.touches[0], event.touches[1])
     touchPinchLastCenterX.value = center.x
     touchPinchLastCenterY.value = center.y
-    return
-  }
-
-  if (isSinglePageBrowsing.value && event.touches.length === 1 && zoomLevel.value <= 1) {
-    const touch = event.touches[0]
-    singlePageSwipeActive.value = true
-    singlePageSwipeStartX.value = touch.clientX
-    singlePageSwipeStartY.value = touch.clientY
-    singlePageSwipeStartAt.value = Date.now()
     return
   }
 
@@ -1482,10 +1434,6 @@ const handleReaderTouchMove = (event) => {
     return
   }
 
-  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
-    return
-  }
-
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     event.preventDefault()
     const touch = event.touches[0]
@@ -1522,32 +1470,6 @@ const handleReaderTouchMove = (event) => {
 
 const handleReaderTouchEnd = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
-
-  if (isSinglePageBrowsing.value && singlePageSwipeActive.value && zoomLevel.value <= 1) {
-    const touch = event.changedTouches && event.changedTouches[0] ? event.changedTouches[0] : null
-    if (touch) {
-      const deltaX = touch.clientX - singlePageSwipeStartX.value
-      const deltaY = touch.clientY - singlePageSwipeStartY.value
-      const axisDelta = pageMode.value === 'left_right' ? deltaX : deltaY
-      const crossDelta = pageMode.value === 'left_right' ? deltaY : deltaX
-      const elapsed = Math.max(1, Date.now() - singlePageSwipeStartAt.value)
-      const fastSwipe = Math.abs(axisDelta) / elapsed >= 0.35
-      if (
-        Math.abs(axisDelta) >= 36 &&
-        Math.abs(axisDelta) >= Math.abs(crossDelta) * 1.2 &&
-        (fastSwipe || Math.abs(axisDelta) >= 56)
-      ) {
-        if (axisDelta < 0) {
-          nextPage()
-        } else {
-          prevPage()
-        }
-      }
-    }
-    singlePageSwipeActive.value = false
-    singlePageSwipeStartAt.value = 0
-    return
-  }
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     clearPanInertia()
@@ -2037,6 +1959,18 @@ onUnmounted(() => {
 
 .left-right-mode.single-page-mode {
   scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+}
+
+.left-right-mode.single-page-mode .page-track-horizontal {
+  width: 100%;
+  min-width: 100%;
+}
+
+.left-right-mode.single-page-mode .page {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
 }
 
 .page-track {
@@ -2125,6 +2059,18 @@ onUnmounted(() => {
 
 .up-down-mode.single-page-mode {
   scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+.up-down-mode.single-page-mode .page-track-vertical {
+  min-height: 100%;
+}
+
+.up-down-mode.single-page-mode .up-down-page {
+  min-height: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
 }
 
 .up-down-page {
@@ -2155,6 +2101,16 @@ onUnmounted(() => {
 .left-right-mode.single-page-mode .page + .page,
 .up-down-mode.single-page-mode .up-down-page + .up-down-page {
   margin: 0;
+}
+
+.left-right-mode.single-page-mode .comic-image,
+.up-down-mode.single-page-mode .comic-image {
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 /* 手机端缩放覆盖层 */

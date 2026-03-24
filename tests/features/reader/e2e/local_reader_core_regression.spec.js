@@ -181,7 +181,7 @@ test("local reader uses configured default page mode on first render", async ({ 
  * - 历史变更:
  *   - 2026-03-24: 新增，覆盖单页浏览核心行为门禁。
  */
-test("local reader single-page mode renders one page and keeps paging flow", async ({
+test("local reader single-page mode keeps centered snap paging in left-right and up-down", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -203,24 +203,81 @@ test("local reader single-page mode renders one page and keeps paging flow", asy
   await waitPageIndicator(page, "2/3");
 
   await expect
-    .poll(() => page.locator(".left-right-mode .comic-image").count())
-    .toBe(1);
-  await expect
-    .poll(async () => {
-      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
-      return src || "";
-    })
-    .toContain(`/api/v1/comic/image?comic_id=${COMIC_ID}&page_num=2`);
+    .poll(() => page.locator(".left-right-mode .page").count())
+    .toBe(3);
 
-  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const container = document.querySelector(".left-right-mode.single-page-mode");
+        if (!container) return Number.POSITIVE_INFINITY;
+        const pages = container.querySelectorAll(".page");
+        const target = pages[1];
+        const image = target?.querySelector("img");
+        if (!target || !image) return Number.POSITIVE_INFINITY;
+        const c = container.getBoundingClientRect();
+        const i = image.getBoundingClientRect();
+        const dx = Math.abs((i.left + i.right) / 2 - (c.left + c.right) / 2);
+        const dy = Math.abs((i.top + i.bottom) / 2 - (c.top + c.bottom) / 2);
+        return Math.max(dx, dy);
+      }),
+    )
+    .toBeLessThan(28);
+
+  await page.evaluate(() => {
+    const container = document.querySelector(".left-right-mode.single-page-mode");
+    if (!container) return;
+    container.scrollLeft = container.clientWidth * 1.45;
+  });
+  await waitPageIndicator(page, "2/3");
+
+  await page.evaluate(() => {
+    const container = document.querySelector(".left-right-mode.single-page-mode");
+    if (!container) return;
+    container.scrollLeft = container.clientWidth * 1.62;
+  });
   await waitPageIndicator(page, "3/3");
+
   await expect
-    .poll(() => page.locator(".left-right-mode .comic-image").count())
-    .toBe(1);
+    .poll(() =>
+      page.evaluate(() => {
+        const container = document.querySelector(".left-right-mode.single-page-mode");
+        if (!container) return Number.POSITIVE_INFINITY;
+        const pages = container.querySelectorAll(".page");
+        const target = pages[2];
+        const image = target?.querySelector("img");
+        if (!target || !image) return Number.POSITIVE_INFINITY;
+        const c = container.getBoundingClientRect();
+        const i = image.getBoundingClientRect();
+        const dx = Math.abs((i.left + i.right) / 2 - (c.left + c.right) / 2);
+        const dy = Math.abs((i.top + i.bottom) / 2 - (c.top + c.bottom) / 2);
+        return Math.max(dx, dy);
+      }),
+    )
+    .toBeLessThan(28);
+
+  await page.locator(".mode-btn").click();
+  await expect(page.locator(".up-down-mode.single-page-mode")).toBeVisible();
+  await waitPageIndicator(page, "3/3");
+
   await expect
-    .poll(async () => {
-      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
-      return src || "";
-    })
-    .toContain(`/api/v1/comic/image?comic_id=${COMIC_ID}&page_num=3`);
+    .poll(() => page.locator(".up-down-mode .up-down-page").count())
+    .toBe(3);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const container = document.querySelector(".up-down-mode.single-page-mode");
+        if (!container) return Number.POSITIVE_INFINITY;
+        const pages = container.querySelectorAll(".up-down-page");
+        const target = pages[2];
+        const image = target?.querySelector("img");
+        if (!target || !image) return Number.POSITIVE_INFINITY;
+        const c = container.getBoundingClientRect();
+        const i = image.getBoundingClientRect();
+        const dx = Math.abs((i.left + i.right) / 2 - (c.left + c.right) / 2);
+        const dy = Math.abs((i.top + i.bottom) / 2 - (c.top + c.bottom) / 2);
+        return Math.max(dx, dy);
+      }),
+    )
+    .toBeLessThan(28);
 });

@@ -238,7 +238,7 @@ test("preview reader uses cached pages and skips full download call", async ({
  * - 历史变更:
  *   - 2026-03-24: 新增，覆盖预览阅读单页模式门禁。
  */
-test("preview reader single-page mode renders one page and keeps paging flow", async ({
+test("preview reader single-page mode keeps centered snap paging", async ({
   page,
   request,
 }) => {
@@ -269,23 +269,55 @@ test("preview reader single-page mode renders one page and keeps paging flow", a
   await waitPageIndicator(page, "2/3");
 
   await expect
-    .poll(() => page.locator(".left-right-mode .comic-image").count())
-    .toBe(1);
-  await expect
-    .poll(async () => {
-      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
-      return src || "";
-    })
-    .toContain(`/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=2`);
+    .poll(() => page.locator(".left-right-mode .page").count())
+    .toBe(3);
 
-  await page.keyboard.press("ArrowRight");
-  await waitPageIndicator(page, "3/3");
   await expect
-    .poll(() => page.locator(".left-right-mode .comic-image").count())
-    .toBe(1);
+    .poll(() =>
+      page.evaluate(() => {
+        const container = document.querySelector(".left-right-mode.single-page-mode");
+        if (!container) return Number.POSITIVE_INFINITY;
+        const pages = container.querySelectorAll(".page");
+        const target = pages[1];
+        const image = target?.querySelector("img");
+        if (!target || !image) return Number.POSITIVE_INFINITY;
+        const c = container.getBoundingClientRect();
+        const i = image.getBoundingClientRect();
+        const dx = Math.abs((i.left + i.right) / 2 - (c.left + c.right) / 2);
+        const dy = Math.abs((i.top + i.bottom) / 2 - (c.top + c.bottom) / 2);
+        return Math.max(dx, dy);
+      }),
+    )
+    .toBeLessThan(28);
+
+  await page.evaluate(() => {
+    const container = document.querySelector(".left-right-mode.single-page-mode");
+    if (!container) return;
+    container.scrollLeft = container.clientWidth * 1.62;
+  });
+  await waitPageIndicator(page, "3/3");
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const container = document.querySelector(".left-right-mode.single-page-mode");
+        if (!container) return Number.POSITIVE_INFINITY;
+        const pages = container.querySelectorAll(".page");
+        const target = pages[2];
+        const image = target?.querySelector("img");
+        if (!target || !image) return Number.POSITIVE_INFINITY;
+        const c = container.getBoundingClientRect();
+        const i = image.getBoundingClientRect();
+        const dx = Math.abs((i.left + i.right) / 2 - (c.left + c.right) / 2);
+        const dy = Math.abs((i.top + i.bottom) / 2 - (c.top + c.bottom) / 2);
+        return Math.max(dx, dy);
+      }),
+    )
+    .toBeLessThan(28);
+
   await expect
     .poll(async () => {
-      const src = await page.locator(".left-right-mode .comic-image").first().getAttribute("src");
+      const src = await page.locator(".left-right-mode .page").nth(2).locator(".comic-image").getAttribute("src");
       return src || "";
     })
     .toContain(`/api/v1/recommendation/cache/image?recommendation_id=${recommendationId}&page_num=3`);
