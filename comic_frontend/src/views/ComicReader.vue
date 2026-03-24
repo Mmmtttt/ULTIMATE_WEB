@@ -283,10 +283,15 @@ let restoreRetryTimer = null
 let restoreRetryCount = 0
 let pageUpdateRafId = 0
 let inertiaRafId = 0
+let programmaticScrollAnimationRafId = 0
+let programmaticScrollAnimationToken = 0
 let restoreBootstrapTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
 const SINGLE_PAGE_SWITCH_THRESHOLD = 0.38
+const SINGLE_PAGE_ANIMATION_DURATION_MS = 120
+const SINGLE_PAGE_SETTLE_DELAY_MS = 100
+const SINGLE_PAGE_PROGRAMMATIC_GUARD_MS = SINGLE_PAGE_ANIMATION_DURATION_MS + 90
 let lastObservedScrollPosition = 0
 let lastSinglePageDirection = 0
 
@@ -525,6 +530,14 @@ const markProgrammaticScroll = (duration = 220) => {
   }, duration)
 }
 
+const clearProgrammaticScrollAnimation = () => {
+  if (programmaticScrollAnimationRafId && Boolean(getWindow())) {
+    cancelFrame(programmaticScrollAnimationRafId)
+  }
+  programmaticScrollAnimationRafId = 0
+  programmaticScrollAnimationToken += 1
+}
+
 const clearScrollCommitTimer = () => {
   if (scrollIdleTimer) {
     clearTimeout(scrollIdleTimer)
@@ -622,6 +635,61 @@ const scrollToPosition = (container, position, behavior) => {
   } else {
     container.scrollTo({ top: position, behavior })
   }
+}
+
+const animateSinglePageScroll = (container, position) => {
+  if (!container) return
+
+  const duration = SINGLE_PAGE_ANIMATION_DURATION_MS
+  if (!Boolean(getWindow()) || duration <= 0) {
+    scrollToPosition(container, position, 'auto')
+    return
+  }
+
+  clearProgrammaticScrollAnimation()
+  const animationToken = programmaticScrollAnimationToken
+  const startPosition = getContainerScrollPosition(container)
+  const distance = position - startPosition
+
+  if (Math.abs(distance) <= 0.5) {
+    scrollToPosition(container, position, 'auto')
+    return
+  }
+
+  const startedAt =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now()
+
+  const step = (timestamp) => {
+    if (animationToken !== programmaticScrollAnimationToken) return
+
+    const now =
+      Number.isFinite(timestamp)
+        ? timestamp
+        : typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now()
+    const progress = Math.min(1, (now - startedAt) / duration)
+    const easedProgress = 1 - Math.pow(1 - progress, 3)
+    const nextPosition = startPosition + distance * easedProgress
+
+    if (pageMode.value === 'left_right') {
+      container.scrollLeft = nextPosition
+    } else {
+      container.scrollTop = nextPosition
+    }
+
+    if (progress < 1) {
+      programmaticScrollAnimationRafId = requestNextFrame(step)
+      return
+    }
+
+    programmaticScrollAnimationRafId = 0
+    scrollToPosition(container, position, 'auto')
+  }
+
+  programmaticScrollAnimationRafId = requestNextFrame(step)
 }
 
 const getPageScrollOffset = (container, page) => {
@@ -776,6 +844,10 @@ const commitReadingPage = (page, immediateProgress = false) => {
 
 const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
   clearScrollCommitTimer()
+  const settleDelay =
+    isSinglePageBrowsing.value && zoomLevel.value <= 1
+      ? SINGLE_PAGE_SETTLE_DELAY_MS
+      : 220
 
   scrollIdleTimer = setTimeout(() => {
     if (observationToken !== scrollObservationToken) return
@@ -794,7 +866,7 @@ const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
       return
     }
     commitReadingPage(currentPage.value)
-  }, 220)
+  }, settleDelay)
 }
 
 const rebuildLoadQueue = (centerPage) => {
@@ -999,6 +1071,7 @@ const loadImages = async () => {
   loading.value = true
   error.value = false
   resetZoomState()
+  clearProgrammaticScrollAnimation()
   singlePageSwipeActive.value = false
   singlePageSwipeStartAt.value = 0
   invalidateScrollObservation()
@@ -1079,10 +1152,22 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
     const fallbackOffset = (targetPage - 1) * getViewportExtent(container)
     const scrollPosition =
       preferredOffset > 0 || targetPage === 1 ? preferredOffset : fallbackOffset
+    const shouldAnimateSinglePage = smooth && isSinglePageBrowsing.value && zoomLevel.value <= 1
+    const programmaticGuardDuration = smooth
+      ? shouldAnimateSinglePage
+        ? SINGLE_PAGE_PROGRAMMATIC_GUARD_MS
+        : 260
+      : 120
+
     lastObservedScrollPosition = scrollPosition
     lastSinglePageDirection = 0
-    markProgrammaticScroll(smooth ? 260 : 120)
-    scrollToPosition(container, scrollPosition, behavior)
+    markProgrammaticScroll(programmaticGuardDuration)
+    if (shouldAnimateSinglePage) {
+      animateSinglePageScroll(container, scrollPosition)
+    } else {
+      clearProgrammaticScrollAnimation()
+      scrollToPosition(container, scrollPosition, behavior)
+    }
   }
 }
 
@@ -1767,6 +1852,7 @@ onUnmounted(() => {
   if (programmaticScrollTimer) {
     clearTimeout(programmaticScrollTimer)
   }
+  clearProgrammaticScrollAnimation()
   if (resizeAlignTimer) {
     clearTimeout(resizeAlignTimer)
   }
