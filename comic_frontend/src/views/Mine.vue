@@ -36,7 +36,8 @@
     
     <div class="about">
       <p class="version">版本 2.0.0</p>
-      <p class="copyright">© 2026 Ultimate Web</p>
+      <p class="copyright">© 2026 Ultimate Web </p>
+      <p><span class="mmmtttt">github@Mmmtttt</span></p>
     </div>
     
     <!-- 存储管理面板 -->
@@ -548,6 +549,11 @@ watch(() => modeStore.currentMode, () => {
 }
 
 .copyright {
+  font-size: 12px;
+}
+
+.mmmtttt {
+  color: #969799;
   font-size: 12px;
 }
 

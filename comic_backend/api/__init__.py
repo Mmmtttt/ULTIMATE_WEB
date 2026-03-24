@@ -1,3 +1,4 @@
+# Ultimate Web API - Mmmtttt
 from flask import Blueprint
 from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp, backup_bp, author_bp, video_bp, actor_bp, sync_bp
 

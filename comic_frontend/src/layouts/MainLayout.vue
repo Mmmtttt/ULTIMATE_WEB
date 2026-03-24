@@ -26,7 +26,8 @@
         </router-link>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="mmmtttt-footer">github@Mmmtttt</div>
+      <div class="sidebar-footer">  
         <router-link to="/search" class="nav-item search-btn">
           <van-icon name="search" />
           <span>全局搜索</span>
@@ -177,6 +178,13 @@ const pageTitle = computed(() => {
   border: 1px solid var(--layout-search-btn-border);
   border-radius: 11px;
   justify-content: center;
+}
+
+.mmmtttt-footer {
+  font-size: 10px;
+  color: #969799;
+  text-align: center;
+  margin-top: 8px;
 }
 
 .mobile-header {

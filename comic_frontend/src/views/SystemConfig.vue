@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="system-config">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
@@ -156,6 +156,8 @@
         重置为默认设置
       </van-button>
     </div>
+
+    <div class="mmmtttt-config">github@Mmmtttt</div>
   </div>
 </template>
 
@@ -501,6 +503,13 @@ onMounted(async () => {
 
 .inline-actions {
   padding: 10px 16px 16px;
+}
+
+.mmmtttt-config {
+  text-align: center;
+  font-size: 12px;
+  color: #969799;
+  padding: 16px;
 }
 
 .third-party-config {

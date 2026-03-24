@@ -317,6 +317,7 @@ def ensure_android_project_chaquopy_app(
 
 import android.os.Bundle;
 import android.util.Log;
+import android.webkit.WebView;
 
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
@@ -333,6 +334,18 @@ public class MainActivity extends BridgeActivity {{
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         startEmbeddedBackend();
+    }}
+
+    @Override
+    public void onBackPressed() {{
+        if (bridge != null) {{
+            WebView webView = bridge.getWebView();
+            if (webView != null && webView.canGoBack()) {{
+                webView.goBack();
+                return;
+            }}
+        }}
+        super.onBackPressed();
     }}
 
     private void startEmbeddedBackend() {{
