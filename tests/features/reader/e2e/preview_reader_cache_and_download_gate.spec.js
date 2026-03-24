@@ -293,7 +293,7 @@ test("preview reader single-page mode keeps centered snap paging", async ({
   await page.evaluate(() => {
     const container = document.querySelector(".left-right-mode.single-page-mode");
     if (!container) return;
-    container.scrollLeft = container.clientWidth * 1.62;
+    container.scrollLeft = container.clientWidth * 1.45;
   });
   await waitPageIndicator(page, "3/3");
 

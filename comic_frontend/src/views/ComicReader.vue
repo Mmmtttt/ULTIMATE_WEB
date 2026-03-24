@@ -286,6 +286,9 @@ let inertiaRafId = 0
 let restoreBootstrapTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
+const SINGLE_PAGE_SWITCH_THRESHOLD = 0.38
+let lastObservedScrollPosition = 0
+let lastSinglePageDirection = 0
 
 const comicId = computed(() => route.params.id)
 
@@ -628,6 +631,12 @@ const getPageScrollOffset = (container, page) => {
   return getAxisStart(pages[targetIndex])
 }
 
+const shouldHoldRestoreLock = (targetPage) =>
+  pageMode.value === 'left_right' &&
+  !isSinglePageBrowsing.value &&
+  targetPage > 1 &&
+  isRestoreBootstrap.value
+
 const estimatePageFromScroll = (container) => {
   const pages = getPageElements(container)
   if (!pages.length || totalPage.value <= 0) return 1
@@ -640,31 +649,34 @@ const estimatePageFromScroll = (container) => {
   const epsilon = 0.5
 
   if (isSinglePageBrowsing.value) {
-    let bestPage = safeCurrentPage
-    let bestDistance = Number.POSITIVE_INFINITY
-    let bestVisible = -1
+    const viewportExtent = Math.max(1, getViewportExtent(container))
+    const currentScroll = getContainerScrollPosition(container)
+    const delta = currentScroll - lastObservedScrollPosition
+    if (Math.abs(delta) > 0.5) {
+      lastSinglePageDirection = delta > 0 ? 1 : -1
+    }
+    lastObservedScrollPosition = currentScroll
+
+    const probeRatio =
+      lastSinglePageDirection > 0
+        ? 1 - SINGLE_PAGE_SWITCH_THRESHOLD
+        : lastSinglePageDirection < 0
+          ? SINGLE_PAGE_SWITCH_THRESHOLD
+          : 0.5
+    const probePosition = currentScroll + viewportExtent * probeRatio
 
     for (let index = 0; index < pages.length; index += 1) {
-      const rect = pages[index].getBoundingClientRect()
-      const extent = pageMode.value === 'left_right' ? rect.width : rect.height
+      const extent = getAxisExtent(pages[index])
       if (extent <= 0) continue
-
-      const pageStart = getRectAxisStart(rect)
-      const pageEnd = getRectAxisEnd(rect)
-      const visibleExtent = Math.max(0, Math.min(pageEnd, viewportEnd) - Math.max(pageStart, viewportStart))
-      const centerDistance = Math.abs(getRectAxisCenter(rect) - viewportCenter)
-
-      if (
-        centerDistance < bestDistance - epsilon ||
-        (Math.abs(centerDistance - bestDistance) <= epsilon && visibleExtent > bestVisible + epsilon)
-      ) {
-        bestPage = index + 1
-        bestDistance = centerDistance
-        bestVisible = visibleExtent
+      const start = getAxisStart(pages[index])
+      const end = start + extent
+      if (probePosition >= start - epsilon && probePosition < end - epsilon) {
+        return clampPage(index + 1, totalPage.value)
       }
     }
 
-    return clampPage(bestPage, totalPage.value)
+    if (probePosition <= 0) return 1
+    return clampPage(totalPage.value, totalPage.value)
   }
 
   let bestPage = safeCurrentPage
@@ -907,6 +919,11 @@ const startRestoreBootstrap = (duration = 2200) => {
   restoreBootstrapTimer = setTimeout(() => {
     isRestoreBootstrap.value = false
     restoreBootstrapTimer = null
+    if (pendingRestorePage.value != null) {
+      restoreRetryCount = 0
+      clearRestoreRetry()
+      void tryRestorePendingPage(restoreSessionToken)
+    }
     if (totalPage.value > 0) {
       preloadImages(clampPage(currentPage.value, totalPage.value))
     }
@@ -954,6 +971,10 @@ const tryRestorePendingPage = async (restoreSession = restoreSessionToken) => {
 
   const container = activeContainer.value
   if (container && isScrollAlignedWithPage(container, targetPage)) {
+    if (shouldHoldRestoreLock(targetPage)) {
+      scheduleRestoreRetry(120, restoreSession)
+      return
+    }
     pendingRestorePage.value = null
     restoreRetryCount = 0
     clearRestoreRetry()
@@ -981,6 +1002,8 @@ const loadImages = async () => {
   singlePageSwipeActive.value = false
   singlePageSwipeStartAt.value = 0
   invalidateScrollObservation()
+  lastObservedScrollPosition = 0
+  lastSinglePageDirection = 0
   pendingRestorePage.value = null
   isRestoreBootstrap.value = false
   restoreRetryCount = 0
@@ -1056,6 +1079,8 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
     const fallbackOffset = (targetPage - 1) * getViewportExtent(container)
     const scrollPosition =
       preferredOffset > 0 || targetPage === 1 ? preferredOffset : fallbackOffset
+    lastObservedScrollPosition = scrollPosition
+    lastSinglePageDirection = 0
     markProgrammaticScroll(smooth ? 260 : 120)
     scrollToPosition(container, scrollPosition, behavior)
   }
