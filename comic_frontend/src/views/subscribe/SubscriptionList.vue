@@ -154,7 +154,24 @@ async function checkAllUpdates() {
   }
 }
 
-function goToDetail(item) {
+async function goToDetail(item) {
+  const subscriptionId = String(item?.id || '').trim()
+  if (subscriptionId && Number(item?.new_work_count || 0) > 0) {
+    try {
+      await currentStore.value.clearNewCount(subscriptionId)
+      items.value = (items.value || []).map(entry => {
+        if (String(entry?.id || '') !== subscriptionId) {
+          return entry
+        }
+        return {
+          ...entry,
+          new_work_count: 0
+        }
+      })
+    } catch (_) {
+      // Ignore clear failure and continue navigation.
+    }
+  }
   router.push(`/creator/${encodeURIComponent(item.name)}`)
 }
 

@@ -78,6 +78,25 @@ export const useAuthorStore = defineStore('author', () => {
       return null
     }
   }
+
+  async function clearNewCount(authorId) {
+    try {
+      const res = await authorApi.clearNewCount(authorId)
+      if (res.code === 200) {
+        const index = actors.value.findIndex(a => a.id === authorId)
+        if (index >= 0) {
+          actors.value[index] = {
+            ...actors.value[index],
+            new_work_count: 0
+          }
+        }
+        return true
+      }
+      return false
+    } catch (e) {
+      return false
+    }
+  }
   
   return {
     actors,
@@ -89,6 +108,7 @@ export const useAuthorStore = defineStore('author', () => {
     fetchAll,
     subscribe,
     unsubscribe,
-    checkUpdates
+    checkUpdates,
+    clearNewCount
   }
 })

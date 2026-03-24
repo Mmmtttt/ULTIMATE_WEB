@@ -115,6 +115,25 @@ export const useActorStore = defineStore('actor', () => {
       return null
     }
   }
+
+  async function clearNewCount(actorId) {
+    try {
+      const res = await actorApi.clearNewCount(actorId)
+      if (res.code === 200) {
+        const index = actors.value.findIndex(a => a.id === actorId)
+        if (index >= 0) {
+          actors.value[index] = {
+            ...actors.value[index],
+            new_work_count: 0
+          }
+        }
+        return true
+      }
+      return false
+    } catch (e) {
+      return false
+    }
+  }
   
   return {
     actors,
@@ -129,6 +148,7 @@ export const useActorStore = defineStore('actor', () => {
     getVideos,
     updateCheckTime,
     updateLastWork,
-    checkUpdates
+    checkUpdates,
+    clearNewCount
   }
 })
