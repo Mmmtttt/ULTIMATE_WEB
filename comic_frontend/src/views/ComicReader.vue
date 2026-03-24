@@ -587,6 +587,11 @@ const getViewportExtent = (container) => {
   return pageMode.value === 'left_right' ? container.clientWidth : container.clientHeight
 }
 
+const getContainerScrollPosition = (container) => {
+  if (!container) return 0
+  return pageMode.value === 'left_right' ? container.scrollLeft : container.scrollTop
+}
+
 const isPageExtentReady = (container, page) => {
   const element = getPageElementByNumber(container, page)
   return getAxisExtent(element) > 0
@@ -763,6 +768,19 @@ const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
   scrollIdleTimer = setTimeout(() => {
     if (observationToken !== scrollObservationToken) return
     if (isProgrammaticScroll.value || totalPage.value <= 0) return
+    const container = activeContainer.value
+    if (container && isSinglePageBrowsing.value && zoomLevel.value <= 1 && pendingRestorePage.value == null) {
+      const settledPage = estimatePageFromScroll(container)
+      commitReadingPage(settledPage)
+
+      const targetOffset = getPageScrollOffset(container, settledPage)
+      const currentOffset = getContainerScrollPosition(container)
+      const settleTolerance = Math.max(2, getViewportExtent(container) * 0.02)
+      if (Math.abs(currentOffset - targetOffset) > settleTolerance) {
+        void jumpToPage(settledPage, true, { reason: 'single-page-settle' })
+      }
+      return
+    }
     commitReadingPage(currentPage.value)
   }, 220)
 }
@@ -1807,12 +1825,11 @@ onUnmounted(() => {
 }
 
 .left-right-mode.single-page-mode {
-  scroll-snap-type: x mandatory;
-  scroll-behavior: smooth;
+  scroll-snap-type: none;
 }
 
 .left-right-mode.single-page-mode .page-track-horizontal {
-  width: max-content;
+  width: 100%;
   min-width: 100%;
 }
 
@@ -1907,8 +1924,7 @@ onUnmounted(() => {
 }
 
 .up-down-mode.single-page-mode {
-  scroll-snap-type: y mandatory;
-  scroll-behavior: smooth;
+  scroll-snap-type: none;
 }
 
 .up-down-mode.single-page-mode .page-track-vertical {
@@ -1916,8 +1932,8 @@ onUnmounted(() => {
 }
 
 .up-down-mode.single-page-mode .up-down-page {
-  min-height: 100%;
-  height: 100%;
+  min-height: var(--reader-vh, 100dvh);
+  height: var(--reader-vh, 100dvh);
   align-items: center;
   justify-content: center;
 }
@@ -1939,12 +1955,6 @@ onUnmounted(() => {
 
 .up-down-page + .up-down-page {
   margin-top: -1px;
-}
-
-.left-right-mode.single-page-mode .page,
-.up-down-mode.single-page-mode .up-down-page {
-  scroll-snap-align: center;
-  scroll-snap-stop: always;
 }
 
 .left-right-mode.single-page-mode .page + .page,
