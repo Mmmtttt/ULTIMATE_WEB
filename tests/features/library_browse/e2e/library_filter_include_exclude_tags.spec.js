@@ -30,14 +30,19 @@ test("library filter include and exclude tags returns expected comics", async ({
   await page.goto("/library");
   await expect(page.getByText("E2E Comic Alpha")).toBeVisible();
 
-  await page.locator(".toolbar .toolbar-action-btn").nth(1).click();
-  await expect(page.locator(".filter-panel-content")).toBeVisible();
+  const filterButton = page
+    .locator(".toolbar .toolbar-action-btn")
+    .filter({ has: page.locator(".van-icon-filter-o") })
+    .first();
+  await filterButton.click();
+  await expect(page.locator(".filter-panel")).toBeVisible();
+  await expect(page.getByText("高级筛选")).toBeVisible();
 
   await page.locator(".tag-item", { hasText: "Action" }).first().click();
   await page.locator(".tag-item", { hasText: "Story" }).first().click();
   await page.locator(".tag-item", { hasText: "Story" }).first().click();
 
-  await page.locator(".filter-actions .van-button").first().click();
+  await page.locator(".filter-panel .van-nav-bar .van-button").first().click();
 
   await expect
     .poll(

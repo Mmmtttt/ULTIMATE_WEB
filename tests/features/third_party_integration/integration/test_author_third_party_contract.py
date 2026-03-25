@@ -30,10 +30,11 @@ def test_author_service_search_works_forwards_platform_adapter_contract(third_pa
     calls = []
 
     class FakeExternalApi:
-        def search_albums(self, keyword, max_pages=1, adapter_name=None, fast_mode=False):
+        def search_albums(self, keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
             calls.append(
                 {
                     "keyword": keyword,
+                    "page": page,
                     "max_pages": max_pages,
                     "adapter_name": adapter_name,
                     "fast_mode": fast_mode,
@@ -51,6 +52,7 @@ def test_author_service_search_works_forwards_platform_adapter_contract(third_pa
     assert len(calls) == 2
     assert {item["adapter_name"] for item in calls} == {"jmcomic", "picacomic"}
     assert all(item["keyword"] == "Alice" for item in calls)
+    assert all(int(item["page"]) == 1 for item in calls)
     assert all(int(item["max_pages"]) == 2 for item in calls)
     assert all(item["fast_mode"] is True for item in calls)
     assert {item["platform"] for item in works} == {"JM", "PK"}

@@ -190,11 +190,12 @@ def test_author_works_route_cache_only_bypasses_external_api_guard(third_party_c
     def fail_if_called():
         raise AssertionError("_get_external_api should not be called for cache_only=true")
 
-    def fake_get_paginated(author_id, offset, limit, cache_only=False):
+    def fake_get_paginated(author_id, offset, limit, cache_only=False, force_refresh=False):
         captured["author_id"] = author_id
         captured["offset"] = offset
         captured["limit"] = limit
         captured["cache_only"] = cache_only
+        captured["force_refresh"] = force_refresh
         return _ok_result(
             {
                 "author": {"id": author_id, "name": "AuthorCache"},
@@ -205,6 +206,7 @@ def test_author_works_route_cache_only_bypasses_external_api_guard(third_party_c
                 "has_more": False,
                 "from_cache": True,
                 "cache_only": cache_only,
+                "force_refresh": force_refresh,
             }
         )
 
@@ -224,4 +226,5 @@ def test_author_works_route_cache_only_bypasses_external_api_guard(third_party_c
         "offset": 1,
         "limit": 4,
         "cache_only": True,
+        "force_refresh": False,
     }
