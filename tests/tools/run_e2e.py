@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import signal
@@ -99,7 +100,18 @@ def _kill_ports_on_windows(ports: list[int]) -> None:
         )
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run E2E tests with managed backend/frontend lifecycle.")
+    parser.add_argument(
+        "--visual",
+        action="store_true",
+        help="Enable local visual mode: headed + slowmo(200ms) + PWDEBUG + Playwright UI.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = _parse_args()
     prepared = prepare_profile(E2E_PROFILE, clean=True)
     runtime_root = Path(prepared["runtime_root"])
     repo_root = Path(REPO_ROOT)
@@ -131,6 +143,12 @@ def main() -> int:
             "VITE_BACKEND_PORT": str(E2E_BACKEND_PORT),
         }
     )
+    playwright_env = os.environ.copy()
+    if args.visual:
+        playwright_env["PW_HEADED"] = "1"
+        playwright_env["PW_SLOWMO"] = "200"
+        playwright_env["PWDEBUG"] = "1"
+
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
     npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
 
@@ -156,10 +174,11 @@ def main() -> int:
         )
         _wait_http(f"http://127.0.0.1:{E2E_FRONTEND_PORT}", timeout_seconds=180)
 
-        completed = subprocess.run(
-            [npx_cmd, "--prefix", "comic_frontend", "playwright", "test", "-c", "tests/playwright.config.js"],
-            cwd=str(repo_root),
-        )
+        playwright_cmd = [npx_cmd, "--prefix", "comic_frontend", "playwright", "test", "-c", "tests/playwright.config.js"]
+        if args.visual:
+            playwright_cmd.append("--ui")
+
+        completed = subprocess.run(playwright_cmd, cwd=str(repo_root), env=playwright_env)
         return int(completed.returncode or 0)
     finally:
         _kill_process_tree(frontend_proc)

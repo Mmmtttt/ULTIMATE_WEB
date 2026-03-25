@@ -247,3 +247,17 @@ tests/
   - Guards progressive reading behavior: reader can render cached pages before `/api/v1/recommendation/cache/download` response completes.
 - Updated E2E: `tests/features/system_config/e2e/system_config_updates_reader_preferences.spec.js`
   - Now also asserts config PUT body includes `"single_page_browsing":true`.
+
+## 17. Local Visual E2E Mode (Developer Workflow)
+- Purpose:
+  - Provide a local, visual execution mode so developers can watch real browser interactions and build confidence in E2E guard coverage.
+- Command:
+  - `python tests/tools/run_e2e.py --visual`
+- What `--visual` enables (all-in-one, no extra flags needed):
+  - Headed browser (non-headless)
+  - Slow motion execution (`slowmo=200ms`)
+  - `PWDEBUG` debug mode
+  - Playwright UI mode (`--ui`)
+- CI behavior remains unchanged:
+  - GitHub workflow does not use `--visual`.
+  - Gate keeps current fast headless behavior and performance.

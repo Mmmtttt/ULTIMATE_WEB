@@ -2,6 +2,7 @@ const { test, expect, startApiRequestRecorder } = require("../../../shared/e2e_h
 
 const COMIC_ID = "JM100003";
 const TOTAL_PAGE = 5;
+const BACKEND_BASE_URL = "http://127.0.0.1:5010";
 
 function extractImageRequestPages(requests, comicId) {
   const pages = [];
@@ -45,6 +46,33 @@ async function showReaderMenuByKeyboard(page) {
   await expect(controlBar).toBeVisible();
 }
 
+async function setComicProgress(page, comicId, currentPage) {
+  const payload = await page.evaluate(
+    async ({ baseUrl, id, pageNum }) => {
+      const response = await fetch(`${baseUrl}/api/v1/comic/progress`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          comic_id: id,
+          current_page: pageNum,
+        }),
+      });
+      let json = null;
+      try {
+        json = await response.json();
+      } catch (error) {
+        json = null;
+      }
+      return { status: response.status, ok: response.ok, body: json };
+    },
+    { baseUrl: BACKEND_BASE_URL, id: comicId, pageNum: currentPage },
+  );
+  expect(payload.ok).toBeTruthy();
+  expect((payload.body || {}).code).toBe(200);
+}
+
 /**
  * 用例描述:
  * - 用例目的: 看护阅读页预加载顺序与上下/左右模式下的无缝拼接，避免新增功能引入页面断层或预加载退化。
@@ -61,6 +89,7 @@ async function showReaderMenuByKeyboard(page) {
  */
 test("reader preloads around focus page and keeps seamless page stitching", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+  await setComicProgress(page, COMIC_ID, 3);
 
   await page.goto(`/reader/${COMIC_ID}?page=3`);
   await expect(page.locator(".reader-content")).toBeVisible();
@@ -144,6 +173,7 @@ test("reader preloads around focus page and keeps seamless page stitching", asyn
  *   - 2026-03-24: 初始创建，补齐桌面端核心交互深度门禁。
  */
 test("desktop reader supports wheel paging zoom pan and fullscreen toggle", async ({ page }) => {
+  await setComicProgress(page, COMIC_ID, 1);
   await page.goto(`/reader/${COMIC_ID}?page=1`);
   await expect(page.locator(".reader-content")).toBeVisible();
   await showReaderMenuByKeyboard(page);
@@ -215,6 +245,8 @@ test("desktop reader supports wheel paging zoom pan and fullscreen toggle", asyn
  *   - 2026-03-24: 初始创建，补齐详情入口继续阅读看护。
  */
 test("comic detail continue reading opens reader at saved progress", async ({ page }) => {
+  await setComicProgress(page, COMIC_ID, 5);
+
   await page.goto(`/comic/${COMIC_ID}`);
   const readButton = page.locator(".read-button");
   await expect(readButton).toBeVisible();
@@ -246,6 +278,7 @@ test.describe("mobile touch reader interactions", () => {
    *   - 2026-03-24: 初始创建，补齐手机端触摸路径的门禁看护。
    */
   test("mobile reader supports touch swipe and pinch zoom", async ({ page }) => {
+    await setComicProgress(page, COMIC_ID, 1);
     await page.goto(`/reader/${COMIC_ID}?page=1`);
     const container = page.locator(".left-right-mode");
     await expect(container).toBeVisible();
