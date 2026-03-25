@@ -124,7 +124,7 @@ const routes = [
     path: '/sync',
     name: 'SyncCenter',
     component: () => import('@/views/SyncCenter.vue'),
-    meta: { title: 'Data Sync' }
+    meta: { title: '数据同步' }
   },
   {
     path: '/trash',
