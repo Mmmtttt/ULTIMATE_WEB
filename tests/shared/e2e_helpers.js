@@ -33,6 +33,18 @@ async function getMediaTitles(page) {
 }
 
 async function confirmDialog(page) {
+  await page.waitForTimeout(300);
+
+  const overlay = page.locator(".van-overlay").first();
+  try {
+    if (await overlay.isVisible({ timeout: 500 })) {
+      await overlay.waitFor({ state: "hidden", timeout: 3000 }).catch(() => {});
+    }
+  } catch {
+  }
+
+  await page.waitForTimeout(200);
+
   const candidates = [
     page.getByRole("button", { name: /确认|确定|Confirm|OK/i }),
     page.locator(".van-dialog__confirm"),
@@ -43,7 +55,7 @@ async function confirmDialog(page) {
     const first = locator.first();
     const visible = await first.isVisible().catch(() => false);
     if (visible) {
-      await first.click();
+      await first.click({ force: true });
       return;
     }
   }

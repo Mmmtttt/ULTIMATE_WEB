@@ -12,9 +12,10 @@ const COMIC_TITLE = "E2E Comic Alpha";
  * 用例描述:
  * - 用例目的: 验证用户从本地库进入漫画详情时，前端路由与关键后端请求链路正常。
  * - 测试步骤:
- *   1. 打开本地库页面并定位目标漫画卡片。
- *   2. 点击漫画卡片进入详情页。
- *   3. 校验页面 URL、标题与关键 API 请求。
+ *   1. 先检查漫画是否在库中，如果不在则从回收站恢复。
+ *   2. 打开本地库页面并定位目标漫画卡片。
+ *   3. 点击漫画卡片进入详情页。
+ *   4. 校验页面 URL、标题与关键 API 请求。
  * - 预期结果:
  *   1. 路由跳转到 /comic/{comic_id}。
  *   2. 详情页展示正确标题。
@@ -22,9 +23,17 @@ const COMIC_TITLE = "E2E Comic Alpha";
  * - 历史变更:
  *   - 2026-03-23: 初始创建并纳入门禁主路径。
  *   - 2026-03-23: 升级为统一用例描述模板并复用共享 E2E 工具。
+ *   - 2026-03-26: 增加前置检查，确保测试数据可用。
  */
 test("library browse opens comic detail with expected backend calls", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+
+  await page.goto("/trash");
+  const trashItem = page.locator(".media-item", { hasText: COMIC_TITLE }).first();
+  if (await trashItem.isVisible()) {
+    await trashItem.getByRole("button", { name: "恢复" }).click();
+    await page.waitForTimeout(500);
+  }
 
   await page.goto("/library");
 

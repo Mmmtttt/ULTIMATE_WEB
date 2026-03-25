@@ -10,22 +10,33 @@ const EXPECTED_FILTERED_TITLES = ["E2E Comic Alpha", "E2E Comic Gamma"];
 
 /**
  * 用例描述:
- * - 用例目的: 强看护漫画库高级筛选“包含标签 + 排除标签”组合逻辑，确保前后端筛选结果一致。
+ * - 用例目的: 强看护漫画库高级筛选"包含标签 + 排除标签"组合逻辑，确保前后端筛选结果一致。
  * - 测试步骤:
- *   1. 打开 `/library`，进入高级筛选面板。
- *   2. 在标签页选择 `Action` 为包含标签。
- *   3. 对 `Story` 连续点击两次，切换为排除标签。
- *   4. 点击“应用”触发筛选。
- *   5. 校验请求参数和页面展示的结果集合。
+ *   1. 先检查测试漫画是否在库中，如果不在则从回收站恢复。
+ *   2. 打开 `/library`，进入高级筛选面板。
+ *   3. 在标签页选择 `Action` 为包含标签。
+ *   4. 对 `Story` 连续点击两次，切换为排除标签。
+ *   5. 点击"应用"触发筛选。
+ *   6. 校验请求参数和页面展示的结果集合。
  * - 预期结果:
  *   1. 触发 `/api/v1/comic/filter`，并携带 `include_tag_ids=tag_action` 与 `exclude_tag_ids=tag_story`。
  *   2. 页面只展示满足条件的漫画，标题集合应为 `E2E Comic Alpha`、`E2E Comic Gamma`。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，覆盖标签组合筛选强看护。
  *   - 2026-03-23: 增加结果渲染等待，避免异步刷新导致假阴性。
+ *   - 2026-03-26: 增加前置检查，确保测试数据可用。
  */
 test("library filter include and exclude tags returns expected comics", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+
+  await page.goto("/trash");
+  for (const title of EXPECTED_FILTERED_TITLES) {
+    const trashItem = page.locator(".media-item", { hasText: title }).first();
+    if (await trashItem.isVisible()) {
+      await trashItem.getByRole("button", { name: "恢复" }).click();
+      await page.waitForTimeout(300);
+    }
+  }
 
   await page.goto("/library");
   await expect(page.getByText("E2E Comic Alpha")).toBeVisible();

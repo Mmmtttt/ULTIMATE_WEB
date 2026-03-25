@@ -61,22 +61,40 @@ tests/
   - e2e: `library_open_video_detail.spec.js`
   - e2e: `library_sort_by_score.spec.js`（已升级为强看护）
   - e2e: `library_filter_include_exclude_tags.spec.js`（新增）
+  - e2e: `comic_detail_operations.spec.js`（新增，覆盖漫画详情页评分更新、标签绑定、清单加入）
+  - e2e: `video_detail_operations.spec.js`（新增，覆盖视频详情页评分更新、进度更新、标签绑定）
+  - e2e: `video_library_sort_by_score.spec.js`（新增，覆盖视频库按评分排序）
   - integration: `test_progress_persistence.py`
   - integration: `test_sort_filter_contract.py`（新增）
+  - integration: `test_comic_import_contract.py`（新增，覆盖漫画导入、编辑、搜索、详情、评分更新）
+  - integration: `test_video_import_contract.py`（新增，覆盖视频导入、评分更新、进度更新）
+  - integration: `test_recommendation_contract.py`（新增，覆盖推荐列表、排序、添加）
+  - integration: `test_video_progress_contract.py`（新增，覆盖视频进度更新、详情、编辑）
 - list_management
   - e2e: `list_manage_create_custom_list.spec.js`
   - e2e: `comic_detail_add_to_custom_list.spec.js`
   - integration: `test_list_create_bind_remove_delete_persistence.py`
+  - integration: `test_list_operations.py`（新增，覆盖清单创建、更新、删除、批量操作）
 - tag_management
+  - e2e: `tag_operations.spec.js`（新增，覆盖标签创建、编辑、删除、绑定）
   - integration: `test_tag_add_edit_bind_delete_persistence.py`
   - integration: `test_tag_content_type_schema_backfill.py`（新增，覆盖缺失 content_type 自动回填）
+  - integration: `test_tag_batch_operations.py`（新增，覆盖标签批量添加/移除到漫画/视频）
 - trash_management
   - e2e: `comic_move_to_trash_and_restore.spec.js`
+  - e2e: `trash_operations.spec.js`（新增，覆盖回收站移入、恢复、永久删除）
   - integration: `test_video_trash_lifecycle_persistence.py`
+  - integration: `test_comic_trash_lifecycle.py`（新增，覆盖漫画/视频回收站生命周期）
 - global_search
   - e2e: `global_search_local_comic_open_detail.spec.js`
+  - integration: `test_search_contract.py`（新增，覆盖漫画/视频本地搜索）
 - system_config
   - e2e: `system_config_updates_reader_preferences.spec.js`
+  - integration: `test_config_contract.py`（新增，覆盖配置读取、更新、备份）
+  - integration: `test_backup_contract.py`（新增，覆盖备份创建、恢复）
+  - integration: `test_cache_contract.py`（新增，覆盖缓存统计、清理、配置验证）
+- subscribe
+  - integration: `test_author_actor_subscription.py`（新增，覆盖作者/演员订阅、更新检查）
 - sync_center
   - integration: `test_sync_center_guard.py`（新增，覆盖 session 分层打包/清理 + 双端 directional pull tag/list 映射与资产幂等 + meta-only 分层守卫 + API 鉴权参数守卫 + directional push/task 主链路）
 
@@ -266,3 +284,202 @@ tests/
 - CI behavior remains unchanged:
   - GitHub workflow does not use `--visual`.
   - Gate keeps current fast headless behavior and performance.
+
+## 18. 新增测试用例详细说明（2026-03-26）
+
+### 18.1 library_browse 模块
+
+#### integration: test_comic_import_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_comic_init_rejects_missing_comic_dir | 验证漫画初始化校验目录存在性 | 调用 `/api/v1/comic/init` 传入不存在的漫画目录，期望返回 404 |
+| test_comic_init_rejects_duplicate_comic_id | 验证漫画初始化校验ID唯一性 | 调用 `/api/v1/comic/init` 传入已存在的漫画ID，期望返回 400 |
+| test_comic_init_rejects_missing_comic_id | 验证漫画初始化校验必要参数 | 调用 `/api/v1/comic/init` 不传 comic_id，期望返回 400 |
+| test_comic_edit_updates_metadata_and_persists | 验证漫画编辑接口正确持久化 | 调用 `/api/v1/comic/edit` 更新元数据，验证文件持久化 |
+| test_comic_edit_rejects_nonexistent_comic | 验证漫画编辑校验漫画存在性 | 调用 `/api/v1/comic/edit` 传入不存在的ID，期望返回 400 |
+| test_comic_search_returns_matching_results | 验证漫画搜索返回正确结果 | 调用 `/api/v1/comic/search` 搜索关键词，验证返回匹配结果 |
+| test_comic_search_returns_empty_for_no_match | 验证漫画搜索无匹配时返回空 | 调用 `/api/v1/comic/search` 搜索不存在的关键词，期望返回空列表 |
+| test_comic_search_rejects_missing_keyword | 验证漫画搜索校验必要参数 | 调用 `/api/v1/comic/search` 不传关键词，期望返回 400 |
+| test_comic_detail_returns_full_info | 验证漫画详情返回完整信息 | 调用 `/api/v1/comic/detail` 获取漫画详情，验证返回完整数据 |
+| test_comic_detail_rejects_nonexistent_comic | 验证漫画详情校验漫画存在性 | 调用 `/api/v1/comic/detail` 传入不存在的ID，期望返回 404 |
+| test_comic_score_update_persists | 验证漫画评分更新正确持久化 | 调用 `/api/v1/comic/score` 更新评分，验证文件持久化 |
+| test_comic_score_rejects_missing_params | 验证漫画评分校验必要参数 | 调用 `/api/v1/comic/score` 不传必要参数，期望返回 400 |
+
+#### integration: test_video_import_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_video_score_update_persists | 验证视频评分更新正确持久化 | 调用 `/api/v1/video/score` 更新评分，验证文件持久化（评分精度需为0.5） |
+| test_video_score_rejects_invalid_precision | 验证视频评分校验精度 | 调用 `/api/v1/video/score` 传入无效精度评分，期望返回 400 |
+| test_video_progress_update_persists | 验证视频进度更新正确持久化 | 调用 `/api/v1/video/progress` 更新进度，验证文件持久化 |
+
+#### integration: test_recommendation_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_recommendation_list_returns_items | 验证推荐列表返回正确数据 | 调用 `/api/v1/recommendation/list` 获取推荐列表，验证返回数据结构 |
+| test_recommendation_list_sort_by_score | 验证推荐列表按评分排序 | 调用 `/api/v1/recommendation/list?sort_type=score`，验证排序正确性 |
+| test_recommendation_add_creates_item | 验证添加推荐正确创建记录 | 调用 `/api/v1/recommendation/add` 添加推荐，验证文件持久化 |
+| test_recommendation_add_rejects_missing_title | 验证添加推荐校验必要参数 | 调用 `/api/v1/recommendation/add` 不传标题，期望返回 400 |
+
+#### integration: test_video_progress_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_video_progress_update_persists | 验证视频进度更新正确持久化 | 调用 `/api/v1/video/progress` 更新进度（参数为 unit），验证文件持久化 |
+| test_video_progress_rejects_invalid_unit | 验证视频进度校验进度值 | 调用 `/api/v1/video/progress` 传入超出范围的进度值，期望返回 400 |
+| test_video_progress_rejects_missing_video_id | 验证视频进度校验必要参数 | 调用 `/api/v1/video/progress` 不传 video_id，期望返回 400 |
+| test_video_progress_rejects_nonexistent_video | 验证视频进度校验视频存在性 | 调用 `/api/v1/video/progress` 传入不存在的ID，期望返回 400 |
+| test_video_detail_returns_full_info | 验证视频详情返回完整信息 | 调用 `/api/v1/video/detail` 获取视频详情，验证返回完整数据 |
+| test_video_detail_rejects_nonexistent_video | 验证视频详情校验视频存在性 | 调用 `/api/v1/video/detail` 传入不存在的ID，期望返回 404 |
+| test_video_edit_updates_metadata | 验证视频编辑正确持久化 | 调用 `/api/v1/video/edit` 更新元数据，验证文件持久化 |
+| test_video_edit_rejects_nonexistent_video | 验证视频编辑校验视频存在性 | 调用 `/api/v1/video/edit` 传入不存在的ID，期望返回 400 |
+
+#### e2e: comic_detail_operations.spec.js
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| comic detail page updates score via API | 验证用户可更新漫画评分 | 用户打开漫画详情页，修改评分，验证请求参数和UI更新 |
+| comic detail page toggles favorite via API | 验证用户可切换收藏状态 | 用户打开漫画详情页，点击收藏按钮，验证请求参数 |
+| comic detail page moves to trash via API | 验证用户可将漫画移入回收站 | 用户打开漫画详情页，点击移入回收站，验证请求参数，测试结束后恢复数据 |
+| comic detail page starts reading and navigates to reader | 验证用户可开始阅读漫画 | 用户打开漫画详情页，点击阅读按钮，验证路由跳转 |
+
+**注意**: 移入回收站测试使用 JM100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响其他测试。
+
+#### e2e: video_detail_operations.spec.js
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| video detail page updates score via API | 验证用户可更新视频评分 | 用户打开视频详情页，修改评分，验证请求参数和UI更新 |
+| video detail page toggles favorite via API | 验证用户可切换收藏状态 | 用户打开视频详情页，点击收藏按钮，验证请求参数 |
+| video detail page moves to trash via API | 验证用户可将视频移入回收站 | 用户打开视频详情页，点击移入回收站，验证请求参数 |
+| video detail page tag click navigates to library with filter | 验证用户可点击标签跳转筛选 | 用户打开视频详情页，点击标签，验证路由跳转 |
+
+#### e2e: video_library_sort_by_score.spec.js
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| 视频库按评分排序 | 验证视频库评分排序功能 | 用户打开视频库，选择按评分排序，验证请求参数和UI顺序 |
+
+### 18.2 list_management 模块
+
+#### integration: test_list_operations.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_list_create_persists | 验证清单创建正确持久化 | 调用 `/api/v1/list/create` 创建清单，验证文件持久化 |
+| test_list_update_persists | 验证清单更新正确持久化 | 调用 `/api/v1/list/update` 更新清单，验证文件持久化 |
+| test_list_delete_removes_record | 验证清单删除正确移除记录 | 调用 `/api/v1/list/delete` 删除清单，验证文件移除 |
+| test_list_batch_add_comics | 验证批量添加漫画到清单 | 调用 `/api/v1/list/batch-add` 批量添加，验证文件持久化 |
+| test_list_batch_remove_comics | 验证批量从清单移除漫画 | 调用 `/api/v1/list/batch-remove` 批量移除，验证文件持久化 |
+
+### 18.3 tag_management 模块
+
+#### integration: test_tag_batch_operations.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_tag_batch_add_to_comics_persists | 验证批量添加标签到漫画 | 调用 `/api/v1/tag/batch-add-tags` 批量添加标签到漫画，验证文件持久化 |
+| test_tag_batch_remove_from_comics_persists | 验证批量从漫画移除标签 | 调用 `/api/v1/tag/batch-remove-tags` 批量移除标签，验证文件持久化 |
+| test_tag_batch_add_to_videos_persists | 验证批量添加标签到视频 | 调用 `/api/v1/tag/batch-add-tags-to-videos` 批量添加标签到视频，验证文件持久化 |
+| test_tag_batch_remove_from_videos_persists | 验证批量从视频移除标签 | 调用 `/api/v1/tag/batch-remove-tags-from-videos` 批量移除标签，验证文件持久化 |
+| test_tag_batch_add_rejects_missing_params | 验证批量添加校验必要参数 | 调用 `/api/v1/tag/batch-add-tags` 不传必要参数，期望返回 400 |
+| test_tag_get_all_comics_returns_data | 验证获取所有漫画返回正确数据 | 调用 `/api/v1/tag/all-comics` 获取所有漫画，验证返回数据结构 |
+| test_tag_get_all_videos_returns_data | 验证获取所有视频返回正确数据 | 调用 `/api/v1/tag/all-videos` 获取所有视频，验证返回数据结构 |
+| test_tag_get_comics_by_tag_returns_matching | 验证按标签获取漫画返回正确结果 | 调用 `/api/v1/tag/comics?tag_id=xxx` 获取漫画，验证返回匹配结果 |
+| test_tag_get_videos_by_tag_returns_matching | 验证按标签获取视频返回正确结果 | 调用 `/api/v1/tag/videos?tag_id=xxx` 获取视频，验证返回匹配结果 |
+
+#### e2e: tag_operations.spec.js
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| 标签创建 | 验证用户可创建标签 | 用户打开标签管理页面，创建新标签，验证请求参数和UI更新 |
+| 标签编辑 | 验证用户可编辑标签 | 用户打开标签管理页面，编辑标签名称，验证请求参数和UI更新 |
+| 标签删除 | 验证用户可删除标签 | 用户打开标签管理页面，删除标签，验证请求参数和UI更新 |
+| 标签绑定 | 验证用户可绑定标签到内容 | 用户打开内容详情页，绑定标签，验证请求参数和UI更新 |
+
+### 18.4 trash_management 模块
+
+#### integration: test_comic_trash_lifecycle.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_comic_trash_move_and_restore_lifecycle | 验证漫画回收站移入恢复生命周期 | 调用 `/api/v1/comic/trash/move` 移入回收站，调用 `/api/v1/comic/trash/restore` 恢复，验证文件状态变化 |
+| test_comic_trash_permanent_delete_removes_record | 验证漫画永久删除正确移除记录 | 调用 `/api/v1/comic/trash/delete` 永久删除，验证文件记录移除 |
+| test_video_batch_trash_move_moves_all | 验证视频批量移入回收站 | 调用 `/api/v1/video/trash/batch-move` 批量移入，验证文件状态变化 |
+| test_video_batch_trash_restore_restores_all | 验证视频批量恢复 | 调用 `/api/v1/video/trash/batch-restore` 批量恢复，验证文件状态变化 |
+| test_video_batch_permanent_delete_removes_all | 验证视频批量永久删除 | 调用 `/api/v1/video/trash/batch-delete` 批量删除，验证文件记录移除 |
+| test_video_trash_list_returns_only_deleted | 验证回收站列表只返回已删除项 | 调用 `/api/v1/video/trash/list` 获取回收站列表，验证只包含已删除项 |
+| test_video_trash_move_rejects_nonexistent_video | 验证移入回收站校验视频存在性 | 调用 `/api/v1/video/trash/move` 传入不存在的ID，期望返回 400 |
+| test_video_trash_restore_rejects_nonexistent_video | 验证恢复校验视频存在性 | 调用 `/api/v1/video/trash/restore` 传入不存在的ID，期望返回 400 |
+| test_video_batch_trash_move_rejects_empty_list | 验证批量移入校验非空列表 | 调用 `/api/v1/video/trash/batch-move` 传入空列表，期望返回 400 |
+
+#### e2e: trash_operations.spec.js
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| trash page complete lifecycle: move to trash, list, and restore | 验证回收站完整生命周期 | 用户移入漫画到回收站，验证列表请求，然后恢复 |
+| trash page shows delete button for trashed item | 验证回收站删除按钮存在 | 用户移入漫画到回收站，验证删除按钮可见，然后恢复数据 |
+| trash page shows empty button when items exist | 验证回收站清空按钮存在 | 用户移入漫画到回收站，验证清空按钮可见，然后恢复数据 |
+
+**注意**: 回收站测试使用 JM100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响 library_sort_by_score 等依赖所有漫画在库的测试。
+
+### 18.5 global_search 模块
+
+#### integration: test_search_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_comic_search_returns_matching_results | 验证漫画搜索返回匹配结果 | 调用 `/api/v1/comic/search` 搜索关键词，验证返回匹配结果 |
+| test_comic_search_returns_empty_for_no_match | 验证漫画搜索无匹配返回空 | 调用 `/api/v1/comic/search` 搜索不存在的关键词，期望返回空列表 |
+| test_video_search_returns_matching_results | 验证视频搜索返回匹配结果 | 调用 `/api/v1/video/search` 搜索关键词，验证返回匹配结果 |
+| test_video_search_returns_empty_for_no_match | 验证视频搜索无匹配返回空 | 调用 `/api/v1/video/search` 搜索不存在的关键词，期望返回空列表 |
+
+### 18.6 system_config 模块
+
+#### integration: test_config_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_config_get_returns_user_config | 验证获取配置返回正确数据 | 调用 `/api/v1/config` 获取配置，验证返回数据结构 |
+| test_config_update_persists | 验证配置更新正确持久化 | 调用 `/api/v1/config` 更新配置，验证文件持久化 |
+| test_config_update_validates_background_value | 验证配置更新校验背景值 | 调用 `/api/v1/config` 传入无效背景值，期望返回 400 |
+| test_config_update_validates_page_mode_value | 验证配置更新校验翻页模式 | 调用 `/api/v1/config` 传入无效翻页模式，期望返回 400 |
+
+#### integration: test_backup_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_backup_create_returns_valid_structure | 验证备份创建返回正确结构 | 调用 `/api/v1/backup/create` 创建备份，验证返回数据结构 |
+| test_backup_restore_returns_valid_structure | 验证备份恢复返回正确结构 | 调用 `/api/v1/backup/restore` 恢复备份，验证返回数据结构 |
+
+#### integration: test_cache_contract.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_cache_stats_returns_valid_structure | 验证缓存统计返回正确结构 | 调用 `/api/v1/config/cache/stats` 获取缓存统计，验证返回数据结构 |
+| test_cache_clear_returns_valid_structure | 验证缓存清理返回正确结构 | 调用 `/api/v1/config/cache/clear` 清理缓存，验证返回数据结构 |
+| test_cache_clean_orphan_returns_valid_structure | 验证孤立缓存清理返回正确结构 | 调用 `/api/v1/config/cache/orphan` 清理孤立缓存，验证返回数据结构 |
+| test_config_data_path_returns_valid_structure | 验证缓存信息返回正确结构 | 调用 `/api/v1/config/cache/info` 获取缓存信息，验证返回数据结构 |
+| test_config_storage_info_returns_valid_structure | 验证系统信息返回正确结构 | 调用 `/api/v1/config/system` 获取系统信息，验证返回数据结构 |
+
+### 18.7 subscribe 模块
+
+#### integration: test_author_actor_subscription.py
+| 用例名称 | 用例目的 | 测试内容 |
+|---------|---------|---------|
+| test_author_subscribe_persists | 验证作者订阅正确持久化 | 调用 `/api/v1/author/subscribe` 订阅作者，验证文件持久化 |
+| test_author_unsubscribe_removes_record | 验证作者取消订阅正确移除 | 调用 `/api/v1/author/unsubscribe` 取消订阅，验证文件移除 |
+| test_actor_subscribe_persists | 验证演员订阅正确持久化 | 调用 `/api/v1/actor/subscribe` 订阅演员，验证文件持久化 |
+| test_actor_unsubscribe_removes_record | 验证演员取消订阅正确移除 | 调用 `/api/v1/actor/unsubscribe` 取消订阅，验证文件移除 |
+| test_author_check_updates_returns_data | 验证作者更新检查返回数据 | 调用 `/api/v1/author/check-updates` 检查更新，验证返回数据结构 |
+| test_actor_check_updates_returns_data | 验证演员更新检查返回数据 | 调用 `/api/v1/actor/check-updates` 检查更新，验证返回数据结构 |
+
+### 18.8 测试用例统计
+
+| 模块 | Integration 用例数 | E2E 用例数 |
+|-----|------------------|-----------|
+| library_browse | 28 | 4 |
+| list_management | 5 | 2 |
+| tag_management | 9 | 1 |
+| trash_management | 9 | 1 |
+| global_search | 4 | 1 |
+| system_config | 11 | 1 |
+| subscribe | 6 | 0 |
+| **总计** | **72** | **10** |
+
+### 18.9 关键修复记录
+
+| 问题类型 | 修复内容 | 影响用例 |
+|---------|---------|---------|
+| API端点不匹配 | `/api/v1/comic/import` → `/api/v1/comic/init` | test_comic_trash_lifecycle.py |
+| 参数名称不匹配 | `current_unit` → `unit`（视频进度） | test_video_progress_contract.py |
+| 响应格式不匹配 | 标签批量操作返回dict而非list | test_tag_batch_operations.py |
+| 测试数据不匹配 | 使用种子数据中的ID进行测试 | 多个用例 |
+| 评分精度验证 | 视频评分需为0.5精度（9.5而非9.8） | test_video_import_contract.py |
+| 请求格式错误 | DELETE请求使用json而非params | test_comic_trash_lifecycle.py |
