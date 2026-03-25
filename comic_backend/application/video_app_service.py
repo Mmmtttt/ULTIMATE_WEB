@@ -391,15 +391,81 @@ class VideoAppService(BaseContentAppService):
                 return local_video.id
         return None
 
+    def _build_preview_asset_prefixes(self, video_id: str) -> tuple:
+        safe_video_id = self._sanitize_video_asset_id(video_id)
+        preview_root_dir, preview_root_url, _ = self._build_preview_asset_root(video_id, "preview")
+        local_root_dir, local_root_url, _ = self._build_preview_asset_root(video_id, "local")
+        preview_dir = os.path.join(preview_root_dir, safe_video_id)
+        local_dir = os.path.join(local_root_dir, safe_video_id)
+        preview_prefix = f"{preview_root_url}/{safe_video_id}/"
+        local_prefix = f"{local_root_url}/{safe_video_id}/"
+        return preview_dir, local_dir, preview_prefix, local_prefix
+
+    def _map_preview_asset_url_to_local(
+        self,
+        asset_url: str,
+        preview_prefix: str,
+        local_prefix: str,
+    ) -> str:
+        raw_url = str(asset_url or "").strip()
+        if not raw_url:
+            return ""
+        if not raw_url.startswith(preview_prefix):
+            return raw_url
+
+        mapped = f"{local_prefix}{raw_url[len(preview_prefix):]}"
+        mapped_abs = self._resolve_static_asset_abs_path(mapped)
+        if mapped_abs and os.path.exists(mapped_abs):
+            return mapped
+
+        # Source points to preview cache but target does not exist after copy.
+        # Clear it so later fallback download/cache logic can repopulate local fields.
+        return ""
+
     def _migrate_recommendation_assets_to_local(self, recommendation_video: VideoRecommendation, local_video: Video) -> dict:
         """
-        Asset migration extension point.
-        For now preview/local video do not persist playable files, so keep as no-op.
+        Migrate cached preview assets from recommendation cache into local video asset directory.
+        When copied, refresh local-field URLs from preview-cache path to local-library path.
         """
+        video_id = str(getattr(recommendation_video, "id", "") or "").strip()
+        if not video_id:
+            return {"success": True, "handled": False, "strategy": "no_video_id"}
+
+        preview_dir, local_dir, preview_prefix, local_prefix = self._build_preview_asset_prefixes(video_id)
+        copied = False
+        try:
+            if os.path.isdir(preview_dir):
+                os.makedirs(os.path.dirname(local_dir), exist_ok=True)
+                shutil.copytree(preview_dir, local_dir, dirs_exist_ok=True)
+                copied = True
+        except Exception as copy_error:
+            error_logger.error(f"复制预览缓存到本地失败: id={video_id}, error={copy_error}")
+            return {"success": False, "reason": "copy_preview_cache_failed"}
+
+        preview_video_local = self._map_preview_asset_url_to_local(
+            getattr(recommendation_video, "preview_video_local", "") or "",
+            preview_prefix,
+            local_prefix,
+        )
+        cover_path_local = self._map_preview_asset_url_to_local(
+            getattr(recommendation_video, "cover_path_local", "") or "",
+            preview_prefix,
+            local_prefix,
+        )
+        thumbnail_images_local = []
+        for item in list(getattr(recommendation_video, "thumbnail_images_local", []) or []):
+            mapped_item = self._map_preview_asset_url_to_local(item, preview_prefix, local_prefix)
+            if mapped_item:
+                thumbnail_images_local.append(mapped_item)
+
+        local_video.preview_video_local = preview_video_local
+        local_video.cover_path_local = cover_path_local
+        local_video.thumbnail_images_local = thumbnail_images_local
+
         return {
             "success": True,
-            "handled": False,
-            "strategy": "reserved"
+            "handled": copied,
+            "strategy": "copy_preview_cache" if copied else "no_preview_cache"
         }
 
     def migrate_recommendations_to_local(self, video_ids: List[str]) -> ServiceResult:

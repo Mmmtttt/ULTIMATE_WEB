@@ -178,12 +178,13 @@ tests/
   - 视频搜索结果混排（JAVDB 横版 + JAVBUS 竖版）卡片高度与比例守卫。
 
 ## 14. Third-party Coverage Matrix (2026-03-25 Latest)
-- Current status: `tests/features/third_party_integration/` has `69` integration cases + `5` E2E cases.
+- Current status: `tests/features/third_party_integration/` has `70` integration cases + `5` E2E cases.
 - Covered import flows:
   - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
   - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`, duplicate-code guards (`home` and `recommendation`).
   - List: `platform/import`, `platform/sync`, `platform/list/detail`, `import/sync favorites` for `JAVDB/JM/PK`.
   - Preview -> local migrate routes (`comic` and `video`) create async import tasks.
+  - Video preview->local migrate cache copy: when preview cache exists, copy cached assets and rewrite local asset paths.
 - Covered search flows:
   - Comic third-party keyword search (`platform=all`, invalid platform guard).
   - Video third-party keyword search (`platform=all`, page parameter contract).
