@@ -1,6 +1,6 @@
 import os
 import re
-from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, SUPPORTED_FORMATS, JSON_FILE
+from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, JSON_FILE
 from core.platform import get_platform_from_id, get_original_id, Platform
 from infrastructure.logger import app_logger, error_logger
 
@@ -20,7 +20,22 @@ class FileParser:
         original_id = get_original_id(comic_id)
         
         if platform == Platform.JM:
-            return os.path.join(JM_PICTURES_DIR, original_id)
+            jm_dir = os.path.join(JM_PICTURES_DIR, original_id)
+            local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
+
+            # 本地导入漫画（JMLOCAL...）优先放置在 comic/local 目录；兼容旧版本可回退到 JM 目录。
+            if str(original_id or "").upper().startswith("LOCAL"):
+                if os.path.exists(local_dir):
+                    return local_dir
+                if os.path.exists(jm_dir):
+                    return jm_dir
+                return local_dir
+
+            if os.path.exists(jm_dir):
+                return jm_dir
+            if os.path.exists(local_dir):
+                return local_dir
+            return jm_dir
         elif platform == Platform.PK:
             # 优先按 Picacomic-Crawler 默认规则推导目录:
             # base_dir = PK_PICTURES_DIR

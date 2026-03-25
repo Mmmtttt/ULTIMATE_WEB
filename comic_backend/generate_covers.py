@@ -12,7 +12,7 @@ from PIL import Image
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, JM_COVER_DIR, PK_COVER_DIR, COVER_WIDTH, COVER_QUALITY
+from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR, JM_COVER_DIR, PK_COVER_DIR, COVER_WIDTH, COVER_QUALITY
 from core.platform import get_platform_from_id, get_original_id, Platform, PLATFORM_PREFIXES
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import app_logger, error_logger
@@ -48,9 +48,16 @@ def generate_cover(comic_id, first_image_path):
         with Image.open(first_image_path) as img:
             # 计算缩放比例
             width, height = img.size
+            if width <= 0 or height <= 0:
+                raise ValueError("图片尺寸无效")
             ratio = COVER_WIDTH / width
             new_height = int(height * ratio)
             
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            elif img.mode == "L":
+                img = img.convert("RGB")
+
             # 缩放图片
             resized_img = img.resize((COVER_WIDTH, new_height), Image.LANCZOS)
             
@@ -72,7 +79,19 @@ def get_comic_image_dir(comic_id):
     original_id = get_original_id(comic_id)
     
     if platform == Platform.JM:
-        return os.path.join(JM_PICTURES_DIR, original_id)
+        jm_dir = os.path.join(JM_PICTURES_DIR, original_id)
+        local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
+        if str(original_id or "").upper().startswith("LOCAL"):
+            if os.path.exists(local_dir):
+                return local_dir
+            if os.path.exists(jm_dir):
+                return jm_dir
+            return local_dir
+        if os.path.exists(jm_dir):
+            return jm_dir
+        if os.path.exists(local_dir):
+            return local_dir
+        return jm_dir
     elif platform == Platform.PK:
         return os.path.join(PK_PICTURES_DIR, original_id)
     else:

@@ -287,6 +287,8 @@ export const comicApi = {
   localImportCreateSessionFromPath: async (sourcePath) => {
     const result = await request.post('/v1/comic/batch-upload/session/from-path', {
       source_path: sourcePath
+    }, {
+      timeout: 0
     })
     return result.data
   },
@@ -297,7 +299,9 @@ export const comicApi = {
       formData.append('files', file)
       formData.append('relative_paths', relativePaths[index] || file.name || '')
     })
-    const result = await request.post('/v1/comic/batch-upload/session/upload', formData)
+    const result = await request.post('/v1/comic/batch-upload/session/upload', formData, {
+      timeout: 0
+    })
     return result.data
   },
 
@@ -318,6 +322,8 @@ export const comicApi = {
     const result = await request.post('/v1/comic/batch-upload/session/commit', {
       session_id: sessionId,
       assignments
+    }, {
+      timeout: 0
     })
     return result.data
   },

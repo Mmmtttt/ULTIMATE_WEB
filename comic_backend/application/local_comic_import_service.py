@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.constants import CACHE_ROOT_DIR, JM_PICTURES_DIR, SUPPORTED_FORMATS
+from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from utils.file_parser import file_parser
@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
+LOCAL_IMPORT_TAG_NAME = "本地"
 
 LOCAL_IMPORT_WORKSPACE_DIR = Path(CACHE_ROOT_DIR) / "comic_local_import_workspace"
 LOCAL_IMPORT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,6 +40,7 @@ LOCAL_IMPORT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 class LocalComicImportService:
     def __init__(self):
         self._db_storage = JsonStorage()
+        self._tag_storage = JsonStorage(TAGS_JSON_FILE)
 
     @staticmethod
     def _timestamp() -> str:
@@ -531,6 +533,87 @@ class LocalComicImportService:
         return f"{base_id}_{suffix}"
 
     @staticmethod
+    def _next_tag_id_from_items(tags: List[Dict[str, Any]]) -> str:
+        max_tag_num = 0
+        for tag in tags:
+            tag_id = str((tag or {}).get("id", ""))
+            if not tag_id.startswith("tag_"):
+                continue
+            try:
+                max_tag_num = max(max_tag_num, int(tag_id[4:]))
+            except Exception:
+                continue
+        return f"tag_{max_tag_num + 1:03d}"
+
+    def _ensure_local_tag_id(self) -> str:
+        result = {"tag_id": ""}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            tags = data.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+
+            for item in tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                if str(item.get("name", "")).strip() != LOCAL_IMPORT_TAG_NAME:
+                    continue
+                tag_id = str(item.get("id", "")).strip()
+                if tag_id:
+                    result["tag_id"] = tag_id
+                    data["tags"] = tags
+                    return data
+
+            new_tag_id = self._next_tag_id_from_items(tags)
+            tags.append(
+                {
+                    "id": new_tag_id,
+                    "name": LOCAL_IMPORT_TAG_NAME,
+                    "content_type": "comic",
+                    "create_time": self._timestamp(),
+                }
+            )
+            data["tags"] = tags
+            data["last_updated"] = time.strftime("%Y-%m-%d")
+            result["tag_id"] = new_tag_id
+            return data
+
+        ok = self._tag_storage.atomic_update(updater)
+        if not ok or not result["tag_id"]:
+            raise RuntimeError("创建/查询本地标签失败")
+        return result["tag_id"]
+
+    def _ensure_comic_has_tag(self, comic_id: str, tag_id: str) -> bool:
+        status = {"updated": False}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            comics = data.get("comics", [])
+            if not isinstance(comics, list):
+                comics = []
+            for comic in comics:
+                if not isinstance(comic, dict):
+                    continue
+                if str(comic.get("id", "")) != comic_id:
+                    continue
+                tag_ids = comic.get("tag_ids", [])
+                if not isinstance(tag_ids, list):
+                    tag_ids = []
+                if tag_id not in tag_ids:
+                    tag_ids.append(tag_id)
+                    comic["tag_ids"] = tag_ids
+                    status["updated"] = True
+                    data["last_updated"] = time.strftime("%Y-%m-%d")
+                break
+            data["comics"] = comics
+            return data
+
+        ok = self._db_storage.atomic_update(updater)
+        return bool(ok and status["updated"])
+
+    @staticmethod
     def _iter_image_files(root: Path) -> List[Path]:
         files: List[Path] = []
         for path in root.rglob("*"):
@@ -652,7 +735,7 @@ class LocalComicImportService:
             meta = self._read_json(self._meta_path(session_id), default={}) or {}
             assignments = self._normalize_assignments(meta.get("saved_assignments", {}))
         if not assignments:
-            raise ValueError("请先完成层级标记并生成 JSON")
+            raise ValueError("请先完成层级标记")
 
         self._save_assignments_to_meta(session_id, assignments)
 
@@ -662,6 +745,8 @@ class LocalComicImportService:
         state = self._load_or_create_state(session_id, total_items=len(items))
         state["status"] = "running"
         self._save_state(session_id, state)
+
+        local_tag_id = self._ensure_local_tag_id() if items else ""
 
         db_data = self._db_storage.read()
         comics = db_data.get("comics", [])
@@ -706,6 +791,8 @@ class LocalComicImportService:
                 if key in existing_source_map:
                     record["status"] = "skipped"
                     record["comic_id"] = existing_source_map[key]
+                    if local_tag_id:
+                        self._ensure_comic_has_tag(record["comic_id"], local_tag_id)
                     record["error"] = ""
                     record["updated_at"] = self._timestamp()
                     self._save_state(session_id, state)
@@ -726,7 +813,7 @@ class LocalComicImportService:
                 if copied_count <= 0:
                     raise RuntimeError("作品目录中没有可导入图片")
 
-                target_dir = Path(JM_PICTURES_DIR) / original_id
+                target_dir = Path(LOCAL_PICTURES_DIR) / original_id
                 if target_dir.exists():
                     shutil.rmtree(target_dir, ignore_errors=True)
                 target_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -737,6 +824,8 @@ class LocalComicImportService:
                     raise RuntimeError("导入后未检测到可读图片")
 
                 cover_path = image_handler.generate_cover(comic_id, image_paths[0])
+                if not cover_path or cover_path == "/static/default/default_cover.jpg":
+                    cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
                 now = self._timestamp()
                 comic_record = {
                     "id": comic_id,
@@ -748,7 +837,7 @@ class LocalComicImportService:
                     "total_page": len(image_paths),
                     "current_page": 1,
                     "score": None,
-                    "tag_ids": [],
+                    "tag_ids": [local_tag_id] if local_tag_id else [],
                     "list_ids": [],
                     "create_time": now,
                     "last_read_time": now,

@@ -555,7 +555,14 @@ class ComicAppService:
         
         handler = ImageHandler()
         new_cover_path = handler.generate_cover(comic.id, image_paths[0])
-        if new_cover_path and comic.cover_path != new_cover_path:
+        if not new_cover_path or new_cover_path == "/static/default/default_cover.jpg":
+            fallback_cover_path = f"/api/v1/comic/image?comic_id={comic.id}&page_num=1"
+            if comic.cover_path != fallback_cover_path:
+                comic.cover_path = fallback_cover_path
+                self._comic_repo.save(comic)
+            return
+
+        if comic.cover_path != new_cover_path:
             comic.cover_path = new_cover_path
             self._comic_repo.save(comic)
 

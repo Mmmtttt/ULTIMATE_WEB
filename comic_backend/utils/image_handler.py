@@ -31,11 +31,18 @@ class ImageHandler:
             
             with Image.open(first_image_path) as img:
                 width, height = img.size
+                if width <= 0 or height <= 0:
+                    raise ValueError("图片尺寸无效")
                 ratio = self.cover_width / width
                 new_height = int(height * ratio)
-                
+
+                # PNG/WebP 等带透明通道的图片需先转 RGB，避免保存 JPEG 失败
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+                elif img.mode == "L":
+                    img = img.convert("RGB")
+
                 resized_img = img.resize((self.cover_width, new_height), Image.LANCZOS)
-                
                 resized_img.save(cover_path, 'JPEG', quality=self.cover_quality)
             
             platform = get_platform_from_id(comic_id)
