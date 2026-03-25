@@ -8,6 +8,29 @@ const {
 const COMIC_ID = "JM100001";
 const SECONDARY_COMIC_ID = "JM100002";
 
+async function setReaderDefaultConfig(page, overrides = {}) {
+  await page.addInitScript((overrideConfig) => {
+    let existing = {};
+    try {
+      existing = JSON.parse(window.localStorage.getItem("comic_config") || "{}");
+    } catch (error) {
+      existing = {};
+    }
+    window.localStorage.setItem(
+      "comic_config",
+      JSON.stringify({
+        defaultPageMode: "left_right",
+        defaultBackground: "white",
+        autoHideToolbar: true,
+        showPageNumber: true,
+        autoDownloadPreviewImportAssets: true,
+        ...existing,
+        ...overrideConfig,
+      }),
+    );
+  }, overrides);
+}
+
 async function openReaderAndShowMenu(page, url) {
   await page.goto(url);
   await expect(page.locator(".reader-content")).toBeVisible();
@@ -47,6 +70,7 @@ async function waitPageIndicator(page, expectedText) {
  *   - 2026-03-24: 初始创建，建立本地阅读核心看护门禁。
  */
 test("local reader restores route page and loads backend images", async ({ page }) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
   const apiRequests = startApiRequestRecorder(page);
 
   await openReaderAndShowMenu(page, `/reader/${COMIC_ID}?page=2`);
@@ -98,6 +122,7 @@ test("local reader restores route page and loads backend images", async ({ page 
 test("local reader keeps anchor page when toggling mode and persists progress", async ({
   page,
 }) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
   await openReaderAndShowMenu(page, `/reader/${COMIC_ID}?page=1`);
   await waitPageIndicator(page, "1/3");
 
@@ -147,18 +172,7 @@ test("local reader keeps anchor page when toggling mode and persists progress", 
  *   - 2026-03-24: 初始创建，补齐配置到阅读行为的回归看护。
  */
 test("local reader uses configured default page mode on first render", async ({ page }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      "comic_config",
-      JSON.stringify({
-        defaultPageMode: "up_down",
-        defaultBackground: "white",
-        autoHideToolbar: true,
-        showPageNumber: true,
-        autoDownloadPreviewImportAssets: true,
-      }),
-    );
-  });
+  await setReaderDefaultConfig(page, { defaultPageMode: "up_down" });
 
   await page.goto(`/reader/${SECONDARY_COMIC_ID}`);
   await expect(page.locator(".reader-content")).toBeVisible();
@@ -184,18 +198,9 @@ test("local reader uses configured default page mode on first render", async ({ 
 test("local reader single-page mode keeps centered snap paging in left-right and up-down", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      "comic_config",
-      JSON.stringify({
-        defaultPageMode: "left_right",
-        defaultBackground: "white",
-        autoHideToolbar: true,
-        showPageNumber: true,
-        autoDownloadPreviewImportAssets: true,
-        singlePageBrowsing: true,
-      }),
-    );
+  await setReaderDefaultConfig(page, {
+    defaultPageMode: "left_right",
+    singlePageBrowsing: true,
   });
 
   await openReaderAndShowMenu(page, `/reader/${COMIC_ID}?page=2`);

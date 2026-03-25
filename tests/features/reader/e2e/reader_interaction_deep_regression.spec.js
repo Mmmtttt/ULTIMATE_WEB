@@ -4,6 +4,29 @@ const COMIC_ID = "JM100003";
 const TOTAL_PAGE = 5;
 const BACKEND_BASE_URL = "http://127.0.0.1:5010";
 
+async function setReaderDefaultConfig(page, overrides = {}) {
+  await page.addInitScript((overrideConfig) => {
+    let existing = {};
+    try {
+      existing = JSON.parse(window.localStorage.getItem("comic_config") || "{}");
+    } catch (error) {
+      existing = {};
+    }
+    window.localStorage.setItem(
+      "comic_config",
+      JSON.stringify({
+        defaultPageMode: "left_right",
+        defaultBackground: "white",
+        autoHideToolbar: true,
+        showPageNumber: true,
+        autoDownloadPreviewImportAssets: true,
+        ...existing,
+        ...overrideConfig,
+      }),
+    );
+  }, overrides);
+}
+
 function extractImageRequestPages(requests, comicId) {
   const pages = [];
   for (const req of requests) {
@@ -88,6 +111,7 @@ async function setComicProgress(page, comicId, currentPage) {
  *   - 2026-03-24: 初始创建，补齐无缝拼接与预加载优先级深度看护。
  */
 test("reader preloads around focus page and keeps seamless page stitching", async ({ page }) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
   const apiRequests = startApiRequestRecorder(page);
   await setComicProgress(page, COMIC_ID, 3);
 
@@ -173,6 +197,7 @@ test("reader preloads around focus page and keeps seamless page stitching", asyn
  *   - 2026-03-24: 初始创建，补齐桌面端核心交互深度门禁。
  */
 test("desktop reader supports wheel paging zoom pan and fullscreen toggle", async ({ page }) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
   await setComicProgress(page, COMIC_ID, 1);
   await page.goto(`/reader/${COMIC_ID}?page=1`);
   await expect(page.locator(".reader-content")).toBeVisible();
@@ -278,6 +303,7 @@ test.describe("mobile touch reader interactions", () => {
    *   - 2026-03-24: 初始创建，补齐手机端触摸路径的门禁看护。
    */
   test("mobile reader supports touch swipe and pinch zoom", async ({ page }) => {
+    await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
     await setComicProgress(page, COMIC_ID, 1);
     await page.goto(`/reader/${COMIC_ID}?page=1`);
     const container = page.locator(".left-right-mode");

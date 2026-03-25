@@ -16,6 +16,29 @@ const PNG_1X1 = Buffer.from(
   "base64",
 );
 
+async function setReaderDefaultConfig(page, overrides = {}) {
+  await page.addInitScript((overrideConfig) => {
+    let existing = {};
+    try {
+      existing = JSON.parse(window.localStorage.getItem("comic_config") || "{}");
+    } catch (error) {
+      existing = {};
+    }
+    window.localStorage.setItem(
+      "comic_config",
+      JSON.stringify({
+        defaultPageMode: "left_right",
+        defaultBackground: "white",
+        autoHideToolbar: true,
+        showPageNumber: true,
+        autoDownloadPreviewImportAssets: true,
+        ...existing,
+        ...overrideConfig,
+      }),
+    );
+  }, overrides);
+}
+
 async function apiJson(response) {
   const payload = await response.json();
   return payload;
@@ -156,6 +179,7 @@ test("preview reader uses cached pages and skips full download call", async ({
   page,
   request,
 }) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
   const runtimeDataDir = await getRuntimeDataDir(request);
   await addRecommendation(request, CACHED_RECOMMENDATION_ID, "Reader Gate Cached", 3);
   await seedRecommendationCache(runtimeDataDir, CACHED_RECOMMENDATION_ID, 3);
@@ -245,18 +269,9 @@ test("preview reader single-page mode keeps centered snap paging", async ({
   const runtimeDataDir = await getRuntimeDataDir(request);
   const recommendationId = "JM910004";
 
-  await page.addInitScript(() => {
-    window.localStorage.setItem(
-      "comic_config",
-      JSON.stringify({
-        defaultPageMode: "left_right",
-        defaultBackground: "white",
-        autoHideToolbar: true,
-        showPageNumber: true,
-        autoDownloadPreviewImportAssets: true,
-        singlePageBrowsing: true,
-      }),
-    );
+  await setReaderDefaultConfig(page, {
+    defaultPageMode: "left_right",
+    singlePageBrowsing: true,
   });
 
   await addRecommendation(request, recommendationId, "Reader Gate Preview Single Page", 3, {
