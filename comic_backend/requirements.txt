@@ -6,3 +6,5 @@ jmcomic
 PyYAML
 beautifulsoup4
 lxml>=4.9.0
+py7zr>=0.21.0
+rarfile>=4.2

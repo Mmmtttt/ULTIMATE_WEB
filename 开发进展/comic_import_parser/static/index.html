@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>本地漫画导入解析器</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <h1>本地漫画导入解析器</h1>
+      <p>先把压缩包 / 文件夹递归解成“干净目录树”，再通过可视化界面手动标记哪一层是作者层、哪一层是作品层。</p>
+    </div>
+    <div class="header-actions">
+      <button id="clearSessionBtn" class="ghost-button">清理当前会话</button>
+    </div>
+  </header>
+
+  <section class="import-grid">
+    <div class="card">
+      <h2>方式一：按本机路径导入</h2>
+      <p class="muted">适合前后端在同一台机器上运行的本地站点。直接填绝对路径即可。</p>
+      <label class="field-label" for="pathInput">本地路径</label>
+      <input id="pathInput" class="text-input" type="text" placeholder="例如：D:\漫画\作者合集 或 /Users/you/comics/作者合集.zip">
+      <button id="importPathBtn" class="primary-button">从路径导入</button>
+    </div>
+
+    <div class="card">
+      <h2>方式二：浏览器上传导入</h2>
+      <p class="muted">可上传压缩包，也可上传整个文件夹。文件夹结构会被保留，再由后端递归清洗。</p>
+      <label class="field-label" for="archiveInput">压缩包（可多选）</label>
+      <input id="archiveInput" type="file" multiple accept=".zip,.rar,.7z">
+      <label class="field-label" for="folderInput">文件夹（可多选）</label>
+      <input id="folderInput" type="file" multiple webkitdirectory directory>
+      <button id="uploadBtn" class="primary-button">上传并导入</button>
+    </div>
+  </section>
+
+  <section class="status-bar" id="statusBar">等待导入。</section>
+
+  <section class="workspace-meta">
+    <div class="meta-item"><span>当前会话</span><strong id="sessionIdLabel">-</strong></div>
+    <div class="meta-item"><span>清洗目录</span><strong id="cleanRootLabel">-</strong></div>
+    <div class="meta-item"><span>当前选中</span><strong id="selectedLabel">-</strong></div>
+  </section>
+
+  <main class="main-grid">
+    <section class="card tree-card">
+      <div class="card-header">
+        <div>
+          <h2>目录树</h2>
+          <p class="muted">点击某个目录后，下面的“标记”操作会作用在它所在的整层（同级目录会一起生效）。</p>
+        </div>
+        <div class="legend">
+          <span class="badge author">作者目录</span>
+          <span class="badge work">作品目录</span>
+        </div>
+      </div>
+      <div id="treeContainer" class="tree-container empty-panel">还没有导入任何目录。</div>
+    </section>
+
+    <section class="side-column">
+      <section class="card action-card">
+        <h2>层级标记</h2>
+        <div id="selectionInfo" class="selection-info">请先从左侧目录树中选择一个目录。</div>
+        <div class="button-group">
+          <button id="markAuthorBtn" class="secondary-button">把这一层标为作者层</button>
+          <button id="markWorkBtn" class="secondary-button">把这一层标为作品层</button>
+          <button id="clearLayerBtn" class="ghost-button">清除此层标记</button>
+          <button id="clearMarksBtn" class="ghost-button">清空全部标记</button>
+        </div>
+      </section>
+
+      <section class="card action-card">
+        <h2>当前标记概览</h2>
+        <div id="assignmentList" class="assignment-list empty-panel">尚未设置任何层级标记。</div>
+      </section>
+
+      <section class="card action-card">
+        <h2>生成结果 JSON</h2>
+        <div class="button-group inline">
+          <button id="exportBtn" class="primary-button">生成 JSON</button>
+          <button id="downloadBtn" class="secondary-button">下载 JSON</button>
+        </div>
+        <pre id="jsonPreview" class="json-preview">[]</pre>
+      </section>
+
+      <section class="card action-card">
+        <h2>导入警告</h2>
+        <div id="warningsBox" class="warnings-box empty-panel">暂无警告。</div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

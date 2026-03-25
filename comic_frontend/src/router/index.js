@@ -135,6 +135,12 @@ const routes = [
     path: '/import-tasks',
     name: 'ImportTasks',
     component: () => import('@/views/ImportTasks.vue')
+  },
+  {
+    path: '/comic-local-import',
+    name: 'ComicLocalImport',
+    component: () => import('@/views/ComicLocalImport.vue'),
+    meta: { title: '本地漫画导入' }
   }
 ]
 

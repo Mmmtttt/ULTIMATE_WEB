@@ -283,6 +283,56 @@ export const comicApi = {
     const result = await request.post('/v1/comic/batch-upload', formData)
     return result.data
   },
+
+  localImportCreateSessionFromPath: async (sourcePath) => {
+    const result = await request.post('/v1/comic/batch-upload/session/from-path', {
+      source_path: sourcePath
+    })
+    return result.data
+  },
+
+  localImportCreateSessionFromUpload: async (files, relativePaths) => {
+    const formData = new FormData()
+    files.forEach((file, index) => {
+      formData.append('files', file)
+      formData.append('relative_paths', relativePaths[index] || file.name || '')
+    })
+    const result = await request.post('/v1/comic/batch-upload/session/upload', formData)
+    return result.data
+  },
+
+  localImportGetSessionTree: async (sessionId) => {
+    const result = await request.get(`/v1/comic/batch-upload/session/${encodeURIComponent(sessionId)}/tree`)
+    return result.data
+  },
+
+  localImportExport: async (sessionId, assignments = {}) => {
+    const result = await request.post('/v1/comic/batch-upload/session/export', {
+      session_id: sessionId,
+      assignments
+    })
+    return result.data
+  },
+
+  localImportCommit: async (sessionId, assignments = {}) => {
+    const result = await request.post('/v1/comic/batch-upload/session/commit', {
+      session_id: sessionId,
+      assignments
+    })
+    return result.data
+  },
+
+  localImportClearSession: async (sessionId) => {
+    const result = await request.delete(`/v1/comic/batch-upload/session/${encodeURIComponent(sessionId)}`)
+    return result.data
+  },
+
+  localImportDownloadResult: async (sessionId) => {
+    const response = await request.get(`/v1/comic/batch-upload/session/${encodeURIComponent(sessionId)}/result.json`, {
+      responseType: 'blob'
+    })
+    triggerBlobDownload(response.data, 'result.json')
+  },
   
   onlineImport: async (data) => {
     return request.post('/v1/comic/import/online', data)

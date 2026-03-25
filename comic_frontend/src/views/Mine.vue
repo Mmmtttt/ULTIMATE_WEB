@@ -25,7 +25,7 @@
           </van-tag>
         </template>
       </van-cell>
-      <van-cell v-if="!isVideoMode" title="批量上传" icon="description" @click="showUploadPanel = true" is-link />
+      <van-cell v-if="!isVideoMode" title="本地漫画导入" icon="description" to="/comic-local-import" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
@@ -151,52 +151,15 @@
       </div>
     </van-popup>
     
-    <!-- 批量上传面板 (漫画独有) -->
-    <van-popup 
-      v-if="!isVideoMode"
-      v-model:show="showUploadPanel" 
-      position="bottom" 
-      round 
-      :style="{ height: '50%' }"
-    >
-      <div class="upload-panel">
-        <van-nav-bar title="批量上传" left-text="关闭" @click-left="showUploadPanel = false" />
-        <div class="upload-content">
-          <div class="upload-area" @click="triggerFileInput">
-            <van-icon name="add-o" size="40" />
-            <p class="upload-hint">点击选择 ZIP 文件</p>
-          </div>
-          <input 
-            ref="fileInput" 
-            type="file" 
-            accept=".zip" 
-            multiple 
-            style="display: none" 
-            @change="handleFileSelect"
-          />
-          <!-- Simplified upload UI -->
-          <van-button 
-            type="primary" 
-            block 
-            :disabled="selectedFiles.length === 0" 
-            :loading="uploading"
-            @click="handleUpload"
-            style="margin-top: 20px"
-          >
-            开始上传 ({{ selectedFiles.length }})
-          </van-button>
-        </div>
-      </div>
-    </van-popup>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
-import { comicApi, authorApi, recommendationApi, configApi } from '@/api'
-import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
+import { configApi } from '@/api'
+import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -212,17 +175,13 @@ const isVideoMode = computed(() => modeStore.isVideoMode)
 // State
 const showImportDialog = ref(false)
 const showCachePanel = ref(false)
-const showUploadPanel = ref(false)
 const importType = ref('by_id')
 const importTarget = ref('home')
 const importPlatform = ref('JM')
 const importId = ref('')
 const importFile = ref(null)
 const importing = ref(false)
-const uploading = ref(false)
-const selectedFiles = ref([])
 const importFileInput = ref(null)
-const fileInput = ref(null)
 
 // Cache Info
 const cacheInfo = ref({
@@ -462,28 +421,6 @@ async function handleOnlineImport() {
   }
 }
 
-// Upload Logic
-function triggerFileInput() {
-  fileInput.value?.click()
-}
-
-function handleFileSelect(event) {
-  selectedFiles.value = Array.from(event.target.files)
-}
-
-async function handleUpload() {
-  uploading.value = true
-  try {
-    await comicApi.batchUpload(selectedFiles.value)
-    showSuccessToast('上传成功')
-    showUploadPanel.value = false
-  } catch (e) {
-    showFailToast('上传失败')
-  } finally {
-    uploading.value = false
-  }
-}
-
 // Init
 onMounted(async () => {
   // Initial data fetch based on mode
@@ -562,13 +499,13 @@ watch(() => modeStore.currentMode, () => {
 }
 
 /* Panels & Dialogs */
-.cache-panel, .upload-panel {
+.cache-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.cache-content, .upload-content {
+.cache-content {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
@@ -610,11 +547,4 @@ watch(() => modeStore.currentMode, () => {
   margin-top: 20px;
 }
 
-.upload-area {
-  border: 2px dashed var(--border-soft);
-  border-radius: 8px;
-  padding: 40px;
-  text-align: center;
-  cursor: pointer;
-}
 </style>

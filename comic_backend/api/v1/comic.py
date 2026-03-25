@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
+from application.local_comic_import_service import local_comic_import_service
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
@@ -957,6 +958,135 @@ def batch_upload_comics():
         
     except Exception as e:
         error_logger.error(f"批量上传漫画失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/from-path', methods=['POST'])
+def batch_upload_create_session_from_path():
+    """按服务端本机路径创建本地导入解析会话。"""
+    try:
+        data = request.json or {}
+        source_path = str(data.get('source_path', '') or '').strip()
+        if not source_path:
+            return error_response(400, "缺少参数: source_path")
+
+        result = local_comic_import_service.create_session_from_path(source_path)
+        return success_response(result, "解析会话创建成功")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"创建本地导入会话失败(path): {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/upload', methods=['POST'])
+def batch_upload_create_session_from_upload():
+    """通过浏览器上传创建本地导入解析会话。"""
+    try:
+        files = request.files.getlist('files')
+        if not files:
+            return error_response(400, "没有上传文件")
+
+        relative_paths = request.form.getlist('relative_paths')
+        if not relative_paths:
+            relative_paths = [f.filename or '' for f in files]
+
+        result = local_comic_import_service.create_session_from_upload(files, relative_paths)
+        return success_response(result, "解析会话创建成功")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"创建本地导入会话失败(upload): {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/<session_id>/tree', methods=['GET'])
+def batch_upload_get_session_tree(session_id):
+    try:
+        result = local_comic_import_service.get_session_tree(session_id)
+        return success_response(result)
+    except ValueError as e:
+        return error_response(404, str(e))
+    except Exception as e:
+        error_logger.error(f"获取本地导入会话目录树失败: {session_id}, {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/export', methods=['POST'])
+def batch_upload_export_json():
+    """根据层级标记生成解析结果 JSON。"""
+    try:
+        data = request.json or {}
+        session_id = str(data.get('session_id', '') or '').strip()
+        if not session_id:
+            return error_response(400, "缺少参数: session_id")
+
+        assignments = data.get('assignments', {}) or {}
+        if not isinstance(assignments, dict):
+            return error_response(400, "参数 assignments 格式错误")
+
+        result = local_comic_import_service.export_session_items(session_id, assignments)
+        return success_response(result, "JSON 生成成功")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"导出本地导入 JSON 失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/commit', methods=['POST'])
+def batch_upload_commit_session():
+    """提交导入到本地漫画库。支持中断后继续执行。"""
+    try:
+        data = request.json or {}
+        session_id = str(data.get('session_id', '') or '').strip()
+        if not session_id:
+            return error_response(400, "缺少参数: session_id")
+
+        assignments = data.get('assignments', None)
+        if assignments is not None and not isinstance(assignments, dict):
+            return error_response(400, "参数 assignments 格式错误")
+
+        result = local_comic_import_service.commit_session_import(session_id, assignments)
+        if result.get('failed_count', 0) > 0:
+            return success_response(
+                result,
+                f"导入部分失败，可修复后继续: 成功 {result.get('imported_count', 0)}，失败 {result.get('failed_count', 0)}"
+            )
+        return success_response(result, "导入完成")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"提交本地导入会话失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/<session_id>/result.json', methods=['GET'])
+def batch_upload_download_result_json(session_id):
+    try:
+        path = local_comic_import_service.get_result_file_path(session_id)
+        return send_file(
+            str(path),
+            mimetype='application/json',
+            as_attachment=True,
+            download_name='result.json'
+        )
+    except ValueError as e:
+        return error_response(404, str(e))
+    except Exception as e:
+        error_logger.error(f"下载本地导入结果 JSON 失败: {session_id}, {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/<session_id>', methods=['DELETE'])
+def batch_upload_clear_session(session_id):
+    try:
+        local_comic_import_service.clear_session(session_id)
+        return success_response({"session_id": session_id}, "会话已清理")
+    except ValueError as e:
+        return error_response(404, str(e))
+    except Exception as e:
+        error_logger.error(f"清理本地导入会话失败: {session_id}, {e}")
         return error_response(500, "服务器内部错误")
 
 
