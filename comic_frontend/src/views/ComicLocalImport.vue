@@ -14,8 +14,7 @@
       <div class="hero-steps">
         <span>1. 导入源</span>
         <span>2. 标记层级</span>
-        <span>3. 预览 JSON</span>
-        <span>4. 提交入库</span>
+        <span>3. 提交入库</span>
       </div>
     </section>
 
@@ -179,6 +178,7 @@
           </div>
         </div>
         <div class="tree-footer-actions">
+          <van-button plain size="small" @click="restoreDefaultLayers">恢复默认标记</van-button>
           <van-button plain size="small" @click="clearAllLayers">清空全部标记</van-button>
         </div>
       </div>
@@ -197,7 +197,7 @@
               <div>当前状态：{{ roleText(selectionLayerInfo.role) }}</div>
             </template>
             <template v-else>
-              当前模式：{{ markModeText }}，请点击目录树中的非根目录节点。
+              当前模式：{{ markModeText }}，请点击目录树中的目录节点。
             </template>
           </div>
           <div class="action-buttons">
@@ -232,11 +232,9 @@
 
     <section class="card-surface result-card">
       <div class="section-title">
-        <h3>结果与提交</h3>
+        <h3>提交导入</h3>
       </div>
       <div class="result-actions">
-        <van-button type="primary" @click="generateJson" :loading="exporting" :disabled="!sessionId">生成 JSON</van-button>
-        <van-button plain @click="downloadJson" :disabled="!sessionId">下载 JSON</van-button>
         <van-button
           type="success"
           @click="commitImport"
@@ -252,7 +250,6 @@
         <div>跳过：{{ commitSummary.skipped_count }}</div>
         <div>失败：{{ commitSummary.failed_count }}</div>
       </div>
-      <pre class="json-preview">{{ jsonPreviewText }}</pre>
     </section>
   </div>
 </template>
@@ -277,7 +274,6 @@ const pathArchivePickerRef = ref(null)
 const pathFolderPickerRef = ref(null)
 
 const parsing = ref(false)
-const exporting = ref(false)
 const committing = ref(false)
 
 const sessionId = ref('')
@@ -288,7 +284,6 @@ const nodeMap = ref({})
 const assignments = ref({})
 const selectedNodeId = ref('')
 const collapsedIds = ref(new Set())
-const exportItems = ref([])
 const commitSummary = ref(null)
 const markMode = ref('work')
 
@@ -347,7 +342,6 @@ const treeRows = computed(() => {
   return rows
 })
 
-const jsonPreviewText = computed(() => JSON.stringify(exportItems.value || [], null, 2))
 const markModeText = computed(() => {
   if (markMode.value === 'author') return '标记为作者层'
   if (markMode.value === 'work') return '标记为作品层'
@@ -359,6 +353,43 @@ function roleText(role) {
   if (role === 'author') return '作者层'
   if (role === 'work') return '作品层'
   return '未标记'
+}
+
+function getNodeDepth(nodeId) {
+  let depth = 0
+  let currentId = nodeId
+  while (currentId && currentId !== '.') {
+    const node = nodeMap.value[currentId]
+    if (!node || node.parentId === null || node.parentId === undefined) {
+      break
+    }
+    depth += 1
+    currentId = node.parentId
+  }
+  return depth
+}
+
+function isChapterLikeName(name) {
+  const raw = String(name || '').trim()
+  if (!raw) return false
+
+  const compact = raw
+    .replace(/[【】\[\]（）()]/g, '')
+    .replace(/[_\-\s]/g, '')
+    .toLowerCase()
+
+  if (!compact) return false
+
+  const basicTokenPattern = /^(?:\d{1,4}|[a-z]{1,2}|[ivxlcdm]{1,6}|[一二三四五六七八九十百千零〇两]{1,6})$/
+  if (basicTokenPattern.test(compact)) return true
+
+  const chapterPattern = /^(?:第)?(?:\d{1,4}|[a-z]{1,2}|[ivxlcdm]{1,6}|[一二三四五六七八九十百千零〇两]{1,6})(?:话|章|回|节|卷|集|部)?$/
+  if (chapterPattern.test(compact)) return true
+
+  const englishChapterPattern = /^(?:ch|chap|chapter|ep|episode|vol|volume)[\divxlcdm\-_.]{1,8}$/
+  if (englishChapterPattern.test(compact)) return true
+
+  return false
 }
 
 function rebuildNodeMap(treePayload) {
@@ -377,22 +408,56 @@ function rebuildNodeMap(treePayload) {
   nodeMap.value = map
 }
 
+function buildDefaultAssignments() {
+  const rootNode = nodeMap.value['.']
+  if (!rootNode) return {}
+
+  const rootHasDirectImages = Number(rootNode.direct_images || 0) > 0
+  const rootHasChildren = Array.isArray(rootNode.childIds) && rootNode.childIds.length > 0
+
+  // 深度很短：根目录下就是直图，默认根目录为作品层（无作者）
+  if (rootHasDirectImages && !rootHasChildren) {
+    return { '.': 'work' }
+  }
+
+  let defaults = { '.': 'author' }
+  const directImageNodes = Object.values(nodeMap.value)
+    .filter((node) => node.id !== '.' && Number(node.direct_images || 0) > 0)
+    .sort((a, b) => getNodeDepth(b.id) - getNodeDepth(a.id))
+
+  for (const imageParentNode of directImageNodes) {
+    let workNode = imageParentNode
+    if (isChapterLikeName(imageParentNode.real_name) && imageParentNode.parentId && nodeMap.value[imageParentNode.parentId]) {
+      workNode = nodeMap.value[imageParentNode.parentId]
+    }
+
+    const targetParentId = workNode.parentId === null ? workNode.id : workNode.parentId
+    defaults = applyLayerMarkWithConstraints(targetParentId, 'work', defaults)
+  }
+
+  if (rootHasDirectImages) {
+    defaults = applyLayerMarkWithConstraints('.', 'work', defaults)
+  }
+
+  return defaults
+}
+
 function setImportedPayload(payload) {
   sessionId.value = payload.session_id || ''
   cleanRoot.value = payload.clean_root || ''
   warnings.value = Array.isArray(payload.warnings) ? payload.warnings : []
   tree.value = payload.tree || null
-  exportItems.value = []
   commitSummary.value = null
-  assignments.value = {}
   collapsedIds.value = new Set()
 
   if (tree.value) {
     rebuildNodeMap(tree.value)
+    assignments.value = buildDefaultAssignments()
     const firstChild = Array.isArray(tree.value.children) && tree.value.children[0]
     selectedNodeId.value = firstChild ? firstChild.id : tree.value.id
   } else {
     nodeMap.value = {}
+    assignments.value = {}
     selectedNodeId.value = ''
   }
 }
@@ -517,7 +582,6 @@ function clearRuntimeState() {
   assignments.value = {}
   selectedNodeId.value = ''
   collapsedIds.value = new Set()
-  exportItems.value = []
   commitSummary.value = null
   markMode.value = 'work'
   localStorage.removeItem(STORAGE_KEY)
@@ -665,8 +729,8 @@ function shouldRemoveExistingMark(existingRole, newRole, existingParentId, targe
   return true
 }
 
-function applyLayerMarkWithConstraints(targetParentId, role) {
-  const next = { ...assignments.value }
+function applyLayerMarkWithConstraints(targetParentId, role, baseAssignments = assignments.value) {
+  const next = { ...baseAssignments }
   if (role === 'clear') {
     delete next[targetParentId]
     return next
@@ -685,12 +749,11 @@ function applyLayerMarkWithConstraints(targetParentId, role) {
 
 function applyMarkModeToNode(nodeId) {
   const node = nodeMap.value[nodeId]
-  if (!node || node.parentId === null) {
-    showToast('根目录不可标记')
+  if (!node) {
     return
   }
 
-  const parentId = node.parentId
+  const parentId = node.parentId === null ? node.id : node.parentId
   const next = applyLayerMarkWithConstraints(parentId, markMode.value)
   assignments.value = next
   commitSummary.value = null
@@ -713,42 +776,13 @@ function toggleNode(nodeId) {
 
 function clearAllLayers() {
   assignments.value = {}
-  exportItems.value = []
   commitSummary.value = null
 }
 
-async function generateJson() {
-  if (!sessionId.value) {
-    showFailToast('请先创建解析会话')
-    return
-  }
-
-  exporting.value = true
-  try {
-    const payload = await comicApi.localImportExport(sessionId.value, assignments.value)
-    exportItems.value = Array.isArray(payload.items) ? payload.items : []
-    showSuccessToast(`已生成 ${payload.count || 0} 条`) 
-  } catch (error) {
-    showFailToast(error?.message || '生成 JSON 失败')
-  } finally {
-    exporting.value = false
-  }
-}
-
-async function downloadJson() {
-  if (!sessionId.value) {
-    showFailToast('请先创建解析会话')
-    return
-  }
-
-  try {
-    if (!exportItems.value.length) {
-      await generateJson()
-    }
-    await comicApi.localImportDownloadResult(sessionId.value)
-  } catch (error) {
-    showFailToast(error?.message || '下载失败')
-  }
+function restoreDefaultLayers() {
+  assignments.value = buildDefaultAssignments()
+  commitSummary.value = null
+  showSuccessToast('已恢复默认标记')
 }
 
 async function commitImport() {
@@ -1115,18 +1149,6 @@ onMounted(async () => {
   flex-wrap: wrap;
   color: var(--text-secondary);
   font-size: 13px;
-}
-
-.json-preview {
-  margin-top: 10px;
-  max-height: 320px;
-  overflow: auto;
-  border-radius: 10px;
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 12px;
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .empty-block {

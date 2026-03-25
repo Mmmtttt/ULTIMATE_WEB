@@ -359,6 +359,9 @@ class LocalComicImportService:
             parent_node = node_map.get(parent_id)
             if not parent_node:
                 continue
+            # 允许“目录自身即作品”（例如根目录下直接是图片，或该目录无子目录但有直图）
+            if int(parent_node.get("direct_images", 0) or 0) > 0:
+                work_nodes.add(parent_id)
             for child_id in parent_node["child_ids"]:
                 work_nodes.add(child_id)
 
