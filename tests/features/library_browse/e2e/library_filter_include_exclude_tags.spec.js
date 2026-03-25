@@ -36,7 +36,7 @@ test("library filter include and exclude tags returns expected comics", async ({
     .first();
   await filterButton.click();
   await expect(page.locator(".filter-panel")).toBeVisible();
-  await expect(page.getByText("高级筛选")).toBeVisible();
+  await expect(page.locator(".filter-panel .van-nav-bar__title")).toHaveText("高级筛选");
 
   await page.locator(".tag-item", { hasText: "Action" }).first().click();
   await page.locator(".tag-item", { hasText: "Story" }).first().click();
