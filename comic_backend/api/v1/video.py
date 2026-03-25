@@ -1717,17 +1717,41 @@ def get_video_recommendation_detail():
 
 @video_bp.route('/recommendation/migrate-to-local', methods=['POST'])
 def migrate_video_recommendations_to_local():
-    """Import preview recommendation videos into local library."""
+    """Create async task to migrate preview recommendation videos into local library."""
     try:
         data = request.json or {}
         video_ids = data.get('video_ids', [])
         if not isinstance(video_ids, list) or len(video_ids) == 0:
             return error_response(400, "missing parameter: video_ids")
 
-        result = video_service.migrate_recommendations_to_local(video_ids)
-        if result.success:
-            return success_response(result.data, result.message)
-        return error_response(400, result.message)
+        normalized_ids = [str(item or "").strip() for item in video_ids if str(item or "").strip()]
+        if len(normalized_ids) == 0:
+            return error_response(400, "missing parameter: video_ids")
+
+        from infrastructure.task_manager import task_manager
+        task_id = task_manager.create_task(
+            platform='JAVDB',
+            import_type='migrate_to_local',
+            target='home',
+            comic_ids=normalized_ids,
+            content_type='video',
+            extra_data={
+                "source": "preview",
+                "entry": "video_recommendation_migrate_to_local"
+            }
+        )
+
+        app_logger.info(
+            f"创建预览视频迁移本地任务: task_id={task_id}, count={len(normalized_ids)}"
+        )
+        return success_response(
+            {
+                "task_id": task_id,
+                "content_type": "video",
+                "message": "导入任务已创建"
+            },
+            "导入任务已创建，请到我的-导入任务查看进度"
+        )
     except Exception as e:
         error_logger.error(f"migrate recommendation videos to local failed: {e}")
         return error_response(500, "internal server error")

@@ -139,7 +139,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore } from '@/stores'
+import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore } from '@/stores'
 import { recommendationApi, videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -155,6 +155,7 @@ const comicRecStore = useRecommendationStore()
 const videoRecStore = useVideoRecommendationStore()
 const listStore = useListStore()
 const tagStore = useTagStore()
+const importTaskStore = useImportTaskStore()
 const { isDesktop, isMobile } = useDevice()
 
 // State
@@ -330,16 +331,18 @@ async function batchImportToLocal() {
     return
   }
 
-  const stats = res.data || {}
-  const importedCount = Number(stats.imported_count || 0)
-  const skippedCount = Number(stats.skipped_count || 0)
-  const failedCount = Number(stats.failed_count || 0)
+  const taskId = String(res?.data?.task_id || '').trim()
+  if (!taskId) {
+    showToast('导入任务创建失败')
+    return
+  }
 
-  showToast(`导入完成：成功 ${importedCount}，跳过 ${skippedCount}，失败 ${failedCount}`)
+  await importTaskStore.fetchTasks()
+  importTaskStore.startPolling()
+  showToast('导入任务已创建，请到“我的-导入任务”查看进度')
 
   selectedIds.value = []
   isManageMode.value = false
-  await loadData(true)
 }
 
 async function batchTrash() {

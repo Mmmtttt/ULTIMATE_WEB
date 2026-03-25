@@ -315,17 +315,41 @@ def get_recommendation_images():
 
 @recommendation_bp.route('/migrate-to-local', methods=['POST'])
 def migrate_recommendations_to_local():
-    """Import preview recommendations into local comic library."""
+    """Create async task to migrate preview recommendations into local comic library."""
     try:
         data = request.json or {}
         recommendation_ids = data.get('recommendation_ids', [])
         if not isinstance(recommendation_ids, list) or len(recommendation_ids) == 0:
             return error_response(400, "missing parameter: recommendation_ids")
 
-        result = recommendation_service.migrate_to_local(recommendation_ids)
-        if result.success:
-            return success_response(result.data, result.message)
-        return error_response(400, result.message)
+        normalized_ids = [str(item or "").strip() for item in recommendation_ids if str(item or "").strip()]
+        if len(normalized_ids) == 0:
+            return error_response(400, "missing parameter: recommendation_ids")
+
+        from infrastructure.task_manager import task_manager
+        task_id = task_manager.create_task(
+            platform='JM',
+            import_type='migrate_to_local',
+            target='home',
+            comic_ids=normalized_ids,
+            content_type='comic',
+            extra_data={
+                "source": "preview",
+                "entry": "recommendation_migrate_to_local"
+            }
+        )
+
+        app_logger.info(
+            f"创建预览漫画迁移本地任务: task_id={task_id}, count={len(normalized_ids)}"
+        )
+        return success_response(
+            {
+                "task_id": task_id,
+                "content_type": "comic",
+                "message": "导入任务已创建"
+            },
+            "导入任务已创建，请到我的-导入任务查看进度"
+        )
     except Exception as e:
         error_logger.error(f"migrate recommendations to local failed: {e}")
         return error_response(500, "internal server error")

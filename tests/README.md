@@ -161,7 +161,7 @@ tests/
   - `tests/ci-artifacts/integration-junit.xml`
   - `tests/playwright-report` 与 `tests/test-results`
 
-## 13. 第三方接口高优先级覆盖（2026-03-24 更新）
+## 13. 第三方接口高优先级覆盖（2026-03-25 更新）
 新增功能目录：`tests/features/third_party_integration/`
 
 - Integration 看护点：
@@ -170,17 +170,20 @@ tests/
   - 清单：`/list/platform/lists`、`/list/platform/list/detail`、`/list/import`、`/list/sync`、`/list/import/favorites`、`/list/sync/favorites`
   - 作者/演员：`/author/search-works`、`/author/check-updates`、`/author/new-works`、`/author/works`、`/actor/search-works`、`/actor/check-updates`、`/actor/new-works`、`/actor/works`、`/actor/videos`
   - 推荐与系统配置：`/recommendation/cache/download`、`/config/system`（third-party 路径更新回调）
+  - 预览库迁移到本地库异步任务：`/recommendation/migrate-to-local`、`/video/recommendation/migrate-to-local`（仅创建任务，不阻塞导入）
   - 预览下载头：`VideoAppService._build_preview_video_headers`（JAVDB Referer/Cookie）
 - E2E 看护点：
   - 用户在 `VideoTagSearch` 页面完成“选标签 -> 搜索 -> 选择结果 -> 导入”，并断言请求参数和导入 body。
   - 用户在 `VideoDetail` 与 `VideoRecommendationDetail` 页面完成“点击播放”，并断言 `play-urls` 请求与 `proxy2` 播放地址映射契约。
+  - 视频搜索结果混排（JAVDB 横版 + JAVBUS 竖版）卡片高度与比例守卫。
 
-## 14. Third-party Coverage Matrix (2026-03-24 Latest)
-- Current status: `tests/features/third_party_integration/` has `61` integration cases + `4` E2E cases.
+## 14. Third-party Coverage Matrix (2026-03-25 Latest)
+- Current status: `tests/features/third_party_integration/` has `69` integration cases + `5` E2E cases.
 - Covered import flows:
   - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
   - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`, duplicate-code guards (`home` and `recommendation`).
   - List: `platform/import`, `platform/sync`, `platform/list/detail`, `import/sync favorites` for `JAVDB/JM/PK`.
+  - Preview -> local migrate routes (`comic` and `video`) create async import tasks.
 - Covered search flows:
   - Comic third-party keyword search (`platform=all`, invalid platform guard).
   - Video third-party keyword search (`platform=all`, page parameter contract).

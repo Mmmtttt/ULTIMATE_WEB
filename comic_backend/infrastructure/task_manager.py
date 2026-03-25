@@ -34,7 +34,7 @@ class ImportTask:
     task_id: str
     status: TaskStatus
     platform: str
-    import_type: str  # by_id, by_search, by_list, by_favorite
+    import_type: str  # by_id, by_search, by_list, by_favorite, by_platform_list, migrate_to_local
     target: str       # home, recommendation
     comic_id: Optional[str]
     keyword: Optional[str]
@@ -249,11 +249,70 @@ class TaskManager:
     def _execute_import(self, task: ImportTask) -> Dict:
         """执行导入操作"""
         content_type = self._normalize_content_type(task.content_type, platform=task.platform)
+        if task.import_type == "migrate_to_local":
+            return self._execute_migrate_to_local(task)
         if task.import_type == "by_platform_list":
             return self._execute_platform_list_import(task)
         if content_type == "video":
             return self._execute_video_import(task)
         return self._execute_comic_import(task)
+
+    def _execute_migrate_to_local(self, task: ImportTask) -> Dict:
+        """执行预览库迁移到本地库"""
+        try:
+            content_type = self._normalize_content_type(task.content_type, platform=task.platform)
+            item_ids = [str(item or "").strip() for item in (task.comic_ids or []) if str(item or "").strip()]
+            if not item_ids and str(task.comic_id or "").strip():
+                item_ids = [str(task.comic_id).strip()]
+
+            if not item_ids:
+                return {"success": False, "error": "缺少待迁移内容"}
+
+            task.total_pages = len(item_ids)
+            task.downloaded_pages = 0
+            task.progress = 10
+
+            if content_type == "video":
+                from application.video_app_service import VideoAppService
+
+                task.title = f"预览视频迁移本地 ({len(item_ids)} 项)"
+                task.message = "正在迁移预览视频到本地库..."
+                self._save_tasks()
+
+                result = VideoAppService().migrate_recommendations_to_local(item_ids)
+            else:
+                from application.recommendation_app_service import RecommendationAppService
+
+                task.title = f"预览漫画迁移本地 ({len(item_ids)} 项)"
+                task.message = "正在迁移预览漫画到本地库..."
+                self._save_tasks()
+
+                result = RecommendationAppService().migrate_to_local(item_ids)
+
+            if not result.success:
+                return {"success": False, "error": result.message or "迁移失败"}
+
+            data = result.data or {}
+            imported_count = int(data.get("imported_count", 0) or 0)
+            skipped_count = int(data.get("skipped_count", 0) or 0)
+            failed_count = int(data.get("failed_count", 0) or 0)
+            task.downloaded_pages = imported_count + skipped_count + failed_count
+            task.progress = 95
+
+            return {
+                "success": True,
+                "imported_count": imported_count,
+                "skipped_count": skipped_count,
+                "failed_count": failed_count,
+                "imported_ids": data.get("imported_ids", []),
+                "skipped_ids": data.get("skipped_ids", data.get("skipped_items", [])),
+                "failed_items": data.get("failed_items", []),
+                "content_type": content_type,
+                "title": task.title,
+            }
+        except Exception as e:
+            error_logger.error(f"执行预览迁移到本地失败: {e}")
+            return {"success": False, "error": str(e)}
 
     @staticmethod
     def _normalize_content_type(content_type: str, platform: Optional[str] = None) -> str:

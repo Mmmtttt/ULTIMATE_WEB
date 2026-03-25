@@ -345,7 +345,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useListStore, useTagStore } from '@/stores'
+import { useListStore, useTagStore, useImportTaskStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
 import { recommendationApi, videoApi } from '@/api'
@@ -358,6 +358,7 @@ const route = useRoute()
 const router = useRouter()
 const listStore = useListStore()
 const tagStore = useTagStore()
+const importTaskStore = useImportTaskStore()
 
 const loading = ref(false)
 const listInfo = ref(null)
@@ -982,14 +983,21 @@ async function handleBatchMoveToLocal() {
       return
     }
 
-    const stats = response.data || {}
-    const importedCount = Number(stats.imported_count || 0)
-    const skippedCount = Number(stats.skipped_count || 0) + localSkipped
-    const failedCount = Number(stats.failed_count || 0)
-    showSuccessToast(`移动完成：成功 ${importedCount}，跳过 ${skippedCount}，失败 ${failedCount}`)
+    const taskId = String(response?.data?.task_id || '').trim()
+    if (!taskId) {
+      showFailToast('移动任务创建失败')
+      return
+    }
+
+    await importTaskStore.fetchTasks()
+    importTaskStore.startPolling()
+    if (localSkipped > 0) {
+      showSuccessToast(`已创建移动任务，本地已存在 ${localSkipped} 项已跳过`)
+    } else {
+      showSuccessToast('已创建移动任务，请到“我的-导入任务”查看进度')
+    }
 
     selectedItemKeys.value = []
-    await loadDetail()
   } catch (error) {
     console.error('移动到本地库失败:', error)
     showFailToast('移动到本地库失败')

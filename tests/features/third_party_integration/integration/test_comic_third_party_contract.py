@@ -734,13 +734,14 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
     Case Description:
     - Purpose: Guard task-manager dispatch routing so video tasks never enter comic import branch.
     - Steps:
-      1. Mock `_execute_video_import/_execute_comic_import/_execute_platform_list_import`.
-      2. Build representative video/comic/platform-list tasks.
+      1. Mock `_execute_video_import/_execute_comic_import/_execute_platform_list_import/_execute_migrate_to_local`.
+      2. Build representative video/comic/platform-list/migrate tasks.
       3. Call `_execute_import` and assert dispatch target.
     - Expected:
       1. `platform=JAVDB` with inferred video content goes to video executor.
       2. `platform=JM` with inferred comic content goes to comic executor.
       3. `import_type=by_platform_list` always goes to platform-list executor.
+      4. `import_type=migrate_to_local` always goes to migrate executor.
     """
     task_manager_module = importlib.import_module("infrastructure.task_manager")
     manager = task_manager_module.task_manager
@@ -763,6 +764,11 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
         manager,
         "_execute_platform_list_import",
         lambda task: calls.append(("platform_list", task.platform, task.import_type)) or {"success": True, "content_type": "video"},
+    )
+    monkeypatch.setattr(
+        manager,
+        "_execute_migrate_to_local",
+        lambda task: calls.append(("migrate_to_local", task.platform, task.import_type)) or {"success": True, "content_type": task.content_type or "comic"},
     )
 
     def build_task(task_id, platform, import_type, content_type="", comic_id=None, keyword=None, comic_ids=None, extra_data=None):
@@ -800,16 +806,26 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
         keyword="Fav",
         extra_data={"platform_list_id": "fav"},
     )
+    migrate_task = build_task(
+        "task-m",
+        "JAVDB",
+        "migrate_to_local",
+        content_type="video",
+        comic_ids=["JAVDB_AAA111", "JAVBUS_BBB222"],
+    )
 
     video_result = manager._execute_import(video_task)
     comic_result = manager._execute_import(comic_task)
     list_result = manager._execute_import(list_task)
+    migrate_result = manager._execute_import(migrate_task)
 
     assert video_result["content_type"] == "video"
     assert comic_result["content_type"] == "comic"
     assert list_result["content_type"] == "video"
+    assert migrate_result["content_type"] == "video"
     assert calls == [
         ("video", "JAVDB", "by_id"),
         ("comic", "JM", "by_search"),
         ("platform_list", "JAVBUS", "by_platform_list"),
+        ("migrate_to_local", "JAVDB", "migrate_to_local"),
     ]
