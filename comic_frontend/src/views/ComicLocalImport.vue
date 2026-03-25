@@ -25,77 +25,94 @@
         <span class="hint">压缩包支持 `.zip/.rar/.7z`，支持任意层级嵌套解包</span>
       </div>
 
-      <van-tabs v-model:active="sourceMode" animated>
-        <van-tab name="upload" title="浏览器上传">
-          <div class="source-panel">
-            <div class="picker-row">
-              <van-button type="primary" plain size="small" @click="triggerArchiveInput">
-                选择压缩包
-              </van-button>
-              <van-tag type="primary" plain>{{ archiveFiles.length }} 个</van-tag>
-            </div>
+      <div class="mode-toggle" role="tablist" aria-label="导入源切换">
+        <button
+          class="mode-btn"
+          :class="{ active: sourceMode === 'upload' }"
+          @click="sourceMode = 'upload'"
+        >
+          从设备上传（推荐）
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: sourceMode === 'path' }"
+          @click="sourceMode = 'path'"
+        >
+          服务端路径导入
+        </button>
+      </div>
 
-            <div class="picker-row">
-              <van-button type="success" plain size="small" @click="triggerFolderInput">
-                选择文件夹
-              </van-button>
-              <van-tag type="success" plain>{{ folderFiles.length }} 个文件</van-tag>
-            </div>
+      <div v-if="sourceMode === 'upload'" class="source-panel">
+        <div class="picker-row">
+          <van-button type="primary" plain size="small" @click="triggerArchiveInput">
+            选择压缩包
+          </van-button>
+          <van-tag type="primary" plain>{{ archiveFiles.length }} 个</van-tag>
+        </div>
 
-            <div class="picker-tip">上传模式可用于局域网访问场景。</div>
+        <div class="picker-tip">
+          上传模式仅支持压缩包，这是跨设备访问服务器时最稳定的方式。
+        </div>
 
-            <input
-              ref="archiveInputRef"
-              type="file"
-              multiple
-              accept=".zip,.rar,.7z"
-              class="hidden-input"
-              @change="onArchiveFilesSelected"
-            >
-            <input
-              ref="folderInputRef"
-              type="file"
-              multiple
-              webkitdirectory
-              directory
-              class="hidden-input"
-              @change="onFolderFilesSelected"
-            >
+        <input
+          ref="archiveInputRef"
+          type="file"
+          multiple
+          accept=".zip,.rar,.7z"
+          class="hidden-input"
+          @change="onArchiveFilesSelected"
+        >
 
-            <van-button
-              type="primary"
-              block
-              :loading="parsing"
-              :disabled="parsing"
-              @click="startUploadParse"
-            >
-              上传并解析
-            </van-button>
-          </div>
-        </van-tab>
+        <van-button
+          type="primary"
+          block
+          :loading="parsing"
+          :disabled="parsing"
+          @click="startUploadParse"
+        >
+          上传并解析
+        </van-button>
+      </div>
 
-        <van-tab name="path" title="服务端路径">
-          <div class="source-panel">
-            <van-field
-              v-model="sourcePath"
-              label="本地路径"
-              placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
-            />
-            <div class="picker-tip">
-              路径必须是服务器所在机器可访问路径。若你从局域网其他设备访问，通常请用“浏览器上传”。
-            </div>
-            <van-button
-              type="primary"
-              block
-              :loading="parsing"
-              :disabled="parsing"
-              @click="startPathParse"
-            >
-              从路径解析
-            </van-button>
-          </div>
-        </van-tab>
-      </van-tabs>
+      <div v-else class="source-panel">
+        <van-field
+          v-model="sourcePath"
+          label="本地路径"
+          placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
+        />
+        <div class="picker-row compact">
+          <van-button plain size="small" @click="triggerPathArchivePicker">选择压缩包路径</van-button>
+          <van-button plain size="small" @click="triggerPathFolderPicker">选择文件夹路径</van-button>
+        </div>
+        <div class="picker-tip">
+          路径模式可导入服务端本机上的压缩包或文件夹。
+        </div>
+        <input
+          ref="pathArchivePickerRef"
+          type="file"
+          accept=".zip,.rar,.7z"
+          class="hidden-input"
+          @change="onPathArchivePicked"
+        >
+        <input
+          ref="pathFolderPickerRef"
+          type="file"
+          multiple
+          webkitdirectory
+          directory
+          class="hidden-input"
+          @change="onPathFolderPicked"
+        >
+        <van-button
+          type="primary"
+          block
+          :loading="parsing"
+          :disabled="parsing"
+          @click="startPathParse"
+        >
+          从路径解析
+        </van-button>
+      </div>
     </section>
 
     <section class="card-surface session-card">
@@ -122,7 +139,19 @@
       <div class="card-surface tree-card">
         <div class="section-title">
           <h3>目录树</h3>
-          <span class="hint">点击目录后，操作会作用到其同级目录（同一层）</span>
+          <span class="hint">点击目录后，会按当前标记模式作用到该目录所在层</span>
+        </div>
+
+        <div class="mark-mode-row">
+          <button class="mark-mode-btn" :class="{ active: markMode === 'author' }" @click="markMode = 'author'">
+            标记为作者层
+          </button>
+          <button class="mark-mode-btn" :class="{ active: markMode === 'work' }" @click="markMode = 'work'">
+            标记为作品层
+          </button>
+          <button class="mark-mode-btn" :class="{ active: markMode === 'clear' }" @click="markMode = 'clear'">
+            清除此层
+          </button>
         </div>
 
         <div v-if="!treeRows.length" class="empty-block">尚未导入可解析目录。</div>
@@ -133,7 +162,7 @@
             class="tree-row"
             :class="{ selected: selectedNodeId === row.id }"
             :style="{ paddingLeft: `${12 + row.depth * 16}px` }"
-            @click="selectNode(row.id)"
+            @click="onTreeNodeClick(row.id)"
           >
             <button
               v-if="row.hasChildren"
@@ -144,11 +173,13 @@
             </button>
             <span v-else class="tree-toggle placeholder">·</span>
             <span class="tree-name">{{ row.id === '.' ? '根目录' : row.real_name }}</span>
-            <van-tag plain size="mini">总图 {{ row.total_images }}</van-tag>
-            <van-tag v-if="row.direct_images > 0" plain size="mini">直图 {{ row.direct_images }}</van-tag>
+            <van-tag plain size="mini">图片数量 {{ row.total_images }}</van-tag>
             <van-tag v-if="row.role === 'author'" type="success" size="mini">作者目录</van-tag>
             <van-tag v-if="row.role === 'work'" type="primary" size="mini">作品目录</van-tag>
           </div>
+        </div>
+        <div class="tree-footer-actions">
+          <van-button plain size="small" @click="clearAllLayers">清空全部标记</van-button>
         </div>
       </div>
 
@@ -159,20 +190,18 @@
           </div>
           <div class="selection-info">
             <template v-if="selectionLayerInfo">
+              <div>当前模式：{{ markModeText }}</div>
               <div>当前目录：{{ selectedNode?.rel_path }}</div>
               <div>层父目录：{{ selectionLayerInfo.parent?.rel_path || '-' }}</div>
               <div>同层数量：{{ selectionLayerInfo.siblingCount }}</div>
               <div>当前状态：{{ roleText(selectionLayerInfo.role) }}</div>
             </template>
             <template v-else>
-              请选择非根目录节点后再标记。
+              当前模式：{{ markModeText }}，请点击目录树中的非根目录节点。
             </template>
           </div>
           <div class="action-buttons">
-            <van-button type="success" plain size="small" @click="markLayer('author')">标记为作者层</van-button>
-            <van-button type="primary" plain size="small" @click="markLayer('work')">标记为作品层</van-button>
-            <van-button plain size="small" @click="clearCurrentLayer">清除此层</van-button>
-            <van-button plain size="small" @click="clearAllLayers">清空全部标记</van-button>
+            <span class="hint">提示：新标记会自动清理同一路径上的冲突旧标记。</span>
           </div>
         </div>
 
@@ -242,10 +271,10 @@ const tagStore = useTagStore()
 const sourceMode = ref('upload')
 const sourcePath = ref('')
 const archiveFiles = ref([])
-const folderFiles = ref([])
 
 const archiveInputRef = ref(null)
-const folderInputRef = ref(null)
+const pathArchivePickerRef = ref(null)
+const pathFolderPickerRef = ref(null)
 
 const parsing = ref(false)
 const exporting = ref(false)
@@ -261,6 +290,7 @@ const selectedNodeId = ref('')
 const collapsedIds = ref(new Set())
 const exportItems = ref([])
 const commitSummary = ref(null)
+const markMode = ref('work')
 
 const selectedNode = computed(() => {
   if (!selectedNodeId.value) return null
@@ -318,6 +348,12 @@ const treeRows = computed(() => {
 })
 
 const jsonPreviewText = computed(() => JSON.stringify(exportItems.value || [], null, 2))
+const markModeText = computed(() => {
+  if (markMode.value === 'author') return '标记为作者层'
+  if (markMode.value === 'work') return '标记为作品层'
+  if (markMode.value === 'clear') return '清除此层'
+  return '未选择'
+})
 
 function roleText(role) {
   if (role === 'author') return '作者层'
@@ -369,7 +405,8 @@ function persistSessionDraft() {
   const payload = {
     sessionId: sessionId.value,
     assignments: assignments.value,
-    selectedNodeId: selectedNodeId.value
+    selectedNodeId: selectedNodeId.value,
+    markMode: markMode.value
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
 }
@@ -391,6 +428,9 @@ async function restoreSessionDraft() {
     if (draft.selectedNodeId && nodeMap.value[draft.selectedNodeId]) {
       selectedNodeId.value = draft.selectedNodeId
     }
+    if (['author', 'work', 'clear'].includes(draft.markMode)) {
+      markMode.value = draft.markMode
+    }
   } catch (error) {
     localStorage.removeItem(STORAGE_KEY)
   }
@@ -400,16 +440,72 @@ function triggerArchiveInput() {
   archiveInputRef.value?.click()
 }
 
-function triggerFolderInput() {
-  folderInputRef.value?.click()
+function triggerPathArchivePicker() {
+  pathArchivePickerRef.value?.click()
+}
+
+function triggerPathFolderPicker() {
+  pathFolderPickerRef.value?.click()
 }
 
 function onArchiveFilesSelected(event) {
   archiveFiles.value = Array.from(event?.target?.files || [])
 }
 
-function onFolderFilesSelected(event) {
-  folderFiles.value = Array.from(event?.target?.files || [])
+function normalizeInputPath(rawPath) {
+  return String(rawPath || '').trim().replaceAll('\\\\', '/')
+}
+
+function deriveFolderPathFromPickedFile(file) {
+  const absPath = normalizeInputPath(file?.path)
+  const relativePath = normalizeInputPath(file?.webkitRelativePath)
+  if (!absPath || !relativePath) return ''
+
+  const lowerAbs = absPath.toLowerCase()
+  const lowerRel = relativePath.toLowerCase()
+  if (!lowerAbs.endsWith(lowerRel)) return ''
+
+  const base = absPath.slice(0, absPath.length - relativePath.length).replace(/\/+$/, '')
+  return base
+}
+
+function readCandidatePathFromFile(file, inputValue) {
+  const filePath = normalizeInputPath(file?.path)
+  if (filePath) return filePath
+
+  const rawInput = normalizeInputPath(inputValue)
+  if (rawInput && !rawInput.toLowerCase().includes('/fakepath/')) {
+    return rawInput
+  }
+  return ''
+}
+
+function onPathArchivePicked(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+
+  const candidate = readCandidatePathFromFile(file, event?.target?.value)
+  if (candidate) {
+    sourcePath.value = candidate
+    showSuccessToast('已填充压缩包路径')
+    return
+  }
+
+  showToast('当前浏览器无法读取绝对路径，请手动粘贴服务端路径')
+}
+
+function onPathFolderPicked(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+
+  const folderPath = deriveFolderPathFromPickedFile(file) || readCandidatePathFromFile(file, event?.target?.value)
+  if (folderPath) {
+    sourcePath.value = folderPath
+    showSuccessToast('已填充文件夹路径')
+    return
+  }
+
+  showToast('当前浏览器无法读取绝对路径，请手动粘贴服务端路径')
 }
 
 function clearRuntimeState() {
@@ -423,6 +519,7 @@ function clearRuntimeState() {
   collapsedIds.value = new Set()
   exportItems.value = []
   commitSummary.value = null
+  markMode.value = 'work'
   localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -454,12 +551,6 @@ function collectUploadSources() {
     paths.push(file.name)
   })
 
-  folderFiles.value.forEach((file) => {
-    uploads.push(file)
-    const relativePath = (file.webkitRelativePath || '').trim()
-    paths.push(relativePath || file.name)
-  })
-
   return { uploads, paths }
 }
 
@@ -486,6 +577,130 @@ function selectNode(nodeId) {
   selectedNodeId.value = nodeId
 }
 
+function isAncestorOrSame(ancestorId, nodeId) {
+  if (!ancestorId || !nodeId) return false
+  let currentId = nodeId
+  while (currentId !== null && currentId !== undefined) {
+    if (currentId === ancestorId) return true
+    const currentNode = nodeMap.value[currentId]
+    if (!currentNode) break
+    currentId = currentNode.parentId
+  }
+  return false
+}
+
+function getLayerNodeIds(parentId) {
+  const parent = nodeMap.value[parentId]
+  if (!parent || !Array.isArray(parent.childIds)) return []
+  return parent.childIds
+}
+
+function hasLayerPathConflict(existingParentId, targetParentId) {
+  const existingNodeIds = getLayerNodeIds(existingParentId)
+  const targetNodeIds = getLayerNodeIds(targetParentId)
+  if (!existingNodeIds.length || !targetNodeIds.length) return false
+
+  for (const existingNodeId of existingNodeIds) {
+    for (const targetNodeId of targetNodeIds) {
+      if (
+        isAncestorOrSame(existingNodeId, targetNodeId) ||
+        isAncestorOrSame(targetNodeId, existingNodeId)
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function getLayerOrder(existingParentId, targetParentId) {
+  const existingNodeIds = getLayerNodeIds(existingParentId)
+  const targetNodeIds = getLayerNodeIds(targetParentId)
+
+  let existingAboveTarget = false
+  let targetAboveExisting = false
+
+  for (const existingNodeId of existingNodeIds) {
+    for (const targetNodeId of targetNodeIds) {
+      if (isAncestorOrSame(existingNodeId, targetNodeId)) {
+        existingAboveTarget = true
+      }
+      if (isAncestorOrSame(targetNodeId, existingNodeId)) {
+        targetAboveExisting = true
+      }
+      if (existingAboveTarget && targetAboveExisting) {
+        return {
+          existingAboveTarget: true,
+          targetAboveExisting: true
+        }
+      }
+    }
+  }
+
+  return {
+    existingAboveTarget,
+    targetAboveExisting
+  }
+}
+
+function shouldRemoveExistingMark(existingRole, newRole, existingParentId, targetParentId) {
+  if (!hasLayerPathConflict(existingParentId, targetParentId)) {
+    return false
+  }
+
+  if (existingRole === newRole) {
+    return true
+  }
+
+  const order = getLayerOrder(existingParentId, targetParentId)
+
+  // 合法关系：作者在上，作品在下
+  if (existingRole === 'author' && newRole === 'work') {
+    return !order.existingAboveTarget
+  }
+  if (existingRole === 'work' && newRole === 'author') {
+    return !order.targetAboveExisting
+  }
+
+  return true
+}
+
+function applyLayerMarkWithConstraints(targetParentId, role) {
+  const next = { ...assignments.value }
+  if (role === 'clear') {
+    delete next[targetParentId]
+    return next
+  }
+
+  Object.entries(next).forEach(([existingParentId, existingRole]) => {
+    if (existingParentId === targetParentId) return
+    if (shouldRemoveExistingMark(existingRole, role, existingParentId, targetParentId)) {
+      delete next[existingParentId]
+    }
+  })
+
+  next[targetParentId] = role
+  return next
+}
+
+function applyMarkModeToNode(nodeId) {
+  const node = nodeMap.value[nodeId]
+  if (!node || node.parentId === null) {
+    showToast('根目录不可标记')
+    return
+  }
+
+  const parentId = node.parentId
+  const next = applyLayerMarkWithConstraints(parentId, markMode.value)
+  assignments.value = next
+  commitSummary.value = null
+}
+
+function onTreeNodeClick(nodeId) {
+  selectNode(nodeId)
+  applyMarkModeToNode(nodeId)
+}
+
 function toggleNode(nodeId) {
   const next = new Set(collapsedIds.value)
   if (next.has(nodeId)) {
@@ -494,35 +709,6 @@ function toggleNode(nodeId) {
     next.add(nodeId)
   }
   collapsedIds.value = next
-}
-
-function markLayer(role) {
-  const node = selectedNode.value
-  if (!node || node.parentId === null) {
-    showFailToast('请先选择非根目录节点')
-    return
-  }
-  assignments.value = {
-    ...assignments.value,
-    [node.parentId]: role
-  }
-  commitSummary.value = null
-}
-
-function clearCurrentLayer() {
-  const node = selectedNode.value
-  if (!node || node.parentId === null) {
-    showFailToast('请先选择可操作目录')
-    return
-  }
-  if (!assignments.value[node.parentId]) {
-    showToast('该层当前没有标记')
-    return
-  }
-  const next = { ...assignments.value }
-  delete next[node.parentId]
-  assignments.value = next
-  commitSummary.value = null
 }
 
 function clearAllLayers() {
@@ -612,7 +798,7 @@ async function clearCurrentSession() {
   showSuccessToast('会话已清理')
 }
 
-watch([sessionId, assignments, selectedNodeId], () => {
+watch([sessionId, assignments, selectedNodeId, markMode], () => {
   persistSessionDraft()
 }, { deep: true })
 
@@ -687,11 +873,46 @@ onMounted(async () => {
   padding: 8px 4px 4px;
 }
 
+.mode-toggle {
+  display: inline-flex;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-1);
+  margin-bottom: 10px;
+}
+
+.mode-btn {
+  border: 0;
+  flex: 1;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+  font-size: 12px;
+}
+
+.mode-btn + .mode-btn {
+  border-left: 1px solid var(--border-soft);
+}
+
+.mode-btn.active {
+  background: linear-gradient(140deg, rgba(89, 160, 255, 0.2), rgba(63, 132, 234, 0.12));
+  color: var(--brand-700);
+}
+
 .picker-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+}
+
+.picker-row.compact {
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .picker-tip {
@@ -754,6 +975,42 @@ onMounted(async () => {
   padding: 8px 0;
 }
 
+.tree-footer-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mark-mode-row {
+  display: inline-flex;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-1);
+  margin-bottom: 10px;
+}
+
+.mark-mode-btn {
+  border: 0;
+  flex: 1;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--motion-fast) var(--ease-standard);
+}
+
+.mark-mode-btn + .mark-mode-btn {
+  border-left: 1px solid var(--border-soft);
+}
+
+.mark-mode-btn.active {
+  background: linear-gradient(140deg, rgba(89, 160, 255, 0.24), rgba(63, 132, 234, 0.1));
+  color: var(--brand-700);
+}
+
 .tree-row {
   min-height: 34px;
   display: flex;
@@ -810,9 +1067,10 @@ onMounted(async () => {
 }
 
 .action-buttons {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 24px;
 }
 
 .assignment-list,
