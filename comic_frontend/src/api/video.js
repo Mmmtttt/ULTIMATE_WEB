@@ -281,9 +281,11 @@ export const actorApi = {
    * @param {number} limit - 每页数量
    * @returns {Promise}
    */
-  getWorks(actorId, offset = 0, limit = 5) {
+  getWorks(actorId, offset = 0, limit = 5, options = {}) {
+    const cacheOnly = Boolean(options && options.cacheOnly)
+    const forceRefresh = Boolean(options && options.forceRefresh)
     return request.get(`/v1/actor/works/${actorId}`, {
-      params: { offset, limit }
+      params: { offset, limit, cache_only: cacheOnly, force_refresh: forceRefresh }
     })
   },
 
@@ -302,9 +304,10 @@ export const actorApi = {
    * @param {number} limit - 每页数量
    * @returns {Promise}
    */
-  searchWorksByName(actorName, offset = 0, limit = 5) {
+  searchWorksByName(actorName, offset = 0, limit = 5, options = {}) {
+    const forceRefresh = Boolean(options && options.forceRefresh)
     return request.get('/v1/actor/search-works', {
-      params: { actor_name: actorName, offset, limit }
+      params: { actor_name: actorName, offset, limit, force_refresh: forceRefresh }
     })
   },
 

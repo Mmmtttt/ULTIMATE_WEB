@@ -125,12 +125,9 @@ class ActorAppService(BaseCreatorAppService):
                     error_logger.error(f"搜索演员 {creator_name} 在平台 {plat} 的作品失败: {e}")
                     continue
             
-            for i in range(max_result_count):
-                for plat in platforms_to_search:
-                    if plat not in platform_videos or i >= len(platform_videos[plat]):
-                        continue
-                    
-                    video = platform_videos[plat][i]
+            # 按平台分组输出：先 JAVDB，再 JAVBUS（不交错）
+            for plat in platforms_to_search:
+                for video in platform_videos.get(plat, []):
                     work_id = str(video.get("video_id") or video.get("code") or "")
                     if not work_id:
                         continue
@@ -432,14 +429,29 @@ class ActorAppService(BaseCreatorAppService):
             error_logger.error(f"清除新作品计数失败: {e}")
             return ServiceResult.error("清除新作品计数失败")
     
-    def get_actor_works_paginated(self, actor_id: str, offset: int = 0, limit: int = 5) -> ServiceResult:
+    def get_actor_works_paginated(
+        self,
+        actor_id: str,
+        offset: int = 0,
+        limit: int = 5,
+        cache_only: bool = False,
+        force_refresh: bool = False
+    ) -> ServiceResult:
         """分页获取演员作品"""
         try:
             actor = self._actor_repo.get_by_id(actor_id)
             if not actor:
                 return ServiceResult.error("订阅不存在")
             
-            result = self.get_works_paginated_impl(actor, offset, limit)
+            if cache_only:
+                result = self.get_cached_works_paginated_impl(actor, offset, limit)
+            else:
+                result = self.get_works_paginated_impl(
+                    actor,
+                    offset,
+                    limit,
+                    force_refresh=force_refresh
+                )
             
             if result.success:
                 data = result.data

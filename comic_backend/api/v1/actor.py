@@ -58,9 +58,13 @@ def search_actor_works():
         actor_name = request.args.get('actor_name')
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 5))
+        force_refresh = str(request.args.get('force_refresh', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
         
         if not actor_name:
             return error_response(400, "演员名称不能为空")
+
+        if force_refresh:
+            actor_service.clear_actor_works_cache(actor_name)
         
         result = actor_service.search_actor_works_by_name(actor_name, offset, limit)
         
@@ -163,8 +167,18 @@ def get_actor_works(actor_id):
     try:
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 5))
-        
-        result = actor_service.get_actor_works_paginated(actor_id, offset, limit)
+        cache_only = str(request.args.get('cache_only', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+        force_refresh = str(request.args.get('force_refresh', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+        if force_refresh:
+            cache_only = False
+
+        result = actor_service.get_actor_works_paginated(
+            actor_id,
+            offset,
+            limit,
+            cache_only=cache_only,
+            force_refresh=force_refresh
+        )
         
         if result.success:
             return success_response(result.data)

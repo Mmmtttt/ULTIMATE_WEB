@@ -311,10 +311,12 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
             required_count = offset + limit
             should_force_fetch = bool(force_refresh)
             if should_force_fetch:
+                cached_all_works = []
+                self._cache_manager.set_persistent(cache_key, cached_all_works, self._get_cache_key_prefix())
                 cached_meta["has_more"] = True
                 cached_meta["all_fetched"] = False
                 cached_meta["next_page"] = 1
-                app_logger.info("[Paginated] force_refresh enabled, start from page 1")
+                app_logger.info("[Paginated] force_refresh enabled, reset cache and start from page 1")
             
             while (len(cached_all_works) < required_count or should_force_fetch) and cached_meta.get("has_more", True) and not cached_meta.get("all_fetched", False):
                 app_logger.info(f"[Paginated] 缓存不足，继续获取第 {cached_meta['next_page']} 页")

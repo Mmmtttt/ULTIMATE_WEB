@@ -20,7 +20,6 @@
           {{ isSubscribed ? '已订阅' : '订阅' }}
         </van-button>
         <van-button
-          v-if="!isVideoMode"
           type="primary"
           plain
           size="small"
@@ -76,7 +75,7 @@
             </div>
             <div class="card-info">
               <div class="card-title">{{ item.title }}</div>
-              <div v-if="item.author" class="card-author">{{ item.author }}</div>
+              <div v-if="getItemCreator(item)" class="card-author">{{ getItemCreator(item) }}</div>
             </div>
           </div>
         </div>
@@ -157,8 +156,33 @@ function applyWorksPage(res, page) {
   if (page === 1) works.value = newWorks
   else works.value = [...works.value, ...newWorks]
 
+  if (isVideoMode.value) {
+    works.value = sortVideoWorksByPlatform(works.value)
+  }
+
   hasMore.value = Boolean(res?.data?.has_more)
   totalWorks.value = res?.data?.total || works.value.length
+}
+
+function sortVideoWorksByPlatform(items) {
+  const javdb = []
+  const javbus = []
+  const other = []
+
+  ;(items || []).forEach(item => {
+    const platform = String(item?.platform || '').trim().toLowerCase()
+    if (platform === 'javdb') {
+      javdb.push(item)
+      return
+    }
+    if (platform === 'javbus') {
+      javbus.push(item)
+      return
+    }
+    other.push(item)
+  })
+
+  return [...javdb, ...javbus, ...other]
 }
 
 async function loadData(page = 1, options = {}) {
@@ -170,7 +194,7 @@ async function loadData(page = 1, options = {}) {
   try {
     if (page === 1) {
       await resolveSubscription()
-      if (!isVideoMode.value && !forceQuery) {
+      if (!forceQuery) {
         hasRemoteQueried.value = false
       }
     }
@@ -178,14 +202,33 @@ async function loadData(page = 1, options = {}) {
     if (isVideoMode.value) {
       if (isSubscribed.value && actorId.value) {
         const offset = (page - 1) * 20
-        const res = await actorApi.getWorks(actorId.value, offset, 20)
+        const cacheOnly = !forceQuery && !hasRemoteQueried.value
+        const forceRefresh = Boolean(forceQuery && page === 1)
+        const res = await actorApi.getWorks(actorId.value, offset, 20, { cacheOnly, forceRefresh })
         if (res.code === 200) {
           applyWorksPage(res, page)
+          if (forceQuery) {
+            hasRemoteQueried.value = true
+          }
         }
       } else {
-        const res = await actorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+        if (!forceQuery) {
+          if (page === 1) {
+            works.value = []
+            hasMore.value = false
+            totalWorks.value = 0
+          }
+          return
+        }
+        const res = await actorApi.searchWorksByName(
+          creatorName.value,
+          (page - 1) * 20,
+          20,
+          { forceRefresh: forceQuery && page === 1 }
+        )
         if (res.code === 200) {
           applyWorksPage(res, page)
+          hasRemoteQueried.value = true
         }
       }
       return
@@ -230,7 +273,7 @@ async function loadData(page = 1, options = {}) {
 async function loadMore() {
   currentPage.value++
   await loadData(currentPage.value, {
-    forceQuery: isVideoMode.value ? false : hasRemoteQueried.value
+    forceQuery: hasRemoteQueried.value
   })
 }
 
@@ -255,6 +298,10 @@ function toggleSelectAllWorks() {
 
 function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
+}
+
+function getItemCreator(item) {
+  return item.author || item.actor || ''
 }
 
 function isJavbusPlatform(item) {
