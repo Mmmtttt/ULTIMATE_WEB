@@ -928,9 +928,15 @@ class ListAppService:
         try:
             from core.platform import add_platform_prefix
             from application.tag_app_service import TagAppService
-            from application.config_app_service import ConfigAppService
             from domain.tag.entity import ContentType
             from application.video_app_service import VideoAppService
+            from api.v1.video import (
+                get_video_adapter,
+                to_proxy_image_url,
+                _sanitize_preview_video_value,
+                _schedule_video_asset_cache,
+                _is_javbus_platform,
+            )
             import re
             
             repo = self._video_repo if source == "local" else self._video_rec_repo
@@ -946,19 +952,7 @@ class ListAppService:
             imported_count = 0
             skipped_count = 0
             imported_video_ids: ListType[str] = []
-            auto_download_preview_assets = True
-
-            if source != "local":
-                try:
-                    config_result = ConfigAppService().get_config()
-                    if config_result.success and isinstance(config_result.data, dict):
-                        auto_download_preview_assets = bool(
-                            config_result.data.get("auto_download_preview_assets_for_preview_import", True)
-                        )
-                except Exception as e:
-                    app_logger.warning(f"读取预览库导入下载配置失败: {e}")
-            
-            platform_service = self._get_platform_service()
+            detail_adapter = get_video_adapter("javdb", existing_tags)
             detail_tasks: ListType[dict] = []
 
             def find_existing_video_by_code(code: str):
@@ -1004,8 +998,13 @@ class ListAppService:
 
             def fetch_video_detail(task: dict) -> dict:
                 video_id = task.get("video_id", "")
+                work = task.get("work", {})
                 app_logger.info(f"获取视频详情: {video_id}")
-                detail = platform_service.get_album_by_id(Platform.JAVDB, video_id)
+                detail = detail_adapter.get_video_detail(video_id)
+                if not detail and hasattr(detail_adapter, "get_video_by_code"):
+                    fallback_code = str((work or {}).get("code", "") or "").strip()
+                    if fallback_code:
+                        detail = detail_adapter.get_video_by_code(fallback_code)
                 return {
                     "task": task,
                     "detail": detail
@@ -1029,13 +1028,12 @@ class ListAppService:
                     skipped_count += 1
                     return
                 
-                videos = detail.get("videos", [])
-                if not videos:
-                    app_logger.warning(f"视频详情中没有视频数据: {video_id}")
+                if not isinstance(detail, dict):
+                    app_logger.warning(f"视频详情格式异常: {video_id}")
                     skipped_count += 1
                     return
-                
-                video_detail = videos[0]
+
+                video_detail = detail
                 video_code = (video_detail.get("code", "") or work.get("code", "")).strip()
                 existing_video = find_existing_video_by_code(video_code)
                 if existing_video:
@@ -1068,8 +1066,8 @@ class ListAppService:
                     "actors": video_detail.get("actors", []),
                     "magnets": video_detail.get("magnets", []),
                     "thumbnail_images": video_detail.get("thumbnail_images", []),
-                    "preview_video": video_detail.get("preview_video", ""),
-                    "cover_path": video_detail.get("cover_url", ""),
+                    "preview_video": _sanitize_preview_video_value(video_detail.get("preview_video", "")),
+                    "cover_path": to_proxy_image_url(video_detail.get("cover_url", "")),
                     "thumbnail_images_local": [],
                     "preview_video_local": "",
                     "cover_path_local": "",
@@ -1096,31 +1094,22 @@ class ListAppService:
                         imported_count += 1
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
-                        app_logger.info(f"视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if cover_url:
-                            app_logger.info(f"开始下载封面: {prefixed_id}")
-                            video_service.cache_cover_to_static_async(
-                                prefixed_id,
-                                cover_url,
-                                source="local"
-                            )
-                        else:
-                            app_logger.warning(f"视频 {prefixed_id} 没有封面 URL")
-
-                        thumbnail_images = video_data.get("thumbnail_images", [])
-                        if thumbnail_images:
-                            video_service.cache_thumbnail_images_async(prefixed_id, thumbnail_images, source="local")
-
-                        preview_video = video_data.get("preview_video", "")
-                        if preview_video and not str(prefixed_id or "").upper().startswith("JAVBUS"):
-                            video_service.cache_preview_video_async(prefixed_id, preview_video, source="local")
+                        _schedule_video_asset_cache(
+                            video_id=prefixed_id,
+                            source="local",
+                            cover_url=cover_url,
+                            preview_video=video_data.get("preview_video", ""),
+                            thumbnail_images=video_data.get("thumbnail_images", []),
+                            allow_cover=True,
+                            allow_preview_video=not _is_javbus_platform(platform="javdb", video_id=prefixed_id),
+                        )
                     else:
                         skipped_count += 1
                 else:
                     from infrastructure.persistence.json_storage import JsonStorage
                     from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
                     
-                    video_data["cover_path"] = video_detail.get("cover_url", "")
+                    video_data["cover_path"] = to_proxy_image_url(video_detail.get("cover_url", ""))
                     
                     db_file = VIDEO_RECOMMENDATION_JSON_FILE
                     storage = JsonStorage(db_file)
@@ -1143,25 +1132,15 @@ class ListAppService:
                         imported_count += 1
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
-                        app_logger.info(f"推荐视频 {prefixed_id} 的封面 URL: {cover_url}")
-                        if cover_url:
-                            app_logger.info(f"开始下载推荐封面: {prefixed_id}")
-                            video_service.cache_cover_to_static_async(
-                                prefixed_id,
-                                cover_url,
-                                source="preview"
-                            )
-                        else:
-                            app_logger.warning(f"推荐视频 {prefixed_id} 没有封面 URL")
-
-                        if auto_download_preview_assets:
-                            thumbnail_images = video_data.get("thumbnail_images", [])
-                            if thumbnail_images:
-                                video_service.cache_thumbnail_images_async(prefixed_id, thumbnail_images, source="preview")
-
-                            preview_video = video_data.get("preview_video", "")
-                            if preview_video and not str(prefixed_id or "").upper().startswith("JAVBUS"):
-                                video_service.cache_preview_video_async(prefixed_id, preview_video, source="preview")
+                        _schedule_video_asset_cache(
+                            video_id=prefixed_id,
+                            source="preview",
+                            cover_url=cover_url,
+                            preview_video=video_data.get("preview_video", ""),
+                            thumbnail_images=video_data.get("thumbnail_images", []),
+                            allow_cover=True,
+                            allow_preview_video=not _is_javbus_platform(platform="javdb", video_id=prefixed_id),
+                        )
                     else:
                         skipped_count += 1
 
