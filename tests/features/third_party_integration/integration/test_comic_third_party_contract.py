@@ -600,3 +600,216 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     assert captured["comic_ids"] == ["5566", "7788", "9911"]
     assert captured["content_type"] == "comic"
     assert captured["extra_data"] == {}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {"import_type": "by_id", "target": "home", "platform": "JM", "comic_id": "M900101"},
+            {"platform": "JM", "content_type": "comic", "comic_id": "M900101", "keyword": None, "comic_ids": None, "extra_data": {}},
+        ),
+        (
+            {"import_type": "by_search", "target": "home", "platform": "PK", "keyword": "idol"},
+            {"platform": "PK", "content_type": "comic", "comic_id": None, "keyword": "idol", "comic_ids": None, "extra_data": {}},
+        ),
+        (
+            {"import_type": "by_list", "target": "recommendation", "platform": "PK", "comic_ids": ["5566", "7788"]},
+            {"platform": "PK", "content_type": "comic", "comic_id": None, "keyword": None, "comic_ids": ["5566", "7788"], "extra_data": {}},
+        ),
+        (
+            {"import_type": "by_id", "target": "home", "platform": "JAVDB", "comic_id": "JVID-101"},
+            {"platform": "JAVDB", "content_type": "video", "comic_id": "JVID-101", "keyword": None, "comic_ids": None, "extra_data": {}},
+        ),
+        (
+            {"import_type": "by_search", "target": "recommendation", "platform": "JAVBUS", "keyword": "mina"},
+            {"platform": "JAVBUS", "content_type": "video", "comic_id": None, "keyword": "mina", "comic_ids": None, "extra_data": {}},
+        ),
+        (
+            {"import_type": "by_list", "target": "home", "platform": "JAVDB", "comic_ids": ["JVID-1", "JVID-2"]},
+            {"platform": "JAVDB", "content_type": "video", "comic_id": None, "keyword": None, "comic_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
+        ),
+        (
+            {
+                "import_type": "by_platform_list",
+                "target": "recommendation",
+                "platform": "JM",
+                "platform_list_id": "favorites",
+                "platform_list_name": "MyFav",
+                "source": "preview",
+            },
+            {
+                "platform": "JM",
+                "content_type": "comic",
+                "comic_id": "favorites",
+                "keyword": "MyFav",
+                "comic_ids": None,
+                "extra_data": {"platform_list_id": "favorites", "platform_list_name": "MyFav", "source": "preview"},
+            },
+        ),
+        (
+            {
+                "import_type": "by_platform_list",
+                "target": "recommendation",
+                "platform": "JAVDB",
+                "platform_list_id": "remote-list-88",
+                "platform_list_name": "Remote 88",
+                "source": "local",
+            },
+            {
+                "platform": "JAVDB",
+                "content_type": "video",
+                "comic_id": "remote-list-88",
+                "keyword": "Remote 88",
+                "comic_ids": None,
+                "extra_data": {"platform_list_id": "remote-list-88", "platform_list_name": "Remote 88", "source": "local"},
+            },
+        ),
+    ],
+)
+def test_comic_import_async_matrix_covers_video_and_comic_flows(third_party_client, monkeypatch, payload, expected):
+    """
+    Case Description:
+    - Purpose: Guard async-import task creation matrix across import types/platforms/content types.
+    - Steps:
+      1. Mock `task_manager.create_task`.
+      2. Call `POST /api/v1/comic/import/async` with matrix payloads.
+      3. Assert every flow creates task and forwards normalized payload contract.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. `create_task` receives normalized `platform/content_type` and corresponding params.
+      3. `by_platform_list` maps list fields to `comic_id/keyword/extra_data`.
+    """
+    client = third_party_client["client"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    captured = {}
+
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
+        captured.clear()
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
+            }
+        )
+        return "task-matrix-001"
+
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
+
+    response = client.post("/api/v1/comic/import/async", json=payload)
+    result = response.get_json()
+
+    assert response.status_code == 200
+    assert result["code"] == 200
+    assert result["data"]["task_id"] == "task-matrix-001"
+    assert captured["platform"] == expected["platform"]
+    assert captured["import_type"] == payload["import_type"]
+    assert captured["target"] == payload["target"]
+    assert captured["content_type"] == expected["content_type"]
+    assert captured["comic_id"] == expected["comic_id"]
+    assert captured["keyword"] == expected["keyword"]
+    assert captured["comic_ids"] == expected["comic_ids"]
+    assert captured["extra_data"] == expected["extra_data"]
+
+
+@pytest.mark.integration
+def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard task-manager dispatch routing so video tasks never enter comic import branch.
+    - Steps:
+      1. Mock `_execute_video_import/_execute_comic_import/_execute_platform_list_import`.
+      2. Build representative video/comic/platform-list tasks.
+      3. Call `_execute_import` and assert dispatch target.
+    - Expected:
+      1. `platform=JAVDB` with inferred video content goes to video executor.
+      2. `platform=JM` with inferred comic content goes to comic executor.
+      3. `import_type=by_platform_list` always goes to platform-list executor.
+    """
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    manager = task_manager_module.task_manager
+    ImportTask = task_manager_module.ImportTask
+    TaskStatus = task_manager_module.TaskStatus
+
+    calls = []
+
+    monkeypatch.setattr(
+        manager,
+        "_execute_video_import",
+        lambda task: calls.append(("video", task.platform, task.import_type)) or {"success": True, "content_type": "video"},
+    )
+    monkeypatch.setattr(
+        manager,
+        "_execute_comic_import",
+        lambda task: calls.append(("comic", task.platform, task.import_type)) or {"success": True, "content_type": "comic"},
+    )
+    monkeypatch.setattr(
+        manager,
+        "_execute_platform_list_import",
+        lambda task: calls.append(("platform_list", task.platform, task.import_type)) or {"success": True, "content_type": "video"},
+    )
+
+    def build_task(task_id, platform, import_type, content_type="", comic_id=None, keyword=None, comic_ids=None, extra_data=None):
+        return ImportTask(
+            task_id=task_id,
+            status=TaskStatus.PENDING,
+            platform=platform,
+            import_type=import_type,
+            target="home",
+            comic_id=comic_id,
+            keyword=keyword,
+            comic_ids=comic_ids,
+            title="t",
+            progress=0,
+            total_pages=0,
+            downloaded_pages=0,
+            message="m",
+            create_time="2026-03-25T00:00:00",
+            start_time=None,
+            complete_time=None,
+            error_msg=None,
+            result=None,
+            content_type=content_type,
+            extra_data=extra_data or {},
+        )
+
+    video_task = build_task("task-v", "JAVDB", "by_id", content_type="", comic_id="JVID-7")
+    comic_task = build_task("task-c", "JM", "by_search", content_type="", keyword="idol")
+    list_task = build_task(
+        "task-l",
+        "JAVBUS",
+        "by_platform_list",
+        content_type="video",
+        comic_id="fav",
+        keyword="Fav",
+        extra_data={"platform_list_id": "fav"},
+    )
+
+    video_result = manager._execute_import(video_task)
+    comic_result = manager._execute_import(comic_task)
+    list_result = manager._execute_import(list_task)
+
+    assert video_result["content_type"] == "video"
+    assert comic_result["content_type"] == "comic"
+    assert list_result["content_type"] == "video"
+    assert calls == [
+        ("video", "JAVDB", "by_id"),
+        ("comic", "JM", "by_search"),
+        ("platform_list", "JAVBUS", "by_platform_list"),
+    ]

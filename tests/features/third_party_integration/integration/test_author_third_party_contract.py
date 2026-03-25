@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.shared.runtime_data import find_by_id, load_json
 
 def _ok_result(data=None, message="ok"):
     return SimpleNamespace(success=True, data=data, message=message)
@@ -210,3 +211,66 @@ def test_author_batch_detail_route_forwards_ids(third_party_client, monkeypatch)
     assert response.status_code == 200
     assert payload["code"] == 200
     assert captured["ids"] == ["A1", "A2", "A3"]
+
+
+@pytest.mark.integration
+def test_author_works_force_refresh_persists_latest_work_for_subscription_summary(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard author detail refresh write-back contract:
+      fetching works from author detail (`offset=0`) must persist latest work fields for subscription summary display.
+    - Steps:
+      1. Subscribe author and get `author_id`.
+      2. Mock `author_service.get_works_paginated_impl` to return latest-first works.
+      3. Call `GET /api/v1/author/works/<author_id>?force_refresh=1`.
+      4. Verify `authors_database.json` latest work fields are updated.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. Response returns mocked works.
+      3. Persisted author record updates `last_work_id/last_work_title` from first work item.
+    """
+    client = third_party_client["client"]
+    author_api = third_party_client["author_api"]
+    meta_dir = third_party_client["meta_dir"]
+    service = author_api.author_service
+
+    subscribe_resp = client.post("/api/v1/author/subscribe", json={"name": "Author-TP-Detail-Sync"})
+    subscribe_payload = subscribe_resp.get_json()
+    assert subscribe_resp.status_code == 200
+    assert subscribe_payload["code"] == 200
+    author_id = subscribe_payload["data"]["id"]
+
+    monkeypatch.setattr(service, "_get_external_api", lambda: object())
+
+    def fake_paginated(_author, offset=0, limit=5, force_refresh=False):
+        return _ok_result(
+            {
+                "creator": {"id": author_id, "name": "Author-TP-Detail-Sync"},
+                "works": [
+                    {"id": "AR-8801", "title": "Author Detail Latest", "platform": "JM"},
+                    {"id": "AR-8800", "title": "Author Detail Old", "platform": "PK"},
+                ],
+                "total": 2,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
+        )
+
+    monkeypatch.setattr(service, "get_works_paginated_impl", fake_paginated)
+
+    response = client.get(
+        f"/api/v1/author/works/{author_id}",
+        query_string={"offset": 0, "limit": 5, "force_refresh": 1},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["works"][0]["id"] == "AR-8801"
+
+    authors = load_json(meta_dir / "authors_database.json").get("authors", [])
+    saved = find_by_id(authors, author_id)
+    assert saved is not None
+    assert saved["last_work_id"] == "AR-8801"
+    assert saved["last_work_title"] == "Author Detail Latest"

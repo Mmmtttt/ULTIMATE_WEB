@@ -54,7 +54,11 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
                 }
             return {
                 "videos": [
-                    {"code": "BUS-1", "title": "BUS One", "cover_url": "https://img/bus1.jpg"},
+                    {
+                        "code": "BUS-1",
+                        "title": "BUS One",
+                        "cover_url": "https://www.javbus.com/pics/thumb/c0ou.jpg",
+                    },
                 ],
                 "has_next": False,
             }
@@ -69,8 +73,63 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     assert calls[1] == {"platform": "javbus", "creator_name": "Mina", "page": 2, "max_pages": 4}
     assert [item["id"] for item in works] == ["DB-1", "DB-2", "BUS-1"]
     assert [item["platform"] for item in works] == ["javdb", "javdb", "javbus"]
+    assert str(works[-1]["cover_url"]).startswith("/api/v1/video/proxy2?url=")
     assert result["has_more"] is True
     assert result["page"] == 2
+
+
+@pytest.mark.integration
+def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard actor videos route contract for two key behaviors:
+      1) grouped output order (`javdb` before `javbus`), 2) javbus anti-hotlink cover proxy mapping.
+    - Steps:
+      1. Mock `api.v1.video.get_video_adapter` for `javdb/javbus`.
+      2. Call `GET /api/v1/actor/videos?actor_name=Mina`.
+      3. Assert order and javbus proxy cover url.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. Output order is `javdb` group first, then `javbus`.
+      3. Javbus cover url is transformed to `/api/v1/video/proxy2?url=...`.
+    """
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+
+    class FakeAdapter:
+        def __init__(self, platform):
+            self.platform = platform
+
+        def search_videos(self, creator_name, page=1, max_pages=1):
+            if self.platform == "javdb":
+                return {
+                    "videos": [
+                        {"video_id": "DB-11", "title": "DB Eleven", "cover_url": "https://img/db11.jpg"},
+                    ],
+                    "has_next": False,
+                }
+            return {
+                "videos": [
+                    {
+                        "code": "BUS-11",
+                        "title": "BUS Eleven",
+                        "cover_url": "https://www.javbus.com/pics/thumb/c0ou.jpg",
+                    }
+                ],
+                "has_next": False,
+            }
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda platform, *args, **kwargs: FakeAdapter(platform))
+
+    response = client.get("/api/v1/actor/videos", query_string={"actor_name": "Mina"})
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    works = payload["data"]
+    assert [item["id"] for item in works] == ["DB-11", "BUS-11"]
+    assert [item["platform"] for item in works] == ["javdb", "javbus"]
+    assert str(works[1]["cover_url"]).startswith("/api/v1/video/proxy2?url=")
 
 
 @pytest.mark.integration
@@ -224,6 +283,7 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
     assert captured["search"] == [{"actor_name": "Actor-TP-Check-01", "page": 1, "max_pages": 3}]
     assert len(payload["data"]["updated_actors"]) == 1
     assert payload["data"]["total_new_works"] == 1
+    assert payload["data"]["updated_actors"][0]["new_works"][0]["platform"] == "javdb"
     assert any(item["category"] == "actor_works" for item in captured["cache_set"])
 
     actors = load_json(meta_dir / "actors_database.json").get("actors", [])
@@ -294,6 +354,67 @@ def test_actor_new_works_endpoint_returns_items_before_last_work_id(third_party_
     assert response.status_code == 200
     assert payload["code"] == 200
     assert [item["id"] for item in payload["data"]["new_works"]] == ["AV-1004", "AV-1003"]
+
+
+@pytest.mark.integration
+def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard actor detail refresh write-back contract:
+      fetching works from actor detail (`offset=0`) must persist latest work fields for subscription summary display.
+    - Steps:
+      1. Subscribe actor and get `actor_id`.
+      2. Mock `actor_service.get_works_paginated_impl` to return latest-first works.
+      3. Call `GET /api/v1/actor/works/<actor_id>?force_refresh=1`.
+      4. Verify `actors_database.json` latest work fields are updated.
+    - Expected:
+      1. HTTP 200 with business `code=200`.
+      2. Response returns mocked works.
+      3. Persisted actor record updates `last_work_id/last_work_title` from first work item.
+    """
+    client = third_party_client["client"]
+    actor_api = third_party_client["actor_api"]
+    meta_dir = third_party_client["meta_dir"]
+    service = actor_api.actor_service
+
+    subscribe_resp = client.post("/api/v1/actor/subscribe", json={"name": "Actor-TP-Detail-Sync"})
+    subscribe_payload = subscribe_resp.get_json()
+    assert subscribe_resp.status_code == 200
+    assert subscribe_payload["code"] == 200
+    actor_id = subscribe_payload["data"]["id"]
+
+    def fake_paginated(_actor, offset=0, limit=5, force_refresh=False):
+        return _ok_result(
+            {
+                "creator": {"id": actor_id, "name": "Actor-TP-Detail-Sync"},
+                "works": [
+                    {"id": "AV-7701", "title": "Actor Detail Latest", "platform": "javdb"},
+                    {"id": "AV-7700", "title": "Actor Detail Old", "platform": "javbus"},
+                ],
+                "total": 2,
+                "offset": offset,
+                "limit": limit,
+                "has_more": False,
+            }
+        )
+
+    monkeypatch.setattr(service, "get_works_paginated_impl", fake_paginated)
+
+    response = client.get(
+        f"/api/v1/actor/works/{actor_id}",
+        query_string={"offset": 0, "limit": 5, "force_refresh": 1},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["works"][0]["id"] == "AV-7701"
+
+    actors = load_json(meta_dir / "actors_database.json").get("actors", [])
+    saved = find_by_id(actors, actor_id)
+    assert saved is not None
+    assert saved["last_work_id"] == "AV-7701"
+    assert saved["last_work_title"] == "Actor Detail Latest"
 
 
 @pytest.mark.integration

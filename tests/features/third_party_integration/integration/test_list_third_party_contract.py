@@ -586,3 +586,85 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
         "platform_list_name": "MyFav",
         "source": "preview",
     }
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "expected_content_type"),
+    [
+        ("JM", "comic"),
+        ("PK", "comic"),
+        ("JAVDB", "video"),
+        ("JAVBUS", "video"),
+    ],
+)
+def test_list_import_route_async_task_matrix_by_platform(third_party_client, monkeypatch, platform, expected_content_type):
+    """
+    Case Description:
+    - Purpose: Guard platform-list import async contract across comic/video platforms.
+    - Steps:
+      1. Mock `task_manager.create_task`.
+      2. Call `POST /api/v1/list/import` with platform list payload.
+      3. Assert normalized async payload contract.
+    - Expected:
+      1. Route always creates async task (`by_platform_list`).
+      2. Route always enforces `target=recommendation` and `extra_data.source=preview`.
+      3. `content_type` maps by platform (`JM/PK=comic`, `JAVDB/JAVBUS=video`).
+    """
+    client = third_party_client["client"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    captured = {}
+
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
+            }
+        )
+        return "task-list-matrix-001"
+
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
+
+    response = client.post(
+        "/api/v1/list/import",
+        json={
+            "platform": platform,
+            "platform_list_id": f"{platform}-remote-list-1",
+            "platform_list_name": f"{platform} Remote List",
+            "source": "local",
+        },
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["task_id"] == "task-list-matrix-001"
+    assert payload["data"]["content_type"] == expected_content_type
+    assert captured["platform"] == platform
+    assert captured["import_type"] == "by_platform_list"
+    assert captured["target"] == "recommendation"
+    assert captured["comic_id"] == f"{platform}-remote-list-1"
+    assert captured["keyword"] == f"{platform} Remote List"
+    assert captured["comic_ids"] is None
+    assert captured["content_type"] == expected_content_type
+    assert captured["extra_data"] == {
+        "platform_list_id": f"{platform}-remote-list-1",
+        "platform_list_name": f"{platform} Remote List",
+        "source": "preview",
+    }
