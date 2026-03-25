@@ -116,6 +116,10 @@ def main() -> int:
     runtime_root = Path(prepared["runtime_root"])
     repo_root = Path(REPO_ROOT)
 
+    # Avoid Vite silently switching to another port (e.g. 4174) and causing
+    # Playwright baseURL mismatch. Clean known test ports before boot.
+    _kill_ports_on_windows([E2E_FRONTEND_PORT, E2E_BACKEND_PORT])
+
     backend_env = os.environ.copy()
     fake_deps_dir = Path(REPO_ROOT) / "tests" / "shared" / "fake_deps"
     existing_pythonpath = str(backend_env.get("PYTHONPATH", "")).strip()
@@ -167,7 +171,17 @@ def main() -> int:
         _wait_http(f"http://127.0.0.1:{E2E_BACKEND_PORT}/health", timeout_seconds=120)
 
         frontend_proc, frontend_fp = _spawn_process(
-            [npm_cmd, "run", "dev", "--", "--host", "127.0.0.1", "--port", str(E2E_FRONTEND_PORT)],
+            [
+                npm_cmd,
+                "run",
+                "dev",
+                "--",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(E2E_FRONTEND_PORT),
+                "--strictPort",
+            ],
             cwd=repo_root / "comic_frontend",
             env=frontend_env,
             log_file=runtime_root / "frontend-e2e.log",

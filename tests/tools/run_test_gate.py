@@ -32,6 +32,15 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _has_pytest(current_python: str) -> bool:
+    completed = subprocess.run(
+        [current_python, "-c", "import pytest"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return completed.returncode == 0
+
+
 def main() -> int:
     args = _parse_args()
     repo_root = Path(REPO_ROOT)
@@ -39,6 +48,12 @@ def main() -> int:
     final_code = 0
 
     if not args.skip_integration:
+        if not _has_pytest(sys.executable):
+            print("[test-gate] integration aborted: pytest is not installed in current interpreter.")
+            print(f"[test-gate] python: {sys.executable}")
+            print("[test-gate] fix: python -m pip install -r tests/requirements.txt")
+            return 1
+
         prepare_profile("integration", clean=True)
         code = _run(
             [sys.executable, "-m", "pytest", "tests/features", "-m", "integration"],

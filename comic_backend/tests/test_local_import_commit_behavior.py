@@ -78,6 +78,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     tag_ids = comic.get("tag_ids", [])
     assert len(tag_ids) == 1
     local_tag_id = tag_ids[0]
+    assert comic.get("score") == 8.0
 
     tags_data = service._tag_storage.read()
     local_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "本地"), None)

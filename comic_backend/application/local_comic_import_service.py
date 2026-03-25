@@ -836,7 +836,7 @@ class LocalComicImportService:
                     "cover_path": cover_path,
                     "total_page": len(image_paths),
                     "current_page": 1,
-                    "score": None,
+                    "score": 8.0,
                     "tag_ids": [local_tag_id] if local_tag_id else [],
                     "list_ids": [],
                     "create_time": now,
