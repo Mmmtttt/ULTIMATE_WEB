@@ -87,7 +87,13 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 创建异步导入任务
   const createImportTask = async (params) => {
     try {
-      const response = await request.post('/v1/comic/import/async', params)
+      const payload = { ...(params || {}) }
+      if (!payload.content_type) {
+        const platform = String(payload.platform || '').trim().toUpperCase()
+        payload.content_type = ['JAVDB', 'JAVBUS'].includes(platform) ? 'video' : 'comic'
+      }
+
+      const response = await request.post('/v1/comic/import/async', payload)
       if (response && response.code === 200) {
         showSuccessToast('导入任务已创建')
         // 立即刷新任务列表

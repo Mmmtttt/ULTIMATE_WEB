@@ -1415,8 +1415,12 @@ def import_async():
         
         import_type = data.get('import_type')
         target = data.get('target', 'home')
-        content_type = str(data.get('content_type', 'comic') or '').strip().lower()
         platform_name = data.get('platform', 'JM').upper()
+        raw_content_type = str(data.get('content_type', '') or '').strip().lower()
+        if raw_content_type in ['comic', 'video']:
+            content_type = raw_content_type
+        else:
+            content_type = 'video' if platform_name in ['JAVDB', 'JAVBUS'] else 'comic'
         comic_id = data.get('comic_id')
         keyword = data.get('keyword')
         comic_ids = data.get('comic_ids')
@@ -1424,9 +1428,6 @@ def import_async():
         platform_list_name = data.get('platform_list_name', '')
         source = data.get('source', 'local')
 
-        if content_type not in ['comic', 'video']:
-            return error_response(400, "无效的内容类型，支持: comic, video")
-        
         if import_type not in ['by_id', 'by_search', 'by_list', 'by_platform_list']:
             return error_response(400, "无效的导入方式，支持: by_id, by_search, by_list, by_platform_list")
         

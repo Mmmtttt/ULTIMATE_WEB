@@ -122,7 +122,10 @@ class TaskManager:
                             complete_time=task_data.get('complete_time'),
                             error_msg=task_data.get('error_msg'),
                             result=task_data.get('result'),
-                            content_type=task_data.get('content_type', 'comic'),
+                            content_type=self._normalize_content_type(
+                                task_data.get('content_type', ''),
+                                platform=task_data.get('platform', '')
+                            ),
                             extra_data=task_data.get('extra_data') or {}
                         )
                         self._tasks[task.task_id] = task
@@ -245,7 +248,7 @@ class TaskManager:
     
     def _execute_import(self, task: ImportTask) -> Dict:
         """执行导入操作"""
-        content_type = self._normalize_content_type(task.content_type)
+        content_type = self._normalize_content_type(task.content_type, platform=task.platform)
         if task.import_type == "by_platform_list":
             return self._execute_platform_list_import(task)
         if content_type == "video":
@@ -253,9 +256,17 @@ class TaskManager:
         return self._execute_comic_import(task)
 
     @staticmethod
-    def _normalize_content_type(content_type: str) -> str:
+    def _normalize_content_type(content_type: str, platform: Optional[str] = None) -> str:
         normalized = str(content_type or "").strip().lower()
-        return normalized if normalized in {"comic", "video"} else "comic"
+        if normalized in {"comic", "video"}:
+            return normalized
+
+        platform_key = str(platform or "").strip().upper()
+        if platform_key in {"JAVDB", "JAVBUS"}:
+            return "video"
+        if platform_key in {"JM", "PK"}:
+            return "comic"
+        return "comic"
 
     def _execute_comic_import(self, task: ImportTask) -> Dict:
         """执行漫画导入操作"""
@@ -661,7 +672,7 @@ class TaskManager:
                 "skipped_count": int(data.get("skipped_count", 0) or 0),
                 "failed_count": int(data.get("failed_count", 0) or 0),
                 "list_id": data.get("list_id"),
-                "content_type": self._normalize_content_type(task.content_type),
+                "content_type": self._normalize_content_type(task.content_type, platform=task.platform),
                 "title": task.title,
             }
         except Exception as e:
@@ -987,7 +998,7 @@ class TaskManager:
             complete_time=None,
             error_msg=None,
             result=None,
-            content_type=self._normalize_content_type(content_type),
+            content_type=self._normalize_content_type(content_type, platform=platform),
             extra_data=extra_data or {}
         )
         
