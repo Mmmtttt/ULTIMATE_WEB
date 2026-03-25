@@ -153,15 +153,34 @@ async function resolveSubscription() {
 
 function applyWorksPage(res, page) {
   const newWorks = res?.data?.works || []
-  if (page === 1) works.value = newWorks
-  else works.value = [...works.value, ...newWorks]
-
+  let incomingWorks = normalizeVideoWorkPlatforms(newWorks)
   if (isVideoMode.value) {
-    works.value = sortVideoWorksByPlatform(works.value)
+    // 仅对“本次新增批次”做平台分组，避免重排历史结果导致新数据跳到前面
+    incomingWorks = sortVideoWorksByPlatform(incomingWorks)
   }
+
+  if (page === 1) works.value = incomingWorks
+  else works.value = [...works.value, ...incomingWorks]
 
   hasMore.value = Boolean(res?.data?.has_more)
   totalWorks.value = res?.data?.total || works.value.length
+}
+
+function normalizeVideoWorkPlatforms(items) {
+  if (!isVideoMode.value) {
+    return items || []
+  }
+
+  return (items || []).map(item => {
+    const normalizedPlatform = detectVideoPlatform(item)
+    if (!normalizedPlatform) {
+      return item
+    }
+    return {
+      ...item,
+      platform: normalizedPlatform.toUpperCase()
+    }
+  })
 }
 
 function sortVideoWorksByPlatform(items) {
@@ -170,7 +189,7 @@ function sortVideoWorksByPlatform(items) {
   const other = []
 
   ;(items || []).forEach(item => {
-    const platform = String(item?.platform || '').trim().toLowerCase()
+    const platform = detectVideoPlatform(item)
     if (platform === 'javdb') {
       javdb.push(item)
       return
@@ -183,6 +202,34 @@ function sortVideoWorksByPlatform(items) {
   })
 
   return [...javdb, ...javbus, ...other]
+}
+
+function detectVideoPlatform(item) {
+  const platformText = String(item?.platform || item?.source || '').trim().toLowerCase()
+  if (platformText.includes('javbus')) {
+    return 'javbus'
+  }
+  if (platformText.includes('javdb')) {
+    return 'javdb'
+  }
+
+  const idText = String(item?.id || item?.video_id || '').trim().toLowerCase()
+  if (idText.startsWith('javbus_')) {
+    return 'javbus'
+  }
+  if (idText.startsWith('javdb_')) {
+    return 'javdb'
+  }
+
+  const coverText = String(item?.cover_url || item?.cover_path || '').trim().toLowerCase()
+  if (coverText.includes('javbus.com')) {
+    return 'javbus'
+  }
+  if (coverText.includes('javdb.com')) {
+    return 'javdb'
+  }
+
+  return ''
 }
 
 async function loadData(page = 1, options = {}) {
@@ -305,8 +352,7 @@ function getItemCreator(item) {
 }
 
 function isJavbusPlatform(item) {
-  const platform = String(item?.platform || '').trim().toLowerCase()
-  return platform === 'javbus'
+  return detectVideoPlatform(item) === 'javbus'
 }
 
 function getCoverFit(item) {

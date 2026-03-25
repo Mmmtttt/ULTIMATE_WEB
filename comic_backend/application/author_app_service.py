@@ -64,6 +64,31 @@ class AuthorAppService(BaseCreatorAppService):
         if os.path.exists(local_file):
             return self._build_author_cover_url(content_id, platform)
         return ""
+
+    def _sync_author_latest_work(self, author: AuthorSubscription, works: List[Dict]) -> None:
+        """Sync latest work metadata into author subscription without changing badge count."""
+        if not author or not isinstance(works, list) or not works:
+            return
+
+        latest = works[0] if isinstance(works[0], dict) else {}
+        latest_work_id = str(latest.get("id", "") or "").strip()
+        latest_work_title = str(latest.get("title", "") or "").strip()
+
+        if not latest_work_id and not latest_work_title:
+            return
+
+        if (
+            str(author.last_work_id or "").strip() == latest_work_id
+            and str(author.last_work_title or "").strip() == latest_work_title
+        ):
+            return
+
+        try:
+            keep_new_count = int(author.new_work_count or 0)
+            author.update_check_info(latest_work_id, latest_work_title, keep_new_count)
+            self._author_repo.save(author)
+        except Exception as e:
+            error_logger.error(f"同步作者最新作品失败: {e}")
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索作者作品 - 支持分页
@@ -484,6 +509,8 @@ class AuthorAppService(BaseCreatorAppService):
             if result.success:
                 data = result.data
                 data["author"] = data.pop("creator")
+                if int(offset or 0) == 0:
+                    self._sync_author_latest_work(author, data.get("works", []))
             
             return result
         except Exception as e:
@@ -492,7 +519,12 @@ class AuthorAppService(BaseCreatorAppService):
     
     def search_author_works_by_name(self, author_name: str, offset: int = 0, limit: int = 5) -> ServiceResult:
         """根据作者名搜索作品（不需要订阅）"""
-        return self.search_works_by_name_impl(author_name, offset, limit)
+        result = self.search_works_by_name_impl(author_name, offset, limit)
+        if result.success and int(offset or 0) == 0:
+            author = self._author_repo.get_by_name(author_name)
+            if author:
+                self._sync_author_latest_work(author, (result.data or {}).get("works", []))
+        return result
     
     def clear_author_cover_cache(self) -> ServiceResult:
         """清理作者作品封面缓存"""

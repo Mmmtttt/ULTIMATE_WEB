@@ -1,4 +1,4 @@
-﻿import { toBackendUrl } from './url'
+﻿import { toBackendApiUrl, toBackendUrl } from './url'
 import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
 
 export function toggleSelection(selectedIds, id) {
@@ -45,9 +45,55 @@ export function getCoverUrl(coverInput) {
 
   const normalizedCoverPath = String(coverPath || '').trim()
   if (!normalizedCoverPath) return ''
+  const javbusProxy = toJavbusProxyCover(normalizedCoverPath)
+  if (javbusProxy) return javbusProxy
   return toBackendUrl(normalizedCoverPath)
 }
 
+function toJavbusProxyCover(rawUrl) {
+  const normalized = String(rawUrl || '').trim()
+  if (!normalized) return ''
+
+  const lower = normalized.toLowerCase()
+  const looksLikeJavbusPic =
+    lower.includes('javbus.com/pics/') ||
+    lower.includes('javbus.org/pics/') ||
+    lower.startsWith('/pics/')
+
+  if (!looksLikeJavbusPic) {
+    return ''
+  }
+
+  let absolute = normalized
+  if (normalized.startsWith('//')) {
+    absolute = `https:${normalized}`
+  } else if (normalized.startsWith('/pics/')) {
+    absolute = `https://www.javbus.com${normalized}`
+  }
+
+  const encoded = encodeBase64(absolute)
+  if (!encoded) {
+    return ''
+  }
+  return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(encoded)}`)
+}
+
+function encodeBase64(value) {
+  try {
+    if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+      return window.btoa(value)
+    }
+    if (typeof btoa === 'function') {
+      return btoa(value)
+    }
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(value, 'utf-8').toString('base64')
+    }
+  } catch (_) {
+    return ''
+  }
+  return ''
+}
 export function extractAuthors(items) {
   const authors = new Set()
   items.forEach(item => {
@@ -241,4 +287,5 @@ export function buildListChangeMessage(addCount, removeCount) {
   }
   return message.trim() || 'No list changes'
 }
+
 

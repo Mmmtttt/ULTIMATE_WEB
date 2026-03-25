@@ -65,6 +65,31 @@ class ActorAppService(BaseCreatorAppService):
         if os.path.exists(local_file):
             return self._build_actor_cover_url(content_id, platform)
         return ""
+
+    def _sync_actor_latest_work(self, actor: ActorSubscription, works: List[Dict]) -> None:
+        """Sync latest work metadata into actor subscription without changing badge count."""
+        if not actor or not isinstance(works, list) or not works:
+            return
+
+        latest = works[0] if isinstance(works[0], dict) else {}
+        latest_work_id = str(latest.get("id", "") or "").strip()
+        latest_work_title = str(latest.get("title", "") or "").strip()
+
+        if not latest_work_id and not latest_work_title:
+            return
+
+        if (
+            str(actor.last_work_id or "").strip() == latest_work_id
+            and str(actor.last_work_title or "").strip() == latest_work_title
+        ):
+            return
+
+        try:
+            keep_new_count = int(actor.new_work_count or 0)
+            actor.update_check_info(latest_work_id, latest_work_title, keep_new_count)
+            self._actor_repo.save(actor)
+        except Exception as e:
+            error_logger.error(f"同步演员最新作品失败: {e}")
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索演员作品 - 支持分页
@@ -81,7 +106,7 @@ class ActorAppService(BaseCreatorAppService):
                 "page": int           # 当前页码
             }
         """
-        from api.v1.video import get_video_adapter
+        from api.v1.video import get_video_adapter, to_proxy_image_url
         
         works = []
         has_more = False
@@ -136,6 +161,8 @@ class ActorAppService(BaseCreatorAppService):
                     local_cover = self._build_actor_cover_url(work_id, plat)
                     if os.path.exists(os.path.join(self._get_actor_cover_cache_dir(plat), f"{work_id}.jpg")):
                         cover_url = local_cover
+                    elif cover_url:
+                        cover_url = to_proxy_image_url(str(cover_url))
                     
                     works.append({
                         "id": work_id,
@@ -456,6 +483,8 @@ class ActorAppService(BaseCreatorAppService):
             if result.success:
                 data = result.data
                 data["actor"] = data.pop("creator")
+                if int(offset or 0) == 0:
+                    self._sync_actor_latest_work(actor, data.get("works", []))
             
             return result
         except Exception as e:
@@ -464,7 +493,12 @@ class ActorAppService(BaseCreatorAppService):
     
     def search_actor_works_by_name(self, actor_name: str, offset: int = 0, limit: int = 5) -> ServiceResult:
         """根据演员名搜索作品（不需要订阅）"""
-        return self.search_works_by_name_impl(actor_name, offset, limit)
+        result = self.search_works_by_name_impl(actor_name, offset, limit)
+        if result.success and int(offset or 0) == 0:
+            actor = self._actor_repo.get_by_name(actor_name)
+            if actor:
+                self._sync_actor_latest_work(actor, (result.data or {}).get("works", []))
+        return result
     
     def clear_actor_cover_cache(self) -> ServiceResult:
         """清理演员作品封面缓存"""
