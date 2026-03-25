@@ -163,23 +163,8 @@
                 <van-cell title="清单" :value="selectedPlatformList?.list_name || listIdInput" />
                 <van-cell title="内容数量" :value="selectedPlatformList?.video_count || '未知'" />
                 <van-cell title="目标清单" :value="getTargetListName()" />
+                <van-cell title="导入位置" value="预览库（固定）" />
               </van-cell-group>
-              
-              <h5 class="section-title">选择导入位置</h5>
-              <van-radio-group v-model="importSource">
-                <van-cell-group inset>
-                  <van-cell title="导入本地库" clickable @click="importSource = 'local'">
-                    <template #right-icon>
-                      <van-radio name="local" />
-                    </template>
-                  </van-cell>
-                  <van-cell title="导入预览库" clickable @click="importSource = 'preview'">
-                    <template #right-icon>
-                      <van-radio name="preview" />
-                    </template>
-                  </van-cell>
-                </van-cell-group>
-              </van-radio-group>
             </div>
             
             <div class="step-buttons">
@@ -227,7 +212,6 @@ const listIdInput = ref('')
 const platformLists = ref([])
 const loadingPlatformLists = ref(false)
 const selectedPlatformList = ref(null)
-const importSource = ref('local')
 const importing = ref(false)
 const syncing = ref(false)
 
@@ -355,7 +339,6 @@ function resetImportDialog() {
   listIdInput.value = ''
   platformLists.value = []
   selectedPlatformList.value = null
-  importSource.value = 'local'
 }
 
 async function loadPlatformLists() {
@@ -406,15 +389,14 @@ async function doImport() {
   
   importing.value = true
   try {
-    const target = importSource.value === 'preview' ? 'recommendation' : 'home'
     const created = await importTaskStore.createImportTask({
       import_type: 'by_platform_list',
-      target,
+      target: 'recommendation',
       content_type: currentContentType.value,
       platform: selectedPlatform.value,
       platform_list_id: selectedPlatformList.value.list_id,
       platform_list_name: selectedPlatformList.value.list_name,
-      source: importSource.value
+      source: 'preview'
     })
 
     if (created) {

@@ -88,6 +88,35 @@ export const useImportTaskStore = defineStore('importTask', () => {
   const createImportTask = async (params) => {
     try {
       const payload = { ...(params || {}) }
+      const isPlatformListImport = payload.import_type === 'by_platform_list'
+
+      if (isPlatformListImport) {
+        const platform = String(payload.platform || '').trim().toUpperCase()
+        const platformListId = String(payload.platform_list_id || payload.comic_id || '').trim()
+        const platformListName = String(payload.platform_list_name || payload.keyword || '').trim()
+        if (!platform || !platformListId) {
+          showFailToast('缺少平台清单参数')
+          return null
+        }
+
+        const response = await request.post('/v1/list/import', {
+          platform,
+          platform_list_id: platformListId,
+          platform_list_name: platformListName,
+          source: 'preview'
+        })
+
+        if (response && response.code === 200) {
+          showSuccessToast('导入任务已创建')
+          await fetchTasks()
+          startPolling()
+          return response.data
+        }
+
+        showFailToast(response?.msg || '创建任务失败')
+        return null
+      }
+
       if (!payload.content_type) {
         const platform = String(payload.platform || '').trim().toUpperCase()
         payload.content_type = ['JAVDB', 'JAVBUS'].includes(platform) ? 'video' : 'comic'

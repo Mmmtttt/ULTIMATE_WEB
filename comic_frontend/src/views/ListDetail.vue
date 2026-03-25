@@ -6,8 +6,24 @@
       left-arrow
       @click-left="$router.back()"
     >
-      <template #right v-if="!listInfo?.is_default">
-        <van-icon name="delete-o" size="18" @click="confirmDelete" />
+      <template #right v-if="listInfo">
+        <div class="nav-right">
+          <van-button
+            size="mini"
+            plain
+            type="primary"
+            class="manage-btn"
+            @click="toggleManageMode"
+          >
+            {{ manageMode ? '完成' : '管理' }}
+          </van-button>
+          <van-icon
+            v-if="!listInfo?.is_default && !manageMode"
+            name="delete-o"
+            size="18"
+            @click="confirmDelete"
+          />
+        </div>
       </template>
     </van-nav-bar>
     
@@ -51,12 +67,51 @@
           plain 
           @click="handleBatchDownload"
           :loading="downloadLoading"
-          :disabled="filteredComics.length === 0"
+          :disabled="filteredComics.length === 0 || manageMode"
           class="action-btn"
         >
           批量下载
           <van-icon name="down" />
         </van-button>
+      </div>
+
+      <div v-if="manageMode" class="manage-action-bar">
+        <div class="manage-summary">已选 {{ selectedCount }} 项</div>
+        <div class="manage-actions">
+          <van-button size="small" plain type="primary" @click="toggleSelectAllItems">
+            {{ allCurrentSelected ? '取消全选' : '全选' }}
+          </van-button>
+          <van-button
+            size="small"
+            type="primary"
+            plain
+            :disabled="selectedCount === 0"
+            :loading="downloadLoading"
+            @click="handleManageBatchDownload"
+          >
+            下载
+          </van-button>
+          <van-button
+            size="small"
+            type="warning"
+            plain
+            :disabled="selectedCount === 0 || !canMoveToLocal"
+            :loading="moveToLocalLoading"
+            @click="handleBatchMoveToLocal"
+          >
+            移动到本地
+          </van-button>
+          <van-button
+            size="small"
+            type="danger"
+            plain
+            :disabled="selectedCount === 0"
+            :loading="batchRemoveLoading"
+            @click="handleBatchRemoveFromList"
+          >
+            删除
+          </van-button>
+        </div>
       </div>
       
       <div v-if="hasActiveFilter" class="active-filter-bar">
@@ -138,8 +193,15 @@
           v-for="comic in filteredComics"
           :key="comic.id"
           class="comic-card"
-          @click="goToComic(comic)"
+          :class="{ selected: isItemSelected(comic) }"
+          @click="handleComicCardClick(comic)"
         >
+          <van-checkbox
+            v-if="manageMode"
+            :model-value="isItemSelected(comic)"
+            class="select-check"
+            @click.stop="toggleItemSelection(comic)"
+          />
           <img :src="getCoverUrl(comic.cover_path)" class="comic-cover" alt="" />
           <div class="comic-info">
             <p class="comic-title">{{ comic.title }}</p>
@@ -155,7 +217,7 @@
             class="source-tag"
           >预览</van-tag>
           <van-icon
-            v-if="!listInfo.is_default"
+            v-if="!listInfo.is_default && !manageMode"
             name="cross"
             class="remove-btn"
             @click.stop="removeComic(comic.id, comic.source)"
@@ -168,8 +230,15 @@
           v-for="video in filteredVideos"
           :key="video.id"
           class="video-card"
-          @click="goToVideo(video)"
+          :class="{ selected: isItemSelected(video) }"
+          @click="handleVideoCardClick(video)"
         >
+          <van-checkbox
+            v-if="manageMode"
+            :model-value="isItemSelected(video)"
+            class="select-check"
+            @click.stop="toggleItemSelection(video)"
+          />
           <img :src="getCoverUrl(video)" class="video-cover" alt="" />
           <div class="video-info">
             <p class="video-title">{{ video.title }}</p>
@@ -185,7 +254,7 @@
             class="source-tag"
           >预览</van-tag>
           <van-icon
-            v-if="!listInfo.is_default"
+            v-if="!listInfo.is_default && !manageMode"
             name="cross"
             class="remove-btn"
             @click.stop="removeVideo(video.id, video.source)"
@@ -279,6 +348,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useListStore, useTagStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
+import { recommendationApi, videoApi } from '@/api'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
@@ -311,6 +381,10 @@ const tempSelectedAuthors = ref([])
 const tempSelectedListIds = ref([])
 const tempUnreadOnly = ref(false)
 const downloadLoading = ref(false)
+const manageMode = ref(false)
+const selectedItemKeys = ref([])
+const batchRemoveLoading = ref(false)
+const moveToLocalLoading = ref(false)
 
 function getFilterStorageKey() {
   return `list_detail_filters_${listId.value}`
@@ -370,6 +444,23 @@ const availableLists = computed(() => {
       ...list,
       item_count: list.item_ids?.length || 0
     }))
+})
+
+function getItemSelectionKey(item) {
+  if (!item?.id) {
+    return ''
+  }
+  return `${item.source || 'local'}:${item.id}`
+}
+
+function normalizeSelectedItemKeys(keys) {
+  const validKeys = new Set(currentItems.value.map(getItemSelectionKey))
+  return [...new Set((keys || []).filter(key => key && validKeys.has(key)))]
+}
+
+const selectedItems = computed(() => {
+  const keySet = new Set(selectedItemKeys.value)
+  return currentItems.value.filter(item => keySet.has(getItemSelectionKey(item)))
 })
 
 const sortLabel = computed(() => {
@@ -523,6 +614,17 @@ const filteredVideos = computed(() => {
   return result
 })
 
+const currentFilteredItems = computed(() => activeContentType.value === 'video' ? filteredVideos.value : filteredComics.value)
+const selectedCount = computed(() => selectedItems.value.length)
+const allCurrentSelected = computed(() => {
+  if (currentFilteredItems.value.length === 0) {
+    return false
+  }
+  const keySet = new Set(selectedItemKeys.value)
+  return currentFilteredItems.value.every(item => keySet.has(getItemSelectionKey(item)))
+})
+const canMoveToLocal = computed(() => selectedItems.value.some(item => item.source === 'preview'))
+
 function getCoverUrl(coverSource) {
   return buildCoverUrl(coverSource)
 }
@@ -531,6 +633,7 @@ async function loadDetail() {
   loading.value = true
   const result = await listStore.fetchListDetail(listId.value)
   listInfo.value = result
+  selectedItemKeys.value = normalizeSelectedItemKeys(selectedItemKeys.value)
   loading.value = false
 }
 
@@ -654,6 +757,83 @@ function clearAllFilters() {
   saveFilterState()
 }
 
+function toggleManageMode() {
+  manageMode.value = !manageMode.value
+  if (!manageMode.value) {
+    selectedItemKeys.value = []
+  }
+}
+
+function isItemSelected(item) {
+  const key = getItemSelectionKey(item)
+  if (!key) {
+    return false
+  }
+  return selectedItemKeys.value.includes(key)
+}
+
+function toggleItemSelection(item) {
+  const key = getItemSelectionKey(item)
+  if (!key) {
+    return
+  }
+  if (selectedItemKeys.value.includes(key)) {
+    selectedItemKeys.value = selectedItemKeys.value.filter(existingKey => existingKey !== key)
+    return
+  }
+  selectedItemKeys.value = [...selectedItemKeys.value, key]
+}
+
+function toggleSelectAllItems() {
+  const currentKeys = currentFilteredItems.value.map(getItemSelectionKey).filter(Boolean)
+  if (currentKeys.length === 0) {
+    return
+  }
+
+  if (allCurrentSelected.value) {
+    const currentKeySet = new Set(currentKeys)
+    selectedItemKeys.value = selectedItemKeys.value.filter(key => !currentKeySet.has(key))
+    return
+  }
+
+  selectedItemKeys.value = [...new Set([...selectedItemKeys.value, ...currentKeys])]
+}
+
+function handleComicCardClick(comic) {
+  if (manageMode.value) {
+    toggleItemSelection(comic)
+    return
+  }
+  goToComic(comic)
+}
+
+function handleVideoCardClick(video) {
+  if (manageMode.value) {
+    toggleItemSelection(video)
+    return
+  }
+  goToVideo(video)
+}
+
+function buildSourceIdGroups(items) {
+  return items.reduce((groups, item) => {
+    if (!item?.id) {
+      return groups
+    }
+    const source = item.source === 'preview' ? 'preview' : 'local'
+    groups[source].push(item.id)
+    return groups
+  }, { local: [], preview: [] })
+}
+
+function getDownloadableComics(items) {
+  const groups = buildSourceIdGroups(items)
+  return {
+    localIds: groups.local,
+    skippedPreviewCount: groups.preview.length
+  }
+}
+
 function applyFilterAndClose() {
   minScore.value = tempMinScore.value > 0 ? tempMinScore.value : null
   includeTags.value = [...tempIncludeTags.value]
@@ -670,17 +850,151 @@ async function handleBatchDownload() {
     showFailToast('没有可下载的漫画')
     return
   }
+
+  const { localIds, skippedPreviewCount } = getDownloadableComics(filteredComics.value)
+  if (localIds.length === 0) {
+    showFailToast('当前列表中没有可下载的本地漫画')
+    return
+  }
   
   downloadLoading.value = true
   try {
-    const comicIds = filteredComics.value.map(c => c.id)
-    await comicApi.batchDownload(comicIds)
-    showSuccessToast(`成功下载 ${comicIds.length} 部漫画`)
+    await comicApi.batchDownload(localIds)
+    if (skippedPreviewCount > 0) {
+      showSuccessToast(`成功下载 ${localIds.length} 部，跳过预览项 ${skippedPreviewCount} 部`)
+    } else {
+      showSuccessToast(`成功下载 ${localIds.length} 部漫画`)
+    }
   } catch (error) {
     console.error('批量下载失败:', error)
     showFailToast('批量下载失败')
   } finally {
     downloadLoading.value = false
+  }
+}
+
+async function handleManageBatchDownload() {
+  if (selectedItems.value.length === 0) {
+    showFailToast('请先选择内容')
+    return
+  }
+  if (activeContentType.value !== 'comic') {
+    showFailToast('视频暂不支持批量下载')
+    return
+  }
+
+  const { localIds, skippedPreviewCount } = getDownloadableComics(selectedItems.value)
+  if (localIds.length === 0) {
+    showFailToast('所选内容中没有可下载的本地漫画')
+    return
+  }
+
+  downloadLoading.value = true
+  try {
+    await comicApi.batchDownload(localIds)
+    if (skippedPreviewCount > 0) {
+      showSuccessToast(`成功下载 ${localIds.length} 部，跳过预览项 ${skippedPreviewCount} 部`)
+    } else {
+      showSuccessToast(`成功下载 ${localIds.length} 部漫画`)
+    }
+  } catch (error) {
+    console.error('批量下载失败:', error)
+    showFailToast('批量下载失败')
+  } finally {
+    downloadLoading.value = false
+  }
+}
+
+async function handleBatchRemoveFromList() {
+  if (selectedItems.value.length === 0) {
+    showFailToast('请先选择内容')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: '批量删除',
+      message: `确定要从清单移除已选 ${selectedItems.value.length} 项内容吗？`
+    })
+  } catch {
+    return
+  }
+
+  const groups = buildSourceIdGroups(selectedItems.value)
+  batchRemoveLoading.value = true
+  try {
+    const operations = []
+    if (activeContentType.value === 'video') {
+      if (groups.local.length > 0) {
+        operations.push(listStore.removeVideos(listId.value, groups.local, 'local'))
+      }
+      if (groups.preview.length > 0) {
+        operations.push(listStore.removeVideos(listId.value, groups.preview, 'preview'))
+      }
+    } else {
+      if (groups.local.length > 0) {
+        operations.push(listStore.removeComics(listId.value, groups.local, 'local'))
+      }
+      if (groups.preview.length > 0) {
+        operations.push(listStore.removeComics(listId.value, groups.preview, 'preview'))
+      }
+    }
+
+    const results = await Promise.all(operations)
+    if (!results.every(Boolean)) {
+      showFailToast('批量删除失败，请重试')
+      return
+    }
+
+    selectedItemKeys.value = []
+    await loadDetail()
+  } finally {
+    batchRemoveLoading.value = false
+  }
+}
+
+async function handleBatchMoveToLocal() {
+  if (selectedItems.value.length === 0) {
+    showFailToast('请先选择内容')
+    return
+  }
+
+  const groups = buildSourceIdGroups(selectedItems.value)
+  const localSkipped = groups.local.length
+  const previewIds = groups.preview
+
+  if (previewIds.length === 0) {
+    showFailToast(localSkipped > 0 ? '所选内容已在本地库，无需移动' : '没有可移动的内容')
+    return
+  }
+
+  moveToLocalLoading.value = true
+  try {
+    let response
+    if (activeContentType.value === 'video') {
+      response = await videoApi.migrateRecommendationToLocal(previewIds)
+    } else {
+      response = await recommendationApi.migrateToLocal(previewIds)
+    }
+
+    if (!response || response.code !== 200) {
+      showFailToast(response?.msg || '移动到本地库失败')
+      return
+    }
+
+    const stats = response.data || {}
+    const importedCount = Number(stats.imported_count || 0)
+    const skippedCount = Number(stats.skipped_count || 0) + localSkipped
+    const failedCount = Number(stats.failed_count || 0)
+    showSuccessToast(`移动完成：成功 ${importedCount}，跳过 ${skippedCount}，失败 ${failedCount}`)
+
+    selectedItemKeys.value = []
+    await loadDetail()
+  } catch (error) {
+    console.error('移动到本地库失败:', error)
+    showFailToast('移动到本地库失败')
+  } finally {
+    moveToLocalLoading.value = false
   }
 }
 
@@ -696,9 +1010,15 @@ watch(showFilterPanel, (val) => {
 })
 
 watch(activeContentType, async (newContentType) => {
+  selectedItemKeys.value = []
+  manageMode.value = false
   if (newContentType === 'video' && tagStore.videoTags.length === 0) {
     await tagStore.fetchTags('video')
   }
+})
+
+watch(currentItems, () => {
+  selectedItemKeys.value = normalizeSelectedItemKeys(selectedItemKeys.value)
 })
 
 onMounted(async () => {
@@ -772,6 +1092,36 @@ onMounted(async () => {
   flex: 1;
 }
 
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manage-btn {
+  min-width: 52px;
+}
+
+.manage-action-bar {
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+
+.manage-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .active-filter-bar {
   padding: 8px 16px;
   background: var(--surface-2);
@@ -809,6 +1159,7 @@ onMounted(async () => {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
+  cursor: pointer;
 }
 
 .video-card {
@@ -817,6 +1168,13 @@ onMounted(async () => {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
+  cursor: pointer;
+}
+
+.comic-card.selected,
+.video-card.selected {
+  border-color: #1989fa;
+  box-shadow: 0 0 0 1px rgba(25, 137, 250, 0.25);
 }
 
 .comic-cover {
@@ -903,6 +1261,16 @@ onMounted(async () => {
   top: 4px;
   left: 4px;
   z-index: 1;
+}
+
+.select-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.86);
 }
 
 .filter-panel {

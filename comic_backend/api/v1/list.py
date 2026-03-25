@@ -328,9 +328,9 @@ def import_platform_list():
         platform = data.get('platform')
         platform_list_id = data.get('platform_list_id')
         platform_list_name = data.get('platform_list_name', '')
-        source = data.get('source', 'local')
-        source_key = str(source or 'local').strip().lower()
-        target = 'recommendation' if source_key == 'preview' else 'home'
+        # 清单导入固定写入预览库，避免误导入本地库
+        source_key = 'preview'
+        target = 'recommendation'
         
         if not platform or not platform_list_id:
             return error_response(400, "缺少必要参数: platform, platform_list_id")
@@ -361,7 +361,7 @@ def import_platform_list():
             "task_id": task_id,
             "content_type": content_type,
             "message": "导入任务已创建"
-        }, "导入任务已创建，请到导入任务页查看进度")
+        })
     except Exception as e:
         error_logger.error(f"导入平台清单失败: {e}")
         return error_response(500, "服务器内部错误")
