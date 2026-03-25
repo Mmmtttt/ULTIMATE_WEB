@@ -92,8 +92,15 @@ class AuthorAppService(BaseCreatorAppService):
             for plat in platforms_to_search:
                 try:
                     adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
-                    result = external_api.search_albums(creator_name, max_pages=max_pages, adapter_name=adapter_name, fast_mode=True)
+                    result = external_api.search_albums(
+                        creator_name,
+                        page=page,
+                        max_pages=max_pages,
+                        adapter_name=adapter_name,
+                        fast_mode=True
+                    )
                     albums = result.get("albums", [])
+                    has_more = has_more or bool(result.get("has_next", False))
                     
                     if albums:
                         platform_albums[plat] = albums
@@ -455,7 +462,8 @@ class AuthorAppService(BaseCreatorAppService):
         author_id: str,
         offset: int = 0,
         limit: int = 5,
-        cache_only: bool = False
+        cache_only: bool = False,
+        force_refresh: bool = False
     ) -> ServiceResult:
         """分页获取作者作品"""
         try:
@@ -466,7 +474,12 @@ class AuthorAppService(BaseCreatorAppService):
             if cache_only:
                 result = self.get_cached_works_paginated_impl(author, offset, limit)
             else:
-                result = self.get_works_paginated_impl(author, offset, limit)
+                result = self.get_works_paginated_impl(
+                    author,
+                    offset,
+                    limit,
+                    force_refresh=force_refresh
+                )
             
             if result.success:
                 data = result.data

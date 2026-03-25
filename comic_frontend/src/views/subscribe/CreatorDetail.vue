@@ -194,7 +194,8 @@ async function loadData(page = 1, options = {}) {
     if (isSubscribed.value && authorSubscriptionId.value) {
       const offset = (page - 1) * 20
       const cacheOnly = !forceQuery && !hasRemoteQueried.value
-      const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20, { cacheOnly })
+      const forceRefresh = Boolean(forceQuery && page === 1)
+      const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20, { cacheOnly, forceRefresh })
       if (res.code === 200) {
         applyWorksPage(res, page)
         if (forceQuery) {

@@ -168,6 +168,9 @@ def get_author_works(author_id):
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', 5))
         cache_only = str(request.args.get('cache_only', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+        force_refresh = str(request.args.get('force_refresh', 'false')).strip().lower() in ('1', 'true', 'yes', 'on')
+        if force_refresh:
+            cache_only = False
         if not cache_only:
             try:
                 author_service._get_external_api()
@@ -178,7 +181,8 @@ def get_author_works(author_id):
             author_id,
             offset,
             limit,
-            cache_only=cache_only
+            cache_only=cache_only,
+            force_refresh=force_refresh
         )
         
         if result.success:

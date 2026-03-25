@@ -292,7 +292,8 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
         self,
         creator: BaseCreator,
         offset: int = 0,
-        limit: int = 5
+        limit: int = 5,
+        force_refresh: bool = False
     ) -> ServiceResult:
         """通用的分页获取作品实现 - 支持分页查询和缓存追加"""
         try:
@@ -308,8 +309,14 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
                 cached_meta = {"has_more": True, "next_page": 1, "all_fetched": False}
             
             required_count = offset + limit
+            should_force_fetch = bool(force_refresh)
+            if should_force_fetch:
+                cached_meta["has_more"] = True
+                cached_meta["all_fetched"] = False
+                cached_meta["next_page"] = 1
+                app_logger.info("[Paginated] force_refresh enabled, start from page 1")
             
-            while len(cached_all_works) < required_count and cached_meta.get("has_more", True) and not cached_meta.get("all_fetched", False):
+            while (len(cached_all_works) < required_count or should_force_fetch) and cached_meta.get("has_more", True) and not cached_meta.get("all_fetched", False):
                 app_logger.info(f"[Paginated] 缓存不足，继续获取第 {cached_meta['next_page']} 页")
                 
                 search_result = self._search_works(
@@ -337,6 +344,7 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
                     cached_meta["all_fetched"] = True
                 
                 self._cache_manager.set_persistent(cache_meta_key, cached_meta, self._get_cache_key_prefix())
+                should_force_fetch = False
                 
                 if not new_works:
                     break

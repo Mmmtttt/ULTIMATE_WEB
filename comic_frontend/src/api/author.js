@@ -70,8 +70,9 @@ export const authorApi = {
    */
   getWorks: (authorId, offset = 0, limit = 5, options = {}) => {
     const cacheOnly = Boolean(options && options.cacheOnly)
+    const forceRefresh = Boolean(options && options.forceRefresh)
     return request.get(`/v1/author/works/${authorId}`, {
-      params: { offset, limit, cache_only: cacheOnly }
+      params: { offset, limit, cache_only: cacheOnly, force_refresh: forceRefresh }
     })
   },
 
