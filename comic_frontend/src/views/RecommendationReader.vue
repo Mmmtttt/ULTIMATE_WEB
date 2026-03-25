@@ -1472,13 +1472,18 @@ const toggleMenuVisibility = () => {
 const togglePageMode = async () => {
   if (totalPage.value <= 0) return
   const anchorPage = clampPage(currentPage.value, totalPage.value)
+  const restoreSession = nextRestoreSessionToken()
+  pendingRestorePage.value = anchorPage
+  restoreRetryCount = 0
+  clearRestoreRetry()
   pageMode.value = pageMode.value === 'left_right' ? 'up_down' : 'left_right'
   configStore.setPageMode(pageMode.value)
   writeDisplayedPage(anchorPage)
+  preloadImages(anchorPage)
 
   await nextTick()
   await nextAnimationFrame()
-  await jumpToPage(anchorPage, false, { reason: 'mode-switch' })
+  await tryRestorePendingPage(restoreSession)
 }
 
 const enterZoomMode = () => {
