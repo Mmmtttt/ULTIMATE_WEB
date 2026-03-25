@@ -172,7 +172,7 @@ import { useConfigStore } from '@/stores'
 
 const configStore = useConfigStore()
 
-const pageModeValue = ref('left_right')
+const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
 const backgroundValue = ref('white')
 const autoDownloadPreviewImportAssets = ref(true)

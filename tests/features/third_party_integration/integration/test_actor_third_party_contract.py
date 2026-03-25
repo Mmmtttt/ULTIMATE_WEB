@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from tests.shared.runtime_data import find_by_id, load_json
 
@@ -77,6 +80,121 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     assert result["has_more"] is True
     assert result["page"] == 2
 
+
+@pytest.mark.integration
+def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard JAVDB actor-works branch compatibility: `get_actor_works` may return `works` (not `videos`).
+    - Steps:
+      1. Mock javdb adapter to provide `search_actor` + `get_actor_works` returning `works`.
+      2. Mock javbus adapter to provide `search_videos`.
+      3. Call `actor_service._search_works("Mina", page=1, max_pages=2)`.
+    - Expected:
+      1. JAVDB works are not dropped.
+      2. Output keeps grouped platform order: javdb first, then javbus.
+    """
+    actor_api = third_party_client["actor_api"]
+    video_api = third_party_client["video_api"]
+    service = actor_api.actor_service
+    captured = {"javdb_get_actor_works": 0, "javdb_search_videos": 0}
+
+    class FakeJavdbAdapter:
+        def search_actor(self, actor_name):
+            assert actor_name == "Mina"
+            return [{"id": "actor-mina", "name": "Mina"}]
+
+        def get_actor_works(self, actor_id, page=1, max_pages=1):
+            captured["javdb_get_actor_works"] += 1
+            assert actor_id == "actor-mina"
+            assert page == 1
+            assert max_pages == 2
+            return {
+                "works": [
+                    {"video_id": "DB-A1", "title": "DB Actor One", "cover_url": "https://img/db-a1.jpg"},
+                ],
+                "has_next": False,
+            }
+
+        def search_videos(self, *_args, **_kwargs):
+            captured["javdb_search_videos"] += 1
+            return {"videos": []}
+
+    class FakeJavbusAdapter:
+        def search_videos(self, actor_name, page=1, max_pages=1):
+            assert actor_name == "Mina"
+            assert page == 1
+            assert max_pages == 2
+            return {
+                "videos": [
+                    {"code": "BUS-A1", "title": "BUS Actor One", "cover_url": "https://www.javbus.com/pics/thumb/a9mj.jpg"},
+                ],
+                "has_next": False,
+            }
+
+    def fake_get_video_adapter(platform, *args, **kwargs):
+        if platform == "javdb":
+            return FakeJavdbAdapter()
+        return FakeJavbusAdapter()
+
+    monkeypatch.setattr(video_api, "get_video_adapter", fake_get_video_adapter)
+
+    result = service._search_works("Mina", page=1, max_pages=2)
+    works = result.get("works", [])
+
+    assert [item["id"] for item in works] == ["DB-A1", "BUS-A1"]
+    assert [item["platform"] for item in works] == ["javdb", "javbus"]
+    assert captured["javdb_get_actor_works"] == 1
+    assert captured["javdb_search_videos"] == 0
+
+
+@pytest.mark.integration
+def test_actor_cover_download_resolves_proxy2_url_before_requests(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard actor cover download contract for proxied cover URLs (`/api/v1/video/proxy2?...`).
+    - Steps:
+      1. Build a proxy2 cover URL with base64-encoded javbus image URL.
+      2. Mock `requests.get` and capture called URL.
+      3. Call `actor_service._download_cover(...)`.
+    - Expected:
+      1. `requests.get` receives decoded absolute URL (https://...).
+      2. Cover is cached to local actor-cover path and returns `/static/cover/...`.
+    """
+    actor_api = third_party_client["actor_api"]
+    service = actor_api.actor_service
+    captured = {}
+
+    target_url = "https://www.javbus.com/pics/thumb/a9mj.jpg"
+    encoded = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
+    proxy_url = f"/api/v1/video/proxy2?url={encoded}"
+
+    image_buffer = BytesIO()
+    Image.new("RGB", (2, 2), color=(255, 0, 0)).save(image_buffer, format="JPEG")
+    image_bytes = image_buffer.getvalue()
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "image/jpeg"}
+        content = image_bytes
+
+        def raise_for_status(self):
+            return None
+
+    def fake_requests_get(url, headers=None, timeout=10):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("application.actor_app_service.requests.get", fake_requests_get)
+
+    result_url = service._download_cover("LOL-223", proxy_url, "javbus")
+
+    assert captured["url"] == target_url
+    assert captured["timeout"] == 10
+    assert "javbus.com" in str(captured["headers"].get("Referer", "")).lower()
+    assert result_url.startswith("/static/cover/JAVBUS/author_cache/LOL-223.jpg")
 
 @pytest.mark.integration
 def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(third_party_client, monkeypatch):

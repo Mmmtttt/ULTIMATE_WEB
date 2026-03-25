@@ -40,7 +40,7 @@ class CacheConfig:
 
 @dataclass
 class UserConfig:
-    default_page_mode: str = "left_right"
+    default_page_mode: str = "up_down"
     default_background: str = "white"
     auto_hide_toolbar: bool = True
     show_page_number: bool = True
@@ -64,7 +64,7 @@ class UserConfig:
         cache_config = CacheConfig.from_dict(cache_config_data) if cache_config_data else CacheConfig()
         
         return cls(
-            default_page_mode=data.get("default_page_mode", "left_right"),
+            default_page_mode=data.get("default_page_mode", "up_down"),
             default_background=data.get("default_background", "white"),
             auto_hide_toolbar=data.get("auto_hide_toolbar", True),
             show_page_number=data.get("show_page_number", True),
@@ -125,7 +125,7 @@ class UserConfig:
         return True
     
     def reset(self):
-        self.default_page_mode = "left_right"
+        self.default_page_mode = "up_down"
         self.default_background = "white"
         self.auto_hide_toolbar = True
         self.show_page_number = True

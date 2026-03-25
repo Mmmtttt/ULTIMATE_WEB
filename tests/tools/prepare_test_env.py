@@ -226,7 +226,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
             },
         ],
         "user_config": {
-            "default_page_mode": "left_right",
+            "default_page_mode": "up_down",
             "default_background": "white",
         },
     }
@@ -360,7 +360,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
 
     user_config_payload = {
         "user_config": {
-            "default_page_mode": "left_right",
+            "default_page_mode": "up_down",
             "default_background": "white",
             "auto_hide_toolbar": True,
             "show_page_number": True,

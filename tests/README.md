@@ -178,7 +178,7 @@ tests/
   - 视频搜索结果混排（JAVDB 横版 + JAVBUS 竖版）卡片高度与比例守卫。
 
 ## 14. Third-party Coverage Matrix (2026-03-25 Latest)
-- Current status: `tests/features/third_party_integration/` has `70` integration cases + `5` E2E cases.
+- Current status: `tests/features/third_party_integration/` has `72` integration cases + `5` E2E cases.
 - Covered import flows:
   - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
   - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`, duplicate-code guards (`home` and `recommendation`).
@@ -208,6 +208,7 @@ tests/
   - Author works search contract (`jmcomic/picacomic` mapping).
   - Author new works enrichment (`get_album_by_id`), check-updates persistence, works runtime-guard/cache-only branches.
   - Actor check-updates persistence, new-works delta slicing, works/videos/search route contracts.
+  - Actor JAVDB `get_actor_works` (`works` payload) compatibility + cover proxy2 decode download contract.
   - Video actor works cache clear contract (`/api/v1/video/actor/works-cache/clear`).
 - Residual risk notes (next priority):
   - Add timeout/retry branch guards for long-running third-party adapter failures.

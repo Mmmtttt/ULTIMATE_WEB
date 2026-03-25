@@ -230,7 +230,7 @@ class JsonStorage:
         if os.path.abspath(self.json_file) == os.path.abspath(USER_CONFIG_JSON_FILE) or file_basename == "user_config.json":
             return {
                 "user_config": {
-                    "default_page_mode": "left_right",
+                    "default_page_mode": "up_down",
                     "default_background": "white",
                     "auto_hide_toolbar": True,
                     "show_page_number": True,
@@ -269,7 +269,7 @@ class JsonStorage:
                 "last_updated": time.strftime("%Y-%m-%d"),
                 comics_key: [],
                 "user_config": {
-                    "default_page_mode": "left_right",
+                    "default_page_mode": "up_down",
                     "default_background": "dark" if is_recommendation else "white",
                     "single_page_browsing": False
                 }

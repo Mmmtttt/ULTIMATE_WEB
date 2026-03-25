@@ -37,7 +37,7 @@ class MetaDataAdapter:
             "lists": [],
             comics_key: [],
             "user_config": {
-                "default_page_mode": "left_right",
+                "default_page_mode": "up_down",
                 "default_background": "dark",
                 "auto_hide_toolbar": False,
                 "show_page_number": False

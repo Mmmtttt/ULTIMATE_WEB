@@ -125,22 +125,50 @@ class ActorAppService(BaseCreatorAppService):
                         actor_id = ""
                         actors = adapter.search_actor(creator_name) or []
                         if isinstance(actors, list) and actors:
-                            actor = actors[0] if isinstance(actors[0], dict) else {}
-                            actor_id = str(
-                                actor.get("id")
-                                or actor.get("actor_id")
-                                or actor.get("uid")
-                                or ""
-                            ).strip()
+                            normalized_name = str(creator_name or "").strip().lower()
+                            fallback_actor_id = ""
+                            for actor in actors:
+                                if not isinstance(actor, dict):
+                                    continue
+                                candidate_id = str(
+                                    actor.get("id")
+                                    or actor.get("actor_id")
+                                    or actor.get("uid")
+                                    or ""
+                                ).strip()
+                                if not candidate_id:
+                                    continue
+                                candidate_name = str(
+                                    actor.get("name")
+                                    or actor.get("actor_name")
+                                    or actor.get("title")
+                                    or ""
+                                ).strip().lower()
+                                if candidate_name and candidate_name == normalized_name:
+                                    actor_id = candidate_id
+                                    break
+                                if not fallback_actor_id:
+                                    fallback_actor_id = candidate_id
+                            if not actor_id:
+                                actor_id = fallback_actor_id
 
                         if actor_id:
                             result = adapter.get_actor_works(actor_id, page=page, max_pages=max_pages) or {}
-                        else:
+                        if not result or (
+                            not isinstance(result.get("videos", None), list)
+                            and not isinstance(result.get("works", None), list)
+                        ):
                             result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
                     else:
                         result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
 
-                    videos = result.get("videos", []) if isinstance(result, dict) else []
+                    videos = []
+                    if isinstance(result, dict):
+                        candidate_videos = result.get("videos")
+                        if not isinstance(candidate_videos, list):
+                            candidate_videos = result.get("works")
+                        if isinstance(candidate_videos, list):
+                            videos = candidate_videos
                     has_more = has_more or bool(result.get("has_next", False) if isinstance(result, dict) else False)
                     
                     if videos:
@@ -210,21 +238,42 @@ class ActorAppService(BaseCreatorAppService):
         if not cover_url:
             return ""
 
+        normalized_cover_url = str(cover_url or "").strip()
+        try:
+            from application.video_app_service import VideoAppService
+
+            resolved_cover_url = VideoAppService._resolve_proxy_source_url(normalized_cover_url)
+            if resolved_cover_url:
+                normalized_cover_url = str(resolved_cover_url).strip()
+        except Exception:
+            pass
+
+        if normalized_cover_url.startswith("//"):
+            normalized_cover_url = f"https:{normalized_cover_url}"
+        if normalized_cover_url.startswith("/pics/"):
+            normalized_cover_url = f"https://www.javbus.com{normalized_cover_url}"
+
         platform_key = self._normalize_platform(platform)
         cache_dir = self._get_actor_cover_cache_dir(platform_key)
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
 
         if os.path.exists(local_path):
             return self._build_actor_cover_url(content_id, platform_key)
+
+        if not (
+            normalized_cover_url.startswith("http://")
+            or normalized_cover_url.startswith("https://")
+        ):
+            return cover_url
         
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            if 'javbus.com' in cover_url.lower():
+            if 'javbus.com' in normalized_cover_url.lower():
                 headers['Referer'] = f"https://www.javbus.com/{content_id}"
             
-            response = requests.get(cover_url, headers=headers, timeout=10)
+            response = requests.get(normalized_cover_url, headers=headers, timeout=10)
             if response.status_code != 200:
                 return cover_url
             if "image" not in (response.headers.get("content-type", "") or "").lower():
