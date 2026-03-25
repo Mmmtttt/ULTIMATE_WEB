@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import io
 import json
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 BOOTSTRAP_REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(BOOTSTRAP_REPO_ROOT) not in sys.path:
@@ -59,6 +61,61 @@ JPG_1X1 = base64.b64decode(
     "AQABPyFq2hQ6dYF2jP/Z"
 )
 
+try:
+    from PIL import Image, ImageDraw
+except Exception:  # pragma: no cover - fallback for minimal environments
+    Image = None
+    ImageDraw = None
+
+_SAMPLED_IMAGE_BYTES: Dict[str, Tuple[bytes, bytes]] = {}
+
+
+def _build_sample_images(seed_text: str) -> Tuple[bytes, bytes]:
+    cache_key = str(seed_text or "default")
+    if cache_key in _SAMPLED_IMAGE_BYTES:
+        return _SAMPLED_IMAGE_BYTES[cache_key]
+
+    if Image is None or ImageDraw is None:
+        _SAMPLED_IMAGE_BYTES[cache_key] = (PNG_1X1, JPG_1X1)
+        return _SAMPLED_IMAGE_BYTES[cache_key]
+
+    # Generate readable fixture covers for local inspection and screenshot debugging.
+    digest = hashlib.md5(cache_key.encode("utf-8")).digest()
+    c_bg = (20 + digest[0] % 50, 25 + digest[1] % 60, 45 + digest[2] % 80)
+    c_border = (170 + digest[3] % 80, 160 + digest[4] % 90, 80 + digest[5] % 100)
+    c_bar = (40 + digest[6] % 120, 50 + digest[7] % 120, 70 + digest[8] % 120)
+    c_text = (220 + digest[9] % 35, 220 + digest[10] % 35, 220 + digest[11] % 35)
+    c_panel = (30 + digest[12] % 90, 35 + digest[13] % 90, 40 + digest[14] % 90)
+
+    # Base 240x320 with deterministic +/-50% variation by seed.
+    width = 120 + int(digest[0] / 255 * 240)   # [120, 360]
+    height = 160 + int(digest[1] / 255 * 320)  # [160, 480]
+    img = Image.new("RGB", (width, height), c_bg)
+    draw = ImageDraw.Draw(img)
+    margin = max(8, min(width, height) // 20)
+    border_w = max(3, min(width, height) // 64)
+    x0, y0 = margin, margin
+    x1, y1 = width - margin, height - margin
+    draw.rectangle((x0, y0, x1, y1), outline=c_border, width=border_w)
+
+    bar_h = max(28, height // 8)
+    panel_top = y0 + bar_h + margin
+    draw.rectangle((x0 + margin, y0 + margin * 2, x1 - margin, y0 + margin * 2 + bar_h), fill=c_bar)
+    draw.rectangle((x0 + margin, panel_top, x1 - margin, y1 - margin), fill=c_panel)
+
+    text_x = x0 + margin + 4
+    draw.text((text_x, y0 + 6), "TEST FIXTURE", fill=c_text)
+    draw.text((text_x, y0 + margin * 2 + 6), cache_key[:20], fill=(255, 255, 255))
+    draw.text((text_x, panel_top + 8), cache_key[20:40], fill=(220, 220, 220))
+
+    png_buffer = io.BytesIO()
+    img.save(png_buffer, format="PNG")
+    jpg_buffer = io.BytesIO()
+    img.save(jpg_buffer, format="JPEG", quality=82, optimize=True)
+
+    _SAMPLED_IMAGE_BYTES[cache_key] = (png_buffer.getvalue(), jpg_buffer.getvalue())
+    return _SAMPLED_IMAGE_BYTES[cache_key]
+
 
 def _write_json(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,12 +124,14 @@ def _write_json(path: Path, payload: Dict) -> None:
 
 def _write_png(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(PNG_1X1)
+    png_bytes, _ = _build_sample_images(path.as_posix())
+    path.write_bytes(png_bytes)
 
 
 def _write_jpg(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(JPG_1X1)
+    _, jpg_bytes = _build_sample_images(path.as_posix())
+    path.write_bytes(jpg_bytes)
 
 
 def _seed_meta_data(meta_dir: Path) -> None:
