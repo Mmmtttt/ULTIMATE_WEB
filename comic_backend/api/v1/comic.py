@@ -1415,13 +1415,20 @@ def import_async():
         
         import_type = data.get('import_type')
         target = data.get('target', 'home')
+        content_type = str(data.get('content_type', 'comic') or '').strip().lower()
         platform_name = data.get('platform', 'JM').upper()
         comic_id = data.get('comic_id')
         keyword = data.get('keyword')
         comic_ids = data.get('comic_ids')
+        platform_list_id = data.get('platform_list_id')
+        platform_list_name = data.get('platform_list_name', '')
+        source = data.get('source', 'local')
+
+        if content_type not in ['comic', 'video']:
+            return error_response(400, "无效的内容类型，支持: comic, video")
         
-        if import_type not in ['by_id', 'by_search', 'by_list']:
-            return error_response(400, "无效的导入方式，支持: by_id, by_search, by_list")
+        if import_type not in ['by_id', 'by_search', 'by_list', 'by_platform_list']:
+            return error_response(400, "无效的导入方式，支持: by_id, by_search, by_list, by_platform_list")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
@@ -1430,14 +1437,11 @@ def import_async():
         if not is_platform_supported(platform_name):
             return error_response(400, f"不支持的平台: {platform_name}，支持的平台: {get_supported_platforms()}")
         
-        # 检查是否已存在
-        if import_type == 'by_id' and comic_id:
+        if content_type == 'comic' and import_type == 'by_id' and comic_id:
             from core.platform import add_platform_prefix
             full_comic_id = add_platform_prefix(Platform(platform_name), comic_id)
             
-            # 检查是否已存在
             from infrastructure.persistence.json_storage import JsonStorage
-            db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
             db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
             storage = JsonStorage(db_file)
             db_data = storage.read()
@@ -1446,6 +1450,19 @@ def import_async():
             existing_ids = {c['id'] for c in db_data.get(comics_key, [])}
             if full_comic_id in existing_ids:
                 return error_response(400, f"漫画 {full_comic_id} 已存在")
+
+        extra_data = {}
+        if import_type == 'by_platform_list':
+            if not platform_list_id:
+                return error_response(400, "缺少平台清单ID: platform_list_id")
+            comic_id = str(platform_list_id).strip()
+            keyword = str(platform_list_name or '').strip()
+            comic_ids = None
+            extra_data = {
+                "platform_list_id": comic_id,
+                "platform_list_name": keyword,
+                "source": str(source or 'local').strip().lower() or 'local',
+            }
         
         # 创建异步任务
         from infrastructure.task_manager import task_manager
@@ -1455,14 +1472,19 @@ def import_async():
             target=target,
             comic_id=comic_id,
             keyword=keyword,
-            comic_ids=comic_ids
+            comic_ids=comic_ids,
+            content_type=content_type,
+            extra_data=extra_data
         )
         
-        app_logger.info(f"创建异步导入任务: {task_id}, 平台={platform_name}, 类型={import_type}, 目标={target}")
+        app_logger.info(
+            f"创建异步导入任务: {task_id}, 内容类型={content_type}, 平台={platform_name}, 类型={import_type}, 目标={target}"
+        )
         
         return success_response({
             "task_id": task_id,
-            "message": "导入任务已创建"
+            "message": "导入任务已创建",
+            "content_type": content_type
         }, "导入任务已创建，请通过任务ID查询进度")
         
     except Exception as e:

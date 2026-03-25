@@ -133,7 +133,7 @@
             
             <div v-if="task.result?.imported_count" class="result-info">
               <van-icon name="success" color="#07c160" />
-              <span>成功导入 {{ task.result.imported_count }} 部漫画</span>
+              <span>{{ getImportResultText(task) }}</span>
             </div>
           </div>
         </div>
@@ -168,6 +168,11 @@ const activeTasks = computed(() => {
 // Methods
 const getStatusText = (status) => taskStore.getStatusText(status)
 const getStatusColor = (status) => taskStore.getStatusColor(status)
+const getImportResultText = (task) => {
+  const count = Number(task?.result?.imported_count || 0)
+  const unit = task?.content_type === 'video' ? '个视频' : '部漫画'
+  return `成功导入 ${count} ${unit}`
+}
 
 const formatTime = (timeStr) => {
   if (!timeStr) return '-'

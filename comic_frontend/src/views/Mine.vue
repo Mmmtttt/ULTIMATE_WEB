@@ -195,7 +195,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
-import { comicApi, authorApi, recommendationApi, videoApi, configApi } from '@/api'
+import { comicApi, authorApi, recommendationApi, configApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog, showToast } from 'vant'
 
 const router = useRouter()
@@ -404,17 +404,24 @@ async function handleComicImport() {
 
 async function handleVideoImport() {
   const target = importTarget.value
-  const defaultPlatform = (importPlatform.value || 'JAVDB').toLowerCase()
-  let successCount = 0
-  let failedCount = 0
+  const defaultPlatform = String(importPlatform.value || 'JAVDB').toUpperCase()
 
   if (importType.value === 'by_id') {
     const videoCode = normalizeVideoCode(importId.value)
     if (!videoCode) {
       throw new Error('请输入视频 code')
     }
-    await videoApi.thirdPartyImport(videoCode, target, defaultPlatform)
-    showSuccessToast('导入成功')
+    const created = await importTaskStore.createImportTask({
+      import_type: 'by_id',
+      target,
+      platform: defaultPlatform,
+      comic_id: videoCode,
+      content_type: 'video'
+    })
+    if (!created) {
+      throw new Error('创建导入任务失败')
+    }
+    showSuccessToast('任务已创建')
     return
   }
 
@@ -423,23 +430,20 @@ async function handleVideoImport() {
     if (videoCodes.length === 0) {
       throw new Error('文件中没有可导入的 code')
     }
-
-    for (const videoCode of videoCodes) {
-      try {
-        await videoApi.thirdPartyImport(videoCode, target, defaultPlatform)
-        successCount += 1
-      } catch (e) {
-        failedCount += 1
-      }
+    const created = await importTaskStore.createImportTask({
+      import_type: 'by_list',
+      target,
+      platform: defaultPlatform,
+      comic_ids: videoCodes,
+      content_type: 'video'
+    })
+    if (!created) {
+      throw new Error('创建导入任务失败')
     }
+    showSuccessToast('任务已创建')
   } else {
     throw new Error('当前模式不支持该导入方式')
   }
-
-  if (successCount === 0) {
-    throw new Error('导入失败')
-  }
-  showSuccessToast(`导入完成：成功 ${successCount}，失败 ${failedCount}`)
 }
 
 async function handleOnlineImport() {

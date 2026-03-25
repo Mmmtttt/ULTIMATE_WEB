@@ -8,7 +8,7 @@ import json
 import time
 import threading
 import uuid
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
 from dataclasses import dataclass, asdict
 from core.constants import (
@@ -49,6 +49,8 @@ class ImportTask:
     complete_time: Optional[str]
     error_msg: Optional[str]
     result: Optional[Dict]  # 导入结果
+    content_type: str = "comic"  # comic, video
+    extra_data: Optional[Dict[str, Any]] = None  # 扩展参数（如平台清单导入）
 
     def to_dict(self) -> Dict:
         """转换为字典"""
@@ -119,7 +121,9 @@ class TaskManager:
                             start_time=task_data.get('start_time'),
                             complete_time=task_data.get('complete_time'),
                             error_msg=task_data.get('error_msg'),
-                            result=task_data.get('result')
+                            result=task_data.get('result'),
+                            content_type=task_data.get('content_type', 'comic'),
+                            extra_data=task_data.get('extra_data') or {}
                         )
                         self._tasks[task.task_id] = task
                 app_logger.info(f"加载任务完成，共 {len(self._tasks)} 个任务")
@@ -204,7 +208,7 @@ class TaskManager:
     
     def _process_task(self, task: ImportTask):
         """处理单个任务"""
-        app_logger.info(f"开始处理任务: {task.task_id}, 漫画: {task.title}")
+        app_logger.info(f"开始处理任务: {task.task_id}, 类型: {task.content_type}, 标题: {task.title}")
         
         # 更新任务状态
         task.status = TaskStatus.PROCESSING
@@ -241,6 +245,20 @@ class TaskManager:
     
     def _execute_import(self, task: ImportTask) -> Dict:
         """执行导入操作"""
+        content_type = self._normalize_content_type(task.content_type)
+        if task.import_type == "by_platform_list":
+            return self._execute_platform_list_import(task)
+        if content_type == "video":
+            return self._execute_video_import(task)
+        return self._execute_comic_import(task)
+
+    @staticmethod
+    def _normalize_content_type(content_type: str) -> str:
+        normalized = str(content_type or "").strip().lower()
+        return normalized if normalized in {"comic", "video"} else "comic"
+
+    def _execute_comic_import(self, task: ImportTask) -> Dict:
+        """执行漫画导入操作"""
         import sys
         import os
         
@@ -360,12 +378,295 @@ class TaskManager:
             return {
                 'success': True,
                 'imported_count': actual_imported_count,
-                'title': task.title
+                'title': task.title,
+                'content_type': 'comic'
             }
             
         except Exception as e:
             error_logger.error(f"执行导入失败: {e}")
             return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    def _normalize_video_lookup(video_id: str, platform: str) -> Tuple[str, str]:
+        from core.platform import Platform as CorePlatform, remove_platform_prefix
+
+        resolved_platform = str(platform or "javdb").strip().lower()
+        resolved_video_id = str(video_id or "").strip()
+
+        if "_" in resolved_video_id:
+            parts = resolved_video_id.split("_", 1)
+            if len(parts) == 2 and parts[0].upper() in {"JAVDB", "JAVBUS"}:
+                resolved_platform = parts[0].lower()
+                resolved_video_id = parts[1].strip()
+                return resolved_platform, resolved_video_id
+
+        parsed_platform, original_id = remove_platform_prefix(resolved_video_id)
+        if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS] and original_id and original_id != resolved_video_id:
+            resolved_platform = parsed_platform.value.lower()
+            resolved_video_id = str(original_id).strip()
+
+        return resolved_platform, resolved_video_id
+
+    def _execute_video_import(self, task: ImportTask) -> Dict:
+        """执行视频导入操作"""
+        try:
+            from api.v1.video import (
+                get_video_adapter,
+                video_service,
+                to_proxy_image_url,
+                _sanitize_preview_video_value,
+                _schedule_video_asset_cache,
+                _is_javbus_platform,
+            )
+            from core.platform import Platform as CorePlatform, add_platform_prefix
+            from application.tag_app_service import TagAppService
+            from domain.tag.entity import ContentType
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+            from core.utils import get_current_time
+
+            platform_name = str(task.platform or "JAVDB").strip().lower()
+            tag_service = TagAppService()
+            existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
+            tag_name_to_id = {
+                str(tag.get("name", "")).strip(): str(tag.get("id", "")).strip()
+                for tag in existing_tags
+                if isinstance(tag, dict) and str(tag.get("name", "")).strip() and str(tag.get("id", "")).strip()
+            }
+
+            preview_storage = None
+            preview_db_data = None
+            preview_codes = set()
+            preview_dirty = False
+            if task.target == "recommendation":
+                preview_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+                preview_db_data = preview_storage.read()
+                preview_codes = {
+                    str((v or {}).get("code", "")).strip().upper()
+                    for v in preview_db_data.get("video_recommendations", [])
+                    if str((v or {}).get("code", "")).strip()
+                }
+
+            if task.import_type == "by_id":
+                lookups = [str(task.comic_id or "").strip()]
+            elif task.import_type == "by_list":
+                lookups = [str(item or "").strip() for item in (task.comic_ids or [])]
+            elif task.import_type == "by_search":
+                adapter = get_video_adapter(platform_name, existing_tags)
+                search_result = adapter.search_videos(str(task.keyword or "").strip(), page=1, max_pages=1)
+                videos = search_result.get("videos", []) if isinstance(search_result, dict) else []
+                lookups = [
+                    str(video.get("video_id") or video.get("code") or "").strip()
+                    for video in videos
+                    if isinstance(video, dict)
+                ]
+            else:
+                return {"success": False, "error": "不支持的视频导入类型"}
+
+            lookups = [item for item in lookups if item]
+            if not lookups:
+                return {"success": False, "error": "未找到可导入的视频"}
+
+            imported_count = 0
+            skipped_count = 0
+            failed_count = 0
+            failed_items = []
+            imported_ids = []
+            total_items = len(lookups)
+
+            for idx, raw_lookup in enumerate(lookups):
+                task.message = f"正在处理第 {idx + 1}/{total_items} 个视频..."
+                task.progress = int((idx / total_items) * 85) if total_items > 0 else 0
+                self._save_tasks()
+
+                try:
+                    resolved_platform, resolved_lookup = self._normalize_video_lookup(raw_lookup, platform_name)
+                    adapter = get_video_adapter(resolved_platform, existing_tags)
+                    detail = adapter.get_video_detail(resolved_lookup)
+                    if not detail and hasattr(adapter, "get_video_by_code"):
+                        detail = adapter.get_video_by_code(resolved_lookup)
+                        if detail and detail.get("video_id"):
+                            resolved_lookup = str(detail.get("video_id")).strip() or resolved_lookup
+
+                    if not detail:
+                        failed_count += 1
+                        failed_items.append({"lookup": raw_lookup, "reason": "视频不存在"})
+                        continue
+
+                    video_code = str(detail.get("code", "") or "").strip()
+                    if not video_code:
+                        failed_count += 1
+                        failed_items.append({"lookup": raw_lookup, "reason": "缺少视频番号"})
+                        continue
+
+                    platform_enum = CorePlatform.JAVBUS if resolved_platform == "javbus" else CorePlatform.JAVDB
+                    video_id_full = add_platform_prefix(platform_enum, resolved_lookup)
+
+                    if task.target == "home":
+                        existing = video_service.get_video_by_code(video_code)
+                        if existing.success and existing.data:
+                            skipped_count += 1
+                            continue
+                    else:
+                        normalized_code = video_code.upper()
+                        if normalized_code in preview_codes:
+                            skipped_count += 1
+                            continue
+
+                    tag_ids = []
+                    seen_tag_ids = set()
+                    for tag_name in detail.get("tags", []) or []:
+                        normalized_name = str(tag_name or "").strip()
+                        if not normalized_name:
+                            continue
+                        if normalized_name not in tag_name_to_id:
+                            create_result = tag_service.create_tag(normalized_name, ContentType.VIDEO)
+                            if create_result.success and create_result.data:
+                                new_id = str(create_result.data.get("id", "")).strip()
+                                if new_id:
+                                    tag_name_to_id[normalized_name] = new_id
+                        tag_id = tag_name_to_id.get(normalized_name)
+                        if tag_id and tag_id not in seen_tag_ids:
+                            seen_tag_ids.add(tag_id)
+                            tag_ids.append(tag_id)
+
+                    cover_url = str(detail.get("cover_url", "") or "").strip()
+                    cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+                    video_data = {
+                        "id": video_id_full,
+                        "title": detail.get("title", ""),
+                        "code": video_code,
+                        "date": detail.get("date", ""),
+                        "series": detail.get("series", ""),
+                        "creator": detail.get("actors", [""])[0] if detail.get("actors") else "",
+                        "actors": detail.get("actors", []),
+                        "magnets": detail.get("magnets", []),
+                        "thumbnail_images": detail.get("thumbnail_images", []),
+                        "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
+                        "cover_path": cover_path_fallback,
+                        "thumbnail_images_local": [],
+                        "preview_video_local": "",
+                        "cover_path_local": "",
+                        "tag_ids": tag_ids,
+                        "list_ids": [],
+                    }
+
+                    if task.target == "home":
+                        import_result = video_service.import_video(video_data)
+                        if not import_result.success:
+                            failed_count += 1
+                            failed_items.append({"lookup": raw_lookup, "reason": import_result.message or "导入失败"})
+                            continue
+                        _schedule_video_asset_cache(
+                            video_id=video_data["id"],
+                            source="local",
+                            cover_url=cover_url,
+                            preview_video=video_data.get("preview_video", ""),
+                            thumbnail_images=video_data.get("thumbnail_images", []),
+                            allow_cover=True,
+                            allow_preview_video=not _is_javbus_platform(platform=resolved_platform, video_id=video_data["id"]),
+                        )
+                    else:
+                        now = get_current_time()
+                        video_data["create_time"] = now
+                        video_data["last_access_time"] = now
+                        preview_db_data.setdefault("video_recommendations", []).append(video_data)
+                        preview_codes.add(video_code.upper())
+                        preview_dirty = True
+                        _schedule_video_asset_cache(
+                            video_id=video_data["id"],
+                            source="preview",
+                            cover_url=cover_url,
+                            preview_video=video_data.get("preview_video", ""),
+                            thumbnail_images=video_data.get("thumbnail_images", []),
+                            allow_cover=True,
+                            allow_preview_video=not _is_javbus_platform(platform=resolved_platform, video_id=video_data["id"]),
+                        )
+
+                    task.title = str(detail.get("title", "") or task.title or "视频导入")
+                    imported_ids.append(video_id_full)
+                    imported_count += 1
+                except Exception as item_error:
+                    failed_count += 1
+                    failed_items.append({"lookup": raw_lookup, "reason": str(item_error)})
+                    error_logger.error(f"导入视频失败: {raw_lookup}, 错误: {item_error}")
+
+            if preview_dirty and preview_storage:
+                if not preview_storage.write(preview_db_data):
+                    return {"success": False, "error": "写入视频预览库失败"}
+
+            if imported_ids:
+                source_key = "preview" if task.target == "recommendation" else "local"
+                recent_result = video_service.apply_recent_import_tags(imported_ids, source=source_key, clear_previous=True)
+                if not recent_result.success:
+                    app_logger.warning(f"更新视频最近导入标签失败: {recent_result.message}")
+
+            if imported_count == 0 and task.import_type == "by_id":
+                if skipped_count > 0:
+                    return {"success": False, "error": "视频已存在"}
+                return {"success": False, "error": failed_items[0]["reason"] if failed_items else "视频导入失败"}
+
+            if imported_count == 0 and failed_count > 0 and skipped_count == 0:
+                return {"success": False, "error": failed_items[0]["reason"] if failed_items else "视频导入失败"}
+
+            if task.import_type != "by_id":
+                task.title = f"批量视频导入 ({imported_count}/{total_items})"
+
+            return {
+                "success": True,
+                "imported_count": imported_count,
+                "skipped_count": skipped_count,
+                "failed_count": failed_count,
+                "failed_items": failed_items,
+                "content_type": "video",
+                "title": task.title,
+            }
+        except Exception as e:
+            error_logger.error(f"执行视频导入失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _execute_platform_list_import(self, task: ImportTask) -> Dict:
+        """执行平台清单导入（异步任务包装）"""
+        try:
+            from application.list_app_service import ListAppService
+
+            extra = task.extra_data or {}
+            platform_list_id = str(extra.get("platform_list_id") or task.comic_id or "").strip()
+            platform_list_name = str(extra.get("platform_list_name") or task.keyword or "").strip()
+            source = str(extra.get("source") or "local").strip().lower() or "local"
+            platform = str(task.platform or "").strip()
+
+            if not platform or not platform_list_id:
+                return {"success": False, "error": "缺少平台清单参数"}
+
+            task.title = f"清单导入: {platform_list_name or platform_list_id}"
+            task.message = "正在拉取并导入平台清单..."
+            task.progress = 10
+            self._save_tasks()
+
+            list_service = ListAppService()
+            result = list_service.import_platform_list(
+                platform_str=platform,
+                platform_list_id=platform_list_id,
+                platform_list_name=platform_list_name,
+                source=source,
+            )
+            if not result.success:
+                return {"success": False, "error": result.message or "清单导入失败"}
+
+            data = result.data or {}
+            return {
+                "success": True,
+                "imported_count": int(data.get("imported_count", 0) or 0),
+                "skipped_count": int(data.get("skipped_count", 0) or 0),
+                "failed_count": int(data.get("failed_count", 0) or 0),
+                "list_id": data.get("list_id"),
+                "content_type": self._normalize_content_type(task.content_type),
+                "title": task.title,
+            }
+        except Exception as e:
+            error_logger.error(f"执行平台清单导入失败: {e}")
+            return {"success": False, "error": str(e)}
     
     def _convert_to_standard_format(self, albums: List[Dict], existing_tags: List[Dict], platform) -> Dict:
         """将平台数据转换为系统标准格式"""
@@ -660,7 +961,9 @@ class TaskManager:
         target: str,
         comic_id: Optional[str] = None,
         keyword: Optional[str] = None,
-        comic_ids: Optional[List[str]] = None
+        comic_ids: Optional[List[str]] = None,
+        content_type: str = "comic",
+        extra_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """创建新任务"""
         task_id = str(uuid.uuid4())[:8]
@@ -683,7 +986,9 @@ class TaskManager:
             start_time=None,
             complete_time=None,
             error_msg=None,
-            result=None
+            result=None,
+            content_type=self._normalize_content_type(content_type),
+            extra_data=extra_data or {}
         )
         
         with self._task_lock:

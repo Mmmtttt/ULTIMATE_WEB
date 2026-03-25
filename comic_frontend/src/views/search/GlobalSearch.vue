@@ -274,34 +274,33 @@ async function confirmImport(target) {
   )
   
   try {
-    if (isVideoMode.value) {
-      let successCount = 0
-      for (const item of selectedItems) {
-        await videoApi.thirdPartyImport(getItemId(item), target, item.platform)
-        successCount++
+    const itemsByPlatform = {}
+    selectedItems.forEach(item => {
+      const platform = item.platform || (isVideoMode.value ? 'JAVDB' : 'JM')
+      if (!itemsByPlatform[platform]) {
+        itemsByPlatform[platform] = []
       }
-      showToast(`已导入 ${successCount} 个视频`)
-    } else {
-      const itemsByPlatform = {}
-      selectedItems.forEach(item => {
-        const platform = item.platform || 'JM'
-        if (!itemsByPlatform[platform]) {
-          itemsByPlatform[platform] = []
-        }
-        itemsByPlatform[platform].push(getItemId(item))
-      })
-      
-      for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
-        const params = {
-          import_type: 'by_list',
-          target: target,
-          platform: platform,
-          comic_ids: comicIds
-        }
-        await importTaskStore.createImportTask(params)
+      itemsByPlatform[platform].push(getItemId(item))
+    })
+
+    let taskCount = 0
+    for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+      const params = {
+        import_type: 'by_list',
+        target,
+        platform: isVideoMode.value ? String(platform).toUpperCase() : platform,
+        comic_ids: comicIds,
+        content_type: isVideoMode.value ? 'video' : 'comic'
       }
-      showToast('已创建导入任务')
+      const created = await importTaskStore.createImportTask(params)
+      if (created) {
+        taskCount += 1
+      }
     }
+    if (taskCount === 0) {
+      throw new Error('创建导入任务失败')
+    }
+    showToast(`已创建 ${taskCount} 个导入任务`)
     selectedIds.value = []
   } catch (e) {
     showToast('导入失败')
@@ -604,6 +603,10 @@ onMounted(() => {
   padding: 12px;
 }
 
+.remote-results-grid.video-mode {
+  align-items: start;
+}
+
 .remote-result-card {
   background: var(--surface-2);
   border: 1px solid rgba(78, 104, 155, 0.14);
@@ -616,6 +619,10 @@ onMounted(() => {
     border-color var(--motion-base) var(--ease-standard),
     box-shadow var(--motion-base) var(--ease-standard);
   position: relative;
+}
+
+.remote-results-grid.video-mode .remote-result-card {
+  align-self: start;
 }
 
 .remote-result-card:hover {

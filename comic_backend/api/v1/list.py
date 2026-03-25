@@ -329,16 +329,39 @@ def import_platform_list():
         platform_list_id = data.get('platform_list_id')
         platform_list_name = data.get('platform_list_name', '')
         source = data.get('source', 'local')
+        source_key = str(source or 'local').strip().lower()
+        target = 'recommendation' if source_key == 'preview' else 'home'
         
         if not platform or not platform_list_id:
             return error_response(400, "缺少必要参数: platform, platform_list_id")
-        
-        result = list_service.import_platform_list(platform, platform_list_id, platform_list_name, source)
-        if result.success:
-            app_logger.info(f"导入平台清单成功: {platform}, {platform_list_id} ({platform_list_name})")
-            return success_response(result.data)
-        else:
-            return error_response(400, result.message)
+
+        normalized_platform = str(platform).strip().upper()
+        content_type = 'video' if normalized_platform in {'JAVDB', 'JAVBUS'} else 'comic'
+
+        from infrastructure.task_manager import task_manager
+        task_id = task_manager.create_task(
+            platform=normalized_platform,
+            import_type='by_platform_list',
+            target=target,
+            comic_id=str(platform_list_id).strip(),
+            keyword=str(platform_list_name or '').strip(),
+            comic_ids=None,
+            content_type=content_type,
+            extra_data={
+                "platform_list_id": str(platform_list_id).strip(),
+                "platform_list_name": str(platform_list_name or '').strip(),
+                "source": source_key,
+            },
+        )
+        app_logger.info(
+            f"创建平台清单异步导入任务: task_id={task_id}, platform={normalized_platform}, "
+            f"list_id={platform_list_id}, source={source_key}"
+        )
+        return success_response({
+            "task_id": task_id,
+            "content_type": content_type,
+            "message": "导入任务已创建"
+        }, "导入任务已创建，请到导入任务页查看进度")
     except Exception as e:
         error_logger.error(f"导入平台清单失败: {e}")
         return error_response(500, "服务器内部错误")

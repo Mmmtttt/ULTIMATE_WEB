@@ -164,8 +164,10 @@ export const useImportTaskStore = defineStore('importTask', () => {
   const refreshTagsAfterImport = async () => {
     try {
       cacheStore.clearCache('tags')
+      cacheStore.clearCache('video-tags')
       cacheStore.clearCache('list')
       await tagStore.fetchTags('comic', true)
+      await tagStore.fetchTags('video', true)
       console.log('[ImportTask] 标签列表已刷新')
     } catch (error) {
       console.error('[ImportTask] 刷新标签列表失败:', error)

@@ -195,13 +195,14 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useListStore, useModeStore } from '@/stores'
+import { useListStore, useModeStore, useImportTaskStore } from '@/stores'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import listApi from '@/api/list'
 
 const router = useRouter()
 const listStore = useListStore()
 const modeStore = useModeStore()
+const importTaskStore = useImportTaskStore()
 
 const loading = ref(false)
 const creating = ref(false)
@@ -405,19 +406,22 @@ async function doImport() {
   
   importing.value = true
   try {
-    const res = await listApi.importPlatformList(
-      selectedPlatform.value,
-      selectedPlatformList.value.list_id,
-      selectedPlatformList.value.list_name,
-      importSource.value
-    )
-    
-    if (res.code === 200) {
-      showSuccessToast(res.msg || '导入成功')
+    const target = importSource.value === 'preview' ? 'recommendation' : 'home'
+    const created = await importTaskStore.createImportTask({
+      import_type: 'by_platform_list',
+      target,
+      content_type: currentContentType.value,
+      platform: selectedPlatform.value,
+      platform_list_id: selectedPlatformList.value.list_id,
+      platform_list_name: selectedPlatformList.value.list_name,
+      source: importSource.value
+    })
+
+    if (created) {
+      showSuccessToast('导入任务已创建')
       showImportDialog.value = false
-      await loadLists()
     } else {
-      showFailToast(res.msg || '导入失败')
+      showFailToast('创建导入任务失败')
     }
   } catch (e) {
     showFailToast('导入失败')

@@ -94,9 +94,29 @@ class ActorAppService(BaseCreatorAppService):
             for plat in platforms_to_search:
                 try:
                     adapter = get_video_adapter(plat)
-                    result = adapter.search_videos(creator_name, page=page, max_pages=max_pages)
-                    videos = result.get("videos", [])
-                    has_more = has_more or result.get("has_next", False)
+                    result = {}
+
+                    if plat == "javdb" and hasattr(adapter, "search_actor") and hasattr(adapter, "get_actor_works"):
+                        actor_id = ""
+                        actors = adapter.search_actor(creator_name) or []
+                        if isinstance(actors, list) and actors:
+                            actor = actors[0] if isinstance(actors[0], dict) else {}
+                            actor_id = str(
+                                actor.get("id")
+                                or actor.get("actor_id")
+                                or actor.get("uid")
+                                or ""
+                            ).strip()
+
+                        if actor_id:
+                            result = adapter.get_actor_works(actor_id, page=page, max_pages=max_pages) or {}
+                        else:
+                            result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
+                    else:
+                        result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
+
+                    videos = result.get("videos", []) if isinstance(result, dict) else []
+                    has_more = has_more or bool(result.get("has_next", False) if isinstance(result, dict) else False)
                     
                     if videos:
                         platform_videos[plat] = videos

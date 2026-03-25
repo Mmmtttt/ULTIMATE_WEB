@@ -174,13 +174,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useModeStore } from '@/stores'
+import { useModeStore, useImportTaskStore } from '@/stores'
 import { videoApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const modeStore = useModeStore()
+const importTaskStore = useImportTaskStore()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -454,27 +455,37 @@ async function confirmImport(target) {
     return
   }
 
-  let successCount = 0
-  let failedCount = 0
-
-  for (const item of selectedItems) {
+  const itemsByPlatform = {}
+  selectedItems.forEach(item => {
+    const platform = String(item.platform || 'javdb').toUpperCase()
     const videoId = getItemId(item)
-    if (!videoId) continue
+    if (!videoId) return
+    if (!itemsByPlatform[platform]) {
+      itemsByPlatform[platform] = []
+    }
+    itemsByPlatform[platform].push(videoId)
+  })
 
-    try {
-      await videoApi.thirdPartyImport(videoId, target, item.platform || 'javdb')
-      successCount += 1
-    } catch (e) {
-      failedCount += 1
+  let taskCount = 0
+  for (const [platform, videoIds] of Object.entries(itemsByPlatform)) {
+    const created = await importTaskStore.createImportTask({
+      import_type: 'by_list',
+      target,
+      platform,
+      comic_ids: videoIds,
+      content_type: 'video'
+    })
+    if (created) {
+      taskCount += 1
     }
   }
 
-  if (successCount === 0) {
+  if (taskCount === 0) {
     showToast('导入失败')
     return
   }
 
-  showToast(`导入完成：成功 ${successCount}，失败 ${failedCount}`)
+  showToast(`已创建 ${taskCount} 个导入任务`)
   selectedResultIds.value = []
 }
 
@@ -650,12 +661,20 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.remote-results-grid.video-mode {
+  align-items: start;
+}
+
 .remote-result-card {
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   overflow: hidden;
   background: var(--surface-2);
   transition: all 0.16s ease;
+}
+
+.remote-results-grid.video-mode .remote-result-card {
+  align-self: start;
 }
 
 .remote-result-card.selected {
