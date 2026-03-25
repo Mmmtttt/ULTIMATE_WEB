@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -136,28 +137,34 @@ def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_part
       - 2026-03-23: 初始创建，覆盖平台清单导入契约。
     """
     client = third_party_client["client"]
-    list_api = third_party_client["list_api"]
-    meta_dir = third_party_client["meta_dir"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
     captured = {}
 
-    class FakePlatformService:
-        def get_list_detail(self, _platform, list_id):
-            captured["remote_list_id"] = list_id
-            return {
-                "works": [
-                    {"video_id": "900009", "code": "TP-900009", "title": "Remote V1"},
-                    {"video_id": "900010", "code": "TP-900010", "title": "Remote V2"},
-                ]
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
             }
+        )
+        return "task-list-javdb-001"
 
-    def fake_import(works, target_list_id, source):
-        captured["import_works"] = works
-        captured["target_list_id"] = target_list_id
-        captured["source"] = source
-        return _ok_result({"imported_count": 2, "skipped_count": 0, "total_count": 2})
-
-    monkeypatch.setattr(list_api.list_service, "_get_platform_service", lambda: FakePlatformService())
-    monkeypatch.setattr(list_api.list_service, "_import_javdb_videos", fake_import)
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
 
     response = client.post(
         "/api/v1/list/import",
@@ -172,17 +179,20 @@ def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_part
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert captured["remote_list_id"] == "remote-list-7"
-    assert len(captured["import_works"]) == 2
-    assert captured["source"] == "local"
-    assert payload["data"]["list_id"] == captured["target_list_id"]
-
-    lists = load_json(meta_dir / "lists_database.json").get("lists", [])
-    created = next((item for item in lists if item.get("id") == captured["target_list_id"]), None)
-    assert created is not None
-    assert created["platform"] == "JAVDB"
-    assert created["platform_list_id"] == "remote-list-7"
-    assert created["import_source"] == "local"
+    assert payload["data"]["task_id"] == "task-list-javdb-001"
+    assert payload["data"]["content_type"] == "video"
+    assert captured["platform"] == "JAVDB"
+    assert captured["import_type"] == "by_platform_list"
+    assert captured["target"] == "recommendation"
+    assert captured["comic_id"] == "remote-list-7"
+    assert captured["keyword"] == "My Remote"
+    assert captured["comic_ids"] is None
+    assert captured["content_type"] == "video"
+    assert captured["extra_data"] == {
+        "platform_list_id": "remote-list-7",
+        "platform_list_name": "My Remote",
+        "source": "preview",
+    }
 
 
 @pytest.mark.integration
@@ -520,28 +530,34 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
       - 2026-03-23: Added JM favorites branch contract guard for platform list import API.
     """
     client = third_party_client["client"]
-    list_api = third_party_client["list_api"]
-    meta_dir = third_party_client["meta_dir"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
     captured = {}
 
-    class FakePlatformService:
-        def get_favorites_basic(self, _platform):
-            return {
-                "albums": [
-                    {"album_id": "551001", "title": "Fav-X", "author": "AX", "cover_url": "u1", "tags": ["t1"]},
-                    {"comic_id": "551002", "title": "Fav-Y", "author": "AY", "cover_url": "u2", "tags": ["t2"]},
-                ]
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
             }
+        )
+        return "task-list-jm-favorites-001"
 
-    def fake_import_comics(works, target_list_id, source, platform):
-        captured["works"] = works
-        captured["target_list_id"] = target_list_id
-        captured["source"] = source
-        captured["platform"] = getattr(platform, "value", str(platform))
-        return _ok_result({"imported_count": len(works), "skipped_count": 0, "total_count": len(works)})
-
-    monkeypatch.setattr(list_api.list_service, "_get_platform_service", lambda: FakePlatformService())
-    monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import_comics)
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
 
     response = client.post(
         "/api/v1/list/import",
@@ -556,16 +572,17 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
 
     assert response.status_code == 200
     assert payload["code"] == 200
+    assert payload["data"]["task_id"] == "task-list-jm-favorites-001"
+    assert payload["data"]["content_type"] == "comic"
     assert captured["platform"] == "JM"
-    assert captured["source"] == "preview"
-    assert len(captured["works"]) == 2
-    assert captured["works"][0]["album_id"] == "551001"
-    assert captured["works"][1]["comic_id"] == "551002"
-    assert payload["data"]["list_id"] == captured["target_list_id"]
-
-    lists = load_json(meta_dir / "lists_database.json").get("lists", [])
-    created = next((item for item in lists if item.get("id") == captured["target_list_id"]), None)
-    assert created is not None
-    assert created["platform"] == "JM"
-    assert created["platform_list_id"] == "favorites"
-    assert created["import_source"] == "preview"
+    assert captured["import_type"] == "by_platform_list"
+    assert captured["target"] == "recommendation"
+    assert captured["comic_id"] == "favorites"
+    assert captured["keyword"] == "MyFav"
+    assert captured["comic_ids"] is None
+    assert captured["content_type"] == "comic"
+    assert captured["extra_data"] == {
+        "platform_list_id": "favorites",
+        "platform_list_name": "MyFav",
+        "source": "preview",
+    }

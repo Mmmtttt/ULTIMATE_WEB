@@ -18,7 +18,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 test("video tag search forwards third-party query and import contracts", async ({ page }) => {
   const requests = startApiRequestRecorder(page);
   const searchQueries = [];
-  const importBodies = [];
+  const importTaskBodies = [];
 
   await page.route("**/api/v1/video/third-party/javdb/cookie-status", async (route) => {
     await route.fulfill({
@@ -84,16 +84,16 @@ test("video tag search forwards third-party query and import contracts", async (
     });
   });
 
-  await page.route("**/api/v1/video/third-party/import", async (route) => {
+  await page.route("**/api/v1/comic/import/async", async (route) => {
     const body = route.request().postDataJSON();
-    importBodies.push(body);
+    importTaskBodies.push(body);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         code: 200,
         msg: "ok",
-        data: { id: "JAVDBJVID-1" },
+        data: { task_id: "task-video-tag-001", content_type: "video" },
       }),
     });
   });
@@ -120,13 +120,15 @@ test("video tag search forwards third-party query and import contracts", async (
   expect(searchQueries[0].page).toBe("1");
   expect(searchQueries[0].tagIds).toEqual(expect.arrayContaining(["c1=23", "c1=24"]));
 
-  expect(importBodies).toHaveLength(1);
-  expect(importBodies[0]).toMatchObject({
-    video_id: "JVID-1",
+  expect(importTaskBodies).toHaveLength(1);
+  expect(importTaskBodies[0]).toMatchObject({
+    import_type: "by_list",
     target: "home",
-    platform: "javdb",
+    platform: "JAVDB",
+    content_type: "video",
   });
+  expect(importTaskBodies[0].comic_ids).toEqual(["JVID-1"]);
 
   expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
-  expect(hasApiCall(requests, "/api/v1/video/third-party/import")).toBeTruthy();
+  expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();
 });

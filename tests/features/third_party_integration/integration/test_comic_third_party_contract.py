@@ -554,7 +554,16 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     task_manager_module = importlib.import_module("infrastructure.task_manager")
     captured = {}
 
-    def fake_create_task(platform, import_type, target, comic_id=None, keyword=None, comic_ids=None):
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
         captured.update(
             {
                 "platform": platform,
@@ -563,6 +572,8 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
                 "comic_id": comic_id,
                 "keyword": keyword,
                 "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
             }
         )
         return "task-batch-001"
@@ -587,3 +598,5 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     assert captured["import_type"] == "by_list"
     assert captured["target"] == "recommendation"
     assert captured["comic_ids"] == ["5566", "7788", "9911"]
+    assert captured["content_type"] == "comic"
+    assert captured["extra_data"] == {}

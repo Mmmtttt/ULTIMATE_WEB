@@ -22,7 +22,7 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     - Expected:
       1. Adapters are called with page/max_pages forwarded unchanged.
       2. Returned works include both platforms.
-      3. Result order is interleaved by index: `javdb[0] -> javbus[0] -> javdb[1]`.
+      3. Result order is grouped by platform: all `javdb` first, then `javbus`.
     - History:
       - 2026-03-23: Added actor service third-party merge contract coverage.
     """
@@ -67,8 +67,8 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     assert len(calls) == 2
     assert calls[0] == {"platform": "javdb", "creator_name": "Mina", "page": 2, "max_pages": 4}
     assert calls[1] == {"platform": "javbus", "creator_name": "Mina", "page": 2, "max_pages": 4}
-    assert [item["id"] for item in works] == ["DB-1", "BUS-1", "DB-2"]
-    assert [item["platform"] for item in works] == ["javdb", "javbus", "javdb"]
+    assert [item["id"] for item in works] == ["DB-1", "DB-2", "BUS-1"]
+    assert [item["platform"] for item in works] == ["javdb", "javdb", "javbus"]
     assert result["has_more"] is True
     assert result["page"] == 2
 
@@ -307,7 +307,7 @@ def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, 
       3. Assert forwarded arguments and response mapping.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. Service receives `(actor_id, 4, 6)`.
+      2. Service receives `(actor_id, 4, 6, cache_only=false, force_refresh=false)`.
       3. Response includes mocked works payload.
     - History:
       - 2026-03-23: Added actor works route paging contract guard.
@@ -316,10 +316,12 @@ def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, 
     actor_api = third_party_client["actor_api"]
     captured = {}
 
-    def fake_get(actor_id, offset=0, limit=5):
+    def fake_get(actor_id, offset=0, limit=5, cache_only=False, force_refresh=False):
         captured["actor_id"] = actor_id
         captured["offset"] = offset
         captured["limit"] = limit
+        captured["cache_only"] = cache_only
+        captured["force_refresh"] = force_refresh
         return _ok_result(
             {
                 "actor": {"id": actor_id, "name": "Route Actor"},
@@ -338,5 +340,11 @@ def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, 
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert captured == {"actor_id": "actor-route-1", "offset": 4, "limit": 6}
+    assert captured == {
+        "actor_id": "actor-route-1",
+        "offset": 4,
+        "limit": 6,
+        "cache_only": False,
+        "force_refresh": False,
+    }
     assert payload["data"]["works"][0]["id"] == "W-ACT-1"
