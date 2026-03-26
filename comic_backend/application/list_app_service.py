@@ -1036,7 +1036,6 @@ class ListAppService:
             
             imported_count = 0
             skipped_count = 0
-            imported_comic_ids: ListType[str] = []
             imported_video_ids: ListType[str] = []
             detail_adapter = get_video_adapter("javdb", existing_tags)
             detail_tasks: ListType[dict] = []
@@ -1295,6 +1294,7 @@ class ListAppService:
             
             imported_count = 0
             skipped_count = 0
+            imported_comic_ids: ListType[str] = []
             
             platform_service = self._get_platform_service()
             
