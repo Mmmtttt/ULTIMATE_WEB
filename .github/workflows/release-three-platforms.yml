@@ -151,11 +151,21 @@ jobs:
             --target "${{ matrix.target }}" \
             --require-status built
 
-      - name: upload target artifact
+      - name: upload desktop release bundle artifact
+        if: ${{ matrix.build_desktop }}
         uses: actions/upload-artifact@v4.3.4  # 适配Node24的最新稳定版
         with:
           name: ultimate-${{ matrix.target }}
-          path: output/ci_packages/${{ matrix.target }}
+          path: output/ci_packages/${{ matrix.target }}/release_bundle
+          if-no-files-found: error
+          retention-days: 14  # 可选：设置产物保留天数
+
+      - name: upload android apk artifact
+        if: ${{ matrix.build_android }}
+        uses: actions/upload-artifact@v4.3.4  # 适配Node24的最新稳定版
+        with:
+          name: ultimate-${{ matrix.target }}
+          path: output/ci_packages/${{ matrix.target }}/apk
           if-no-files-found: error
           retention-days: 14  # 可选：设置产物保留天数
 
