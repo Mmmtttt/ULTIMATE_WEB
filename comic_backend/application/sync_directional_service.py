@@ -75,12 +75,18 @@ class DirectionalSyncService:
     ASSET_ROOT_DIRS: List[str] = [COMIC_DIR, VIDEO_DIR, STATIC_DIR, CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR]
     ASSET_ALLOWED_PREFIXES: tuple = ("comic/", "video/", "static/", "cache/", "recommendation_cache/")
     ASSET_EXCLUDED_PREFIXES: tuple = ("cache/sync_assets/", "cache/sync_exports/")
+    ASSET_TEMP_DIR = os.path.join(CACHE_ROOT_DIR, "sync_assets")
+    ASSET_TEMP_PREFIXES: tuple = ("sync_pull_", "sync_assets_")
+    ASSET_TEMP_SUFFIX = ".zip"
+    ASSET_TEMP_STALE_SECONDS = 2 * 60 * 60
     TASK_MAX_KEEP = 50
     _TASK_LOCK = threading.Lock()
     _TASKS: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self) -> None:
         os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
+        os.makedirs(self.ASSET_TEMP_DIR, exist_ok=True)
+        self._cleanup_stale_sync_asset_archives()
 
     def start_directional_task(self, peer_id: str, direction: str) -> Dict[str, Any]:
         direction_key = str(direction or "").strip().lower()
@@ -1400,8 +1406,13 @@ class DirectionalSyncService:
         return index
 
     def _create_asset_zip(self, rel_paths: List[str]) -> str:
-        os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
-        fd, zip_path = tempfile.mkstemp(prefix="sync_assets_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
+        self._cleanup_stale_sync_asset_archives()
+        os.makedirs(self.ASSET_TEMP_DIR, exist_ok=True)
+        fd, zip_path = tempfile.mkstemp(
+            prefix="sync_assets_",
+            suffix=".zip",
+            dir=self.ASSET_TEMP_DIR,
+        )
         os.close(fd)
 
         data_root = os.path.abspath(DATA_DIR)
@@ -1423,8 +1434,13 @@ class DirectionalSyncService:
         response: requests.Response,
         progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
     ) -> str:
-        os.makedirs(os.path.join(CACHE_ROOT_DIR, "sync_assets"), exist_ok=True)
-        fd, zip_path = tempfile.mkstemp(prefix="sync_pull_", suffix=".zip", dir=os.path.join(CACHE_ROOT_DIR, "sync_assets"))
+        self._cleanup_stale_sync_asset_archives()
+        os.makedirs(self.ASSET_TEMP_DIR, exist_ok=True)
+        fd, zip_path = tempfile.mkstemp(
+            prefix="sync_pull_",
+            suffix=".zip",
+            dir=self.ASSET_TEMP_DIR,
+        )
         os.close(fd)
         total_bytes = 0
         content_length = 0
@@ -1456,6 +1472,38 @@ class DirectionalSyncService:
             f"[sync] pull assets downloaded bytes={total_bytes} temp_zip={zip_path}"
         )
         return zip_path
+
+    def _cleanup_stale_sync_asset_archives(self) -> int:
+        now = _utc_now().timestamp()
+        cleaned = 0
+        if not os.path.isdir(self.ASSET_TEMP_DIR):
+            return 0
+
+        for name in os.listdir(self.ASSET_TEMP_DIR):
+            filename = str(name or "").strip()
+            if not filename.endswith(self.ASSET_TEMP_SUFFIX):
+                continue
+            if not filename.startswith(self.ASSET_TEMP_PREFIXES):
+                continue
+
+            path = os.path.join(self.ASSET_TEMP_DIR, filename)
+            if not os.path.isfile(path):
+                continue
+            try:
+                age_seconds = now - float(os.path.getmtime(path))
+            except Exception:
+                continue
+            if age_seconds < float(self.ASSET_TEMP_STALE_SECONDS):
+                continue
+            try:
+                os.remove(path)
+                cleaned += 1
+            except Exception:
+                continue
+
+        if cleaned > 0:
+            app_logger.info(f"[sync] cleaned stale asset temp archives count={cleaned}")
+        return cleaned
 
     def _extract_asset_zip(
         self,
