@@ -352,8 +352,8 @@
           在左侧菜单中展开 <code>Cookies</code>，选择 <code>https://javdb.com</code>。此时会显示所有相关的 Cookie 键值对。
         </li>
         <li>
-          <strong>步骤 4：复制完整 Cookie</strong><br>
-          建议复制完整的 Cookie 字符串（至少包含 <code>_jdb_session</code>、<code>over18</code>、<code>locale</code>）。可以在 <code>Network</code> 面板中复制请求头中的 Cookie。
+          <strong>步骤 4：复制 _jdb_session 的值</strong><br>
+          只需要复制 <code>_jdb_session</code> 对应的 value（不要包含 <code>_jdb_session=</code> 前缀）。系统保存时会自动补全其他固定字段。
         </li>
         <li>
           <strong>步骤 5：粘贴到系统设置</strong><br>
@@ -361,7 +361,7 @@
         </li>
       </ol>
       <div class="tips">
-        <p>💡 提示：只复制单个字段（如只复制 <code>_jdb_session</code>）时，部分情况下仍可能提示未登录。建议复制完整的 Cookie 字符串。</p>
+        <p>💡 提示：配置项现在只需要填写 <code>_jdb_session</code> 的值，其他字段由系统自动补全。</p>
       </div>
     </section>
 
@@ -386,7 +386,7 @@
           <div class="step-header">步骤 3：复制 Cookie 值</div>
           <div class="step-content">
             <img class="step-image" src="javdb-cookie-guide/screenshots/3.png" alt="步骤三：复制 Cookie" onclick="openModal(this.src)" />
-            <div class="step-description">复制需要的 Cookie 值，建议复制完整的 Cookie 字符串以确保功能正常。</div>
+            <div class="step-description">复制 <code>_jdb_session</code> 的 value 值，直接粘贴到系统配置即可。</div>
           </div>
         </div>
       </div>
@@ -394,7 +394,7 @@
 
     <section class="card">
       <h2>Cookie 字符串示例</h2>
-      <div class="cookie-example">_jdb_session=xxxxxx; over18=1; locale=zh; theme=auto; list_mode=h</div>
+      <div class="cookie-example">REDACTED_COOKIE</div>
       <div class="tips warn" style="margin-top: 16px;">
         <p>⚠️ 重要提示：Cookie 包含您的登录信息，请勿分享给他人。Cookie 会在一段时间后失效，需要重新获取并更新。</p>
       </div>

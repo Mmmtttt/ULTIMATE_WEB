@@ -112,6 +112,33 @@ def _parse_cookie_string(cookie_string: str) -> dict:
     return cookies
 
 
+def _normalize_javdb_cookie_input(cookie_input: str) -> dict:
+    raw = str(cookie_input or "").strip()
+    if not raw:
+        return {}
+
+    parsed = _parse_cookie_string(raw)
+    if not parsed:
+        parsed = {"_jdb_session": raw}
+
+    session_value = str(parsed.get("_jdb_session", "")).strip()
+    if not session_value:
+        return {}
+
+    normalized = {
+        "_jdb_session": session_value,
+        "list_mode": "h",
+        "theme": "auto",
+        "over18": "1",
+        "locale": "zh",
+    }
+    for key in ("list_mode", "theme", "over18", "locale"):
+        value = str(parsed.get(key, "")).strip()
+        if value:
+            normalized[key] = value
+    return normalized
+
+
 def _build_third_party_schema() -> dict:
     return {
         "jmcomic": {
@@ -138,9 +165,9 @@ def _build_third_party_schema() -> dict:
                 {"key": "domain_index", "label": "域名索引", "type": "number", "placeholder": "0"},
                 {
                     "key": "cookie_string",
-                    "label": "Cookie 字符串",
+                    "label": "Cookie(_jdb_session)",
                     "type": "textarea",
-                    "placeholder": "_jdb_session=...; over18=1; locale=zh",
+                    "placeholder": "REDACTED_COOKIE",
                     "secret": True,
                 },
             ],
@@ -159,9 +186,7 @@ def _build_third_party_config_response(config_manager) -> dict:
         if adapter_name == "javdb":
             cookies = normalized_config.get("cookies", {})
             if isinstance(cookies, dict) and cookies:
-                normalized_config["cookie_string"] = "; ".join(
-                    f"{key}={value}" for key, value in cookies.items() if str(key).strip()
-                )
+                normalized_config["cookie_string"] = str(cookies.get("_jdb_session", "")).strip()
             else:
                 normalized_config["cookie_string"] = ""
 
@@ -200,14 +225,9 @@ def _normalize_adapter_payload(adapter_name: str, payload: dict) -> dict:
         adapter_payload.setdefault("enabled", True)
         cookie_string = adapter_payload.pop("cookie_string", None)
         if cookie_string is not None:
-            parsed = _parse_cookie_string(cookie_string)
-            current_cookies = adapter_payload.get("cookies", {})
-            if not isinstance(current_cookies, dict):
-                current_cookies = {}
-            current_cookies.update(parsed)
-            adapter_payload["cookies"] = current_cookies
+            adapter_payload["cookies"] = _normalize_javdb_cookie_input(cookie_string)
         elif isinstance(adapter_payload.get("cookies"), str):
-            adapter_payload["cookies"] = _parse_cookie_string(adapter_payload.get("cookies"))
+            adapter_payload["cookies"] = _normalize_javdb_cookie_input(adapter_payload.get("cookies"))
 
     return adapter_payload
 

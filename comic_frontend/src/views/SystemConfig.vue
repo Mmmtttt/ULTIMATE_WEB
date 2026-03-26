@@ -124,7 +124,7 @@
                 </van-cell-group>
 
                 <div v-if="adapterName === 'javdb'" class="cookie-guide">
-                  <div class="cookie-guide-text">JAVDB 需先登录后获取 Cookie，再粘贴到上面的 Cookie 字符串。</div>
+                  <div class="cookie-guide-text">JAVDB 先登录后获取 <code>_jdb_session</code> 的值，粘贴到上面的输入框即可，保存时会自动补全其余固定字段。</div>
                   <van-button plain type="primary" block @click="openJavdbCookieGuide">
                     打开 Cookie 获取教学页
                   </van-button>
