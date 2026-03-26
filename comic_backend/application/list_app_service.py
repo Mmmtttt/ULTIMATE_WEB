@@ -24,6 +24,8 @@ class ListAppService:
     DEFAULT_IMPORT_MAX_WORKERS = 10
     DEFAULT_IMPORT_JM_MAX_WORKERS = 3
     THIRD_PARTY_DISABLED_MESSAGE = "third-party integration is disabled in current runtime profile"
+    COMIC_RECENT_IMPORT_TAG_ID = "tag_recent_import"
+    COMIC_RECENT_IMPORT_TAG_NAME = "最近导入"
     
     def __init__(
         self,
@@ -46,6 +48,89 @@ class ListAppService:
             )
         from third_party.platform_service import get_platform_service
         return get_platform_service()
+
+    def _ensure_comic_recent_import_tag_id(self) -> Optional[str]:
+        from domain.tag import Tag
+        from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
+        from core.enums import ContentType as TagContentType
+
+        tag_repo = TagJsonRepository()
+        configured_tag = tag_repo.get_by_id(self.COMIC_RECENT_IMPORT_TAG_ID)
+        if configured_tag and configured_tag.content_type == TagContentType.COMIC:
+            if configured_tag.name != self.COMIC_RECENT_IMPORT_TAG_NAME:
+                configured_tag.name = self.COMIC_RECENT_IMPORT_TAG_NAME
+                tag_repo.save(configured_tag)
+            return configured_tag.id
+
+        for tag in tag_repo.get_all(TagContentType.COMIC):
+            if tag.name == self.COMIC_RECENT_IMPORT_TAG_NAME:
+                return tag.id
+
+        new_tag = Tag(
+            id=self.COMIC_RECENT_IMPORT_TAG_ID,
+            name=self.COMIC_RECENT_IMPORT_TAG_NAME,
+            content_type=TagContentType.COMIC,
+            create_time=get_current_time(),
+        )
+        if tag_repo.save(new_tag):
+            app_logger.info(f"创建漫画系统标签: {self.COMIC_RECENT_IMPORT_TAG_NAME} ({new_tag.id})")
+            return new_tag.id
+
+        error_logger.error("创建漫画系统标签失败")
+        return None
+
+    def _apply_comic_recent_import_tags(
+        self,
+        comic_ids: ListType[str],
+        source: str = "local",
+        clear_previous: bool = True
+    ) -> ServiceResult:
+        try:
+            target_ids = [comic_id for comic_id in dict.fromkeys(comic_ids or []) if comic_id]
+            if not target_ids:
+                return ServiceResult.ok({
+                    "tag_id": None,
+                    "updated_count": 0,
+                    "cleared_count": 0
+                }, "无需更新最近导入标签")
+
+            tag_id = self._ensure_comic_recent_import_tag_id()
+            if not tag_id:
+                return ServiceResult.error("创建最近导入标签失败")
+
+            repo = self._comic_repo if source == "local" else self._rec_repo
+
+            cleared_count = 0
+            if clear_previous:
+                for comic in repo.get_all():
+                    if tag_id in (comic.tag_ids or []):
+                        comic.remove_tags([tag_id])
+                        if repo.save(comic):
+                            cleared_count += 1
+
+            updated_count = 0
+            for comic_id in target_ids:
+                comic = repo.get_by_id(comic_id)
+                if not comic:
+                    continue
+                if tag_id in (comic.tag_ids or []):
+                    continue
+                comic.add_tags([tag_id])
+                if repo.save(comic):
+                    updated_count += 1
+
+            app_logger.info(
+                f"更新漫画最近导入标签完成: source={source}, tag_id={tag_id}, "
+                f"cleared={cleared_count}, updated={updated_count}"
+            )
+            return ServiceResult.ok({
+                "tag_id": tag_id,
+                "updated_count": updated_count,
+                "cleared_count": cleared_count
+            }, "更新最近导入标签成功")
+        except Exception as e:
+            error_logger.error(f"更新漫画最近导入标签失败: {e}")
+            return ServiceResult.error("更新最近导入标签失败")
 
     def _build_tracking_list_name(self, platform_str: str, platform_list_name: str, content_type: ContentType) -> str:
         base_name = (platform_list_name or "").strip() or "未命名清单"
@@ -951,6 +1036,7 @@ class ListAppService:
             
             imported_count = 0
             skipped_count = 0
+            imported_comic_ids: ListType[str] = []
             imported_video_ids: ListType[str] = []
             detail_adapter = get_video_adapter("javdb", existing_tags)
             detail_tasks: ListType[dict] = []
@@ -1260,6 +1346,7 @@ class ListAppService:
                                 skipped_count += 1
                                 continue
                             imported_count += 1
+                            imported_comic_ids.append(existing_comic.id)
                         else:
                             if updated:
                                 repo.save(existing_comic)
@@ -1306,6 +1393,7 @@ class ListAppService:
                         existing_comic.add_to_list(target_list_id)
                         if repo.save(existing_comic):
                             imported_count += 1
+                            imported_comic_ids.append(existing_comic.id)
                         else:
                             skipped_count += 1
                     else:
@@ -1356,6 +1444,7 @@ class ListAppService:
                     comic = Comic.from_dict(comic_data)
                     if repo.save(comic):
                         imported_count += 1
+                        imported_comic_ids.append(prefixed_id)
                         
                         cover_url = comic_detail.get("cover_url", "")
                         if cover_url:
@@ -1418,6 +1507,7 @@ class ListAppService:
                     
                     if storage.write(db_data):
                         imported_count += 1
+                        imported_comic_ids.append(prefixed_id)
                     else:
                         skipped_count += 1
 
@@ -1428,6 +1518,15 @@ class ListAppService:
                     handle_detail=handle_comic_detail,
                     platform=platform
                 )
+
+            if imported_comic_ids:
+                recent_result = self._apply_comic_recent_import_tags(
+                    imported_comic_ids,
+                    source=source,
+                    clear_previous=True
+                )
+                if not recent_result.success:
+                    app_logger.warning(f"更新漫画最近导入标签失败: {recent_result.message}")
             
             return ServiceResult.ok({
                 "imported_count": imported_count,

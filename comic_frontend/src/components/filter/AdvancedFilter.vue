@@ -292,11 +292,27 @@ const tagCountKey = computed(() => {
   return props.isVideoMode ? 'video_count' : 'comic_count'
 })
 
+function isRecentImportTag(tag) {
+  const tagId = String(tag?.id || '').toLowerCase()
+  const tagName = String(tag?.name || '').trim()
+  return tagName === '最近导入' || tagId === 'tag_recent_import' || tagId === 'tag_video_recent_import'
+}
+
 const sortedTags = computed(() => {
   return [...props.tags].sort((a, b) => {
+    const recentA = isRecentImportTag(a) ? 1 : 0
+    const recentB = isRecentImportTag(b) ? 1 : 0
+    if (recentA !== recentB) {
+      return recentB - recentA
+    }
+
     const countA = a[tagCountKey.value] || 0
     const countB = b[tagCountKey.value] || 0
-    return countB - countA
+    if (countA !== countB) {
+      return countB - countA
+    }
+
+    return String(a?.name || '').localeCompare(String(b?.name || ''), 'zh-CN')
   })
 })
 
