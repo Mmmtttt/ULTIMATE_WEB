@@ -21,6 +21,7 @@
       "type": "capacitor",
       "app_id": "com.ultimate.web",
       "app_name": "UltimateWeb",
+      "icon_source": "comic_frontend/public/vite.jpg",
       "web_dir": "comic_frontend_dist",
       "workspace_web_dir": "web",
       "api_base_url": "",

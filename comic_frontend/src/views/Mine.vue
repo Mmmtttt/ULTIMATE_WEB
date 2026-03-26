@@ -38,6 +38,7 @@
       <p class="version">版本 2.0.0</p>
       <p class="copyright">© 2026 Ultimate Web </p>
       <p><span class="mmmtttt">github@Mmmtttt</span></p>
+      <p><span class="mmmtttt">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB.git</span></p>
     </div>
     
     <!-- 存储管理面板 -->

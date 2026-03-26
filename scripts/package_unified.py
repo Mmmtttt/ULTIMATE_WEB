@@ -176,6 +176,56 @@ def write_android_local_properties(android_project_dir: Path, sdk_dir: str) -> P
     return local_properties
 
 
+def apply_android_launcher_icon(workspace_dir: Path, packager_cfg: Dict) -> None:
+    icon_source_raw = str(packager_cfg.get("icon_source", "")).strip()
+    if not icon_source_raw:
+        return
+
+    icon_source = Path(icon_source_raw)
+    if not icon_source.is_absolute():
+        icon_source = (ROOT_DIR / icon_source).resolve()
+    if not icon_source.exists():
+        raise FileNotFoundError(f"android icon source not found: {icon_source}")
+
+    ext = icon_source.suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise ValueError(f"android icon source format not supported: {icon_source.name}")
+
+    android_main = workspace_dir / "android" / "app" / "src" / "main"
+    if not android_main.exists():
+        raise FileNotFoundError(f"android main source dir not found: {android_main}")
+
+    resource_name = "app_icon"
+    drawable_dir = android_main / "res" / "drawable"
+    drawable_dir.mkdir(parents=True, exist_ok=True)
+
+    target_suffix = ".jpg" if ext in {".jpg", ".jpeg"} else ext
+    target_image = drawable_dir / f"{resource_name}{target_suffix}"
+    for stale in drawable_dir.glob(f"{resource_name}.*"):
+        if stale != target_image:
+            stale.unlink()
+    shutil.copy2(icon_source, target_image)
+
+    manifest_path = android_main / "AndroidManifest.xml"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"android manifest not found: {manifest_path}")
+    manifest_raw = manifest_path.read_text(encoding="utf-8")
+    manifest_patched = re.sub(
+        r'android:icon="[^"]*"',
+        f'android:icon="@drawable/{resource_name}"',
+        manifest_raw,
+        count=1,
+    )
+    manifest_patched = re.sub(
+        r'android:roundIcon="[^"]*"',
+        f'android:roundIcon="@drawable/{resource_name}"',
+        manifest_patched,
+        count=1,
+    )
+    if manifest_patched != manifest_raw:
+        write_text(manifest_path, manifest_patched)
+
+
 def patch_android_min_sdk(android_project_dir: Path, min_sdk: int) -> None:
     variables_gradle = android_project_dir / "variables.gradle"
     if not variables_gradle.exists():
@@ -1174,6 +1224,22 @@ def package_android(
                 output_dir=str(target_out_dir),
                 command=cmd,
             )
+        if idx == 4:
+            try:
+                apply_android_launcher_icon(workspace_dir, packager_cfg)
+                if str(packager_cfg.get("icon_source", "")).strip():
+                    logs.append("$ [internal] apply android launcher icon\n[ok] launcher icon source applied\n")
+            except Exception as ex:
+                log_path = target_out_dir / "android_build.log"
+                logs.append(f"$ [internal] apply android launcher icon\n[error] {ex}\n")
+                write_text(log_path, "\n".join(logs))
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android launcher icon apply failed after step {idx}; see {log_path}",
+                    output_dir=str(target_out_dir),
+                    command=["apply_android_launcher_icon"],
+                )
 
     expected_apk = workspace_dir / apk_relative_path
     if not expected_apk.exists():
