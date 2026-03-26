@@ -34,7 +34,7 @@ test("library browse switches to video mode and opens video detail", async ({ pa
   await card.click();
 
   await expect(page).toHaveURL(new RegExp(`/video/${VIDEO_ID}$`));
-  await expect(page.locator(".video-title")).toContainText(VIDEO_TITLE);
+  await expect(page.locator(".video-title, .detail-title").first()).toContainText(VIDEO_TITLE);
 
   expect(hasApiCall(apiRequests, "/api/v1/video/list")).toBeTruthy();
   expect(

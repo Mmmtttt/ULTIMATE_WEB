@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from uuid import uuid4
 
 import pytest
@@ -75,13 +76,31 @@ def test_comic_trash_permanent_delete_removes_record(integration_runtime):
     """
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]
+    data_dir = integration_runtime["data_dir"]
     comics_path = meta_dir / "comics_database.json"
 
     from tests.shared.test_constants import FIFTH_COMIC_ID
 
+    temp_numeric = str((uuid4().int % 900000) + 100000)
+    temp_comic_id = f"JM{temp_numeric}"
+    temp_title = f"Trash Delete {temp_numeric}"
+    source_dir = data_dir / "comic" / "JM" / FIFTH_COMIC_ID.replace("JM", "", 1)
+    temp_dir = data_dir / "comic" / "JM" / temp_comic_id.replace("JM", "", 1)
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    shutil.copytree(source_dir, temp_dir)
+
+    init_resp = requests.post(
+        f"{base_url}/api/v1/comic/init",
+        json={"comic_id": temp_comic_id, "title": temp_title},
+        timeout=10,
+    )
+    assert init_resp.status_code == 200
+    assert init_resp.json()["code"] == 200
+
     trash_resp = requests.put(
         f"{base_url}/api/v1/comic/trash/move",
-        json={"comic_id": FIFTH_COMIC_ID},
+        json={"comic_id": temp_comic_id},
         timeout=5,
     )
     assert trash_resp.status_code == 200
@@ -89,14 +108,14 @@ def test_comic_trash_permanent_delete_removes_record(integration_runtime):
 
     delete_resp = requests.delete(
         f"{base_url}/api/v1/comic/trash/delete",
-        json={"comic_id": FIFTH_COMIC_ID},
+        json={"comic_id": temp_comic_id},
         timeout=5,
     )
     assert delete_resp.status_code == 200
     assert delete_resp.json()["code"] == 200
 
     comics_after_delete = load_json(comics_path).get("comics", [])
-    assert find_by_id(comics_after_delete, FIFTH_COMIC_ID) is None
+    assert find_by_id(comics_after_delete, temp_comic_id) is None
 
 
 @pytest.mark.integration

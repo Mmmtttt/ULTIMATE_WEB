@@ -223,27 +223,39 @@ def test_video_edit_updates_metadata_and_persists(integration_runtime):
 
     from tests.shared.test_constants import PRIMARY_VIDEO_ID
 
+    original = find_by_id(load_json(videos_path).get("videos", []), PRIMARY_VIDEO_ID)
+    assert original is not None
+    original_title = original.get("title")
+    original_actors = original.get("actors")
+
     new_title = "Updated Video Title"
     new_actors = ["New Actor A", "New Actor B"]
 
-    response = requests.put(
-        f"{base_url}/api/v1/video/edit",
-        json={"video_id": PRIMARY_VIDEO_ID, "title": new_title, "actors": new_actors},
-        timeout=5,
-    )
+    try:
+        response = requests.put(
+            f"{base_url}/api/v1/video/edit",
+            json={"video_id": PRIMARY_VIDEO_ID, "title": new_title, "actors": new_actors},
+            timeout=5,
+        )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["code"] == 200
-    assert payload["data"]["title"] == new_title
-    assert payload["data"]["actors"] == new_actors
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["title"] == new_title
+        assert payload["data"]["actors"] == new_actors
 
-    videos_data = load_json(videos_path)
-    videos = videos_data.get("videos", [])
-    updated = find_by_id(videos, PRIMARY_VIDEO_ID)
-    assert updated is not None
-    assert updated["title"] == new_title
-    assert updated["actors"] == new_actors
+        videos_data = load_json(videos_path)
+        videos = videos_data.get("videos", [])
+        updated = find_by_id(videos, PRIMARY_VIDEO_ID)
+        assert updated is not None
+        assert updated["title"] == new_title
+        assert updated["actors"] == new_actors
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/video/edit",
+            json={"video_id": PRIMARY_VIDEO_ID, "title": original_title, "actors": original_actors},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration
@@ -266,24 +278,35 @@ def test_video_score_update_persists(integration_runtime):
 
     from tests.shared.test_constants import PRIMARY_VIDEO_ID
 
+    original = find_by_id(load_json(videos_path).get("videos", []), PRIMARY_VIDEO_ID)
+    assert original is not None
+    original_score = original.get("score")
+
     new_score = 9.5
 
-    response = requests.put(
-        f"{base_url}/api/v1/video/score",
-        json={"video_id": PRIMARY_VIDEO_ID, "score": new_score},
-        timeout=5,
-    )
+    try:
+        response = requests.put(
+            f"{base_url}/api/v1/video/score",
+            json={"video_id": PRIMARY_VIDEO_ID, "score": new_score},
+            timeout=5,
+        )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["code"] == 200
-    assert payload["data"]["score"] == new_score
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["score"] == new_score
 
-    videos_data = load_json(videos_path)
-    videos = videos_data.get("videos", [])
-    updated = find_by_id(videos, PRIMARY_VIDEO_ID)
-    assert updated is not None
-    assert updated["score"] == new_score
+        videos_data = load_json(videos_path)
+        videos = videos_data.get("videos", [])
+        updated = find_by_id(videos, PRIMARY_VIDEO_ID)
+        assert updated is not None
+        assert updated["score"] == new_score
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/video/score",
+            json={"video_id": PRIMARY_VIDEO_ID, "score": original_score},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration
@@ -306,22 +329,33 @@ def test_video_progress_update_persists(integration_runtime):
 
     from tests.shared.test_constants import PRIMARY_VIDEO_ID
 
+    original = find_by_id(load_json(videos_path).get("videos", []), PRIMARY_VIDEO_ID)
+    assert original is not None
+    original_unit = original.get("current_unit")
+
     new_unit = 1
 
-    response = requests.put(
-        f"{base_url}/api/v1/video/progress",
-        json={"video_id": PRIMARY_VIDEO_ID, "unit": new_unit},
-        timeout=5,
-    )
+    try:
+        response = requests.put(
+            f"{base_url}/api/v1/video/progress",
+            json={"video_id": PRIMARY_VIDEO_ID, "unit": new_unit},
+            timeout=5,
+        )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["code"] == 200
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
 
-    videos_data = load_json(videos_path)
-    videos = videos_data.get("videos", [])
-    updated = find_by_id(videos, PRIMARY_VIDEO_ID)
-    assert updated is not None
+        videos_data = load_json(videos_path)
+        videos = videos_data.get("videos", [])
+        updated = find_by_id(videos, PRIMARY_VIDEO_ID)
+        assert updated is not None
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/video/progress",
+            json={"video_id": PRIMARY_VIDEO_ID, "unit": original_unit},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration

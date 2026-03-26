@@ -118,27 +118,39 @@ def test_comic_edit_updates_metadata_and_persists(integration_runtime):
 
     from tests.shared.test_constants import PRIMARY_COMIC_ID
 
+    original = find_by_id(load_json(comics_path).get("comics", []), PRIMARY_COMIC_ID)
+    assert original is not None
+    original_title = original.get("title")
+    original_author = original.get("author")
+
     new_title = "Updated Comic Title"
     new_author = "Updated Author"
 
-    response = requests.put(
-        f"{base_url}/api/v1/comic/edit",
-        json={"comic_id": PRIMARY_COMIC_ID, "title": new_title, "author": new_author},
-        timeout=5,
-    )
+    try:
+        response = requests.put(
+            f"{base_url}/api/v1/comic/edit",
+            json={"comic_id": PRIMARY_COMIC_ID, "title": new_title, "author": new_author},
+            timeout=5,
+        )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["code"] == 200
-    assert payload["data"]["title"] == new_title
-    assert payload["data"]["author"] == new_author
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["title"] == new_title
+        assert payload["data"]["author"] == new_author
 
-    comics_data = load_json(comics_path)
-    comics = comics_data.get("comics", [])
-    updated = find_by_id(comics, PRIMARY_COMIC_ID)
-    assert updated is not None
-    assert updated["title"] == new_title
-    assert updated["author"] == new_author
+        comics_data = load_json(comics_path)
+        comics = comics_data.get("comics", [])
+        updated = find_by_id(comics, PRIMARY_COMIC_ID)
+        assert updated is not None
+        assert updated["title"] == new_title
+        assert updated["author"] == new_author
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/comic/edit",
+            json={"comic_id": PRIMARY_COMIC_ID, "title": original_title, "author": original_author},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration
@@ -332,24 +344,35 @@ def test_comic_score_update_persists(integration_runtime):
 
     from tests.shared.test_constants import PRIMARY_COMIC_ID
 
+    original = find_by_id(load_json(comics_path).get("comics", []), PRIMARY_COMIC_ID)
+    assert original is not None
+    original_score = original.get("score")
+
     new_score = 9.5
 
-    response = requests.put(
-        f"{base_url}/api/v1/comic/score",
-        json={"comic_id": PRIMARY_COMIC_ID, "score": new_score},
-        timeout=5,
-    )
+    try:
+        response = requests.put(
+            f"{base_url}/api/v1/comic/score",
+            json={"comic_id": PRIMARY_COMIC_ID, "score": new_score},
+            timeout=5,
+        )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["code"] == 200
-    assert payload["data"]["score"] == new_score
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["score"] == new_score
 
-    comics_data = load_json(comics_path)
-    comics = comics_data.get("comics", [])
-    updated = find_by_id(comics, PRIMARY_COMIC_ID)
-    assert updated is not None
-    assert updated["score"] == new_score
+        comics_data = load_json(comics_path)
+        comics = comics_data.get("comics", [])
+        updated = find_by_id(comics, PRIMARY_COMIC_ID)
+        assert updated is not None
+        assert updated["score"] == new_score
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/comic/score",
+            json={"comic_id": PRIMARY_COMIC_ID, "score": original_score},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration
