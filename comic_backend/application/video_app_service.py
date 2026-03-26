@@ -811,7 +811,7 @@ class VideoAppService(BaseContentAppService):
             result = ConfigAppService().get_config()
             if not result.success or not isinstance(result.data, dict):
                 return True
-            return bool(result.data.get("auto_download_preview_assets_for_preview_import", True))
+            return bool(result.data.get("auto_download_preview_assets_for_preview_import", False))
         except Exception as e:
             app_logger.warning(f"读取预览库资源下载配置失败: {e}")
             return True

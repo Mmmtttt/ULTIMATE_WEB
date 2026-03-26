@@ -835,7 +835,7 @@ def _get_preview_import_auto_download_enabled() -> bool:
         result = config_service.get_config()
         if not result.success or not isinstance(result.data, dict):
             return True
-        return bool(result.data.get("auto_download_preview_assets_for_preview_import", True))
+        return bool(result.data.get("auto_download_preview_assets_for_preview_import", False))
     except Exception as e:
         app_logger.warning(f"read preview import asset config failed: {e}")
         return True

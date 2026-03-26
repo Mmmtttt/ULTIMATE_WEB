@@ -44,7 +44,7 @@ class UserConfig:
     default_background: str = "white"
     auto_hide_toolbar: bool = True
     show_page_number: bool = True
-    auto_download_preview_assets_for_preview_import: bool = True
+    auto_download_preview_assets_for_preview_import: bool = False
     single_page_browsing: bool = False
     cache_config: CacheConfig = None
     
@@ -70,7 +70,7 @@ class UserConfig:
             show_page_number=data.get("show_page_number", True),
             auto_download_preview_assets_for_preview_import=data.get(
                 "auto_download_preview_assets_for_preview_import",
-                True
+                False
             ),
             single_page_browsing=data.get("single_page_browsing", False),
             cache_config=cache_config
@@ -129,7 +129,7 @@ class UserConfig:
         self.default_background = "white"
         self.auto_hide_toolbar = True
         self.show_page_number = True
-        self.auto_download_preview_assets_for_preview_import = True
+        self.auto_download_preview_assets_for_preview_import = False
         self.single_page_browsing = False
         self.cache_config = CacheConfig()
 
