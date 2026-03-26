@@ -55,7 +55,8 @@ def _parse_iso(value: str) -> Optional[datetime]:
 class DirectionalSyncService:
     STORE_FILE = os.path.join(META_DIR, "sync_pairing.json")
     SCHEMA_VERSION = 1
-    HTTP_TIMEOUT_SECONDS = 12
+    # Intentionally disable HTTP request timeout for large sync payload transfer.
+    HTTP_TIMEOUT_SECONDS = None
     INVITE_TTL_MINUTES = 10
     INVITE_TTL_MINUTES_MAX = 60
 
@@ -923,7 +924,7 @@ class DirectionalSyncService:
                     self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/apply"),
                     headers=headers,
                     files=files,
-                    timeout=self.HTTP_TIMEOUT_SECONDS * 4,
+                    timeout=self.HTTP_TIMEOUT_SECONDS,
                 )
             if response.status_code in (404, 405):
                 self._report_progress(progress_cb, 90, "asset_push_upload", "remote does not support assets apply")
@@ -984,7 +985,7 @@ class DirectionalSyncService:
                 endpoint,
                 headers=headers,
                 json={"known_files": known_files or {}},
-                timeout=self.HTTP_TIMEOUT_SECONDS * 8,
+                timeout=self.HTTP_TIMEOUT_SECONDS,
                 stream=True,
             )
             if response.status_code == 204:
@@ -996,7 +997,7 @@ class DirectionalSyncService:
                     response = requests.get(
                         endpoint,
                         headers=headers,
-                        timeout=self.HTTP_TIMEOUT_SECONDS * 8,
+                        timeout=self.HTTP_TIMEOUT_SECONDS,
                         stream=True,
                     )
                     if response.status_code == 204:

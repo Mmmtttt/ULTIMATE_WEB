@@ -46,7 +46,8 @@ def _parse_iso(value: str) -> Optional[datetime]:
 
 
 class SyncAppService:
-    SESSION_TTL_HOURS = 24
+    # Intentionally disable session expiration timeout for large sync payload transfer.
+    SESSION_TTL_HOURS = None
     SCHEMA_VERSION = 1
     SESSION_STORE_FILE = os.path.join(META_DIR, "sync_sessions.json")
     EXPORT_ROOT_DIR = os.path.join(CACHE_ROOT_DIR, "sync_exports")
@@ -65,7 +66,11 @@ class SyncAppService:
 
             session_id = uuid.uuid4().hex
             created_at = _utc_now()
-            expires_at = created_at + timedelta(hours=self.SESSION_TTL_HOURS)
+            expires_at = (
+                created_at + timedelta(hours=float(self.SESSION_TTL_HOURS))
+                if self.SESSION_TTL_HOURS
+                else None
+            )
             snapshot_generated_at = _utc_now()
 
             export_dir = self._session_export_dir(session_id)
@@ -84,7 +89,7 @@ class SyncAppService:
                 "schema_version": self.SCHEMA_VERSION,
                 "status": "open",
                 "created_at": _to_iso(created_at),
-                "expires_at": _to_iso(expires_at),
+                "expires_at": _to_iso(expires_at) if isinstance(expires_at, datetime) else "",
                 "snapshot_version": _to_iso(created_at),
                 "snapshot_generated_at": _to_iso(snapshot_generated_at),
                 "server_data_root_fingerprint": self._server_data_root_fingerprint(),
