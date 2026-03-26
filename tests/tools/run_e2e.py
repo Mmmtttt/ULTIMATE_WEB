@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import re
 import signal
@@ -20,6 +21,19 @@ if str(BOOTSTRAP_REPO_ROOT) not in sys.path:
 
 from tests.shared.test_constants import E2E_BACKEND_PORT, E2E_FRONTEND_PORT, E2E_PROFILE, REPO_ROOT
 from tests.tools.prepare_test_env import prepare_profile
+
+PARALLEL_SAFE_SPECS = [
+    "tests/features/global_search/e2e/global_search_local_comic_open_detail.spec.js",
+    "tests/features/library_browse/e2e/library_open_detail.spec.js",
+    "tests/features/library_browse/e2e/library_open_video_detail.spec.js",
+    "tests/features/library_browse/e2e/library_sort_by_score.spec.js",
+    "tests/features/library_browse/e2e/video_library_sort_by_score.spec.js",
+    "tests/features/third_party_integration/e2e/video_local_playback_contract.spec.js",
+    "tests/features/third_party_integration/e2e/video_mixed_platform_card_layout.spec.js",
+    "tests/features/third_party_integration/e2e/video_recommendation_playback_contract.spec.js",
+    "tests/features/third_party_integration/e2e/video_tag_search_import_contract.spec.js",
+    "tests/features/third_party_integration/e2e/video_tag_search_pagination_and_recommendation_import.spec.js",
+]
 
 
 def _wait_http(url: str, timeout_seconds: int = 120) -> None:
@@ -107,7 +121,64 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable local visual mode: headed + slowmo(200ms) + PWDEBUG + Playwright UI.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Override worker count for parallel-safe spec group.",
+    )
     return parser.parse_args()
+
+
+def _run_playwright(
+    npx_cmd: str,
+    repo_root: Path,
+    playwright_env: dict,
+    specs: list[str],
+    workers: int,
+    visual: bool,
+) -> int:
+    if not specs:
+        return 0
+    cmd = [
+        npx_cmd,
+        "--prefix",
+        "comic_frontend",
+        "playwright",
+        "test",
+        "-c",
+        "tests/playwright.config.js",
+        "--workers",
+        str(workers),
+    ]
+    cmd.extend(specs)
+    if visual:
+        cmd.append("--ui")
+    completed = subprocess.run(cmd, cwd=str(repo_root), env=playwright_env)
+    return int(completed.returncode or 0)
+
+
+def _collect_all_e2e_specs(repo_root: Path) -> list[str]:
+    pattern = str(repo_root / "tests" / "features" / "**" / "e2e" / "*.spec.js")
+    files = glob.glob(pattern, recursive=True)
+    specs = []
+    for file_path in files:
+        relative = Path(file_path).resolve().relative_to(repo_root.resolve())
+        specs.append(str(relative).replace("\\", "/"))
+    return sorted(specs)
+
+
+def _build_spec_plan(repo_root: Path) -> tuple[list[str], list[str]]:
+    all_specs = _collect_all_e2e_specs(repo_root)
+    parallel_set = set(PARALLEL_SAFE_SPECS)
+    all_set = set(all_specs)
+    invalid_parallel = sorted(parallel_set - all_set)
+    if invalid_parallel:
+        raise RuntimeError(f"Parallel whitelist contains non-existent specs: {invalid_parallel}")
+
+    serial_specs = [spec for spec in all_specs if spec not in parallel_set]
+    parallel_specs = [spec for spec in all_specs if spec in parallel_set]
+    return parallel_specs, serial_specs
 
 
 def main() -> int:
@@ -155,6 +226,9 @@ def main() -> int:
 
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
     npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
+    cpu_based = max(1, min(4, (os.cpu_count() or 1)))
+    parallel_workers = args.workers if args.workers and args.workers > 0 else cpu_based
+    parallel_specs, serial_specs = _build_spec_plan(repo_root)
 
     backend_proc = None
     frontend_proc = None
@@ -188,12 +262,26 @@ def main() -> int:
         )
         _wait_http(f"http://127.0.0.1:{E2E_FRONTEND_PORT}", timeout_seconds=180)
 
-        playwright_cmd = [npx_cmd, "--prefix", "comic_frontend", "playwright", "test", "-c", "tests/playwright.config.js"]
-        if args.visual:
-            playwright_cmd.append("--ui")
+        if parallel_specs:
+            code = _run_playwright(
+                npx_cmd=npx_cmd,
+                repo_root=repo_root,
+                playwright_env=playwright_env,
+                specs=parallel_specs,
+                workers=parallel_workers,
+                visual=args.visual,
+            )
+            if code != 0:
+                return code
 
-        completed = subprocess.run(playwright_cmd, cwd=str(repo_root), env=playwright_env)
-        return int(completed.returncode or 0)
+        return _run_playwright(
+            npx_cmd=npx_cmd,
+            repo_root=repo_root,
+            playwright_env=playwright_env,
+            specs=serial_specs,
+            workers=1,
+            visual=args.visual,
+        )
     finally:
         _kill_process_tree(frontend_proc)
         _kill_process_tree(backend_proc)

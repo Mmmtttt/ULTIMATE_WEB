@@ -483,3 +483,13 @@ tests/
 | 测试数据不匹配 | 使用种子数据中的ID进行测试 | 多个用例 |
 | 评分精度验证 | 视频评分需为0.5精度（9.5而非9.8） | test_video_import_contract.py |
 | 请求格式错误 | DELETE请求使用json而非params | test_comic_trash_lifecycle.py |
+
+## 19. E2E Parallel Policy (2026-03-26)
+
+- We keep only one parallel group: `PARALLEL_SAFE_SPECS` in `tests/tools/run_e2e.py`.
+- All other E2E specs run serially by default.
+- New E2E specs are serial by default, unless explicitly added into `PARALLEL_SAFE_SPECS`.
+- Before adding a spec to `PARALLEL_SAFE_SPECS`, confirm it has no shared-state/race impact on other specs.
+- `python tests/tools/run_e2e.py` will run:
+  1. parallel-safe whitelist (multi-worker)
+  2. remaining specs (worker=1 serial)
