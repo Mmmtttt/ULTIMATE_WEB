@@ -90,12 +90,16 @@ export const useTagStore = defineStore('tag', () => {
         ? cacheStore.getVideoTagsCache() 
         : cacheStore.getTagsCache()
       if (cached) {
-        if (contentType === 'video') {
-          videoTags.value = cached
+        if (Array.isArray(cached) && cached.length === 0) {
+          // Empty cache should not block immediate refresh after import/update.
         } else {
-          tags.value = cached
+          if (contentType === 'video') {
+            videoTags.value = cached
+          } else {
+            tags.value = cached
+          }
+          return cached
         }
-        return cached
       }
     }
     

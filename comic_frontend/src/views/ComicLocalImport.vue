@@ -797,8 +797,10 @@ async function commitImport() {
     commitSummary.value = result
 
     if (Number(result.imported_count || 0) > 0) {
-      await comicStore.fetchComics()
-      await tagStore.fetchTags('comic')
+      comicStore.clearCache('list')
+      comicStore.clearCache('detail')
+      await comicStore.fetchComics(true)
+      await tagStore.fetchTags('comic', true)
     }
 
     if (Number(result.failed_count || 0) > 0) {

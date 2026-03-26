@@ -172,6 +172,7 @@ const tempSelectedListIds = ref([])
 const tempMinScore = ref(0)
 const tempUnreadOnly = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
+const initVersion = ref(0)
 const viewModeOptions = [
   { value: 'large', label: '大图' },
   { value: 'medium', label: '中图' },
@@ -195,10 +196,10 @@ function saveFilterState() {
   saveToSession(getFilterStorageKey(), payload)
 }
 
-async function restoreFilterState() {
+function restoreFilterState() {
   const parsed = loadFromSession(getFilterStorageKey())
   if (!parsed) {
-    return
+    return false
   }
   tempIncludeTags.value = parsed.includeTags || []
   tempExcludeTags.value = parsed.excludeTags || []
@@ -206,14 +207,7 @@ async function restoreFilterState() {
   tempSelectedListIds.value = parsed.selectedListIds || []
   tempMinScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
   tempUnreadOnly.value = Boolean(parsed.unreadOnly)
-  await currentStore.value.filterMulti(
-    tempIncludeTags.value,
-    tempExcludeTags.value,
-    tempSelectedAuthors.value,
-    tempSelectedListIds.value,
-    tempMinScore.value,
-    tempUnreadOnly.value
-  )
+  return true
 }
 
 // Computed
@@ -268,9 +262,11 @@ function goToSearch() {
   router.push('/search?source=preview')
 }
 
-function onMenuSelect(action) {
+async function onMenuSelect(action) {
   if (action.text === '批量管理') isManageMode.value = true
-  if (action.text === '刷新列表') loadData(true)
+  if (action.text === '刷新列表') {
+    await initializePage(true)
+  }
 }
 
 function onItemClick(item) {
@@ -389,45 +385,84 @@ async function applyFilterAndClose() {
 }
 
 async function loadData(force = false) {
-  if (listStore.lists.length === 0) {
+  if (force || listStore.lists.length === 0) {
     await listStore.fetchLists()
+  }
+  if (isVideoMode.value) {
+    if (force || tagStore.videoTags.length === 0) {
+      await tagStore.fetchTags('video', force)
+    }
+  } else if (force || tagStore.tags.length === 0) {
+    await tagStore.fetchTags('comic', force)
   }
   await currentStore.value.fetchRecommendations(force)
 }
 
-// Lifecycle
-watch(() => modeStore.currentMode, () => {
-  loadData()
-  selectedIds.value = []
-  isManageMode.value = false
-  restoreFilterState()
-})
+function hasActiveFilterState() {
+  return tempIncludeTags.value.length > 0 ||
+    tempExcludeTags.value.length > 0 ||
+    tempSelectedAuthors.value.length > 0 ||
+    tempSelectedListIds.value.length > 0 ||
+    tempMinScore.value > 0 ||
+    tempUnreadOnly.value
+}
 
-watch(() => route.query.author, (newAuthor) => {
-  if (newAuthor) {
-    tempSelectedAuthors.value = [newAuthor]
-    applyFilterAndClose()
+async function applyCurrentFilters() {
+  await currentStore.value.filterMulti(
+    tempIncludeTags.value,
+    tempExcludeTags.value,
+    tempSelectedAuthors.value,
+    tempSelectedListIds.value,
+    tempMinScore.value,
+    tempUnreadOnly.value
+  )
+}
+
+async function initializePage(force = false) {
+  const currentVersion = ++initVersion.value
+  await loadData(force)
+  if (currentVersion !== initVersion.value) {
+    return
   }
-})
 
-watch(() => route.query.tagId, (newTagId) => {
-  if (newTagId) {
-    tempIncludeTags.value = [newTagId]
-    applyFilterAndClose()
-  }
-})
-
-onMounted(() => {
-  loadData()
-  restoreFilterState()
+  const restored = restoreFilterState()
   if (route.query.author) {
     tempSelectedAuthors.value = [route.query.author]
-    applyFilterAndClose()
   }
   if (route.query.tagId) {
     tempIncludeTags.value = [route.query.tagId]
-    applyFilterAndClose()
   }
+
+  if (restored || hasActiveFilterState()) {
+    await applyCurrentFilters()
+  } else if (typeof currentStore.value.clearFilter === 'function') {
+    currentStore.value.clearFilter()
+  }
+}
+
+// Lifecycle
+watch(() => modeStore.currentMode, async () => {
+  selectedIds.value = []
+  isManageMode.value = false
+  await initializePage(false)
+})
+
+watch(() => route.query.author, async (newAuthor) => {
+  if (newAuthor) {
+    tempSelectedAuthors.value = [newAuthor]
+    await applyCurrentFilters()
+  }
+})
+
+watch(() => route.query.tagId, async (newTagId) => {
+  if (newTagId) {
+    tempIncludeTags.value = [newTagId]
+    await applyCurrentFilters()
+  }
+})
+
+onMounted(async () => {
+  await initializePage(false)
 })
 </script>
 

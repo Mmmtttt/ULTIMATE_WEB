@@ -182,6 +182,7 @@ const selectedListIds = ref([])
 const minScore = ref(0)
 const unreadOnly = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
+const initVersion = ref(0)
 const viewModeOptions = [
   { value: 'large', label: '大图' },
   { value: 'medium', label: '中图' },
@@ -376,9 +377,11 @@ function goToSearch() {
   router.push('/search')
 }
 
-function onMenuSelect(action) {
+async function onMenuSelect(action) {
   if (action.text === '批量管理') isManageMode.value = true
-  if (action.text === '刷新列表') loadData(true)
+  if (action.text === '刷新列表') {
+    await initializePage(true)
+  }
 }
 
 function onItemClick(item) {
@@ -487,55 +490,72 @@ async function removeFilter(filter) {
 }
 
 async function loadData(force = false) {
-  if (listStore.lists.length === 0) {
+  if (force || listStore.lists.length === 0) {
     await listStore.fetchLists()
   }
   if (isVideoMode.value) {
-    if (tagStore.videoTags.length === 0) await tagStore.fetchTags('video')
+    if (force || tagStore.videoTags.length === 0) await tagStore.fetchTags('video', force)
     await videoStore.fetchList()
   } else {
-    if (tagStore.tags.length === 0) await tagStore.fetchTags('comic')
-    await comicStore.fetchComics()
+    if (force || tagStore.tags.length === 0) await tagStore.fetchTags('comic', force)
+    await comicStore.fetchComics(force)
+  }
+}
+
+function hasActiveFilterState() {
+  return includeTags.value.length > 0 ||
+    excludeTags.value.length > 0 ||
+    selectedAuthors.value.length > 0 ||
+    selectedListIds.value.length > 0 ||
+    minScore.value > 0 ||
+    unreadOnly.value
+}
+
+async function initializePage(force = false) {
+  const currentVersion = ++initVersion.value
+  await loadData(force)
+  if (currentVersion !== initVersion.value) {
+    return
+  }
+
+  const restored = restoreFilterState()
+  if (route.query.author) {
+    selectedAuthors.value = [route.query.author]
+  }
+  if (route.query.tagId) {
+    includeTags.value = [route.query.tagId]
+  }
+
+  if (restored || hasActiveFilterState()) {
+    await applyFilters()
+  } else {
+    currentStore.value.clearFilter()
   }
 }
 
 // Lifecycle
-watch(() => modeStore.currentMode, () => {
-  loadData()
+watch(() => modeStore.currentMode, async () => {
   selectedIds.value = []
   isManageMode.value = false
-  restoreFilterState()
-  applyFilters()
+  await initializePage(false)
 })
 
-watch(() => route.query.author, (newAuthor) => {
+watch(() => route.query.author, async (newAuthor) => {
   if (newAuthor) {
     selectedAuthors.value = [newAuthor]
-    applyFilters()
+    await applyFilters()
   }
 })
 
-watch(() => route.query.tagId, (newTagId) => {
+watch(() => route.query.tagId, async (newTagId) => {
   if (newTagId) {
     includeTags.value = [newTagId]
-    applyFilters()
+    await applyFilters()
   }
 })
 
-onMounted(() => {
-  loadData()
-  const restored = restoreFilterState()
-  if (restored) {
-    applyFilters()
-  }
-  if (route.query.author) {
-    selectedAuthors.value = [route.query.author]
-    applyFilters()
-  }
-  if (route.query.tagId) {
-    includeTags.value = [route.query.tagId]
-    applyFilters()
-  }
+onMounted(async () => {
+  await initializePage(false)
 })
 </script>
 
