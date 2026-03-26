@@ -239,6 +239,13 @@ const touchPanVelocityY = ref(0)
 const touchPinchLastDistance = ref(0)
 const touchPinchLastCenterX = ref(0)
 const touchPinchLastCenterY = ref(0)
+const touchTapStartX = ref(0)
+const touchTapStartY = ref(0)
+const touchTapStartTime = ref(0)
+const touchTapLastX = ref(0)
+const touchTapLastY = ref(0)
+const touchTapLastTime = ref(0)
+const touchTapSuppressImageClickUntil = ref(0)
 
 const isDragging = ref(false)
 const dragStartX = ref(0)
@@ -288,10 +295,16 @@ let programmaticScrollAnimationToken = 0
 let restoreBootstrapTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
+let mobileSingleTapTimer = null
 const SINGLE_PAGE_SWITCH_THRESHOLD = 0.38
 const SINGLE_PAGE_ANIMATION_DURATION_MS = 120
 const SINGLE_PAGE_SETTLE_DELAY_MS = 100
 const SINGLE_PAGE_PROGRAMMATIC_GUARD_MS = SINGLE_PAGE_ANIMATION_DURATION_MS + 90
+const DOUBLE_TAP_INTERVAL_MS = 280
+const DOUBLE_TAP_MAX_DISTANCE_PX = 36
+const TAP_MAX_DURATION_MS = 260
+const TAP_MAX_MOVE_PX = 18
+const MOBILE_DOUBLE_TAP_ZOOM_LEVEL = 2.2
 let lastObservedScrollPosition = 0
 let lastSinglePageDirection = 0
 
@@ -1070,6 +1083,9 @@ const handlePageImageLoad = (pageNum) => {
 const loadImages = async () => {
   loading.value = true
   error.value = false
+  clearMobileSingleTapTimer()
+  touchTapLastTime.value = 0
+  touchTapSuppressImageClickUntil.value = 0
   resetZoomState()
   clearProgrammaticScrollAnimation()
   singlePageSwipeActive.value = false
@@ -1228,10 +1244,70 @@ const flushProgressBeforeLeave = () => {
   }
 }
 
-const handleImageClick = () => {
-  if (!isDragging.value) {
-    toggleMenuVisibility()
+const clearMobileSingleTapTimer = () => {
+  if (mobileSingleTapTimer) {
+    clearTimeout(mobileSingleTapTimer)
+    mobileSingleTapTimer = null
   }
+}
+
+const triggerDoubleTapZoom = (clientX, clientY) => {
+  const container = getZoomContainer()
+  if (zoomLevel.value > 1) {
+    resetZoomState()
+    return
+  }
+
+  const anchorPoint = container
+    ? getContainerAnchorPoint(container, clientX, clientY)
+    : { x: 0, y: 0 }
+  zoomAtPoint(MOBILE_DOUBLE_TAP_ZOOM_LEVEL, anchorPoint, container)
+  showMenu.value = false
+}
+
+const handleMobileTapGesture = (clientX, clientY) => {
+  const now = Date.now()
+  const timeDelta = now - touchTapLastTime.value
+  const distance = Math.hypot(clientX - touchTapLastX.value, clientY - touchTapLastY.value)
+
+  if (
+    touchTapLastTime.value > 0 &&
+    timeDelta > 0 &&
+    timeDelta <= DOUBLE_TAP_INTERVAL_MS &&
+    distance <= DOUBLE_TAP_MAX_DISTANCE_PX
+  ) {
+    clearMobileSingleTapTimer()
+    touchTapLastTime.value = 0
+    triggerDoubleTapZoom(clientX, clientY)
+    return true
+  }
+
+  touchTapLastTime.value = now
+  touchTapLastX.value = clientX
+  touchTapLastY.value = clientY
+  clearMobileSingleTapTimer()
+  mobileSingleTapTimer = setTimeout(() => {
+    mobileSingleTapTimer = null
+    if (Date.now() - touchTapLastTime.value >= DOUBLE_TAP_INTERVAL_MS - 8) {
+      toggleMenuVisibility()
+      touchTapLastTime.value = 0
+    }
+  }, DOUBLE_TAP_INTERVAL_MS)
+  return false
+}
+
+const handleImageClick = (event) => {
+  if (isDragging.value) return
+
+  if (isMobile.value && supportsTouch.value) {
+    if (Date.now() <= touchTapSuppressImageClickUntil.value) return
+    const clientX = Number(event?.clientX || 0)
+    const clientY = Number(event?.clientY || 0)
+    handleMobileTapGesture(clientX, clientY)
+    return
+  }
+
+  toggleMenuVisibility()
 }
 
 const toggleMenuVisibility = () => {
@@ -1386,6 +1462,13 @@ const handleWheel = (event) => {
 const handleReaderTouchStart = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
 
+  if (event.touches.length === 1) {
+    const touch = event.touches[0]
+    touchTapStartX.value = touch.clientX
+    touchTapStartY.value = touch.clientY
+    touchTapStartTime.value = Date.now()
+  }
+
   if (event.touches.length === 2) {
     event.preventDefault()
     clearPanInertia()
@@ -1473,6 +1556,30 @@ const handleReaderTouchMove = (event) => {
 
 const handleReaderTouchEnd = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
+
+  if (event.touches.length === 0 && event.changedTouches.length === 1 && isMobile.value) {
+    const endedTouch = event.changedTouches[0]
+    const now = Date.now()
+    const touchDuration = now - (touchTapStartTime.value || now)
+    const moveDistance = Math.hypot(
+      endedTouch.clientX - touchTapStartX.value,
+      endedTouch.clientY - touchTapStartY.value
+    )
+    const isTap = touchDuration <= TAP_MAX_DURATION_MS && moveDistance <= TAP_MAX_MOVE_PX
+
+    if (isTap) {
+      touchTapSuppressImageClickUntil.value = now + DOUBLE_TAP_INTERVAL_MS + 120
+      handleMobileTapGesture(endedTouch.clientX, endedTouch.clientY)
+      touchPanActive.value = false
+      touchPinchLastDistance.value = 0
+      touchPinchLastCenterX.value = 0
+      touchPinchLastCenterY.value = 0
+      touchPanLastTime.value = 0
+      touchPanVelocityX.value = 0
+      touchPanVelocityY.value = 0
+      return
+    }
+  }
 
   if (event.touches.length === 1 && zoomLevel.value > 1) {
     clearPanInertia()
@@ -1873,6 +1980,7 @@ onUnmounted(() => {
   }
 
   flushProgressBeforeLeave()
+  clearMobileSingleTapTimer()
 
   if (readerContent.value) {
     readerContent.value.removeEventListener('dblclick', handleDoubleClick)
