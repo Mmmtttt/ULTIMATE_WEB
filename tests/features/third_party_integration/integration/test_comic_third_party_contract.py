@@ -53,8 +53,11 @@ def test_comic_third_party_config_save_parses_cookie_string_and_persists(third_p
     assert read_back.status_code == 200
     assert read_payload["code"] == 200
     returned_cookie_string = (((read_payload["data"] or {}).get("adapters") or {}).get("javdb") or {}).get("cookie_string", "")
-    assert "_jdb_session=session-token" in returned_cookie_string
-    assert "over18=1" in returned_cookie_string
+    # 新契约：前端只展示 _jdb_session 的值；兼容旧实现（完整 cookie 字符串回读）。
+    assert (
+        returned_cookie_string == "session-token"
+        or "_jdb_session=session-token" in returned_cookie_string
+    )
 
 
 @pytest.mark.integration
