@@ -9,6 +9,7 @@ from flask import Blueprint, jsonify, request, send_from_directory
 
 from application.config_app_service import ConfigAppService
 from core.constants import (
+    BACKEND_ROOT,
     CACHE_ROOT_DIR,
     COMIC_RECOMMENDATION_CACHE_DIR,
     DATA_DIR,
@@ -29,17 +30,37 @@ config_bp = Blueprint('config', __name__)
 config_service = ConfigAppService()
 
 _PROJECT_ROOT = PROJECT_ROOT
-_STATIC_PAGE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '..', 'static_pages')
+_BACKEND_ROOT = BACKEND_ROOT
+
+
+def _pick_existing_dir(*candidates):
+    for path in candidates:
+        if path and os.path.isdir(path):
+            return os.path.abspath(path)
+    if candidates:
+        return os.path.abspath(candidates[0])
+    return ""
+
+
+_STATIC_PAGE_DIR = _pick_existing_dir(
+    os.path.join(_BACKEND_ROOT, 'static_pages'),
+    os.path.join(_PROJECT_ROOT, 'backend_source', 'static_pages'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'static_pages'),
 )
-_JAVDB_PLAYER_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'player')
+_JAVDB_PLAYER_DIR = _pick_existing_dir(
+    os.path.join(_BACKEND_ROOT, 'third_party', 'javdb-api-scraper', 'player'),
+    os.path.join(_PROJECT_ROOT, 'backend_source', 'third_party', 'javdb-api-scraper', 'player'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'player'),
 )
-_JAVDB_STATIC_SCREENSHOTS_DIR = os.path.abspath(
-    os.path.join(_STATIC_PAGE_DIR, 'screenshots')
+_JAVDB_STATIC_SCREENSHOTS_DIR = _pick_existing_dir(
+    os.path.join(_STATIC_PAGE_DIR, 'screenshots'),
+    os.path.join(_BACKEND_ROOT, 'static_pages', 'screenshots'),
+    os.path.join(_PROJECT_ROOT, 'backend_source', 'static_pages', 'screenshots'),
 )
-_JAVDB_LIB_SCREENSHOTS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots')
+_JAVDB_LIB_SCREENSHOTS_DIR = _pick_existing_dir(
+    os.path.join(_BACKEND_ROOT, 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
+    os.path.join(_PROJECT_ROOT, 'backend_source', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
 )
 _VIDEO_PREVIEW_CACHE_DIR = VIDEO_RECOMMENDATION_CACHE_DIR
 _VIDEO_LOCAL_ASSET_FIELDS = ("cover_path_local", "thumbnail_images_local", "preview_video_local")
@@ -457,12 +478,8 @@ def update_system_config():
 def javdb_cookie_guide():
     try:
         guide_file = 'javdb_cookie_guide.html'
-        if os.path.exists(os.path.join(_STATIC_PAGE_DIR, guide_file)):
+        if os.path.isfile(os.path.join(_STATIC_PAGE_DIR, guide_file)):
             return send_from_directory(_STATIC_PAGE_DIR, guide_file)
-
-        fallback_file = 'index.html'
-        if os.path.exists(os.path.join(_JAVDB_PLAYER_DIR, fallback_file)):
-            return send_from_directory(_JAVDB_PLAYER_DIR, fallback_file)
 
         return error_response(404, '未找到 JAVDB Cookie 教学页面')
     except Exception as e:
