@@ -1030,6 +1030,11 @@ class VideoAppService(BaseContentAppService):
                 headers["Cookie"] = cookie_header
             return headers
 
+        if "missav" in host or "surrit" in host or "mushroom" in host:
+            headers["Referer"] = "https://missav.ai/"
+            headers["Origin"] = "https://missav.ai"
+            return headers
+
         if parsed.scheme and parsed.netloc:
             headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
         return headers
