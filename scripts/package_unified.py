@@ -333,7 +333,14 @@ public class MainActivity extends BridgeActivity {{
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
+        normalizeWebViewTextScale();
         startEmbeddedBackend();
+    }}
+
+    @Override
+    public void onResume() {{
+        super.onResume();
+        normalizeWebViewTextScale();
     }}
 
     @Override
@@ -346,6 +353,24 @@ public class MainActivity extends BridgeActivity {{
             }}
         }}
         super.onBackPressed();
+    }}
+
+    private void normalizeWebViewTextScale() {{
+        try {{
+            if (bridge == null) {{
+                return;
+            }}
+            WebView webView = bridge.getWebView();
+            if (webView == null || webView.getSettings() == null) {{
+                return;
+            }}
+            // Keep APK typography aligned with mobile browser defaults.
+            webView.getSettings().setTextZoom(100);
+            webView.getSettings().setUseWideViewPort(true);
+            webView.getSettings().setLoadWithOverviewMode(false);
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to normalize WebView text scale", ex);
+        }}
     }}
 
     private void startEmbeddedBackend() {{
