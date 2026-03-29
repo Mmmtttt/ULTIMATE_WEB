@@ -1077,7 +1077,11 @@ def batch_upload_export_json():
         if not isinstance(assignments, dict):
             return error_response(400, "参数 assignments 格式错误")
 
-        result = local_comic_import_service.export_session_items(session_id, assignments)
+        tag_assignments = data.get('tag_assignments', None)
+        if tag_assignments is not None and not isinstance(tag_assignments, dict):
+            return error_response(400, "参数 tag_assignments 格式错误")
+
+        result = local_comic_import_service.export_session_items(session_id, assignments, tag_assignments)
         return success_response(result, "JSON 生成成功")
     except ValueError as e:
         return error_response(400, str(e))
@@ -1099,7 +1103,11 @@ def batch_upload_commit_session():
         if assignments is not None and not isinstance(assignments, dict):
             return error_response(400, "参数 assignments 格式错误")
 
-        result = local_comic_import_service.commit_session_import(session_id, assignments)
+        tag_assignments = data.get('tag_assignments', None)
+        if tag_assignments is not None and not isinstance(tag_assignments, dict):
+            return error_response(400, "参数 tag_assignments 格式错误")
+
+        result = local_comic_import_service.commit_session_import(session_id, assignments, tag_assignments)
         if result.get('failed_count', 0) > 0:
             return success_response(
                 result,

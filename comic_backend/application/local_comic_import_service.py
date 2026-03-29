@@ -542,12 +542,68 @@ class LocalComicImportService:
             normalized[str(key)] = role
         return normalized
 
+    @staticmethod
+    def _normalize_tag_assignments(raw_tag_assignments: Optional[Any]) -> Dict[str, bool]:
+        normalized: Dict[str, bool] = {}
+        if isinstance(raw_tag_assignments, dict):
+            for key, value in raw_tag_assignments.items():
+                node_id = str(key or "").strip()
+                if not node_id:
+                    continue
+                if value is None:
+                    continue
+                if isinstance(value, bool) and not value:
+                    continue
+                if isinstance(value, (int, float)) and value == 0:
+                    continue
+                if isinstance(value, str) and value.strip().lower() in {"", "0", "false", "none", "null"}:
+                    continue
+                normalized[node_id] = True
+            return normalized
+
+        if isinstance(raw_tag_assignments, (list, tuple, set)):
+            for value in raw_tag_assignments:
+                node_id = str(value or "").strip()
+                if not node_id:
+                    continue
+                normalized[node_id] = True
+        return normalized
+
+    def _collect_parent_tag_names(
+        self,
+        node_id: str,
+        node_map: Dict[str, Dict[str, Any]],
+        tag_assignments: Dict[str, bool],
+    ) -> List[str]:
+        names: List[str] = []
+        current_id: Optional[str] = node_id
+        while current_id is not None and current_id in node_map:
+            current_node = node_map[current_id]
+            parent_id = current_node["parent_id"]
+            if parent_id is not None and parent_id in tag_assignments:
+                tag_name = str(current_node.get("real_name", "")).strip()
+                if tag_name:
+                    names.append(tag_name)
+            current_id = parent_id
+
+        names.reverse()
+        result: List[str] = []
+        seen: set[str] = set()
+        for item in names:
+            if item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
     def _build_export_payload(
         self,
         clean_root: Path,
         assignments: Dict[str, str],
-    ) -> Tuple[List[Dict[str, str]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        tag_assignments: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
         tree, node_map = self._build_tree(clean_root)
+        normalized_tag_assignments = self._normalize_tag_assignments(tag_assignments)
 
         work_nodes: set[str] = set()
         for parent_id, role in assignments.items():
@@ -575,7 +631,7 @@ class LocalComicImportService:
             key=lambda node_id: node_map[node_id]["abs_path"],
         )
 
-        payload: List[Dict[str, str]] = []
+        payload: List[Dict[str, Any]] = []
         for node_id in deepest_work_nodes:
             node = node_map[node_id]
             payload.append(
@@ -583,6 +639,7 @@ class LocalComicImportService:
                     "作者名称": self._nearest_author_name(node_id, node_map, assignments),
                     "作品名称": node["real_name"],
                     "作品文件地址": node["abs_path"],
+                    "标签名称列表": self._collect_parent_tag_names(node_id, node_map, normalized_tag_assignments),
                 }
             )
         return payload, tree, node_map
@@ -617,6 +674,7 @@ class LocalComicImportService:
             "clean_root": str(clean_root.resolve()),
             "warnings": warnings,
             "saved_assignments": existing_meta.get("saved_assignments", {}) or {},
+            "saved_tag_assignments": existing_meta.get("saved_tag_assignments", {}) or {},
             "phase": SESSION_PHASE_READY,
             "created_at": existing_meta.get("created_at", self._timestamp()),
         }
@@ -626,10 +684,19 @@ class LocalComicImportService:
         self._write_json(self._meta_path(session_id), next_meta)
         return self._attach_meta_to_tree_payload(session_id, payload)
 
-    def _save_assignments_to_meta(self, session_id: str, assignments: Dict[str, str]) -> None:
+    def _save_assignments_to_meta(
+        self,
+        session_id: str,
+        assignments: Dict[str, str],
+        tag_assignments: Optional[Dict[str, bool]] = None,
+    ) -> None:
         meta_file = self._meta_path(session_id)
         meta = self._read_json(meta_file, default={}) or {}
-        meta["saved_assignments"] = dict(assignments)
+        meta["saved_assignments"] = dict(assignments or {})
+        if tag_assignments is None:
+            meta["saved_tag_assignments"] = self._normalize_tag_assignments(meta.get("saved_tag_assignments", {}))
+        else:
+            meta["saved_tag_assignments"] = dict(self._normalize_tag_assignments(tag_assignments))
         meta["updated_at"] = self._timestamp()
         self._write_json(meta_file, meta)
 
@@ -645,6 +712,7 @@ class LocalComicImportService:
         meta = self._load_meta(session_id)
         data = dict(payload or {})
         data["saved_assignments"] = self._normalize_assignments(meta.get("saved_assignments", {}))
+        data["saved_tag_assignments"] = self._normalize_tag_assignments(meta.get("saved_tag_assignments", {}))
         data["import_mode"] = str(meta.get("import_mode", IMPORT_MODE_COPY_SAFE))
         data["effective_mode"] = str(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
         data["phase"] = str(meta.get("phase", ""))
@@ -668,6 +736,7 @@ class LocalComicImportService:
             "phase": SESSION_PHASE_PREPARING,
             "created_at": self._timestamp(),
             "saved_assignments": {},
+            "saved_tag_assignments": {},
             "warnings": [],
         }
         self._write_json(self._meta_path(session_id), session_meta)
@@ -768,6 +837,7 @@ class LocalComicImportService:
                 "phase": SESSION_PHASE_PREPARING,
                 "created_at": self._timestamp(),
                 "saved_assignments": {},
+                "saved_tag_assignments": {},
                 "warnings": [],
             },
         )
@@ -803,12 +873,23 @@ class LocalComicImportService:
             raise ValueError("目录树不存在")
         return self._attach_meta_to_tree_payload(session_id, data)
 
-    def export_session_items(self, session_id: str, raw_assignments: Dict[str, str]) -> Dict[str, Any]:
+    def export_session_items(
+        self,
+        session_id: str,
+        raw_assignments: Dict[str, str],
+        raw_tag_assignments: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         clean_root = self._load_clean_root(session_id)
+        meta = self._load_meta(session_id)
         assignments = self._normalize_assignments(raw_assignments)
-        self._save_assignments_to_meta(session_id, assignments)
+        if raw_tag_assignments is None:
+            tag_assignments = self._normalize_tag_assignments(meta.get("saved_tag_assignments", {}))
+            self._save_assignments_to_meta(session_id, assignments, None)
+        else:
+            tag_assignments = self._normalize_tag_assignments(raw_tag_assignments)
+            self._save_assignments_to_meta(session_id, assignments, tag_assignments)
 
-        items, tree, _node_map = self._build_export_payload(clean_root, assignments)
+        items, tree, _node_map = self._build_export_payload(clean_root, assignments, tag_assignments)
         self._write_json(self._result_path(session_id), items)
         return {
             "session_id": session_id,
@@ -887,7 +968,84 @@ class LocalComicImportService:
             raise RuntimeError("创建/查询本地标签失败")
         return result["tag_id"]
 
-    def _ensure_comic_has_tag(self, comic_id: str, tag_id: str) -> bool:
+    def _ensure_comic_tag_ids(self, raw_tag_names: List[str]) -> Dict[str, str]:
+        tag_names: List[str] = []
+        seen: set[str] = set()
+        for raw_name in raw_tag_names:
+            name = str(raw_name or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            tag_names.append(name)
+        if not tag_names:
+            return {}
+
+        result: Dict[str, str] = {}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            tags = data.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+
+            existing_map: Dict[str, str] = {}
+            for item in tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                name = str(item.get("name", "")).strip()
+                tag_id = str(item.get("id", "")).strip()
+                if not name or not tag_id:
+                    continue
+                if name not in existing_map:
+                    existing_map[name] = tag_id
+
+            changed = False
+            for name in tag_names:
+                if name in existing_map:
+                    result[name] = existing_map[name]
+                    continue
+
+                tag_id = self._next_tag_id_from_items(tags)
+                tags.append(
+                    {
+                        "id": tag_id,
+                        "name": name,
+                        "content_type": "comic",
+                        "create_time": self._timestamp(),
+                    }
+                )
+                existing_map[name] = tag_id
+                result[name] = tag_id
+                changed = True
+
+            data["tags"] = tags
+            if changed:
+                data["last_updated"] = time.strftime("%Y-%m-%d")
+            return data
+
+        ok = self._tag_storage.atomic_update(updater)
+        if not ok:
+            raise RuntimeError("创建/查询漫画标签失败")
+        for name in tag_names:
+            if name not in result:
+                raise RuntimeError(f"创建/查询漫画标签失败: {name}")
+        return result
+
+    def _ensure_comic_has_tags(self, comic_id: str, raw_tag_ids: List[str]) -> bool:
+        normalized_tag_ids: List[str] = []
+        seen: set[str] = set()
+        for raw_tag_id in raw_tag_ids:
+            tag_id = str(raw_tag_id or "").strip()
+            if not tag_id or tag_id in seen:
+                continue
+            seen.add(tag_id)
+            normalized_tag_ids.append(tag_id)
+
+        if not normalized_tag_ids:
+            return False
+
         status = {"updated": False}
 
         def updater(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -902,8 +1060,13 @@ class LocalComicImportService:
                 tag_ids = comic.get("tag_ids", [])
                 if not isinstance(tag_ids, list):
                     tag_ids = []
-                if tag_id not in tag_ids:
+                changed = False
+                for tag_id in normalized_tag_ids:
+                    if tag_id in tag_ids:
+                        continue
                     tag_ids.append(tag_id)
+                    changed = True
+                if changed:
                     comic["tag_ids"] = tag_ids
                     status["updated"] = True
                     data["last_updated"] = time.strftime("%Y-%m-%d")
@@ -913,6 +1076,29 @@ class LocalComicImportService:
 
         ok = self._db_storage.atomic_update(updater)
         return bool(ok and status["updated"])
+
+    def _ensure_comic_has_tag(self, comic_id: str, tag_id: str) -> bool:
+        return self._ensure_comic_has_tags(comic_id, [tag_id])
+
+    @staticmethod
+    def _normalize_entry_tag_names(raw_names: Any) -> List[str]:
+        values: List[str] = []
+        if isinstance(raw_names, str):
+            values = [raw_names]
+        elif isinstance(raw_names, (list, tuple, set)):
+            values = [str(item) for item in raw_names]
+        else:
+            return []
+
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for item in values:
+            name = str(item or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
 
     @staticmethod
     def _iter_image_files(root: Path) -> List[Path]:
@@ -1036,6 +1222,7 @@ class LocalComicImportService:
         self,
         session_id: str,
         raw_assignments: Optional[Dict[str, str]] = None,
+        raw_tag_assignments: Optional[Any] = None,
     ) -> Dict[str, Any]:
         clean_root = self._load_clean_root(session_id)
         meta = self._load_meta(session_id)
@@ -1047,10 +1234,14 @@ class LocalComicImportService:
         if not assignments:
             raise ValueError("请先完成层级标记")
 
-        self._save_assignments_to_meta(session_id, assignments)
+        tag_assignments = self._normalize_tag_assignments(raw_tag_assignments)
+        if raw_tag_assignments is None:
+            tag_assignments = self._normalize_tag_assignments(meta.get("saved_tag_assignments", {}))
+
+        self._save_assignments_to_meta(session_id, assignments, tag_assignments)
 
         existing_result_items = self._read_json(self._result_path(session_id), default=None)
-        computed_items, _tree, _node_map = self._build_export_payload(clean_root, assignments)
+        computed_items, _tree, _node_map = self._build_export_payload(clean_root, assignments, tag_assignments)
         items = computed_items
         if (
             effective_mode == IMPORT_MODE_MOVE_HUGE
@@ -1075,6 +1266,10 @@ class LocalComicImportService:
         )
 
         local_tag_id = self._ensure_local_tag_id() if items else ""
+        all_tag_names: List[str] = []
+        for entry in items:
+            all_tag_names.extend(self._normalize_entry_tag_names(entry.get("标签名称列表")))
+        tag_id_map = self._ensure_comic_tag_ids(all_tag_names) if all_tag_names else {}
 
         db_data = self._db_storage.read()
         comics = db_data.get("comics", [])
@@ -1103,12 +1298,22 @@ class LocalComicImportService:
 
             title = str(entry.get("作品名称") or "").strip() or Path(work_path).name
             author = str(entry.get("作者名称") or "").strip()
+            tag_names = self._normalize_entry_tag_names(entry.get("标签名称列表"))
+            selected_tag_ids = [tag_id_map[name] for name in tag_names if name in tag_id_map]
+            target_tag_ids: List[str] = []
+            if local_tag_id:
+                target_tag_ids.append(local_tag_id)
+            for tag_id in selected_tag_ids:
+                if tag_id not in target_tag_ids:
+                    target_tag_ids.append(tag_id)
             record.update(
                 {
                     "status": "running",
                     "title": title,
                     "author": author,
                     "work_path": work_path,
+                    "tag_names": tag_names,
+                    "tag_ids": target_tag_ids,
                     "updated_at": self._timestamp(),
                 }
             )
@@ -1119,8 +1324,8 @@ class LocalComicImportService:
                 if key in existing_source_map:
                     record["status"] = "skipped"
                     record["comic_id"] = existing_source_map[key]
-                    if local_tag_id:
-                        self._ensure_comic_has_tag(record["comic_id"], local_tag_id)
+                    if target_tag_ids:
+                        self._ensure_comic_has_tags(record["comic_id"], target_tag_ids)
                     record["error"] = ""
                     record["updated_at"] = self._timestamp()
                     self._save_state(session_id, state)
@@ -1179,7 +1384,7 @@ class LocalComicImportService:
                     "total_page": len(image_paths),
                     "current_page": 1,
                     "score": 8.0,
-                    "tag_ids": [local_tag_id] if local_tag_id else [],
+                    "tag_ids": target_tag_ids,
                     "list_ids": [],
                     "create_time": now,
                     "last_read_time": now,
@@ -1190,6 +1395,8 @@ class LocalComicImportService:
                 ok, inserted = self._append_comic_record(comic_record)
                 if not ok:
                     raise RuntimeError("写入漫画数据库失败")
+                if not inserted and target_tag_ids:
+                    self._ensure_comic_has_tags(comic_id, target_tag_ids)
 
                 existing_ids.add(comic_id)
                 existing_source_map[key] = comic_id

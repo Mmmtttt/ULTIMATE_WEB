@@ -81,6 +81,31 @@ def _cleanup_imported_comics(base_url: str, titles: list[str]) -> None:
         )
 
 
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _find_comic_by_title(comics_data: dict, title: str) -> dict:
+    for item in comics_data.get("comics") or []:
+        if item.get("title") == title:
+            return item
+    raise AssertionError(f"comic not found by title: {title}")
+
+
+def _resolve_comic_tag_names(meta_dir: Path, title: str) -> set[str]:
+    comics_data = _load_json(meta_dir / "comics_database.json")
+    tags_data = _load_json(meta_dir / "tags_database.json")
+
+    comic = _find_comic_by_title(comics_data, title)
+    comic_tag_ids = set(comic.get("tag_ids") or [])
+
+    tag_names: set[str] = set()
+    for tag in tags_data.get("tags") or []:
+        if tag.get("id") in comic_tag_ids:
+            tag_names.add(str(tag.get("name") or ""))
+    return tag_names
+
+
 @pytest.mark.integration
 def test_local_import_parse_export_commit_success(integration_runtime):
     base_url = integration_runtime["base_url"]
@@ -394,3 +419,158 @@ def test_local_import_move_mode_can_resume_after_move_then_failed_indexing(integ
         assert not any(item.get("session_id") == session_id for item in sessions_after)
     finally:
         _cleanup_imported_comics(base_url, ["作品正常", "作品异常"])
+
+
+@pytest.mark.integration
+def test_local_import_commit_applies_single_level_parent_tag(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_tag_single"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    tag_name = "标签单层分类"
+    author_name = "作者标签甲"
+    title = "作品标签单层"
+    _write_png(source_dir / tag_name / author_name / title / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir)},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        node_map = _build_node_map(data["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        tag_assignments = {
+            _find_parent_id_by_name(node_map, tag_name): True,
+        }
+
+        export_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/export",
+            json={
+                "session_id": session_id,
+                "assignments": assignments,
+                "tag_assignments": tag_assignments,
+            },
+            timeout=30,
+        )
+        assert export_resp.status_code == 200
+        export_payload = export_resp.json()
+        assert export_payload["code"] == 200
+        items = export_payload["data"]["items"]
+        assert len(items) == 1
+        assert items[0]["作品名称"] == title
+        assert items[0]["标签名称列表"] == [tag_name]
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={
+                "session_id": session_id,
+                "assignments": assignments,
+                "tag_assignments": tag_assignments,
+            },
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["imported_count"] == 1
+
+        tag_names = _resolve_comic_tag_names(meta_dir, title)
+        assert "本地" in tag_names
+        assert tag_name in tag_names
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_local_import_commit_applies_multi_level_parent_tags(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_tag_multi"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    tag_level_1 = "标签一级分类"
+    tag_level_2 = "标签二级分类"
+    author_name = "作者标签乙"
+    title = "作品标签多级"
+    _write_png(source_dir / tag_level_1 / tag_level_2 / author_name / title / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir)},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        node_map = _build_node_map(data["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        tag_assignments = {
+            _find_parent_id_by_name(node_map, tag_level_1): True,
+            _find_parent_id_by_name(node_map, tag_level_2): True,
+        }
+
+        export_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/export",
+            json={
+                "session_id": session_id,
+                "assignments": assignments,
+                "tag_assignments": tag_assignments,
+            },
+            timeout=30,
+        )
+        assert export_resp.status_code == 200
+        export_payload = export_resp.json()
+        assert export_payload["code"] == 200
+        items = export_payload["data"]["items"]
+        assert len(items) == 1
+        assert items[0]["作品名称"] == title
+        assert items[0]["标签名称列表"] == [tag_level_1, tag_level_2]
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={
+                "session_id": session_id,
+                "assignments": assignments,
+                "tag_assignments": tag_assignments,
+            },
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["imported_count"] == 1
+
+        tag_names = _resolve_comic_tag_names(meta_dir, title)
+        assert "本地" in tag_names
+        assert tag_level_1 in tag_names
+        assert tag_level_2 in tag_names
+    finally:
+        _cleanup_imported_comics(base_url, [title])

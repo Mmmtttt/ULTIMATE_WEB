@@ -312,18 +312,20 @@ export const comicApi = {
     return result.data
   },
 
-  localImportExport: async (sessionId, assignments = {}) => {
+  localImportExport: async (sessionId, assignments = {}, tagAssignments = {}) => {
     const result = await request.post('/v1/comic/batch-upload/session/export', {
       session_id: sessionId,
-      assignments
+      assignments,
+      tag_assignments: tagAssignments
     })
     return result.data
   },
 
-  localImportCommit: async (sessionId, assignments = {}) => {
+  localImportCommit: async (sessionId, assignments = {}, tagAssignments = {}) => {
     const result = await request.post('/v1/comic/batch-upload/session/commit', {
       session_id: sessionId,
-      assignments
+      assignments,
+      tag_assignments: tagAssignments
     }, {
       timeout: 0
     })

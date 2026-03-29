@@ -147,6 +147,9 @@
           <button class="mark-mode-btn" :class="{ active: markMode === 'work' }" @click="markMode = 'work'">
             标记为作品层
           </button>
+          <button class="mark-mode-btn" :class="{ active: markMode === 'tag' }" @click="markMode = 'tag'">
+            标记为标签层
+          </button>
           <button class="mark-mode-btn" :class="{ active: markMode === 'clear' }" @click="markMode = 'clear'">
             清除此层
           </button>
@@ -174,6 +177,7 @@
             <van-tag plain size="mini">图片数量 {{ row.total_images }}</van-tag>
             <van-tag v-if="row.role === 'author'" type="success" size="mini">作者目录</van-tag>
             <van-tag v-if="row.role === 'work'" type="primary" size="mini">作品目录</van-tag>
+            <van-tag v-if="row.isTag" type="warning" size="mini">标签目录</van-tag>
           </div>
         </div>
         <div class="tree-footer-actions">
@@ -193,14 +197,14 @@
               <div>当前目录：{{ selectedNode?.rel_path }}</div>
               <div>层父目录：{{ selectionLayerInfo.parent?.rel_path || '-' }}</div>
               <div>同层数量：{{ selectionLayerInfo.siblingCount }}</div>
-              <div>当前状态：{{ roleText(selectionLayerInfo.role) }}</div>
+              <div>当前状态：{{ layerStateText(selectionLayerInfo.role, selectionLayerInfo.isTag) }}</div>
             </template>
             <template v-else>
               当前模式：{{ markModeText }}，请点击目录树中的目录节点。
             </template>
           </div>
           <div class="action-buttons">
-            <span class="hint">提示：新标记会自动清理同一路径上的冲突旧标记。</span>
+            <span class="hint">提示：作者层/作品层会自动清理同路径冲突；标签层支持多级并存。</span>
           </div>
         </div>
 
@@ -211,7 +215,7 @@
           <div v-if="assignmentEntries.length === 0" class="empty-block small">暂无标记。</div>
           <div v-else class="assignment-list">
             <div v-for="entry in assignmentEntries" :key="entry.parentId" class="assignment-item">
-              <div class="assignment-title">{{ entry.parentRelPath }} → {{ roleText(entry.role) }}</div>
+              <div class="assignment-title">{{ entry.parentRelPath }} → {{ layerStateText(entry.role, entry.isTag) }}</div>
               <div class="hint">该层共 {{ entry.childCount }} 个目录</div>
             </div>
           </div>
@@ -282,6 +286,7 @@ const warnings = ref([])
 const tree = ref(null)
 const nodeMap = ref({})
 const assignments = ref({})
+const tagAssignments = ref({})
 const selectedNodeId = ref('')
 const collapsedIds = ref(new Set())
 const commitSummary = ref(null)
@@ -299,21 +304,41 @@ const selectionLayerInfo = computed(() => {
   return {
     parent,
     role: assignments.value[node.parentId] || '',
+    isTag: Boolean(tagAssignments.value[node.parentId]),
     siblingCount: Array.isArray(parent.childIds) ? parent.childIds.length : 0
   }
 })
 
 const assignmentEntries = computed(() => {
-  return Object.entries(assignments.value)
-    .map(([parentId, role]) => {
-      const parent = nodeMap.value[parentId]
-      return {
+  const bucket = {}
+
+  Object.entries(assignments.value).forEach(([parentId, role]) => {
+    const parent = nodeMap.value[parentId]
+    bucket[parentId] = {
+      parentId,
+      role,
+      isTag: false,
+      parentRelPath: parent?.rel_path || parentId,
+      childCount: Array.isArray(parent?.childIds) ? parent.childIds.length : 0
+    }
+  })
+
+  Object.keys(tagAssignments.value).forEach((parentId) => {
+    const parent = nodeMap.value[parentId]
+    if (!bucket[parentId]) {
+      bucket[parentId] = {
         parentId,
-        role,
+        role: '',
+        isTag: true,
         parentRelPath: parent?.rel_path || parentId,
         childCount: Array.isArray(parent?.childIds) ? parent.childIds.length : 0
       }
-    })
+      return
+    }
+    bucket[parentId].isTag = true
+  })
+
+  return Object.values(bucket)
     .sort((a, b) => a.parentRelPath.localeCompare(b.parentRelPath, 'zh-CN'))
 })
 
@@ -331,7 +356,8 @@ const treeRows = computed(() => {
       depth,
       hasChildren,
       collapsed: isCollapsed,
-      role: mapNode.parentId === null ? '' : (assignments.value[mapNode.parentId] || '')
+      role: mapNode.parentId === null ? '' : (assignments.value[mapNode.parentId] || ''),
+      isTag: mapNode.parentId === null ? false : Boolean(tagAssignments.value[mapNode.parentId])
     })
     if (hasChildren && !isCollapsed) {
       node.children.forEach((child) => walk(child, depth + 1))
@@ -345,6 +371,7 @@ const treeRows = computed(() => {
 const markModeText = computed(() => {
   if (markMode.value === 'author') return '标记为作者层'
   if (markMode.value === 'work') return '标记为作品层'
+  if (markMode.value === 'tag') return '标记为标签层'
   if (markMode.value === 'clear') return '清除此层'
   return '未选择'
 })
@@ -352,7 +379,18 @@ const markModeText = computed(() => {
 function roleText(role) {
   if (role === 'author') return '作者层'
   if (role === 'work') return '作品层'
+  if (role === 'tag') return '标签层'
   return '未标记'
+}
+
+function layerStateText(role, isTag) {
+  if (role && isTag) {
+    return `${roleText(role)} + ${roleText('tag')}`
+  }
+  if (isTag) {
+    return roleText('tag')
+  }
+  return roleText(role)
 }
 
 function getNodeDepth(nodeId) {
@@ -453,16 +491,23 @@ function setImportedPayload(payload) {
   if (tree.value) {
     rebuildNodeMap(tree.value)
     const providedAssignments = payload?.saved_assignments
+    const providedTagAssignments = payload?.saved_tag_assignments
     if (providedAssignments && typeof providedAssignments === 'object' && Object.keys(providedAssignments).length) {
       assignments.value = { ...providedAssignments }
     } else {
       assignments.value = buildDefaultAssignments()
+    }
+    if (providedTagAssignments && typeof providedTagAssignments === 'object') {
+      tagAssignments.value = { ...providedTagAssignments }
+    } else {
+      tagAssignments.value = {}
     }
     const firstChild = Array.isArray(tree.value.children) && tree.value.children[0]
     selectedNodeId.value = firstChild ? firstChild.id : tree.value.id
   } else {
     nodeMap.value = {}
     assignments.value = {}
+    tagAssignments.value = {}
     selectedNodeId.value = ''
   }
 }
@@ -475,6 +520,7 @@ function persistSessionDraft() {
   const payload = {
     sessionId: sessionId.value,
     assignments: assignments.value,
+    tagAssignments: tagAssignments.value,
     selectedNodeId: selectedNodeId.value,
     markMode: markMode.value
   }
@@ -495,10 +541,13 @@ async function restoreSessionDraft() {
     if (draft.assignments && typeof draft.assignments === 'object') {
       assignments.value = { ...draft.assignments }
     }
+    if (draft.tagAssignments && typeof draft.tagAssignments === 'object') {
+      tagAssignments.value = { ...draft.tagAssignments }
+    }
     if (draft.selectedNodeId && nodeMap.value[draft.selectedNodeId]) {
       selectedNodeId.value = draft.selectedNodeId
     }
-    if (['author', 'work', 'clear'].includes(draft.markMode)) {
+    if (['author', 'work', 'tag', 'clear'].includes(draft.markMode)) {
       markMode.value = draft.markMode
     }
   } catch (error) {
@@ -547,6 +596,7 @@ function clearRuntimeState() {
   tree.value = null
   nodeMap.value = {}
   assignments.value = {}
+  tagAssignments.value = {}
   selectedNodeId.value = ''
   collapsedIds.value = new Set()
   commitSummary.value = null
@@ -736,8 +786,19 @@ function applyMarkModeToNode(nodeId) {
   }
 
   const parentId = node.parentId === null ? node.id : node.parentId
-  const next = applyLayerMarkWithConstraints(parentId, markMode.value)
-  assignments.value = next
+  if (markMode.value === 'tag') {
+    tagAssignments.value = {
+      ...tagAssignments.value,
+      [parentId]: true
+    }
+  } else if (markMode.value === 'clear') {
+    assignments.value = applyLayerMarkWithConstraints(parentId, 'clear')
+    const nextTagAssignments = { ...tagAssignments.value }
+    delete nextTagAssignments[parentId]
+    tagAssignments.value = nextTagAssignments
+  } else {
+    assignments.value = applyLayerMarkWithConstraints(parentId, markMode.value)
+  }
   commitSummary.value = null
 }
 
@@ -758,11 +819,13 @@ function toggleNode(nodeId) {
 
 function clearAllLayers() {
   assignments.value = {}
+  tagAssignments.value = {}
   commitSummary.value = null
 }
 
 function restoreDefaultLayers() {
   assignments.value = buildDefaultAssignments()
+  tagAssignments.value = {}
   commitSummary.value = null
   showSuccessToast('已恢复默认标记')
 }
@@ -775,7 +838,7 @@ async function commitImport() {
 
   committing.value = true
   try {
-    const result = await comicApi.localImportCommit(sessionId.value, assignments.value)
+    const result = await comicApi.localImportCommit(sessionId.value, assignments.value, tagAssignments.value)
     commitSummary.value = result
 
     if (Number(result.imported_count || 0) > 0) {
@@ -818,7 +881,7 @@ async function clearCurrentSession() {
   showSuccessToast('会话已清理')
 }
 
-watch([sessionId, assignments, selectedNodeId, markMode], () => {
+watch([sessionId, assignments, tagAssignments, selectedNodeId, markMode], () => {
   persistSessionDraft()
 }, { deep: true })
 
