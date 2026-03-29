@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 import base64
+import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -33,6 +35,13 @@ def _build_node_map(tree: dict) -> dict:
 
     walk(tree)
     return node_map
+
+
+def _write_zip_with_png(zip_path: Path, members: list[str]) -> None:
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for member in members:
+            zf.writestr(member, PNG_1X1)
 
 
 def _find_parent_id_by_name(node_map: dict, name: str) -> str:
@@ -222,3 +231,166 @@ def test_local_import_commit_can_resume_after_partial_failure(integration_runtim
         assert "作品乙" in titles
     finally:
         _cleanup_imported_comics(base_url, ["作品甲", "作品乙"])
+
+
+@pytest.mark.integration
+def test_local_import_move_mode_extracts_nested_archives_and_moves_work_dirs(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_move_mode"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    _write_png(source_dir / "作者丙" / "作品一" / "001.png")
+    _write_zip_with_png(
+        source_dir / "作者丙" / "作品二.zip",
+        ["第1话/001.png", "第2话/001.png"],
+    )
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "move_huge"},
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        node_map = _build_node_map(data["tree"])
+
+        # 嵌套压缩包应已在源目录原地解压并删除压缩包文件
+        assert not (source_dir / "作者丙" / "作品二.zip").exists()
+        assert any(node["real_name"] == "作品二" for node in node_map.values())
+
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者丙"): "author",
+            _find_parent_id_by_name(node_map, "作品一"): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["status"] == "completed"
+        assert result["imported_count"] >= 2
+        assert result["session_removed"] is True
+
+        # move 模式导入后，源目录作品会被移动走
+        assert not (source_dir / "作者丙" / "作品一").exists()
+        assert not (source_dir / "作者丙" / "作品二").exists()
+
+        list_resp = requests.get(f"{base_url}/api/v1/comic/list", timeout=10)
+        assert list_resp.status_code == 200
+        titles = {item.get("title") for item in (list_resp.json().get("data") or [])}
+        assert "作品一" in titles
+        assert "作品二" in titles
+    finally:
+        _cleanup_imported_comics(base_url, ["作品一", "作品二"])
+
+
+@pytest.mark.integration
+def test_local_import_move_mode_can_resume_after_move_then_failed_indexing(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+
+    source_dir = runtime_root / "local_import_case_move_resume"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    _write_png(source_dir / "作者丁" / "作品正常" / "001.png")
+    (source_dir / "作者丁" / "作品异常").mkdir(parents=True, exist_ok=True)
+    (source_dir / "作者丁" / "作品异常" / "note.txt").write_text("no images", encoding="utf-8")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "move_huge"},
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        node_map = _build_node_map(data["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者丁"): "author",
+            _find_parent_id_by_name(node_map, "作品正常"): "work",
+        }
+
+        first_commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert first_commit_resp.status_code == 200
+        first_result = first_commit_resp.json()["data"]
+        assert first_result["status"] == "failed"
+        assert first_result["failed_count"] == 1
+        assert first_result["session_removed"] is False
+
+        recover_resp = requests.get(
+            f"{base_url}/api/v1/comic/batch-upload/session/recoverable",
+            timeout=10,
+        )
+        assert recover_resp.status_code == 200
+        sessions = (recover_resp.json().get("data") or {}).get("sessions") or []
+        assert any(item.get("session_id") == session_id for item in sessions)
+
+        resume_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/resume",
+            json={"session_id": session_id},
+            timeout=30,
+        )
+        assert resume_resp.status_code == 200
+        resume_payload = resume_resp.json()
+        assert resume_payload["code"] == 200
+        assert resume_payload["data"]["session_id"] == session_id
+
+        state_path = data_dir / "cache" / "comic_local_import_workspace" / session_id / "import_state.json"
+        state_data = json.loads(state_path.read_text(encoding="utf-8"))
+        failed_record = None
+        for record in (state_data.get("records") or {}).values():
+            if str(record.get("status", "")).lower() == "failed":
+                failed_record = record
+                break
+        assert failed_record is not None
+
+        comic_id = str(failed_record.get("comic_id", "")).strip()
+        assert comic_id
+        original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
+        repaired_dir = data_dir / "comic" / "local" / original_id
+        assert repaired_dir.exists()
+        _write_png(repaired_dir / "001.png")
+
+        second_commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id},
+            timeout=60,
+        )
+        assert second_commit_resp.status_code == 200
+        second_result = second_commit_resp.json()["data"]
+        assert second_result["failed_count"] == 0
+        assert second_result["status"] == "completed"
+        assert second_result["session_removed"] is True
+
+        recover_resp_after = requests.get(
+            f"{base_url}/api/v1/comic/batch-upload/session/recoverable",
+            timeout=10,
+        )
+        assert recover_resp_after.status_code == 200
+        sessions_after = (recover_resp_after.json().get("data") or {}).get("sessions") or []
+        assert not any(item.get("session_id") == session_id for item in sessions_after)
+    finally:
+        _cleanup_imported_comics(base_url, ["作品正常", "作品异常"])

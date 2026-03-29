@@ -79,8 +79,24 @@
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
         />
+        <div class="move-mode-row">
+          <van-switch v-model="enableHugeMoveImport" size="20" />
+          <div class="move-mode-text">
+            <div class="move-mode-title">超大文件移动导入</div>
+            <div class="hint">导入大文件时推荐</div>
+          </div>
+        </div>
+        <div v-if="recoverableSessions.length" class="recover-row">
+          <div class="hint">检测到未完成导入会话，可继续上一次任务。</div>
+          <van-button plain size="small" :loading="recoveringSession" @click="resumeLatestSession">
+            继续上次任务
+          </van-button>
+        </div>
         <div class="picker-tip">
           路径模式仅支持手动输入服务端本机绝对路径（可填写压缩包或文件夹）。
+        </div>
+        <div v-if="enableHugeMoveImport" class="picker-tip danger-tip">
+          已启用移动导入：将直接移动源目录内作品，若中断或断电可能导致数据损坏，请先备份重要数据。
         </div>
         <div class="picker-tip">
           浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
@@ -239,7 +255,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { showFailToast, showSuccessToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api'
 import { useComicStore, useTagStore } from '@/stores'
 
@@ -251,6 +267,9 @@ const tagStore = useTagStore()
 const sourceMode = ref('upload')
 const sourcePath = ref('')
 const archiveFiles = ref([])
+const enableHugeMoveImport = ref(false)
+const recoverableSessions = ref([])
+const recoveringSession = ref(false)
 
 const archiveInputRef = ref(null)
 
@@ -433,7 +452,12 @@ function setImportedPayload(payload) {
 
   if (tree.value) {
     rebuildNodeMap(tree.value)
-    assignments.value = buildDefaultAssignments()
+    const providedAssignments = payload?.saved_assignments
+    if (providedAssignments && typeof providedAssignments === 'object' && Object.keys(providedAssignments).length) {
+      assignments.value = { ...providedAssignments }
+    } else {
+      assignments.value = buildDefaultAssignments()
+    }
     const firstChild = Array.isArray(tree.value.children) && tree.value.children[0]
     selectedNodeId.value = firstChild ? firstChild.id : tree.value.id
   } else {
@@ -482,6 +506,32 @@ async function restoreSessionDraft() {
   }
 }
 
+async function loadRecoverableSessions() {
+  try {
+    const payload = await comicApi.localImportListRecoverableSessions(10)
+    recoverableSessions.value = Array.isArray(payload?.sessions) ? payload.sessions : []
+  } catch (_error) {
+    recoverableSessions.value = []
+  }
+}
+
+async function resumeLatestSession() {
+  const latest = recoverableSessions.value[0]
+  if (!latest?.session_id) return
+
+  recoveringSession.value = true
+  try {
+    const payload = await comicApi.localImportResumeSession(latest.session_id)
+    setImportedPayload(payload)
+    showSuccessToast('已恢复上次会话')
+    await loadRecoverableSessions()
+  } catch (error) {
+    showFailToast(error?.message || '恢复会话失败')
+  } finally {
+    recoveringSession.value = false
+  }
+}
+
 function triggerArchiveInput() {
   archiveInputRef.value?.click()
 }
@@ -501,6 +551,7 @@ function clearRuntimeState() {
   collapsedIds.value = new Set()
   commitSummary.value = null
   markMode.value = 'work'
+  enableHugeMoveImport.value = false
   localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -511,10 +562,24 @@ async function startPathParse() {
     return
   }
 
+  if (enableHugeMoveImport.value) {
+    try {
+      await showConfirmDialog({
+        title: '风险提示',
+        message: '超大文件移动导入会直接移动源文件，若中断可能造成数据损坏。是否继续？'
+      })
+    } catch (_error) {
+      return
+    }
+  }
+
   parsing.value = true
   try {
-    const payload = await comicApi.localImportCreateSessionFromPath(path)
+    const payload = await comicApi.localImportCreateSessionFromPath(path, {
+      importMode: enableHugeMoveImport.value ? 'move_huge' : 'copy_safe'
+    })
     setImportedPayload(payload)
+    await loadRecoverableSessions()
     showSuccessToast('解析完成')
   } catch (error) {
     showFailToast(error?.message || '解析失败')
@@ -739,6 +804,7 @@ async function commitImport() {
 async function clearCurrentSession() {
   if (!sessionId.value) {
     clearRuntimeState()
+    await loadRecoverableSessions()
     return
   }
 
@@ -748,6 +814,7 @@ async function clearCurrentSession() {
     // 忽略服务端清理失败，前端仍清理本地状态
   }
   clearRuntimeState()
+  await loadRecoverableSessions()
   showSuccessToast('会话已清理')
 }
 
@@ -757,6 +824,7 @@ watch([sessionId, assignments, selectedNodeId, markMode], () => {
 
 onMounted(async () => {
   await restoreSessionDraft()
+  await loadRecoverableSessions()
 })
 </script>
 
@@ -863,11 +931,49 @@ onMounted(async () => {
   margin-bottom: 10px;
 }
 
+.move-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-soft);
+  background: var(--surface-1);
+}
+
+.move-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.move-mode-title {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.recover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-soft);
+  background: var(--surface-1);
+}
+
 .picker-tip {
   margin: 8px 0 12px;
   color: var(--text-tertiary);
   line-height: 1.5;
   font-size: 12px;
+}
+
+.danger-tip {
+  color: #9a3412;
 }
 
 .hidden-input {

@@ -990,12 +990,44 @@ def batch_upload_create_session_from_path():
         if not source_path:
             return error_response(400, "缺少参数: source_path")
 
-        result = local_comic_import_service.create_session_from_path(source_path)
+        import_mode = str(data.get('import_mode', 'copy_safe') or 'copy_safe').strip()
+        result = local_comic_import_service.create_session_from_path(source_path, import_mode=import_mode)
         return success_response(result, "解析会话创建成功")
     except ValueError as e:
         return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"创建本地导入会话失败(path): {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/recoverable', methods=['GET'])
+def batch_upload_list_recoverable_sessions():
+    try:
+        limit = request.args.get('limit', default=20, type=int)
+        sessions = local_comic_import_service.list_recoverable_sessions(limit=limit)
+        return success_response({
+            "sessions": sessions,
+            "count": len(sessions),
+        })
+    except Exception as e:
+        error_logger.error(f"获取可恢复本地导入会话失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/batch-upload/session/resume', methods=['POST'])
+def batch_upload_resume_session():
+    try:
+        data = request.json or {}
+        session_id = str(data.get('session_id', '') or '').strip()
+        if not session_id:
+            return error_response(400, "缺少参数: session_id")
+
+        result = local_comic_import_service.resume_session(session_id)
+        return success_response(result, "会话恢复成功")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"恢复本地导入会话失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

@@ -284,9 +284,11 @@ export const comicApi = {
     return result.data
   },
 
-  localImportCreateSessionFromPath: async (sourcePath) => {
+  localImportCreateSessionFromPath: async (sourcePath, options = {}) => {
+    const importMode = String(options.importMode || 'copy_safe')
     const result = await request.post('/v1/comic/batch-upload/session/from-path', {
-      source_path: sourcePath
+      source_path: sourcePath,
+      import_mode: importMode
     }, {
       timeout: 0
     })
@@ -330,6 +332,22 @@ export const comicApi = {
 
   localImportClearSession: async (sessionId) => {
     const result = await request.delete(`/v1/comic/batch-upload/session/${encodeURIComponent(sessionId)}`)
+    return result.data
+  },
+
+  localImportListRecoverableSessions: async (limit = 20) => {
+    const result = await request.get('/v1/comic/batch-upload/session/recoverable', {
+      params: { limit }
+    })
+    return result.data
+  },
+
+  localImportResumeSession: async (sessionId) => {
+    const result = await request.post('/v1/comic/batch-upload/session/resume', {
+      session_id: sessionId
+    }, {
+      timeout: 0
+    })
     return result.data
   },
 

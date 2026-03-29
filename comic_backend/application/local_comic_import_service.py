@@ -32,6 +32,13 @@ ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
 LOCAL_IMPORT_TAG_NAME = "本地"
+IMPORT_MODE_COPY_SAFE = "copy_safe"
+IMPORT_MODE_MOVE_HUGE = "move_huge"
+SESSION_PHASE_PREPARING = "preparing"
+SESSION_PHASE_READY = "ready_for_mark"
+SESSION_PHASE_COMMITTING = "committing"
+SESSION_PHASE_COMPLETED = "completed"
+SESSION_PHASE_FAILED = "failed"
 
 LOCAL_IMPORT_WORKSPACE_DIR = Path(CACHE_ROOT_DIR) / "comic_local_import_workspace"
 LOCAL_IMPORT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,11 +68,60 @@ class LocalComicImportService:
     def _state_path(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "import_state.json"
 
+    def _prepare_state_path(self, session_id: str) -> Path:
+        return self._session_dir(session_id) / "prepare_state.json"
+
     def _ensure_session_dir(self, session_id: str) -> Path:
         path = self._session_dir(session_id)
         if not path.exists():
             raise ValueError("会话不存在或已失效")
         return path
+
+    @staticmethod
+    def _normalize_import_mode(raw_mode: Optional[str]) -> str:
+        mode = str(raw_mode or "").strip().lower()
+        if mode == IMPORT_MODE_MOVE_HUGE:
+            return IMPORT_MODE_MOVE_HUGE
+        return IMPORT_MODE_COPY_SAFE
+
+    @staticmethod
+    def _normalize_source_path_input(source_path: str) -> Path:
+        raw = str(source_path or "").strip()
+        if not raw:
+            raise ValueError("缺少 source_path")
+
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+            raw = raw[1:-1].strip()
+
+        normalized_raw = raw.replace("\\", "/").lower()
+        if "/fakepath/" in normalized_raw:
+            raise ValueError("检测到浏览器虚拟路径（fakepath）。请手动粘贴服务端本机可访问的真实绝对路径。")
+
+        source = Path(os.path.expandvars(raw)).expanduser()
+        try:
+            source = source.resolve()
+        except Exception:
+            source = Path(os.path.abspath(os.path.expandvars(os.path.expanduser(raw))))
+        return source
+
+    @staticmethod
+    def _is_same_filesystem(src_dir: Path, dst_dir: Path) -> bool:
+        try:
+            src_abs = src_dir.resolve()
+            dst_abs = dst_dir.resolve()
+        except Exception:
+            src_abs = Path(os.path.abspath(str(src_dir)))
+            dst_abs = Path(os.path.abspath(str(dst_dir)))
+
+        if os.name == "nt":
+            src_drive = os.path.splitdrive(str(src_abs))[0].lower()
+            dst_drive = os.path.splitdrive(str(dst_abs))[0].lower()
+            return bool(src_drive) and src_drive == dst_drive
+
+        try:
+            return os.stat(src_abs).st_dev == os.stat(dst_abs).st_dev
+        except Exception:
+            return False
 
     @staticmethod
     def _write_json(path: Path, payload: Any) -> None:
@@ -77,6 +133,19 @@ class LocalComicImportService:
         if not path.exists():
             return default
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _load_meta(self, session_id: str) -> Dict[str, Any]:
+        meta = self._read_json(self._meta_path(session_id), default={}) or {}
+        if not isinstance(meta, dict):
+            return {}
+        return meta
+
+    def _update_meta(self, session_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        meta = self._load_meta(session_id)
+        meta.update(updates or {})
+        meta["updated_at"] = self._timestamp()
+        self._write_json(self._meta_path(session_id), meta)
+        return meta
 
     @staticmethod
     def _is_image(path: Path) -> bool:
@@ -280,6 +349,132 @@ class LocalComicImportService:
                 self._prune_empty_directories(child)
         return warnings
 
+    @staticmethod
+    def _build_prepare_record_key(archive_path: Path) -> str:
+        return os.path.normcase(os.path.abspath(str(archive_path)))
+
+    def _scan_archives(self, root: Path) -> List[Path]:
+        archives: List[Path] = []
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if self._is_archive(path):
+                archives.append(path)
+        return sorted(archives, key=lambda p: str(p).replace("\\", "/").lower())
+
+    def _load_or_create_prepare_state(self, session_id: str) -> Dict[str, Any]:
+        path = self._prepare_state_path(session_id)
+        state = self._read_json(path, default=None)
+        if not isinstance(state, dict):
+            state = {
+                "session_id": session_id,
+                "status": "pending",
+                "records": {},
+                "created_at": self._timestamp(),
+                "updated_at": self._timestamp(),
+            }
+            self._write_json(path, state)
+        return state
+
+    def _save_prepare_state(self, session_id: str, state: Dict[str, Any]) -> None:
+        state["updated_at"] = self._timestamp()
+        self._write_json(self._prepare_state_path(session_id), state)
+
+    def _prepare_source_inplace(self, session_id: str, source_root: Path) -> Dict[str, Any]:
+        if not source_root.exists() or not source_root.is_dir():
+            raise ValueError("仅支持文件夹启用超大文件移动导入")
+
+        state = self._load_or_create_prepare_state(session_id)
+        records = state.setdefault("records", {})
+        state["status"] = "running"
+        self._save_prepare_state(session_id, state)
+
+        session_base = self._ensure_session_dir(session_id)
+        scratch_root = session_base / "prepare_scratch"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+
+        warning_set: set[str] = set()
+        total_processed = 0
+
+        while True:
+            archives = self._scan_archives(source_root)
+            if not archives:
+                break
+
+            pending = []
+            for archive_path in archives:
+                key = self._build_prepare_record_key(archive_path)
+                record = records.get(key, {})
+                if str(record.get("status", "")).lower() == "running":
+                    record["status"] = "pending"
+                records[key] = record
+                if str(record.get("status", "")).lower() != "completed":
+                    pending.append((key, archive_path))
+
+            if not pending:
+                break
+
+            for key, archive_path in pending:
+                if not archive_path.exists():
+                    continue
+                total_processed += 1
+                record = records.setdefault(key, {})
+                record.update(
+                    {
+                        "archive_path": str(archive_path),
+                        "status": "running",
+                        "updated_at": self._timestamp(),
+                        "error": "",
+                    }
+                )
+                self._save_prepare_state(session_id, state)
+
+                target_dir = self._make_unique_path(archive_path.parent / self._strip_archive_suffix(archive_path.name))
+                temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    self._extract_archive(archive_path, temp_dir)
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    for child in self._sorted_entries(list(temp_dir.iterdir())):
+                        destination = self._make_unique_path(target_dir / child.name)
+                        shutil.move(str(child), str(destination))
+                    self._flatten_archive_directory(target_dir)
+                    self._prune_empty_directories(target_dir)
+
+                    archive_path.unlink(missing_ok=True)
+                    record["status"] = "completed"
+                    record["error"] = ""
+                    record["extracted_dir"] = str(target_dir.resolve())
+                except Exception as exc:
+                    record["status"] = "failed"
+                    record["error"] = str(exc)
+                    warning_set.add(f"解压失败，已跳过 {archive_path.name}: {exc}")
+                finally:
+                    record["updated_at"] = self._timestamp()
+                    self._save_prepare_state(session_id, state)
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+
+            # 继续下一轮扫描，处理新解压出来的嵌套压缩包
+            continue
+
+        failed_count = 0
+        for record in records.values():
+            if str((record or {}).get("status", "")).lower() == "failed":
+                failed_count += 1
+                err = str((record or {}).get("error", "")).strip()
+                archive_name = Path(str((record or {}).get("archive_path", "")).strip()).name
+                if err and archive_name:
+                    warning_set.add(f"解压失败，已跳过 {archive_name}: {err}")
+
+        state["status"] = "failed" if failed_count > 0 else "completed"
+        self._save_prepare_state(session_id, state)
+        return {
+            "status": state["status"],
+            "processed_count": total_processed,
+            "failed_count": failed_count,
+            "warnings": sorted(warning_set),
+        }
+
     def _count_direct_images(self, path: Path) -> int:
         total = 0
         for child in path.iterdir():
@@ -401,7 +596,13 @@ class LocalComicImportService:
         clean_root.mkdir(parents=True, exist_ok=True)
         return session_id, base, input_root, clean_root
 
-    def _finalize_session(self, session_id: str, clean_root: Path, warnings: List[str]) -> Dict[str, Any]:
+    def _finalize_session(
+        self,
+        session_id: str,
+        clean_root: Path,
+        warnings: List[str],
+        meta_updates: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         tree, _ = self._build_tree(clean_root)
         payload = {
             "session_id": session_id,
@@ -410,17 +611,20 @@ class LocalComicImportService:
             "clean_root": str(clean_root.resolve()),
         }
         self._write_json(self._tree_path(session_id), payload)
-        self._write_json(
-            self._meta_path(session_id),
-            {
-                "session_id": session_id,
-                "clean_root": str(clean_root.resolve()),
-                "warnings": warnings,
-                "created_at": self._timestamp(),
-                "saved_assignments": {},
-            },
-        )
-        return payload
+        existing_meta = self._load_meta(session_id)
+        next_meta = {
+            "session_id": session_id,
+            "clean_root": str(clean_root.resolve()),
+            "warnings": warnings,
+            "saved_assignments": existing_meta.get("saved_assignments", {}) or {},
+            "phase": SESSION_PHASE_READY,
+            "created_at": existing_meta.get("created_at", self._timestamp()),
+        }
+        if meta_updates:
+            next_meta.update(meta_updates)
+        next_meta["updated_at"] = self._timestamp()
+        self._write_json(self._meta_path(session_id), next_meta)
+        return self._attach_meta_to_tree_payload(session_id, payload)
 
     def _save_assignments_to_meta(self, session_id: str, assignments: Dict[str, str]) -> None:
         meta_file = self._meta_path(session_id)
@@ -437,24 +641,18 @@ class LocalComicImportService:
             raise ValueError("清洗后的目录不存在")
         return clean_root
 
-    def create_session_from_path(self, source_path: str) -> Dict[str, Any]:
-        raw = str(source_path or "").strip()
-        if not raw:
-            raise ValueError("缺少 source_path")
+    def _attach_meta_to_tree_payload(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        meta = self._load_meta(session_id)
+        data = dict(payload or {})
+        data["saved_assignments"] = self._normalize_assignments(meta.get("saved_assignments", {}))
+        data["import_mode"] = str(meta.get("import_mode", IMPORT_MODE_COPY_SAFE))
+        data["effective_mode"] = str(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
+        data["phase"] = str(meta.get("phase", ""))
+        return data
 
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
-            raw = raw[1:-1].strip()
-
-        normalized_raw = raw.replace("\\", "/").lower()
-        if "/fakepath/" in normalized_raw:
-            raise ValueError("检测到浏览器虚拟路径（fakepath）。请手动粘贴服务端本机可访问的真实绝对路径。")
-
-        source = Path(os.path.expandvars(raw)).expanduser()
-        try:
-            source = source.resolve()
-        except Exception:
-            source = Path(os.path.abspath(os.path.expandvars(os.path.expanduser(raw))))
-
+    def create_session_from_path(self, source_path: str, import_mode: str = IMPORT_MODE_COPY_SAFE) -> Dict[str, Any]:
+        source = self._normalize_source_path_input(source_path)
+        mode = self._normalize_import_mode(import_mode)
         if not source.exists():
             raise ValueError(
                 "给定路径不存在。请注意：路径必须是服务器所在设备可访问的本机路径；"
@@ -462,20 +660,96 @@ class LocalComicImportService:
             )
 
         session_id, _base, input_root, clean_root = self._create_empty_session()
+        session_meta = {
+            "session_id": session_id,
+            "source_path": str(source),
+            "import_mode": mode,
+            "effective_mode": mode,
+            "phase": SESSION_PHASE_PREPARING,
+            "created_at": self._timestamp(),
+            "saved_assignments": {},
+            "warnings": [],
+        }
+        self._write_json(self._meta_path(session_id), session_meta)
+
         target = input_root / source.name
+        warnings: List[str] = []
         try:
+            effective_mode = mode
+            if mode == IMPORT_MODE_MOVE_HUGE:
+                if not source.is_dir():
+                    raise ValueError("超大文件移动导入仅支持文件夹路径")
+
+                local_root = Path(LOCAL_PICTURES_DIR)
+                if not self._is_same_filesystem(source, local_root):
+                    effective_mode = IMPORT_MODE_COPY_SAFE
+                    warnings.append(
+                        "检测到源目录与本地图库目录不在同一磁盘，无法原地移动导入；已自动降级为复制导入。"
+                    )
+
+            self._update_meta(
+                session_id,
+                {
+                    "effective_mode": effective_mode,
+                    "phase": SESSION_PHASE_PREPARING,
+                },
+            )
+
+            if effective_mode == IMPORT_MODE_MOVE_HUGE:
+                prepare_result = self._prepare_source_inplace(session_id, source)
+                warnings.extend(prepare_result.get("warnings", []))
+                response = self._finalize_session(
+                    session_id,
+                    source,
+                    warnings,
+                    meta_updates={
+                        "import_mode": mode,
+                        "effective_mode": effective_mode,
+                        "source_path": str(source),
+                        "prepare_status": prepare_result.get("status", "completed"),
+                    },
+                )
+                app_logger.info(f"本地导入解析会话创建成功(path-move): {session_id}")
+                return response
+
             if source.is_dir():
                 shutil.copytree(source, target)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
 
-            warnings = self._normalize_to_clean_tree(input_root, clean_root)
-            response = self._finalize_session(session_id, clean_root, warnings)
+            warnings.extend(self._normalize_to_clean_tree(input_root, clean_root))
+            response = self._finalize_session(
+                session_id,
+                clean_root,
+                warnings,
+                meta_updates={
+                    "import_mode": mode,
+                    "effective_mode": effective_mode,
+                    "source_path": str(source),
+                },
+            )
             app_logger.info(f"本地导入解析会话创建成功(path): {session_id}")
             return response
         except Exception:
-            shutil.rmtree(self._session_dir(session_id), ignore_errors=True)
+            # 保留 move_huge 会话用于恢复；copy 模式沿用原行为清理脏会话。
+            try:
+                meta = self._load_meta(session_id)
+                keep_session = str(meta.get("effective_mode", "")) == IMPORT_MODE_MOVE_HUGE
+            except Exception:
+                keep_session = False
+
+            if keep_session:
+                self._update_meta(
+                    session_id,
+                    {
+                        "phase": SESSION_PHASE_FAILED,
+                        "error": "会话准备阶段中断，可继续恢复",
+                        "warnings": warnings,
+                    },
+                )
+            else:
+                shutil.rmtree(self._session_dir(session_id), ignore_errors=True)
             raise
 
     def create_session_from_upload(self, files: List[Any], relative_paths: List[str]) -> Dict[str, Any]:
@@ -485,6 +759,18 @@ class LocalComicImportService:
             raise ValueError("上传文件与相对路径数量不一致")
 
         session_id, _base, input_root, clean_root = self._create_empty_session()
+        self._write_json(
+            self._meta_path(session_id),
+            {
+                "session_id": session_id,
+                "import_mode": IMPORT_MODE_COPY_SAFE,
+                "effective_mode": IMPORT_MODE_COPY_SAFE,
+                "phase": SESSION_PHASE_PREPARING,
+                "created_at": self._timestamp(),
+                "saved_assignments": {},
+                "warnings": [],
+            },
+        )
 
         try:
             for upload_file, rel_path in zip(files, relative_paths):
@@ -495,7 +781,15 @@ class LocalComicImportService:
                 self._copy_upload_file(upload_file, target)
 
             warnings = self._normalize_to_clean_tree(input_root, clean_root)
-            response = self._finalize_session(session_id, clean_root, warnings)
+            response = self._finalize_session(
+                session_id,
+                clean_root,
+                warnings,
+                meta_updates={
+                    "import_mode": IMPORT_MODE_COPY_SAFE,
+                    "effective_mode": IMPORT_MODE_COPY_SAFE,
+                },
+            )
             app_logger.info(f"本地导入解析会话创建成功(upload): {session_id}")
             return response
         except Exception:
@@ -507,7 +801,7 @@ class LocalComicImportService:
         data = self._read_json(self._tree_path(session_id), default=None)
         if not data:
             raise ValueError("目录树不存在")
-        return data
+        return self._attach_meta_to_tree_payload(session_id, data)
 
     def export_session_items(self, session_id: str, raw_assignments: Dict[str, str]) -> Dict[str, Any]:
         clean_root = self._load_clean_root(session_id)
@@ -665,6 +959,14 @@ class LocalComicImportService:
             shutil.copy2(source, target)
         return len(images)
 
+    def _move_work_to_target(self, work_dir: Path, target_dir: Path) -> None:
+        if not work_dir.exists() or not work_dir.is_dir():
+            raise RuntimeError("作品目录不存在，可能已被删除")
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(work_dir), str(target_dir))
+
     def _append_comic_record(self, comic_record: Dict[str, Any]) -> Tuple[bool, bool]:
         status = {"inserted": False, "exists": False}
 
@@ -736,22 +1038,41 @@ class LocalComicImportService:
         raw_assignments: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         clean_root = self._load_clean_root(session_id)
+        meta = self._load_meta(session_id)
+        effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
 
         assignments = self._normalize_assignments(raw_assignments)
         if not assignments:
-            meta = self._read_json(self._meta_path(session_id), default={}) or {}
             assignments = self._normalize_assignments(meta.get("saved_assignments", {}))
         if not assignments:
             raise ValueError("请先完成层级标记")
 
         self._save_assignments_to_meta(session_id, assignments)
 
-        items, _tree, _node_map = self._build_export_payload(clean_root, assignments)
+        existing_result_items = self._read_json(self._result_path(session_id), default=None)
+        computed_items, _tree, _node_map = self._build_export_payload(clean_root, assignments)
+        items = computed_items
+        if (
+            effective_mode == IMPORT_MODE_MOVE_HUGE
+            and isinstance(existing_result_items, list)
+            and len(existing_result_items) > 0
+            and len(computed_items) < len(existing_result_items)
+        ):
+            # move 模式会改变源目录结构，恢复时优先沿用首轮解析结果继续补偿导入。
+            items = existing_result_items
+
         self._write_json(self._result_path(session_id), items)
 
         state = self._load_or_create_state(session_id, total_items=len(items))
         state["status"] = "running"
         self._save_state(session_id, state)
+        self._update_meta(
+            session_id,
+            {
+                "phase": SESSION_PHASE_COMMITTING,
+                "effective_mode": effective_mode,
+            },
+        )
 
         local_tag_id = self._ensure_local_tag_id() if items else ""
 
@@ -805,26 +1126,40 @@ class LocalComicImportService:
                     self._save_state(session_id, state)
                     continue
 
-                work_dir = Path(work_path)
-                if not work_dir.exists() or not work_dir.is_dir():
-                    raise RuntimeError("作品目录不存在，可能已被删除")
-
                 comic_id = str(record.get("comic_id", "")).strip()
                 if not comic_id:
                     comic_id = self._build_local_comic_id(work_path, existing_ids)
                     record["comic_id"] = comic_id
 
                 original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
-                staging_dir = staging_root / original_id
-                copied_count = self._copy_work_to_staging(work_dir, staging_dir)
-                if copied_count <= 0:
-                    raise RuntimeError("作品目录中没有可导入图片")
-
                 target_dir = Path(LOCAL_PICTURES_DIR) / original_id
-                if target_dir.exists():
-                    shutil.rmtree(target_dir, ignore_errors=True)
-                target_dir.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(staging_dir), str(target_dir))
+                moved_flag = bool(record.get("data_moved", False))
+                work_dir = Path(work_path)
+                if effective_mode == IMPORT_MODE_MOVE_HUGE:
+                    if not moved_flag:
+                        if not work_dir.exists() or not work_dir.is_dir():
+                            raise RuntimeError("作品目录不存在，可能已被删除")
+                        self._move_work_to_target(work_dir, target_dir)
+                        record["data_moved"] = True
+                        moved_flag = True
+                        self._save_state(session_id, state)
+                else:
+                    if not work_dir.exists() or not work_dir.is_dir():
+                        raise RuntimeError("作品目录不存在，可能已被删除")
+                    staging_dir = staging_root / original_id
+                    copied_count = self._copy_work_to_staging(work_dir, staging_dir)
+                    if copied_count <= 0:
+                        raise RuntimeError("作品目录中没有可导入图片")
+                    if target_dir.exists():
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                    target_dir.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(staging_dir), str(target_dir))
+                    moved_flag = True
+                    record["data_moved"] = True
+                    self._save_state(session_id, state)
+
+                if not target_dir.exists() or not target_dir.is_dir():
+                    raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
 
                 image_paths = file_parser.parse_comic_images(comic_id)
                 if not image_paths:
@@ -860,6 +1195,7 @@ class LocalComicImportService:
                 existing_source_map[key] = comic_id
                 record["status"] = "completed" if inserted else "skipped"
                 record["error"] = ""
+                record["effective_mode"] = effective_mode
                 record["updated_at"] = self._timestamp()
                 self._save_state(session_id, state)
             except Exception as exc:
@@ -872,6 +1208,12 @@ class LocalComicImportService:
         has_failed = summary["failed_count"] > 0
         state["status"] = "failed" if has_failed else "completed"
         self._save_state(session_id, state)
+        self._update_meta(
+            session_id,
+            {
+                "phase": SESSION_PHASE_FAILED if has_failed else SESSION_PHASE_COMPLETED,
+            },
+        )
 
         session_removed = False
         if not has_failed:
@@ -888,6 +1230,92 @@ class LocalComicImportService:
             "session_removed": session_removed,
             **summary,
         }
+
+    def list_recoverable_sessions(self, limit: int = 20) -> List[Dict[str, Any]]:
+        sessions: List[Dict[str, Any]] = []
+        if not LOCAL_IMPORT_WORKSPACE_DIR.exists():
+            return sessions
+
+        for session_dir in LOCAL_IMPORT_WORKSPACE_DIR.iterdir():
+            if not session_dir.is_dir():
+                continue
+            session_id = session_dir.name
+            meta = self._load_meta(session_id)
+            if not meta:
+                continue
+            phase = str(meta.get("phase", "")).strip().lower()
+            if phase not in {
+                SESSION_PHASE_PREPARING,
+                SESSION_PHASE_READY,
+                SESSION_PHASE_COMMITTING,
+                SESSION_PHASE_FAILED,
+            }:
+                continue
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "phase": phase,
+                    "import_mode": str(meta.get("import_mode", IMPORT_MODE_COPY_SAFE)),
+                    "effective_mode": str(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE)),
+                    "source_path": str(meta.get("source_path", "")),
+                    "updated_at": str(meta.get("updated_at", meta.get("created_at", ""))),
+                    "warnings": list(meta.get("warnings", []) or []),
+                }
+            )
+
+        sessions.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+        return sessions[: max(1, int(limit or 20))]
+
+    def resume_session(self, session_id: str) -> Dict[str, Any]:
+        self._ensure_session_dir(session_id)
+        meta = self._load_meta(session_id)
+        if not meta:
+            raise ValueError("会话元数据不存在")
+
+        phase = str(meta.get("phase", "")).strip().lower()
+        clean_root_raw = str(meta.get("clean_root", "")).strip()
+        warnings = list(meta.get("warnings", []) or [])
+
+        if phase == SESSION_PHASE_PREPARING and str(meta.get("effective_mode", "")) == IMPORT_MODE_MOVE_HUGE:
+            source_path = str(meta.get("source_path", "")).strip()
+            if not source_path:
+                raise ValueError("缺少源路径，无法恢复会话")
+            source_root = Path(source_path)
+            if not source_root.exists() or not source_root.is_dir():
+                raise ValueError("源目录不存在，无法恢复会话")
+            prepare_result = self._prepare_source_inplace(session_id, source_root)
+            warnings.extend(prepare_result.get("warnings", []))
+            payload = self._finalize_session(
+                session_id,
+                source_root,
+                warnings,
+                meta_updates={
+                    "source_path": source_path,
+                    "import_mode": str(meta.get("import_mode", IMPORT_MODE_COPY_SAFE)),
+                    "effective_mode": str(meta.get("effective_mode", IMPORT_MODE_MOVE_HUGE)),
+                    "prepare_status": prepare_result.get("status", "completed"),
+                },
+            )
+            return payload
+
+        tree = self._read_json(self._tree_path(session_id), default=None)
+        if tree:
+            return self.get_session_tree(session_id)
+
+        if clean_root_raw:
+            clean_root = Path(clean_root_raw)
+            if clean_root.exists():
+                return self._finalize_session(
+                    session_id,
+                    clean_root,
+                    warnings,
+                    meta_updates={
+                        "import_mode": str(meta.get("import_mode", IMPORT_MODE_COPY_SAFE)),
+                        "effective_mode": str(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE)),
+                    },
+                )
+
+        raise ValueError("当前会话不可恢复")
 
     def get_result_file_path(self, session_id: str) -> Path:
         self._ensure_session_dir(session_id)
