@@ -79,29 +79,12 @@
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
         />
-        <div class="picker-row compact">
-          <van-button plain size="small" @click="triggerPathArchivePicker">选择压缩包路径</van-button>
-          <van-button plain size="small" @click="triggerPathFolderPicker">选择文件夹路径</van-button>
+        <div class="picker-tip">
+          路径模式仅支持手动输入服务端本机绝对路径（可填写压缩包或文件夹）。
         </div>
         <div class="picker-tip">
-          路径模式可导入服务端本机上的压缩包或文件夹。
+          浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
         </div>
-        <input
-          ref="pathArchivePickerRef"
-          type="file"
-          accept=".zip,.rar,.7z"
-          class="hidden-input"
-          @change="onPathArchivePicked"
-        >
-        <input
-          ref="pathFolderPickerRef"
-          type="file"
-          multiple
-          webkitdirectory
-          directory
-          class="hidden-input"
-          @change="onPathFolderPicked"
-        >
         <van-button
           type="primary"
           block
@@ -256,7 +239,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { showFailToast, showSuccessToast, showToast } from 'vant'
+import { showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api'
 import { useComicStore, useTagStore } from '@/stores'
 
@@ -270,8 +253,6 @@ const sourcePath = ref('')
 const archiveFiles = ref([])
 
 const archiveInputRef = ref(null)
-const pathArchivePickerRef = ref(null)
-const pathFolderPickerRef = ref(null)
 
 const parsing = ref(false)
 const committing = ref(false)
@@ -505,72 +486,8 @@ function triggerArchiveInput() {
   archiveInputRef.value?.click()
 }
 
-function triggerPathArchivePicker() {
-  pathArchivePickerRef.value?.click()
-}
-
-function triggerPathFolderPicker() {
-  pathFolderPickerRef.value?.click()
-}
-
 function onArchiveFilesSelected(event) {
   archiveFiles.value = Array.from(event?.target?.files || [])
-}
-
-function normalizeInputPath(rawPath) {
-  return String(rawPath || '').trim().replaceAll('\\\\', '/')
-}
-
-function deriveFolderPathFromPickedFile(file) {
-  const absPath = normalizeInputPath(file?.path)
-  const relativePath = normalizeInputPath(file?.webkitRelativePath)
-  if (!absPath || !relativePath) return ''
-
-  const lowerAbs = absPath.toLowerCase()
-  const lowerRel = relativePath.toLowerCase()
-  if (!lowerAbs.endsWith(lowerRel)) return ''
-
-  const base = absPath.slice(0, absPath.length - relativePath.length).replace(/\/+$/, '')
-  return base
-}
-
-function readCandidatePathFromFile(file, inputValue) {
-  const filePath = normalizeInputPath(file?.path)
-  if (filePath) return filePath
-
-  const rawInput = normalizeInputPath(inputValue)
-  if (rawInput && !rawInput.toLowerCase().includes('/fakepath/')) {
-    return rawInput
-  }
-  return ''
-}
-
-function onPathArchivePicked(event) {
-  const file = event?.target?.files?.[0]
-  if (!file) return
-
-  const candidate = readCandidatePathFromFile(file, event?.target?.value)
-  if (candidate) {
-    sourcePath.value = candidate
-    showSuccessToast('已填充压缩包路径')
-    return
-  }
-
-  showToast('当前浏览器无法读取绝对路径，请手动粘贴服务端路径')
-}
-
-function onPathFolderPicked(event) {
-  const file = event?.target?.files?.[0]
-  if (!file) return
-
-  const folderPath = deriveFolderPathFromPickedFile(file) || readCandidatePathFromFile(file, event?.target?.value)
-  if (folderPath) {
-    sourcePath.value = folderPath
-    showSuccessToast('已填充文件夹路径')
-    return
-  }
-
-  showToast('当前浏览器无法读取绝对路径，请手动粘贴服务端路径')
 }
 
 function clearRuntimeState() {
@@ -944,11 +861,6 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-}
-
-.picker-row.compact {
-  justify-content: flex-start;
-  gap: 8px;
 }
 
 .picker-tip {

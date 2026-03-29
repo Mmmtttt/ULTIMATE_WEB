@@ -442,11 +442,18 @@ class LocalComicImportService:
         if not raw:
             raise ValueError("缺少 source_path")
 
-        source = Path(raw).expanduser()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+            raw = raw[1:-1].strip()
+
+        normalized_raw = raw.replace("\\", "/").lower()
+        if "/fakepath/" in normalized_raw:
+            raise ValueError("检测到浏览器虚拟路径（fakepath）。请手动粘贴服务端本机可访问的真实绝对路径。")
+
+        source = Path(os.path.expandvars(raw)).expanduser()
         try:
             source = source.resolve()
         except Exception:
-            source = Path(os.path.abspath(os.path.expanduser(raw)))
+            source = Path(os.path.abspath(os.path.expandvars(os.path.expanduser(raw))))
 
         if not source.exists():
             raise ValueError(
