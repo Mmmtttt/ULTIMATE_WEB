@@ -1,12 +1,12 @@
 <template>
-  <div class="random-feed-page">
-    <section class="feed-toolbar">
+  <div class="random-feed-page" :style="pageStyle">
+    <section v-show="controlsVisible" class="feed-toolbar">
       <div class="feed-title-group">
         <h1 class="feed-title">{{ isVideoMode ? '视频随机流' : '漫画随机流' }}</h1>
         <p class="feed-subtitle">本地库 + 已缓存预览库，随机序列可重复、可无限下滑</p>
-        <p v-show="!controlsVisible" class="feed-toolbar-hint">点击当前图片显示操作按钮</p>
+        <p class="feed-toolbar-hint">点击当前图片显示操作按钮</p>
       </div>
-      <div v-show="controlsVisible && !!currentItem" class="feed-toolbar-actions">
+      <div class="feed-toolbar-actions">
         <van-button
           size="small"
           plain
@@ -20,15 +20,15 @@
           size="small"
           type="primary"
           data-testid="random-feed-detail"
-          :disabled="!currentItem"
-          @click="goToDetail"
+          :disabled="!controlItem"
+          @click.stop="goToDetail(controlItem)"
         >
           查看详情
         </van-button>
       </div>
     </section>
 
-    <section class="feed-status">
+    <section v-show="controlsVisible" class="feed-status">
       <span v-if="currentItem">第 {{ activeIndex + 1 }} 项 / 无限序列</span>
       <span v-else>等待加载随机内容…</span>
       <span class="mode-chip">{{ isVideoMode ? '视频模式' : '漫画模式' }}</span>
@@ -119,12 +119,15 @@ import { toBackendUrl } from '@/utils/url'
 const router = useRouter()
 const modeStore = useModeStore()
 const randomFeedStore = useRandomFeedStore()
+const VIEW_STATE_KEY = 'random_feed_view_state_v1'
 
 const feedScroller = ref(null)
 const activeIndex = ref(0)
 const refreshing = ref(false)
 const loadingTailPromise = ref(null)
 const controlsVisible = ref(false)
+const controlIndex = ref(0)
+const scrollerHeight = ref(0)
 const preloadCache = new Set()
 
 const zoomState = reactive({
@@ -148,6 +151,13 @@ const loading = computed(() => modeState.value.loading)
 const loadingMore = computed(() => modeState.value.loadingMore)
 const errorText = computed(() => modeState.value.error || '')
 const currentItem = computed(() => items.value[activeIndex.value] || null)
+const controlItem = computed(() => items.value[controlIndex.value] || currentItem.value || null)
+const pageStyle = computed(() => {
+  if (!scrollerHeight.value) return {}
+  return {
+    '--feed-card-height': `${scrollerHeight.value}px`
+  }
+})
 
 function resetZoom() {
   zoomState.scale = 1
@@ -160,6 +170,66 @@ function resetZoom() {
 
 function clampZoom(scale) {
   return Math.max(1, Math.min(5, Number(scale || 1)))
+}
+
+function readViewState() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(VIEW_STATE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed
+  } catch (_error) {
+    return null
+  }
+}
+
+function saveViewState() {
+  if (typeof window === 'undefined') return
+  try {
+    const payload = {
+      mode: modeKey.value,
+      activeIndex: activeIndex.value,
+      controlIndex: controlIndex.value,
+      controlsVisible: controlsVisible.value,
+      scrollTop: feedScroller.value?.scrollTop ?? 0,
+      updatedAt: Date.now()
+    }
+    window.sessionStorage.setItem(VIEW_STATE_KEY, JSON.stringify(payload))
+  } catch (_error) {
+    // ignore storage failure
+  }
+}
+
+function applyStoredViewState() {
+  const state = readViewState()
+  if (!state || String(state.mode || '') !== modeKey.value) {
+    return false
+  }
+  if (!items.value.length) {
+    return false
+  }
+
+  const nextActive = Math.max(0, Math.min(items.value.length - 1, Number(state.activeIndex) || 0))
+  const nextControl = Math.max(0, Math.min(items.value.length - 1, Number(state.controlIndex) || nextActive))
+
+  activeIndex.value = nextActive
+  controlIndex.value = nextControl
+  controlsVisible.value = Boolean(state.controlsVisible)
+
+  const requestedScrollTop = Number(state.scrollTop)
+  nextTick(() => {
+    const scroller = feedScroller.value
+    if (!scroller) return
+    if (Number.isFinite(requestedScrollTop) && requestedScrollTop >= 0) {
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop = Math.min(maxTop, requestedScrollTop)
+      return
+    }
+    scroller.scrollTop = nextActive * getCardHeight()
+  })
+  return true
 }
 
 function toDisplayUrl(rawUrl) {
@@ -269,21 +339,31 @@ async function handleRefresh() {
 }
 
 function goToDetail(item = currentItem.value) {
-  if (!item?.detail_route_name || !item?.detail_id) {
+  const target = item || currentItem.value
+  if (!target?.detail_route_name || !target?.detail_id) {
+    showFailToast('当前推荐项暂不支持跳转详情')
     return
   }
+  saveViewState()
   router.push({
-    name: item.detail_route_name,
-    params: { id: item.detail_id }
+    name: target.detail_route_name,
+    params: { id: target.detail_id }
   })
 }
 
 function handleScroll() {
   updateActiveIndexByScroll()
+  saveViewState()
 }
 
 function handleImageTap(index) {
-  if (index !== activeIndex.value) return
+  if (index !== activeIndex.value) {
+    activeIndex.value = index
+    controlIndex.value = index
+    controlsVisible.value = true
+    return
+  }
+  controlIndex.value = index
   controlsVisible.value = !controlsVisible.value
 }
 
@@ -395,10 +475,25 @@ function handleTouchEnd() {
 
 function handleResize() {
   updateViewportHeightCssVar('--reader-vh')
+  updateScrollerHeight()
+}
+
+function updateScrollerHeight() {
+  const scroller = feedScroller.value
+  if (!scroller || typeof window === 'undefined') return
+
+  const rect = scroller.getBoundingClientRect()
+  const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
+  const mobileReserve = window.matchMedia('(max-width: 1023px)').matches ? 56 : 0
+  const buffer = 8
+  const nextHeight = Math.max(300, Math.floor(viewportHeight - rect.top - mobileReserve - buffer))
+  if (!Number.isFinite(nextHeight)) return
+  scrollerHeight.value = nextHeight
 }
 
 watch(modeKey, async () => {
   activeIndex.value = 0
+  controlIndex.value = 0
   controlsVisible.value = false
   resetZoom()
   preloadCache.clear()
@@ -407,12 +502,15 @@ watch(modeKey, async () => {
   if (feedScroller.value) {
     feedScroller.value.scrollTop = 0
   }
+  updateScrollerHeight()
+  applyStoredViewState()
 })
 
 watch(
   () => activeIndex.value,
   async (index, previous) => {
     if (index !== previous) {
+      controlIndex.value = index
       controlsVisible.value = false
       resetZoom()
     }
@@ -420,6 +518,7 @@ watch(
     if (index >= items.value.length - 4) {
       await loadMore()
     }
+    saveViewState()
   }
 )
 
@@ -440,13 +539,25 @@ onMounted(async () => {
   addDocumentListener('mousemove', onMouseMove)
   addDocumentListener('mouseup', stopMouseDrag)
   await ensureRandomData()
+  await nextTick()
+  updateScrollerHeight()
+  applyStoredViewState()
 })
 
 onUnmounted(() => {
+  saveViewState()
   removeWindowListener('resize', handleResize)
   removeDocumentListener('mousemove', onMouseMove)
   removeDocumentListener('mouseup', stopMouseDrag)
 })
+
+watch(
+  () => controlsVisible.value,
+  async () => {
+    await nextTick()
+    updateScrollerHeight()
+  }
+)
 </script>
 
 <style scoped>
@@ -515,7 +626,7 @@ onUnmounted(() => {
 }
 
 .feed-scroller {
-  height: calc(var(--reader-vh, 100vh) - 132px);
+  height: var(--feed-card-height, calc(var(--reader-vh, 100vh) - 132px));
   min-height: 500px;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
@@ -524,7 +635,7 @@ onUnmounted(() => {
 
 .feed-card {
   position: relative;
-  height: calc(var(--reader-vh, 100vh) - 132px);
+  height: var(--feed-card-height, calc(var(--reader-vh, 100vh) - 132px));
   min-height: 500px;
   scroll-snap-align: start;
   border-radius: 16px;
@@ -649,8 +760,11 @@ onUnmounted(() => {
 
   .feed-scroller,
   .feed-card {
-    height: calc(var(--reader-vh, 100vh) - 172px);
     min-height: 420px;
+  }
+
+  .feed-overlay {
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px) + 64px);
   }
 }
 </style>

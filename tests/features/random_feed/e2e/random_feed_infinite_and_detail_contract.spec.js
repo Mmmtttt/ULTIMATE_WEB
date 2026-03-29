@@ -41,11 +41,20 @@ test("random feed supports refresh, infinite loading, and button-only detail nav
   const apiRequests = startApiRequestRecorder(page);
 
   await openRandomFeed(page);
+  await expect(page.getByText("漫画随机流")).not.toBeVisible();
 
   const currentPath = new URL(page.url()).pathname;
   await page.locator(".feed-image").first().click();
   await expect.poll(() => new URL(page.url()).pathname).toBe(currentPath);
+  await expect(page.getByText("漫画随机流")).toBeVisible();
 
+  await expect(page.getByTestId("random-feed-detail")).toBeVisible();
+  await page.getByTestId("random-feed-detail").click();
+  await expect.poll(() => new URL(page.url()).pathname).not.toBe("/random-feed");
+  await page.goBack();
+  await openRandomFeed(page);
+
+  await page.locator(".feed-image").first().click();
   await expect(page.getByTestId("random-feed-card-detail").first()).toBeVisible();
   await page.getByTestId("random-feed-card-detail").first().click();
   await expect.poll(() => new URL(page.url()).pathname).not.toBe("/random-feed");
@@ -93,13 +102,47 @@ test("random feed supports video mode and detail jump by button", async ({ page 
   await openRandomFeed(page);
 
   await page.locator(".mode-switch").first().click();
-  await expect(page.getByText("视频模式")).toBeVisible();
   await expect(page.getByTestId("random-feed-card").first()).toBeVisible();
 
   await page.locator(".feed-image").first().click();
+  await expect(page.getByText("视频模式")).toBeVisible();
   await expect(page.getByTestId("random-feed-card-detail").first()).toBeVisible();
   await page.getByTestId("random-feed-card-detail").first().click();
   await expect
     .poll(() => new URL(page.url()).pathname)
     .toMatch(/^\/video(\/|-.+)/);
+});
+
+test("random feed keeps browsing position after entering detail and going back", async ({
+  page,
+}) => {
+  await setInitialMode(page, "comic");
+  await openRandomFeed(page);
+
+  const scroller = page.getByTestId("random-feed-scroller");
+  const rememberedTop = await scroller.evaluate((node) => {
+    node.scrollTop = node.clientHeight * 2;
+    return node.scrollTop;
+  });
+
+  await expect
+    .poll(async () => await scroller.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+
+  const box = await scroller.boundingBox();
+  if (!box) {
+    throw new Error("random feed scroller has no bounding box");
+  }
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+  await expect(page.getByTestId("random-feed-detail")).toBeVisible();
+  await page.getByTestId("random-feed-detail").click();
+  await expect.poll(() => new URL(page.url()).pathname).not.toBe("/random-feed");
+
+  await page.goBack();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/random-feed");
+  await expect(scroller).toBeVisible();
+
+  const restoredTop = await scroller.evaluate((node) => node.scrollTop);
+  expect(Math.abs(restoredTop - rememberedTop)).toBeLessThan(180);
 });
