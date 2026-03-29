@@ -1,0 +1,26 @@
+name: ultimate-web
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ultimate-web:local
+    container_name: ultimate-web
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      SERVER_CONFIG_PATH: /app/server_config.json
+      THIRD_PARTY_CONFIG_PATH: /app/comic_backend/third_party_config.json
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: "5000"
+      BACKEND_DEBUG: "0"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./server_config.json:/app/server_config.json:rw
+      - ./comic_backend/third_party_config.json:/app/comic_backend/third_party_config.json:rw
+      - ./data:/app/comic_backend/data
+      # 在 NAS 上挂载媒体目录后，服务端路径导入要填写容器内路径，例如:
+      # - /volume1/library/comics:/library/comics:rw
+      # - /volume1/library/videos:/library/videos:rw
