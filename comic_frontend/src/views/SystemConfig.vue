@@ -1,5 +1,5 @@
 <template>
-  <div class="system-config">
+  <div class="system-config desktop-page-shell">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
     <van-cell-group inset class="config-group">

@@ -1,5 +1,6 @@
 <template>
   <BaseTagManage
+    class="desktop-page-shell"
     content-type="video"
     :tag-store="tagStore"
     :tag-api="tagApi"

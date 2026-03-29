@@ -1,5 +1,5 @@
 <template>
-  <div class="sync-center-page">
+  <div class="sync-center-page desktop-page-shell">
     <van-nav-bar title="数据同步" left-text="返回" left-arrow @click-left="$router.back()" />
 
     <van-cell-group inset class="sync-group">

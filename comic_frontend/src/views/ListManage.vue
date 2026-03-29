@@ -1,5 +1,5 @@
 <template>
-  <div class="list-manage">
+  <div class="list-manage desktop-page-shell">
     <van-nav-bar
       title="清单管理"
       left-text="返回"

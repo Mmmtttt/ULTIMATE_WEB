@@ -1,5 +1,5 @@
 ﻿<template>
-  <div class="comic-local-import-page">
+  <div class="comic-local-import-page desktop-page-shell">
     <van-nav-bar
       title="本地漫画导入"
       left-arrow

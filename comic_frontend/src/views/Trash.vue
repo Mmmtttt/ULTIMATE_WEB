@@ -1,5 +1,6 @@
 <template>
   <BaseTrash
+    class="desktop-page-shell"
     :content-type="contentType"
     :stores="stores"
     :apis="apis"

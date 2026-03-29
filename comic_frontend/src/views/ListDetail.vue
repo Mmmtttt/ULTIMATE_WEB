@@ -1,5 +1,5 @@
 <template>
-  <div class="list-detail">
+  <div class="list-detail desktop-page-shell">
     <van-nav-bar
       :title="listInfo?.name || '清单详情'"
       left-text="返回"

@@ -1,5 +1,6 @@
 <template>
   <BaseTagDetail
+    class="desktop-page-shell"
     content-type="comic"
     :tag-store="tagStore"
     :tag-api="tagApi"

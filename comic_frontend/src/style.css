@@ -86,6 +86,9 @@
   --page-gutter: clamp(10px, 1.6vw, 24px);
   --toolbar-height: 56px;
   --sidebar-width: 248px;
+  --desktop-page-min: 980px;
+  --desktop-page-fluid: 90vw;
+  --desktop-page-max: 1520px;
 }
 
 html[data-theme='dark'] {
@@ -537,6 +540,30 @@ a {
 .media-card,
 .remote-result-card {
   animation: cardIn var(--motion-slow) var(--ease-standard) both;
+}
+
+.desktop-page-shell {
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (min-width: 1024px) {
+  .desktop-page-shell {
+    width: clamp(var(--desktop-page-min), var(--desktop-page-fluid), var(--desktop-page-max));
+    min-width: var(--desktop-page-min);
+    border: 1px solid var(--border-soft);
+    border-radius: 16px;
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.14) 100%);
+    box-shadow: var(--shadow-sm);
+    overflow: clip;
+    backdrop-filter: blur(8px);
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1120px) {
+  :root {
+    --desktop-page-min: 940px;
+  }
 }
 
 @keyframes cardIn {
