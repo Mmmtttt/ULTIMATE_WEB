@@ -1,6 +1,18 @@
 # Ultimate Web API - Mmmtttt
 from flask import Blueprint
-from .v1 import comic_bp, tag_bp, list_bp, config_bp, recommendation_bp, backup_bp, author_bp, video_bp, actor_bp, sync_bp
+from .v1 import (
+    actor_bp,
+    author_bp,
+    backup_bp,
+    comic_bp,
+    config_bp,
+    feed_bp,
+    list_bp,
+    recommendation_bp,
+    sync_bp,
+    tag_bp,
+    video_bp,
+)
 
 
 def register_blueprints(app):
@@ -14,3 +26,4 @@ def register_blueprints(app):
     app.register_blueprint(video_bp, url_prefix='/api/v1/video')
     app.register_blueprint(actor_bp, url_prefix='/api/v1/actor')
     app.register_blueprint(sync_bp, url_prefix='/api/v1/sync')
+    app.register_blueprint(feed_bp, url_prefix='/api/v1/feed')

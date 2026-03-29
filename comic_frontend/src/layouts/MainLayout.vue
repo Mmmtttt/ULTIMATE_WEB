@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="main-layout">
     <!-- Desktop Sidebar -->
     <aside v-if="isDesktop" class="sidebar">
@@ -15,6 +15,10 @@
         <router-link to="/preview" class="nav-item" active-class="active">
           <van-icon name="eye-o" />
           <span>预览库</span>
+        </router-link>
+        <router-link to="/random-feed" class="nav-item" active-class="active">
+          <van-icon name="fire-o" />
+          <span>随机流</span>
         </router-link>
         <router-link to="/subscribe" class="nav-item" active-class="active">
           <van-icon name="star-o" />
@@ -56,6 +60,7 @@
     <van-tabbar v-if="isMobile" route fixed placeholder>
       <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
       <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
+      <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
       <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
       <van-tabbar-item to="/mine" icon="user-o">我的</van-tabbar-item>
     </van-tabbar>
@@ -75,6 +80,7 @@ const pageTitle = computed(() => {
   switch (route.path) {
     case '/library': return '本地库'
     case '/preview': return '预览库'
+    case '/random-feed': return '随机流'
     case '/subscribe': return '订阅'
     case '/mine': return '我的'
     case '/sync': return '数据同步'

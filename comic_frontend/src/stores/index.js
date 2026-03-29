@@ -41,3 +41,6 @@ export { useListStore } from './list'
 
 // 导入任务管理
 export { useImportTaskStore } from './importTask'
+
+// 随机流推荐
+export { useRandomFeedStore } from './randomFeed'

@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+﻿import { createRouter, createWebHistory } from 'vue-router'
 import { setDocumentTitle } from '@/runtime/browser'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useModeStore } from '@/stores/mode'
@@ -20,6 +20,12 @@ const routes = [
         name: 'Preview',
         component: () => import('@/views/preview/Preview.vue'),
         meta: { title: '预览库' }
+      },
+      {
+        path: 'random-feed',
+        name: 'RandomFeed',
+        component: () => import('@/views/RandomFeed.vue'),
+        meta: { title: '随机流' }
       },
       {
         path: 'subscribe',
@@ -53,7 +59,7 @@ const routes = [
     component: () => import('@/views/subscribe/CreatorDetail.vue'),
     meta: { title: '创作者详情' }
   },
-  // 保留原有详情页路由，但可能需要适配
+  // 淇濈暀鍘熸湁璇︽儏椤佃矾鐢憋紝浣嗗彲鑳介渶瑕侀€傞厤
   {
     path: '/comic/:id',
     name: 'ComicDetail',
@@ -84,7 +90,7 @@ const routes = [
     name: 'VideoRecommendationDetail',
     component: () => import('@/views/VideoRecommendationDetail.vue')
   },
-  // 管理页面
+  // 绠＄悊椤甸潰
   {
     path: '/tags',
     name: 'TagManage',
@@ -149,7 +155,7 @@ const router = createRouter({
   routes
 })
 
-// 路由守卫：更新页面标题
+// 璺敱瀹堝崼锛氭洿鏂伴〉闈㈡爣棰?
 router.beforeEach((to, from, next) => {
   if (to.meta.title) {
     setDocumentTitle(`${to.meta.title} - Ultimate`)

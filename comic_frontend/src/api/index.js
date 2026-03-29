@@ -13,6 +13,7 @@ export { authorApi } from './author'
 export { configApi } from './config'
 export { imageApi, buildImageUrl, buildCoverUrl, buildThumbnailUrl } from './image'
 export { syncApi } from './sync'
+export { feedApi } from './feed'
 
 import { comicApi } from './comic'
 export default comicApi

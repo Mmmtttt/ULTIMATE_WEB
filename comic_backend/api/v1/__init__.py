@@ -8,3 +8,4 @@ from .author import author_bp
 from .video import video_bp
 from .actor import actor_bp
 from .sync import sync_bp
+from .feed import feed_bp
