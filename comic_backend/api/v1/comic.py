@@ -1,6 +1,11 @@
 from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
 from application.local_comic_import_service import local_comic_import_service
+from application.softref_comic_reader import (
+    softref_comic_reader,
+    SoftRefPasswordRequiredError,
+    SoftRefSourceMissingError,
+)
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
@@ -330,6 +335,25 @@ def comic_images():
         comic_id = request.args.get('comic_id')
         if not comic_id:
             return error_response(400, "缺少参数")
+
+        if softref_comic_reader.is_soft_ref_comic(comic_id):
+            try:
+                page_count = softref_comic_reader.get_page_count(comic_id)
+                if page_count > 0:
+                    # Trigger one real read to surface password challenge early.
+                    softref_comic_reader.get_image_stream(comic_id, 1)
+            except SoftRefPasswordRequiredError as exc:
+                return success_response({
+                    "images": [],
+                    "password_required": softref_comic_reader.get_password_required_payload(comic_id, exc),
+                })
+            except SoftRefSourceMissingError as exc:
+                return error_response(404, str(exc))
+            except ValueError as exc:
+                return error_response(404, str(exc))
+            relative_paths = [f"/api/v1/comic/image?comic_id={comic_id}&page_num={i+1}" for i in range(page_count)]
+            app_logger.info(f"获取软连接漫画图片列表成功: {comic_id}, 共 {len(relative_paths)} 张图片")
+            return success_response(relative_paths)
         
         image_paths = file_parser.parse_comic_images(comic_id)
         if not image_paths:
@@ -350,6 +374,19 @@ def comic_image():
         page_num = request.args.get('page_num', type=int)
         if not comic_id or not page_num:
             return error_response(400, "缺少参数")
+
+        if softref_comic_reader.is_soft_ref_comic(comic_id):
+            try:
+                stream, mimetype = softref_comic_reader.get_image_stream(comic_id, page_num)
+            except SoftRefPasswordRequiredError:
+                return error_response(428, "该压缩包需要密码，请先在阅读页输入密码")
+            except SoftRefSourceMissingError as exc:
+                return error_response(404, str(exc))
+            except ValueError as exc:
+                return error_response(404, str(exc))
+            response = send_file(stream, mimetype=mimetype or 'image/jpeg')
+            response.headers['Cache-Control'] = f'public, max-age={CACHE_MAX_AGE}'
+            return response
         
         stream = image_handler.get_image_stream(comic_id, page_num)
         if not stream:
@@ -370,6 +407,33 @@ def comic_image():
         return response
     except Exception as e:
         error_logger.error(f"获取图片失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/softref/password', methods=['POST'])
+def comic_softref_set_password():
+    try:
+        data = request.json or {}
+        comic_id = str(data.get('comic_id', '') or '').strip()
+        archive_fingerprint = str(data.get('archive_fingerprint', '') or '').strip()
+        password = str(data.get('password', '') or '')
+        if not comic_id:
+            return error_response(400, "缺少参数: comic_id")
+        if not archive_fingerprint:
+            return error_response(400, "缺少参数: archive_fingerprint")
+        if not password:
+            return error_response(400, "缺少参数: password")
+
+        result = softref_comic_reader.set_archive_password(
+            comic_id=comic_id,
+            archive_fingerprint=archive_fingerprint,
+            password=password,
+        )
+        return success_response(result, "密码保存成功")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"保存软连接压缩包密码失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

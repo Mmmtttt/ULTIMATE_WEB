@@ -181,11 +181,29 @@ export const useComicStore = defineStore('comic', () => {
     try {
       console.log('[Comic] 获取图片列表:', id)
       const response = await comicApi.getImages(id)
-      
-      // 更新缓存
-      cacheStore.setImagesCache(id, response.data)
-      
-      return response.data
+      const payload = response.data
+
+      if (Array.isArray(payload)) {
+        cacheStore.setImagesCache(id, payload)
+        return payload
+      }
+
+      if (payload && typeof payload === 'object') {
+        const images = Array.isArray(payload.images) ? payload.images : []
+        const passwordRequired = payload.password_required || null
+        if (passwordRequired) {
+          return {
+            images,
+            passwordRequired
+          }
+        }
+        if (images.length > 0) {
+          cacheStore.setImagesCache(id, images)
+          return images
+        }
+      }
+
+      return null
     } catch (err) {
       console.error('[Comic] 获取图片列表失败:', err)
       return null

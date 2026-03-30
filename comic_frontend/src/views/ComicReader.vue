@@ -161,6 +161,7 @@
 import { ref, onMounted, computed, watch, nextTick, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useComicStore, useConfigStore } from '@/stores'
+import { comicApi } from '@/api'
 import { buildImageUrl } from '@/api/image'
 import {
   calculateLoadSequence,
@@ -1080,6 +1081,40 @@ const handlePageImageLoad = (pageNum) => {
   }
 }
 
+const fetchImagesWithSoftRefPasswordFallback = async () => {
+  const maxRetries = 3
+  let retry = 0
+  while (retry < maxRetries) {
+    const imagePayload = await comicStore.fetchImages(comicId.value, retry > 0)
+    if (Array.isArray(imagePayload)) {
+      return imagePayload
+    }
+
+    const challenge = imagePayload?.passwordRequired
+    if (!challenge) {
+      return null
+    }
+
+    const archiveLabel = String(challenge.archive_label || '').trim()
+    const promptMessage = archiveLabel
+      ? `该漫画包含加密压缩包，请输入密码：\n${archiveLabel}`
+      : '该漫画包含加密压缩包，请输入密码：'
+    const win = getWindow()
+    const input = win && typeof win.prompt === 'function' ? win.prompt(promptMessage) : null
+    if (!input || !String(input).trim()) {
+      throw new Error('已取消输入压缩包密码')
+    }
+
+    await comicApi.setSoftRefPassword(
+      comicId.value,
+      String(challenge.archive_fingerprint || ''),
+      String(input).trim()
+    )
+    retry += 1
+  }
+  throw new Error('压缩包密码验证失败')
+}
+
 const loadImages = async () => {
   loading.value = true
   error.value = false
@@ -1105,7 +1140,7 @@ const loadImages = async () => {
 
   try {
     const comic = await comicStore.fetchComicDetail(comicId.value)
-    const imageData = await comicStore.fetchImages(comicId.value)
+    const imageData = await fetchImagesWithSoftRefPasswordFallback()
 
     if (!imageData || imageData.length === 0) {
       throw new Error('empty images')

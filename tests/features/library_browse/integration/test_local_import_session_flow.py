@@ -82,6 +82,19 @@ def _cleanup_imported_comics(base_url: str, titles: list[str]) -> None:
         )
 
 
+def _find_comic_id_by_title(base_url: str, title: str) -> str:
+    list_resp = requests.get(f"{base_url}/api/v1/comic/list", timeout=10)
+    assert list_resp.status_code == 200
+    payload = list_resp.json()
+    assert payload.get("code") == 200
+    for item in payload.get("data") or []:
+        if str(item.get("title") or "") == title:
+            comic_id = str(item.get("id") or "").strip()
+            if comic_id:
+                return comic_id
+    raise AssertionError(f"comic not found by title: {title}")
+
+
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -474,12 +487,264 @@ def test_local_import_softlink_mode_commit_creates_soft_ref_records(integration_
             assert str(comic.get("import_source") or "").strip()
             assert int(comic.get("total_page") or 0) >= 1
 
+        # 软连接压缩包作品可直接走阅读接口按页读取
+        archive_comic_id = str(comic_b.get("id") or "")
+        archive_images_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": archive_comic_id},
+            timeout=30,
+        )
+        assert archive_images_resp.status_code == 200
+        archive_images_payload = archive_images_resp.json()
+        assert archive_images_payload["code"] == 200
+        archive_image_urls = archive_images_payload["data"]
+        assert isinstance(archive_image_urls, list)
+        assert len(archive_image_urls) >= 1
+
+        archive_first_image_resp = requests.get(f"{base_url}{archive_image_urls[0]}", timeout=30)
+        assert archive_first_image_resp.status_code == 200
+        assert archive_first_image_resp.headers.get("Content-Type", "").startswith("image/")
+        assert len(archive_first_image_resp.content) > 0
+
         # 提交后源文件仍保持原位
         assert (source_dir / "作者软链" / "作品目录").exists()
         assert (source_dir / "作者软链" / "作品压缩.zip").exists()
         assert (source_dir / "作者软链" / "作品压缩.zip").stat().st_size == zip_size_before
     finally:
         _cleanup_imported_comics(base_url, ["作品目录", "作品压缩"])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_reader_can_stream_images_from_directory_source(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_softlink_reader_dir"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者读图"
+    title = "作品读图目录"
+    _write_png(source_dir / author_name / title / "001.png")
+    _write_png(source_dir / author_name / title / "002.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+
+        node_map = _build_node_map(data["tree"])
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        assert commit_payload["data"]["failed_count"] == 0
+
+        comics_data = _load_json(meta_dir / "comics_database.json")
+        comic = _find_comic_by_title(comics_data, title)
+        comic_id = str(comic.get("id") or "")
+        assert comic.get("storage_mode") == "soft_ref"
+        assert comic_id
+
+        images_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": comic_id},
+            timeout=30,
+        )
+        assert images_resp.status_code == 200
+        images_payload = images_resp.json()
+        assert images_payload["code"] == 200
+        image_urls = images_payload["data"]
+        assert isinstance(image_urls, list)
+        assert len(image_urls) == 2
+
+        first_image_resp = requests.get(f"{base_url}{image_urls[0]}", timeout=30)
+        assert first_image_resp.status_code == 200
+        assert first_image_resp.headers.get("Content-Type", "").startswith("image/")
+        assert first_image_resp.content[:8] == PNG_1X1[:8]
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_reader_returns_missing_source_error_after_source_removed(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_softlink_missing_source"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者丢失"
+    title = "作品源丢失"
+    work_dir = source_dir / author_name / title
+    _write_png(work_dir / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        session_id = parse_payload["data"]["session_id"]
+        node_map = _build_node_map(parse_payload["data"]["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        assert commit_resp.json()["code"] == 200
+
+        comic_id = _find_comic_id_by_title(base_url, title)
+
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+        images_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": comic_id},
+            timeout=30,
+        )
+        assert images_resp.status_code == 200
+        images_payload = images_resp.json()
+        assert images_payload["code"] == 404
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_reader_password_flow_with_encrypted_7z(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+
+    try:
+        import py7zr  # type: ignore
+    except Exception:
+        pytest.skip("py7zr not available")
+
+    source_dir = runtime_root / "local_import_case_softlink_password_flow"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者密码"
+    title = "作品加密7z"
+    archive_password = "stage3-softref-pass"
+    archive_path = source_dir / author_name / f"{title}.7z"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with py7zr.SevenZipFile(str(archive_path), "w", password=archive_password) as archive:
+        archive.writestr(PNG_1X1, f"{title}/001.png")
+        archive.writestr(PNG_1X1, f"{title}/002.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={
+                "source_path": str(source_dir),
+                "import_mode": "softlink_ref",
+                "archive_password": archive_password,
+            },
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        session_id = parse_payload["data"]["session_id"]
+        node_map = _build_node_map(parse_payload["data"]["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        assert commit_payload["data"]["failed_count"] == 0
+
+        comic_id = _find_comic_id_by_title(base_url, title)
+
+        challenge_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": comic_id},
+            timeout=30,
+        )
+        assert challenge_resp.status_code == 200
+        challenge_payload = challenge_resp.json()
+        assert challenge_payload["code"] == 200
+        challenge_data = challenge_payload["data"]
+        assert isinstance(challenge_data, dict)
+        assert challenge_data.get("images") == []
+        password_required = challenge_data.get("password_required")
+        assert isinstance(password_required, dict)
+        archive_fingerprint = str(password_required.get("archive_fingerprint") or "")
+        assert archive_fingerprint
+
+        set_password_resp = requests.post(
+            f"{base_url}/api/v1/comic/softref/password",
+            json={
+                "comic_id": comic_id,
+                "archive_fingerprint": archive_fingerprint,
+                "password": archive_password,
+            },
+            timeout=30,
+        )
+        assert set_password_resp.status_code == 200
+        set_password_payload = set_password_resp.json()
+        assert set_password_payload["code"] == 200
+
+        password_store = data_dir / "cache" / "comic_softref_passwords.json"
+        assert password_store.exists()
+        store_payload = json.loads(password_store.read_text(encoding="utf-8"))
+        assert store_payload["archives"][archive_fingerprint]["password"] == archive_password
+
+        images_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": comic_id},
+            timeout=30,
+        )
+        assert images_resp.status_code == 200
+        images_payload = images_resp.json()
+        assert images_payload["code"] == 200
+        image_urls = images_payload["data"]
+        assert isinstance(image_urls, list)
+        assert len(image_urls) >= 2
+
+        image_resp = requests.get(f"{base_url}{image_urls[0]}", timeout=30)
+        assert image_resp.status_code == 200
+        assert image_resp.headers.get("Content-Type", "").startswith("image/")
+        assert image_resp.content[:8] == PNG_1X1[:8]
+    finally:
+        _cleanup_imported_comics(base_url, [title])
 
 
 @pytest.mark.integration
@@ -504,6 +769,11 @@ def test_local_import_softlink_mode_external_encrypted_rar_smoke_if_available(in
     assert payload["code"] == 200
     data = payload["data"]
     assert data.get("effective_mode") == "softlink_ref"
+    tree = data.get("tree") or {}
+    total_images = int(tree.get("total_images") or 0)
+    warnings = data.get("warnings") or []
+    if total_images <= 0:
+        assert len(warnings) > 0
     assert rar_path.exists()
     assert rar_path.stat().st_size == size_before
 

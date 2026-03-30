@@ -176,6 +176,9 @@
         </div>
 
         <div v-if="!treeRows.length" class="empty-block">尚未导入可解析目录。</div>
+        <div v-else-if="!hasImportableImages" class="empty-block">
+          未识别到可导入图片，请先查看右侧“导入警告”并检查压缩包支持能力。
+        </div>
         <div v-else class="tree-list">
           <div
             v-for="row in treeRows"
@@ -387,6 +390,11 @@ const treeRows = computed(() => {
 
   walk(tree.value, 0)
   return rows
+})
+
+const hasImportableImages = computed(() => {
+  if (!tree.value) return false
+  return Number(tree.value.total_images || 0) > 0
 })
 
 const markModeText = computed(() => {

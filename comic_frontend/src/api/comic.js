@@ -58,6 +58,14 @@ export const comicApi = {
       params: { comic_id: comicId }
     })
   },
+
+  setSoftRefPassword: (comicId, archiveFingerprint, password) => {
+    return request.post('/v1/comic/softref/password', {
+      comic_id: comicId,
+      archive_fingerprint: archiveFingerprint,
+      password
+    })
+  },
   
   /**
    * 保存阅读进度

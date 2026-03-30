@@ -9,6 +9,9 @@ from core.enums import ContentType
 @dataclass
 class Comic(BaseContent):
     content_type: ContentType = ContentType.COMIC
+    import_source: str = ""
+    storage_mode: str = ""
+    soft_ref_locator: str = ""
     
     @property
     def author(self) -> str:
@@ -59,6 +62,9 @@ class Comic(BaseContent):
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_read_time", data.get("last_access_time", "")),
             is_deleted=data.get("is_deleted", False),
+            import_source=data.get("import_source", ""),
+            storage_mode=data.get("storage_mode", ""),
+            soft_ref_locator=data.get("soft_ref_locator", ""),
             content_type=ContentType.COMIC
         )
     
@@ -77,7 +83,10 @@ class Comic(BaseContent):
             "list_ids": self.list_ids,
             "create_time": self.create_time,
             "last_read_time": self.last_access_time,
-            "is_deleted": self.is_deleted
+            "is_deleted": self.is_deleted,
+            "import_source": self.import_source,
+            "storage_mode": self.storage_mode,
+            "soft_ref_locator": self.soft_ref_locator,
         }
     
     def update_progress(self, page: int) -> bool:

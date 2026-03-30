@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import stat
+import tempfile
 import time
 import uuid
 import zipfile
@@ -33,7 +34,6 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
-MAX_NESTED_ARCHIVE_SCAN_BYTES = 256 * 1024 * 1024
 LOCAL_IMPORT_TAG_NAME = "本地"
 IMPORT_MODE_COPY_SAFE = "copy_safe"
 IMPORT_MODE_MOVE_HUGE = "move_huge"
@@ -434,9 +434,6 @@ class LocalComicImportService:
 
             try:
                 nested_bytes = read_member_bytes(member_name)
-                if len(nested_bytes) > MAX_NESTED_ARCHIVE_SCAN_BYTES:
-                    warnings.append(f"嵌套压缩包过大，已跳过深度解析: {member_name}")
-                    continue
                 self._scan_archive_bytes_into_virtual_node(
                     archive_node=nested_node,
                     archive_name=leaf_name,
@@ -502,6 +499,12 @@ class LocalComicImportService:
                 if archive_password and hasattr(rf, "setpassword"):
                     rf.setpassword(archive_password)
                 infos = list(rf.infolist())
+                if not infos and archive_password:
+                    warnings.append(
+                        f"未能读取加密 RAR 目录结构，已跳过: {archive_path.name}。"
+                        "可能是当前系统解包后端不支持密码读取。"
+                    )
+                    return
                 members: List[Dict[str, Any]] = []
                 info_map: Dict[str, Any] = {}
                 for info in infos:
@@ -517,6 +520,9 @@ class LocalComicImportService:
                         continue
                     members.append({"name": member_name, "is_dir": is_dir})
                     info_map[member_name] = info
+
+                before_children = len(list(archive_node.get("children") or []))
+                before_direct_images = int(archive_node.get("direct_images", 0) or 0)
 
                 def read_member_bytes(name: str) -> bytes:
                     info = info_map[name]
@@ -537,6 +543,17 @@ class LocalComicImportService:
                     warnings=warnings,
                     read_member_bytes=read_member_bytes,
                 )
+                after_children = len(list(archive_node.get("children") or []))
+                after_direct_images = int(archive_node.get("direct_images", 0) or 0)
+                if (
+                    after_children <= before_children
+                    and after_direct_images <= before_direct_images
+                    and len(members) > 0
+                ):
+                    warnings.append(
+                        f"RAR 内文件未识别到可导入图片/压缩包: {archive_path.name}。"
+                        "若为加密头或特殊封装，请安装支持密码读取的 unrar/7z 后重试。"
+                    )
             return
 
         if suffix == ".7z":
@@ -605,7 +622,64 @@ class LocalComicImportService:
             return
 
         if suffix == ".rar":
-            warnings.append(f"当前环境不支持内存解析嵌套 RAR，已跳过: {archive_name}")
+            if rarfile is None:
+                warnings.append(f"缺少 rarfile 依赖，无法解析: {archive_name}")
+                return
+            temp_path: Optional[str] = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".rar") as temp_file:
+                    temp_file.write(archive_bytes)
+                    temp_path = temp_file.name
+                with rarfile.RarFile(temp_path) as rf:  # type: ignore[arg-type]
+                    if archive_password and hasattr(rf, "setpassword"):
+                        rf.setpassword(archive_password)
+                    infos = list(rf.infolist())
+                    if not infos and archive_password:
+                        warnings.append(f"未能读取嵌套加密 RAR 目录结构，已跳过: {archive_name}")
+                        return
+                    members: List[Dict[str, Any]] = []
+                    info_map: Dict[str, Any] = {}
+                    for info in infos:
+                        member_name = str(getattr(info, "filename", "") or "")
+                        if not member_name:
+                            continue
+                        is_dir = False
+                        if hasattr(info, "is_dir"):
+                            is_dir = bool(info.is_dir())
+                        elif hasattr(info, "isdir"):
+                            is_dir = bool(info.isdir())
+                        if hasattr(info, "is_symlink") and info.is_symlink():
+                            continue
+                        members.append({"name": member_name, "is_dir": is_dir})
+                        info_map[member_name] = info
+
+                    def read_member_bytes(name: str) -> bytes:
+                        info = info_map[name]
+                        kwargs: Dict[str, Any] = {}
+                        if archive_password:
+                            kwargs["pwd"] = archive_password
+                        with rf.open(info, "r", **kwargs) as src:
+                            return src.read()
+
+                    self._populate_virtual_archive_node(
+                        archive_node=archive_node,
+                        members=members,
+                        source_path=source_path,
+                        top_archive_path=top_archive_path,
+                        archive_chain=archive_chain,
+                        depth=depth,
+                        archive_password=archive_password,
+                        warnings=warnings,
+                        read_member_bytes=read_member_bytes,
+                    )
+            except Exception as exc:
+                warnings.append(f"解析嵌套 RAR 失败，已跳过 {archive_name}: {exc}")
+            finally:
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except Exception:
+                        pass
             return
 
         if suffix == ".7z":
@@ -702,6 +776,15 @@ class LocalComicImportService:
             raise ValueError("给定路径不可读取")
 
         tree, node_map = self._finalize_virtual_tree(root)
+        total_images = int(tree.get("total_images", 0) or 0)
+        if total_images <= 0:
+            if source.is_file() and source.suffix.lower() == ".rar":
+                warnings.append(
+                    "未在当前 RAR 中识别到可导入图片。"
+                    "请确认压缩包内容和密码是否正确，或安装支持加密 RAR 的解包后端（unrar/7z）。"
+                )
+            else:
+                warnings.append("未在给定路径中识别到可导入图片。")
         return tree, node_map, warnings
 
     def _extract_zip(self, archive_path: Path, dest_dir: Path) -> None:
