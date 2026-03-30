@@ -1,9 +1,9 @@
 <template>
   <div class="subscription-list-page">
     <div class="header-actions">
-      <van-search 
-        v-model="searchKeyword" 
-        placeholder="搜索已订阅..." 
+      <van-search
+        v-model="searchKeyword"
+        placeholder="搜索已订阅..."
         shape="round"
         background="transparent"
       />
@@ -27,9 +27,9 @@
     <div class="content-area">
       <van-loading v-if="loading" class="loading-center" />
       
-      <EmptyState 
-        v-else-if="filteredItems.length === 0" 
-        title="暂无订阅" 
+      <EmptyState
+        v-else-if="filteredItems.length === 0"
+        title="暂无订阅"
         description="添加订阅以获取更新提醒"
       />
 
@@ -39,8 +39,21 @@
           v-for="actor in filteredItems" 
           :key="actor.id" 
           class="actor-card"
+          data-testid="subscription-actor-card"
           @click="goToDetail(actor)"
         >
+          <van-button
+            class="actor-unsubscribe-btn"
+            size="mini"
+            type="danger"
+            plain
+            round
+            data-testid="subscription-actor-unsubscribe"
+            :loading="unsubscribingIds.has(String(actor.id || ''))"
+            @click.stop="unsubscribe(actor)"
+          >
+            取消
+          </van-button>
           <div class="actor-avatar">
             <!-- Placeholder for avatar if API provides one, currently using icon -->
             <van-icon name="user-circle-o" size="40" color="#ddd" />
@@ -62,13 +75,33 @@
               @click="goToDetail(author)"
             >
               <template #value>
-                <van-tag v-if="author.new_work_count > 0" type="danger" round>
-                  {{ author.new_work_count }}
-                </van-tag>
+                <div class="author-actions-inline">
+                  <van-tag v-if="author.new_work_count > 0" type="danger" round>
+                    {{ author.new_work_count }}
+                  </van-tag>
+                  <van-button
+                    size="mini"
+                    type="danger"
+                    plain
+                    round
+                    data-testid="subscription-author-unsubscribe-inline"
+                    :loading="unsubscribingIds.has(String(author.id || ''))"
+                    @click.stop="unsubscribe(author)"
+                  >
+                    取消
+                  </van-button>
+                </div>
               </template>
             </van-cell>
             <template #right>
-              <van-button square type="danger" text="取消订阅" @click="unsubscribe(author)" />
+              <van-button
+                square
+                type="danger"
+                text="取消订阅"
+                data-testid="subscription-author-unsubscribe"
+                :loading="unsubscribingIds.has(String(author.id || ''))"
+                @click="unsubscribe(author)"
+              />
             </template>
           </van-swipe-cell>
         </van-cell-group>
@@ -78,7 +111,7 @@
     <!-- Add Subscription Popup -->
     <van-dialog 
       v-model:show="showAddPopup" 
-      title="添加订阅" 
+      title="添加订阅"
       show-cancel-button
       @confirm="addSubscription"
     >
@@ -88,7 +121,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModeStore, useActorStore, useAuthorStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -105,6 +138,7 @@ const searchKeyword = ref('')
 const showAddPopup = ref(false)
 const newSubscriptionName = ref('')
 const checkingUpdates = ref(false)
+const unsubscribingIds = reactive(new Set())
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? actorStore : authorStore)
@@ -140,7 +174,7 @@ async function checkAllUpdates() {
       await loadData()
       const total = res?.total_new_works || 0
       if (total > 0) {
-        showToast(`有 ${total} 个新作品`)
+        showToast(`共 ${total} 个新作品`)
       } else {
         showToast('暂无新作品')
       }
@@ -193,18 +227,32 @@ async function addSubscription() {
 }
 
 async function unsubscribe(item) {
+  const subId = String(item?.id || '').trim()
+  if (!subId || unsubscribingIds.has(subId)) return
+
   try {
     await showConfirmDialog({
       title: '确认取消订阅',
       message: `确定取消订阅 ${item.name} 吗？`
     })
-    
-    const subId = item.id
-    await currentStore.value.unsubscribe(subId)
+  } catch (_e) {
+    return
+  }
+
+  unsubscribingIds.add(subId)
+  try {
+    const success = await currentStore.value.unsubscribe(subId)
+    if (!success) {
+      showToast('操作失败')
+      return
+    }
+
     showToast('已取消')
     await loadData()
-  } catch (e) {
-    // cancel
+  } catch (_e) {
+    showToast('操作失败')
+  } finally {
+    unsubscribingIds.delete(subId)
   }
 }
 
@@ -260,6 +308,7 @@ onMounted(() => {
 }
 
 .actor-card {
+  position: relative;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -270,6 +319,13 @@ onMounted(() => {
   text-align: center;
   box-shadow: 0 8px 18px rgba(2, 8, 18, 0.34);
   cursor: pointer;
+}
+
+.actor-unsubscribe-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
 }
 
 .actor-avatar {
@@ -308,4 +364,11 @@ onMounted(() => {
 .author-list {
   padding-top: 12px;
 }
+
+.author-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 </style>
+
