@@ -79,12 +79,21 @@
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
         />
-        <div class="move-mode-row">
-          <van-switch v-model="enableHugeMoveImport" size="20" />
-          <div class="move-mode-text">
-            <div class="move-mode-title">超大文件移动导入</div>
-            <div class="hint">导入大文件时推荐</div>
-          </div>
+        <div class="import-mode-row">
+          <button
+            class="import-mode-btn"
+            :class="{ active: pathImportMode === 'hardlink_move' }"
+            @click="pathImportMode = 'hardlink_move'"
+          >
+            硬链接导入（移动源文件）
+          </button>
+          <button
+            class="import-mode-btn"
+            :class="{ active: pathImportMode === 'softlink_ref' }"
+            @click="pathImportMode = 'softlink_ref'"
+          >
+            软连接导入（不移动源文件）
+          </button>
         </div>
         <div v-if="recoverableSessions.length" class="recover-row">
           <div class="hint">检测到未完成导入会话，可继续上一次任务。</div>
@@ -95,8 +104,11 @@
         <div class="picker-tip">
           路径模式仅支持手动输入服务端本机绝对路径（可填写压缩包或文件夹）。
         </div>
-        <div v-if="enableHugeMoveImport" class="picker-tip danger-tip">
-          已启用移动导入：将直接移动源目录内作品，若中断或断电可能导致数据损坏，请先备份重要数据。
+        <div v-if="pathImportMode === 'hardlink_move'" class="picker-tip danger-tip">
+          已启用硬链接导入（移动源文件）：将直接移动源目录内作品，若中断或断电可能导致数据损坏，请先备份重要数据。
+        </div>
+        <div v-if="pathImportMode === 'softlink_ref'" class="picker-tip">
+          软连接导入会保持源文件不变，当前版本处于分阶段开发中，若未启用会返回明确提示。
         </div>
         <div class="picker-tip">
           浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
@@ -271,7 +283,7 @@ const tagStore = useTagStore()
 const sourceMode = ref('upload')
 const sourcePath = ref('')
 const archiveFiles = ref([])
-const enableHugeMoveImport = ref(false)
+const pathImportMode = ref('hardlink_move')
 const recoverableSessions = ref([])
 const recoveringSession = ref(false)
 
@@ -601,7 +613,7 @@ function clearRuntimeState() {
   collapsedIds.value = new Set()
   commitSummary.value = null
   markMode.value = 'work'
-  enableHugeMoveImport.value = false
+  pathImportMode.value = 'hardlink_move'
   localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -612,11 +624,11 @@ async function startPathParse() {
     return
   }
 
-  if (enableHugeMoveImport.value) {
+  if (pathImportMode.value === 'hardlink_move') {
     try {
       await showConfirmDialog({
         title: '风险提示',
-        message: '超大文件移动导入会直接移动源文件，若中断可能造成数据损坏。是否继续？'
+        message: '硬链接导入（移动源文件）会直接移动源文件，若中断可能造成数据损坏。是否继续？'
       })
     } catch (_error) {
       return
@@ -626,7 +638,7 @@ async function startPathParse() {
   parsing.value = true
   try {
     const payload = await comicApi.localImportCreateSessionFromPath(path, {
-      importMode: enableHugeMoveImport.value ? 'move_huge' : 'copy_safe'
+      importMode: pathImportMode.value
     })
     setImportedPayload(payload)
     await loadRecoverableSessions()
@@ -994,26 +1006,34 @@ onMounted(async () => {
   margin-bottom: 10px;
 }
 
-.move-mode-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 10px 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px dashed var(--border-soft);
+.import-mode-row {
+  display: inline-flex;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  overflow: hidden;
   background: var(--surface-1);
+  margin: 10px 0;
 }
 
-.move-mode-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.import-mode-btn {
+  border: 0;
+  flex: 1;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all var(--motion-fast) var(--ease-standard);
+  font-size: 12px;
 }
 
-.move-mode-title {
-  color: var(--text-strong);
-  font-size: 13px;
+.import-mode-btn + .import-mode-btn {
+  border-left: 1px solid var(--border-soft);
+}
+
+.import-mode-btn.active {
+  background: linear-gradient(140deg, rgba(89, 160, 255, 0.2), rgba(63, 132, 234, 0.12));
+  color: var(--brand-700);
 }
 
 .recover-row {

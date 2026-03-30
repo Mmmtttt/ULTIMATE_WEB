@@ -34,6 +34,8 @@ MAX_NESTED_DEPTH = 30
 LOCAL_IMPORT_TAG_NAME = "本地"
 IMPORT_MODE_COPY_SAFE = "copy_safe"
 IMPORT_MODE_MOVE_HUGE = "move_huge"
+IMPORT_MODE_HARDLINK_MOVE = "hardlink_move"
+IMPORT_MODE_SOFTLINK_REF = "softlink_ref"
 SESSION_PHASE_PREPARING = "preparing"
 SESSION_PHASE_READY = "ready_for_mark"
 SESSION_PHASE_COMMITTING = "committing"
@@ -80,8 +82,10 @@ class LocalComicImportService:
     @staticmethod
     def _normalize_import_mode(raw_mode: Optional[str]) -> str:
         mode = str(raw_mode or "").strip().lower()
-        if mode == IMPORT_MODE_MOVE_HUGE:
+        if mode in {IMPORT_MODE_MOVE_HUGE, IMPORT_MODE_HARDLINK_MOVE}:
             return IMPORT_MODE_MOVE_HUGE
+        if mode == IMPORT_MODE_SOFTLINK_REF:
+            return IMPORT_MODE_SOFTLINK_REF
         return IMPORT_MODE_COPY_SAFE
 
     @staticmethod
@@ -720,18 +724,22 @@ class LocalComicImportService:
 
     def create_session_from_path(self, source_path: str, import_mode: str = IMPORT_MODE_COPY_SAFE) -> Dict[str, Any]:
         source = self._normalize_source_path_input(source_path)
-        mode = self._normalize_import_mode(import_mode)
+        raw_mode = str(import_mode or "").strip().lower()
+        mode = self._normalize_import_mode(raw_mode)
+        display_mode = IMPORT_MODE_HARDLINK_MOVE if raw_mode == IMPORT_MODE_HARDLINK_MOVE else mode
         if not source.exists():
             raise ValueError(
                 "给定路径不存在。请注意：路径必须是服务器所在设备可访问的本机路径；"
                 "若你在局域网其他设备访问本服务，不能直接使用你那台设备的本地路径。"
             )
+        if mode == IMPORT_MODE_SOFTLINK_REF:
+            raise ValueError("软连接导入功能尚未启用，将在后续阶段开放。")
 
         session_id, _base, input_root, clean_root = self._create_empty_session()
         session_meta = {
             "session_id": session_id,
             "source_path": str(source),
-            "import_mode": mode,
+            "import_mode": display_mode,
             "effective_mode": mode,
             "phase": SESSION_PHASE_PREPARING,
             "created_at": self._timestamp(),
@@ -772,7 +780,7 @@ class LocalComicImportService:
                     source,
                     warnings,
                     meta_updates={
-                        "import_mode": mode,
+                        "import_mode": display_mode,
                         "effective_mode": effective_mode,
                         "source_path": str(source),
                         "prepare_status": prepare_result.get("status", "completed"),
@@ -793,7 +801,7 @@ class LocalComicImportService:
                 clean_root,
                 warnings,
                 meta_updates={
-                    "import_mode": mode,
+                    "import_mode": display_mode,
                     "effective_mode": effective_mode,
                     "source_path": str(source),
                 },

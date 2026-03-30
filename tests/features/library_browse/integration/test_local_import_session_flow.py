@@ -323,6 +323,79 @@ def test_local_import_move_mode_extracts_nested_archives_and_moves_work_dirs(int
 
 
 @pytest.mark.integration
+def test_local_import_hardlink_move_alias_matches_move_mode_behavior(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_hardlink_alias"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    _write_png(source_dir / "作者硬链" / "作品硬链" / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "hardlink_move"},
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        assert data.get("import_mode") == "hardlink_move"
+        assert data.get("effective_mode") == "move_huge"
+        node_map = _build_node_map(data["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者硬链"): "author",
+            _find_parent_id_by_name(node_map, "作品硬链"): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["status"] == "completed"
+        assert result["imported_count"] >= 1
+        assert result["session_removed"] is True
+
+        # 与 move_huge 行为一致：源目录中的作品被移动走
+        assert not (source_dir / "作者硬链" / "作品硬链").exists()
+    finally:
+        _cleanup_imported_comics(base_url, ["作品硬链"])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_returns_explicit_not_enabled_error(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_softlink_not_enabled"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+    _write_png(source_dir / "作者软链" / "作品软链" / "001.png")
+
+    parse_resp = requests.post(
+        f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+        json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+        timeout=30,
+    )
+    # 本项目接口约定：业务错误通过 JSON code 返回，HTTP 状态仍为 200
+    assert parse_resp.status_code == 200
+    payload = parse_resp.json()
+    assert payload["code"] == 400
+    assert "尚未启用" in str(payload.get("msg") or "")
+
+
+@pytest.mark.integration
 def test_local_import_move_mode_can_resume_after_move_then_failed_indexing(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
