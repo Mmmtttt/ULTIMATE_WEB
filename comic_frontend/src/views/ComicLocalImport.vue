@@ -79,6 +79,14 @@
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
         />
+        <van-field
+          v-if="pathImportMode === 'softlink_ref'"
+          v-model="pathArchivePassword"
+          label="压缩包密码"
+          type="password"
+          autocomplete="new-password"
+          placeholder="可选：用于解析加密压缩包目录"
+        />
         <div class="import-mode-row">
           <button
             class="import-mode-btn"
@@ -108,7 +116,7 @@
           已启用硬链接导入（移动源文件）：将直接移动源目录内作品，若中断或断电可能导致数据损坏，请先备份重要数据。
         </div>
         <div v-if="pathImportMode === 'softlink_ref'" class="picker-tip">
-          软连接导入会保持源文件不变，当前版本处于分阶段开发中，若未启用会返回明确提示。
+          软连接导入会保持源文件不变：当前阶段会建立虚拟索引并入库，不会移动或删除源文件。
         </div>
         <div class="picker-tip">
           浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
@@ -284,6 +292,7 @@ const sourceMode = ref('upload')
 const sourcePath = ref('')
 const archiveFiles = ref([])
 const pathImportMode = ref('hardlink_move')
+const pathArchivePassword = ref('')
 const recoverableSessions = ref([])
 const recoveringSession = ref(false)
 
@@ -614,6 +623,7 @@ function clearRuntimeState() {
   commitSummary.value = null
   markMode.value = 'work'
   pathImportMode.value = 'hardlink_move'
+  pathArchivePassword.value = ''
   localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -637,8 +647,14 @@ async function startPathParse() {
 
   parsing.value = true
   try {
-    const payload = await comicApi.localImportCreateSessionFromPath(path, {
+    const options = {
       importMode: pathImportMode.value
+    }
+    if (pathImportMode.value === 'softlink_ref' && pathArchivePassword.value.trim()) {
+      options.archivePassword = pathArchivePassword.value.trim()
+    }
+    const payload = await comicApi.localImportCreateSessionFromPath(path, {
+      ...options
     })
     setImportedPayload(payload)
     await loadRecoverableSessions()

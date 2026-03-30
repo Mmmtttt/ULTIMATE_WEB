@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+import io
 import json
 import shutil
 import zipfile
@@ -374,25 +375,137 @@ def test_local_import_hardlink_move_alias_matches_move_mode_behavior(integration
 
 
 @pytest.mark.integration
-def test_local_import_softlink_mode_returns_explicit_not_enabled_error(integration_runtime):
+def test_local_import_softlink_mode_parses_nested_archive_without_modifying_source(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
 
-    source_dir = runtime_root / "local_import_case_softlink_not_enabled"
+    source_dir = runtime_root / "local_import_case_softlink_tree"
     if source_dir.exists():
         shutil.rmtree(source_dir, ignore_errors=True)
-    _write_png(source_dir / "作者软链" / "作品软链" / "001.png")
+
+    _write_png(source_dir / "作者软链" / "作品目录" / "001.png")
+
+    nested_zip_bytes = io.BytesIO()
+    with zipfile.ZipFile(nested_zip_bytes, "w", compression=zipfile.ZIP_DEFLATED) as nested_zip:
+        nested_zip.writestr("作品压缩内/001.png", PNG_1X1)
+
+    outer_zip = source_dir / "作者软链" / "作品压缩.zip"
+    with zipfile.ZipFile(outer_zip, "w", compression=zipfile.ZIP_DEFLATED) as outer:
+        outer.writestr("作品压缩/外层001.png", PNG_1X1)
+        outer.writestr("作品压缩/内层.zip", nested_zip_bytes.getvalue())
+    size_before = outer_zip.stat().st_size
 
     parse_resp = requests.post(
         f"{base_url}/api/v1/comic/batch-upload/session/from-path",
         json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
         timeout=30,
     )
-    # 本项目接口约定：业务错误通过 JSON code 返回，HTTP 状态仍为 200
     assert parse_resp.status_code == 200
     payload = parse_resp.json()
-    assert payload["code"] == 400
-    assert "尚未启用" in str(payload.get("msg") or "")
+    assert payload["code"] == 200
+    data = payload["data"]
+    assert data.get("effective_mode") == "softlink_ref"
+
+    node_map = _build_node_map(data["tree"])
+    all_names = {str(node.get("real_name") or "") for node in node_map.values()}
+    assert "作者软链" in all_names
+    assert "作品目录" in all_names
+    assert "作品压缩" in all_names
+    assert "内层" in all_names
+
+    # 源目录和压缩包不可被改动/删除
+    assert (source_dir / "作者软链" / "作品目录").exists()
+    assert outer_zip.exists()
+    assert outer_zip.stat().st_size == size_before
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_commit_creates_soft_ref_records(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_softlink_commit"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    _write_png(source_dir / "作者软链" / "作品目录" / "001.png")
+    _write_zip_with_png(source_dir / "作者软链" / "作品压缩.zip", ["作品压缩/001.png"])
+    zip_size_before = (source_dir / "作者软链" / "作品压缩.zip").stat().st_size
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        assert data.get("effective_mode") == "softlink_ref"
+
+        node_map = _build_node_map(data["tree"])
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者软链"): "author",
+            _find_parent_id_by_name(node_map, "作品目录"): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["status"] == "completed"
+        assert result["failed_count"] == 0
+        assert result["imported_count"] >= 2
+
+        comics_data = _load_json(meta_dir / "comics_database.json")
+        comic_a = _find_comic_by_title(comics_data, "作品目录")
+        comic_b = _find_comic_by_title(comics_data, "作品压缩")
+
+        for comic in (comic_a, comic_b):
+            assert comic.get("storage_mode") == "soft_ref"
+            assert str(comic.get("import_source") or "").strip()
+            assert int(comic.get("total_page") or 0) >= 1
+
+        # 提交后源文件仍保持原位
+        assert (source_dir / "作者软链" / "作品目录").exists()
+        assert (source_dir / "作者软链" / "作品压缩.zip").exists()
+        assert (source_dir / "作者软链" / "作品压缩.zip").stat().st_size == zip_size_before
+    finally:
+        _cleanup_imported_comics(base_url, ["作品目录", "作品压缩"])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_external_encrypted_rar_smoke_if_available(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    rar_path = Path(r"D:\uohsoaixgnaixgnawab.rar")
+    if not rar_path.exists():
+        pytest.skip("external encrypted rar not provided in this environment")
+
+    size_before = rar_path.stat().st_size
+    parse_resp = requests.post(
+        f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+        json={
+            "source_path": str(rar_path),
+            "import_mode": "softlink_ref",
+            "archive_password": "uohsoaixgnaixgnawab",
+        },
+        timeout=120,
+    )
+    assert parse_resp.status_code == 200
+    payload = parse_resp.json()
+    assert payload["code"] == 200
+    data = payload["data"]
+    assert data.get("effective_mode") == "softlink_ref"
+    assert rar_path.exists()
+    assert rar_path.stat().st_size == size_before
 
 
 @pytest.mark.integration

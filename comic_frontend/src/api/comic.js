@@ -286,9 +286,16 @@ export const comicApi = {
 
   localImportCreateSessionFromPath: async (sourcePath, options = {}) => {
     const importMode = String(options.importMode || 'copy_safe')
-    const result = await request.post('/v1/comic/batch-upload/session/from-path', {
+    const archivePassword = String(options.archivePassword || '').trim()
+    const payload = {
       source_path: sourcePath,
       import_mode: importMode
+    }
+    if (archivePassword) {
+      payload.archive_password = archivePassword
+    }
+    const result = await request.post('/v1/comic/batch-upload/session/from-path', {
+      ...payload
     }, {
       timeout: 0
     })

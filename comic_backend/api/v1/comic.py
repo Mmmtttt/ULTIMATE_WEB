@@ -991,7 +991,12 @@ def batch_upload_create_session_from_path():
             return error_response(400, "缺少参数: source_path")
 
         import_mode = str(data.get('import_mode', 'copy_safe') or 'copy_safe').strip()
-        result = local_comic_import_service.create_session_from_path(source_path, import_mode=import_mode)
+        archive_password = str(data.get('archive_password', '') or '').strip() or None
+        result = local_comic_import_service.create_session_from_path(
+            source_path,
+            import_mode=import_mode,
+            archive_password=archive_password,
+        )
         return success_response(result, "解析会话创建成功")
     except ValueError as e:
         return error_response(400, str(e))

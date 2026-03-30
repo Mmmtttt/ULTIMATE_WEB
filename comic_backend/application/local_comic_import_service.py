@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -9,7 +11,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
 from infrastructure.logger import app_logger
@@ -31,6 +33,7 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
+MAX_NESTED_ARCHIVE_SCAN_BYTES = 256 * 1024 * 1024
 LOCAL_IMPORT_TAG_NAME = "本地"
 IMPORT_MODE_COPY_SAFE = "copy_safe"
 IMPORT_MODE_MOVE_HUGE = "move_huge"
@@ -160,6 +163,24 @@ class LocalComicImportService:
         return path.suffix.lower() in ARCHIVE_EXTENSIONS
 
     @staticmethod
+    def _looks_like_image_name(filename: str) -> bool:
+        return Path(str(filename or "")).suffix.lower() in IMAGE_EXTENSIONS
+
+    @staticmethod
+    def _looks_like_archive_name(filename: str) -> bool:
+        return Path(str(filename or "")).suffix.lower() in ARCHIVE_EXTENSIONS
+
+    @staticmethod
+    def _is_softref_locator(raw_path: str) -> bool:
+        return str(raw_path or "").startswith("softref://")
+
+    @staticmethod
+    def _encode_softref_locator(payload: Dict[str, Any]) -> str:
+        raw = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
+        encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+        return f"softref://{encoded}"
+
+    @staticmethod
     def _normalize_name(name: str) -> str:
         return "".join(ch.lower() for ch in str(name or "") if ch not in {" ", "_", "-", "."})
 
@@ -207,6 +228,481 @@ class LocalComicImportService:
         if not parts:
             return None
         return dest_dir.joinpath(*parts)
+
+    def _new_virtual_node(
+        self,
+        node_id: str,
+        display_name: str,
+        real_name: str,
+        abs_path: str,
+        parent_id: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "id": node_id,
+            "name": "根目录" if node_id == "." else display_name,
+            "real_name": real_name if node_id != "." else display_name,
+            "abs_path": abs_path,
+            "rel_path": "." if node_id == "." else node_id,
+            "direct_images": 0,
+            "total_images": 0,
+            "children": [],
+            "_child_index": {},
+            "_parent_id": parent_id,
+        }
+
+    def _ensure_virtual_dir_child(
+        self,
+        parent: Dict[str, Any],
+        segment: str,
+        abs_path: str,
+        *,
+        allow_reuse: bool = True,
+    ) -> Dict[str, Any]:
+        raw_segment = str(segment or "").strip() or "未命名目录"
+        child_index = parent.setdefault("_child_index", {})
+
+        if allow_reuse and raw_segment in child_index:
+            child = child_index[raw_segment]
+            if abs_path:
+                child["abs_path"] = abs_path
+            return child
+
+        final_segment = raw_segment
+        if final_segment in child_index:
+            suffix = 2
+            while f"{raw_segment}__{suffix}" in child_index:
+                suffix += 1
+            final_segment = f"{raw_segment}__{suffix}"
+
+        parent_id = str(parent.get("id") or ".")
+        node_id = final_segment if parent_id == "." else f"{parent_id}/{final_segment}"
+        child = self._new_virtual_node(
+            node_id=node_id,
+            display_name=final_segment,
+            real_name=final_segment,
+            abs_path=abs_path,
+            parent_id=parent_id,
+        )
+        child_index[final_segment] = child
+        parent.setdefault("children", []).append(child)
+        return child
+
+    def _finalize_virtual_tree(self, root: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        node_map: Dict[str, Dict[str, Any]] = {}
+
+        def walk(node: Dict[str, Any]) -> Dict[str, Any]:
+            raw_children = list(node.get("children", []) or [])
+            children = sorted(
+                raw_children,
+                key=lambda item: (
+                    str(item.get("real_name", "")).lower(),
+                    str(item.get("real_name", "")),
+                ),
+            )
+
+            child_ids: List[str] = []
+            total_images = int(node.get("direct_images", 0) or 0)
+            finalized_children: List[Dict[str, Any]] = []
+            for child in children:
+                finalized = walk(child)
+                finalized_children.append(finalized)
+                child_ids.append(str(finalized.get("id") or ""))
+                total_images += int(finalized.get("total_images", 0) or 0)
+
+            node["children"] = finalized_children
+            node["total_images"] = total_images
+            node.pop("_child_index", None)
+            parent_id = node.pop("_parent_id", None)
+
+            node_id = str(node.get("id") or "")
+            node_map[node_id] = {
+                "id": node_id,
+                "name": str(node.get("name") or ""),
+                "real_name": str(node.get("real_name") or ""),
+                "abs_path": str(node.get("abs_path") or ""),
+                "rel_path": str(node.get("rel_path") or "."),
+                "direct_images": int(node.get("direct_images", 0) or 0),
+                "total_images": int(node.get("total_images", 0) or 0),
+                "parent_id": parent_id,
+                "child_ids": child_ids,
+            }
+            return node
+
+        tree = walk(root)
+        return tree, node_map
+
+    def _make_archive_softref_locator(
+        self,
+        source_path: str,
+        top_archive_path: str,
+        archive_chain: List[str],
+        inner_path: str,
+    ) -> str:
+        return self._encode_softref_locator(
+            {
+                "kind": "archive_dir",
+                "source_path": str(source_path or ""),
+                "top_archive_path": str(top_archive_path or ""),
+                "archive_chain": list(archive_chain or []),
+                "inner_path": str(inner_path or "."),
+            }
+        )
+
+    def _populate_virtual_archive_node(
+        self,
+        archive_node: Dict[str, Any],
+        members: List[Dict[str, Any]],
+        *,
+        source_path: str,
+        top_archive_path: str,
+        archive_chain: List[str],
+        depth: int,
+        archive_password: Optional[str],
+        warnings: List[str],
+        read_member_bytes: Optional[Callable[[str], bytes]] = None,
+    ) -> None:
+        def ensure_inner_dir(path_parts: List[str]) -> Dict[str, Any]:
+            current = archive_node
+            current_parts: List[str] = []
+            for part in path_parts:
+                current_parts.append(part)
+                locator = self._make_archive_softref_locator(
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    inner_path="/".join(current_parts) or ".",
+                )
+                current = self._ensure_virtual_dir_child(current, part, locator, allow_reuse=True)
+            return current
+
+        sorted_members = sorted(
+            list(members or []),
+            key=lambda item: (str(item.get("name", "")).replace("\\", "/").lower(), str(item.get("name", ""))),
+        )
+
+        for member in sorted_members:
+            member_name = str(member.get("name") or "").replace("\\", "/")
+            if not member_name:
+                continue
+            if not self._is_safe_member_name(member_name):
+                warnings.append(f"压缩包内包含非法路径，已跳过: {member_name}")
+                continue
+
+            pure = PurePosixPath(member_name)
+            parts = [part for part in pure.parts if part not in {"", "."}]
+            if not parts:
+                continue
+
+            is_dir = bool(member.get("is_dir", False))
+            if is_dir:
+                ensure_inner_dir(parts)
+                continue
+
+            parent_parts = parts[:-1]
+            leaf_name = parts[-1]
+            leaf_parent = ensure_inner_dir(parent_parts) if parent_parts else archive_node
+
+            if self._looks_like_image_name(leaf_name):
+                leaf_parent["direct_images"] = int(leaf_parent.get("direct_images", 0) or 0) + 1
+                continue
+
+            if not self._looks_like_archive_name(leaf_name):
+                continue
+
+            nested_chain = list(archive_chain) + [member_name]
+            nested_locator = self._make_archive_softref_locator(
+                source_path=source_path,
+                top_archive_path=top_archive_path,
+                archive_chain=nested_chain,
+                inner_path=".",
+            )
+            nested_name = self._strip_archive_suffix(leaf_name) or leaf_name
+            nested_node = self._ensure_virtual_dir_child(
+                leaf_parent,
+                nested_name,
+                nested_locator,
+                allow_reuse=False,
+            )
+
+            if depth + 1 > MAX_NESTED_DEPTH:
+                warnings.append(f"嵌套层级过深，已跳过: {member_name}")
+                continue
+
+            if read_member_bytes is None:
+                warnings.append(f"当前压缩格式暂不支持直接解析嵌套压缩包: {member_name}")
+                continue
+
+            try:
+                nested_bytes = read_member_bytes(member_name)
+                if len(nested_bytes) > MAX_NESTED_ARCHIVE_SCAN_BYTES:
+                    warnings.append(f"嵌套压缩包过大，已跳过深度解析: {member_name}")
+                    continue
+                self._scan_archive_bytes_into_virtual_node(
+                    archive_node=nested_node,
+                    archive_name=leaf_name,
+                    archive_bytes=nested_bytes,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=nested_chain,
+                    depth=depth + 1,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                )
+            except Exception as exc:
+                warnings.append(f"解析嵌套压缩包失败，已跳过 {member_name}: {exc}")
+
+    def _scan_archive_path_into_virtual_node(
+        self,
+        archive_node: Dict[str, Any],
+        archive_path: Path,
+        *,
+        source_path: str,
+        top_archive_path: str,
+        archive_chain: List[str],
+        depth: int,
+        archive_password: Optional[str],
+        warnings: List[str],
+    ) -> None:
+        suffix = archive_path.suffix.lower()
+        if suffix == ".zip":
+            pwd_bytes = archive_password.encode("utf-8") if archive_password else None
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                if pwd_bytes:
+                    zf.setpassword(pwd_bytes)
+                infos = [info for info in zf.infolist() if not stat.S_ISLNK(info.external_attr >> 16)]
+                members = [{"name": str(info.filename or ""), "is_dir": bool(info.is_dir())} for info in infos]
+                info_map = {str(info.filename or ""): info for info in infos}
+
+                def read_member_bytes(name: str) -> bytes:
+                    info = info_map[name]
+                    if pwd_bytes:
+                        with zf.open(info, "r", pwd=pwd_bytes) as src:
+                            return src.read()
+                    with zf.open(info, "r") as src:
+                        return src.read()
+
+                self._populate_virtual_archive_node(
+                    archive_node=archive_node,
+                    members=members,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                    read_member_bytes=read_member_bytes,
+                )
+            return
+
+        if suffix == ".rar":
+            if rarfile is None:
+                warnings.append(f"缺少 rarfile 依赖，无法解析: {archive_path.name}")
+                return
+            with rarfile.RarFile(archive_path) as rf:  # type: ignore[arg-type]
+                if archive_password and hasattr(rf, "setpassword"):
+                    rf.setpassword(archive_password)
+                infos = list(rf.infolist())
+                members: List[Dict[str, Any]] = []
+                info_map: Dict[str, Any] = {}
+                for info in infos:
+                    member_name = str(getattr(info, "filename", "") or "")
+                    if not member_name:
+                        continue
+                    is_dir = False
+                    if hasattr(info, "is_dir"):
+                        is_dir = bool(info.is_dir())
+                    elif hasattr(info, "isdir"):
+                        is_dir = bool(info.isdir())
+                    if hasattr(info, "is_symlink") and info.is_symlink():
+                        continue
+                    members.append({"name": member_name, "is_dir": is_dir})
+                    info_map[member_name] = info
+
+                def read_member_bytes(name: str) -> bytes:
+                    info = info_map[name]
+                    kwargs: Dict[str, Any] = {}
+                    if archive_password:
+                        kwargs["pwd"] = archive_password
+                    with rf.open(info, "r", **kwargs) as src:
+                        return src.read()
+
+                self._populate_virtual_archive_node(
+                    archive_node=archive_node,
+                    members=members,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                    read_member_bytes=read_member_bytes,
+                )
+            return
+
+        if suffix == ".7z":
+            if py7zr is None:
+                warnings.append(f"缺少 py7zr 依赖，无法解析: {archive_path.name}")
+                return
+            with py7zr.SevenZipFile(archive_path, "r", password=(archive_password or None)) as archive:
+                members = [{"name": str(name or ""), "is_dir": str(name or "").endswith("/")} for name in archive.getnames()]
+                self._populate_virtual_archive_node(
+                    archive_node=archive_node,
+                    members=members,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                    read_member_bytes=None,
+                )
+            return
+
+        warnings.append(f"不支持的压缩格式，已跳过: {archive_path.name}")
+
+    def _scan_archive_bytes_into_virtual_node(
+        self,
+        archive_node: Dict[str, Any],
+        archive_name: str,
+        archive_bytes: bytes,
+        *,
+        source_path: str,
+        top_archive_path: str,
+        archive_chain: List[str],
+        depth: int,
+        archive_password: Optional[str],
+        warnings: List[str],
+    ) -> None:
+        suffix = Path(str(archive_name or "")).suffix.lower()
+        if suffix == ".zip":
+            pwd_bytes = archive_password.encode("utf-8") if archive_password else None
+            with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as zf:
+                if pwd_bytes:
+                    zf.setpassword(pwd_bytes)
+                infos = [info for info in zf.infolist() if not stat.S_ISLNK(info.external_attr >> 16)]
+                members = [{"name": str(info.filename or ""), "is_dir": bool(info.is_dir())} for info in infos]
+                info_map = {str(info.filename or ""): info for info in infos}
+
+                def read_member_bytes(name: str) -> bytes:
+                    info = info_map[name]
+                    if pwd_bytes:
+                        with zf.open(info, "r", pwd=pwd_bytes) as src:
+                            return src.read()
+                    with zf.open(info, "r") as src:
+                        return src.read()
+
+                self._populate_virtual_archive_node(
+                    archive_node=archive_node,
+                    members=members,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                    read_member_bytes=read_member_bytes,
+                )
+            return
+
+        if suffix == ".rar":
+            warnings.append(f"当前环境不支持内存解析嵌套 RAR，已跳过: {archive_name}")
+            return
+
+        if suffix == ".7z":
+            if py7zr is None:
+                warnings.append(f"缺少 py7zr 依赖，无法解析: {archive_name}")
+                return
+            with py7zr.SevenZipFile(io.BytesIO(archive_bytes), "r", password=(archive_password or None)) as archive:
+                members = [{"name": str(name or ""), "is_dir": str(name or "").endswith("/")} for name in archive.getnames()]
+                self._populate_virtual_archive_node(
+                    archive_node=archive_node,
+                    members=members,
+                    source_path=source_path,
+                    top_archive_path=top_archive_path,
+                    archive_chain=archive_chain,
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                    read_member_bytes=None,
+                )
+            return
+
+        warnings.append(f"不支持的嵌套压缩格式，已跳过: {archive_name}")
+
+    def _build_softref_tree(
+        self,
+        source: Path,
+        archive_password: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], List[str]]:
+        warnings: List[str] = []
+        source_abs = str(source.resolve())
+        root = self._new_virtual_node(
+            node_id=".",
+            display_name="根目录",
+            real_name=str(source.name or "根目录"),
+            abs_path=source_abs,
+            parent_id=None,
+        )
+
+        def add_archive_from_path(parent: Dict[str, Any], archive_path: Path, *, depth: int) -> None:
+            archive_name = archive_path.name
+            display_name = self._strip_archive_suffix(archive_name) or archive_name
+            archive_locator = self._make_archive_softref_locator(
+                source_path=source_abs,
+                top_archive_path=str(archive_path.resolve()),
+                archive_chain=[],
+                inner_path=".",
+            )
+            archive_node = self._ensure_virtual_dir_child(
+                parent,
+                display_name,
+                archive_locator,
+                allow_reuse=False,
+            )
+            try:
+                self._scan_archive_path_into_virtual_node(
+                    archive_node=archive_node,
+                    archive_path=archive_path,
+                    source_path=source_abs,
+                    top_archive_path=str(archive_path.resolve()),
+                    archive_chain=[],
+                    depth=depth,
+                    archive_password=archive_password,
+                    warnings=warnings,
+                )
+            except Exception as exc:
+                warnings.append(f"解析压缩包失败，已跳过 {archive_name}: {exc}")
+
+        def walk_fs_dir(parent: Dict[str, Any], folder: Path, *, depth: int) -> None:
+            if depth > MAX_NESTED_DEPTH:
+                warnings.append(f"目录层级过深，已跳过: {folder}")
+                return
+            for entry in self._sorted_entries(list(folder.iterdir())):
+                if entry.is_dir():
+                    child = self._ensure_virtual_dir_child(parent, entry.name, str(entry.resolve()), allow_reuse=True)
+                    walk_fs_dir(child, entry, depth=depth + 1)
+                    continue
+                if self._is_image(entry):
+                    parent["direct_images"] = int(parent.get("direct_images", 0) or 0) + 1
+                    continue
+                if self._is_archive(entry):
+                    add_archive_from_path(parent, entry, depth=depth + 1)
+                    continue
+
+        if source.is_dir():
+            walk_fs_dir(root, source, depth=0)
+        elif source.is_file():
+            if self._is_image(source):
+                root["direct_images"] = int(root.get("direct_images", 0) or 0) + 1
+            elif self._is_archive(source):
+                add_archive_from_path(root, source, depth=0)
+            else:
+                raise ValueError("给定路径不是可导入的图片/压缩包/文件夹")
+        else:
+            raise ValueError("给定路径不可读取")
+
+        tree, node_map = self._finalize_virtual_tree(root)
+        return tree, node_map, warnings
 
     def _extract_zip(self, archive_path: Path, dest_dir: Path) -> None:
         with zipfile.ZipFile(archive_path, "r") as zf:
@@ -526,6 +1022,35 @@ class LocalComicImportService:
         tree = walk(clean_root, ".", None)
         return tree, node_map
 
+    def _build_node_map_from_tree(self, tree: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(tree, dict):
+            raise ValueError("会话目录树格式错误")
+
+        node_map: Dict[str, Dict[str, Any]] = {}
+
+        def walk(node: Dict[str, Any], parent_id: Optional[str]) -> None:
+            node_id = str(node.get("id") or "")
+            if not node_id:
+                return
+            children = list(node.get("children") or [])
+            child_ids: List[str] = [str(child.get("id") or "") for child in children if str(child.get("id") or "")]
+            node_map[node_id] = {
+                "id": node_id,
+                "name": str(node.get("name") or ""),
+                "real_name": str(node.get("real_name") or node.get("name") or ""),
+                "abs_path": str(node.get("abs_path") or ""),
+                "rel_path": str(node.get("rel_path") or "."),
+                "direct_images": int(node.get("direct_images", 0) or 0),
+                "total_images": int(node.get("total_images", 0) or 0),
+                "parent_id": parent_id,
+                "child_ids": child_ids,
+            }
+            for child in children:
+                walk(child, node_id)
+
+        walk(tree, None)
+        return node_map
+
     def _nearest_author_name(self, node_id: str, node_map: Dict[str, Dict[str, Any]], assignments: Dict[str, str]) -> str:
         current_id = node_map[node_id]["parent_id"]
         while current_id is not None:
@@ -600,13 +1125,13 @@ class LocalComicImportService:
             result.append(item)
         return result
 
-    def _build_export_payload(
+    def _build_export_payload_from_tree(
         self,
-        clean_root: Path,
+        tree: Dict[str, Any],
+        node_map: Dict[str, Dict[str, Any]],
         assignments: Dict[str, str],
         tag_assignments: Optional[Dict[str, bool]] = None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
-        tree, node_map = self._build_tree(clean_root)
+    ) -> List[Dict[str, Any]]:
         normalized_tag_assignments = self._normalize_tag_assignments(tag_assignments)
 
         work_nodes: set[str] = set()
@@ -632,7 +1157,7 @@ class LocalComicImportService:
 
         deepest_work_nodes = sorted(
             [node_id for node_id in work_nodes if node_id not in ancestor_selected],
-            key=lambda node_id: node_map[node_id]["abs_path"],
+            key=lambda node_id: str(node_map[node_id].get("abs_path", "")),
         )
 
         payload: List[Dict[str, Any]] = []
@@ -643,9 +1168,20 @@ class LocalComicImportService:
                     "作者名称": self._nearest_author_name(node_id, node_map, assignments),
                     "作品名称": node["real_name"],
                     "作品文件地址": node["abs_path"],
+                    "图片数量": int(node.get("total_images", 0) or 0),
                     "标签名称列表": self._collect_parent_tag_names(node_id, node_map, normalized_tag_assignments),
                 }
             )
+        return payload
+
+    def _build_export_payload(
+        self,
+        clean_root: Path,
+        assignments: Dict[str, str],
+        tag_assignments: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        tree, node_map = self._build_tree(clean_root)
+        payload = self._build_export_payload_from_tree(tree, node_map, assignments, tag_assignments)
         return payload, tree, node_map
 
     def _create_empty_session(self) -> Tuple[str, Path, Path, Path]:
@@ -663,8 +1199,12 @@ class LocalComicImportService:
         clean_root: Path,
         warnings: List[str],
         meta_updates: Optional[Dict[str, Any]] = None,
+        tree_override: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        tree, _ = self._build_tree(clean_root)
+        if tree_override is None:
+            tree, _ = self._build_tree(clean_root)
+        else:
+            tree = tree_override
         payload = {
             "session_id": session_id,
             "tree": tree,
@@ -712,6 +1252,33 @@ class LocalComicImportService:
             raise ValueError("清洗后的目录不存在")
         return clean_root
 
+    def _load_session_tree_and_node_map(self, session_id: str) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        self._ensure_session_dir(session_id)
+        payload = self._read_json(self._tree_path(session_id), default=None)
+        if not isinstance(payload, dict):
+            raise ValueError("会话目录树不存在")
+        tree = payload.get("tree")
+        if not isinstance(tree, dict):
+            raise ValueError("会话目录树格式错误")
+        node_map = self._build_node_map_from_tree(tree)
+        return tree, node_map
+
+    def _build_session_export_payload(
+        self,
+        session_id: str,
+        assignments: Dict[str, str],
+        tag_assignments: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
+        meta = self._load_meta(session_id)
+        effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
+        if effective_mode == IMPORT_MODE_SOFTLINK_REF:
+            tree, node_map = self._load_session_tree_and_node_map(session_id)
+            items = self._build_export_payload_from_tree(tree, node_map, assignments, tag_assignments)
+            return items, tree, node_map
+
+        clean_root = self._load_clean_root(session_id)
+        return self._build_export_payload(clean_root, assignments, tag_assignments)
+
     def _attach_meta_to_tree_payload(self, session_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         meta = self._load_meta(session_id)
         data = dict(payload or {})
@@ -722,18 +1289,22 @@ class LocalComicImportService:
         data["phase"] = str(meta.get("phase", ""))
         return data
 
-    def create_session_from_path(self, source_path: str, import_mode: str = IMPORT_MODE_COPY_SAFE) -> Dict[str, Any]:
+    def create_session_from_path(
+        self,
+        source_path: str,
+        import_mode: str = IMPORT_MODE_COPY_SAFE,
+        archive_password: Optional[str] = None,
+    ) -> Dict[str, Any]:
         source = self._normalize_source_path_input(source_path)
         raw_mode = str(import_mode or "").strip().lower()
         mode = self._normalize_import_mode(raw_mode)
         display_mode = IMPORT_MODE_HARDLINK_MOVE if raw_mode == IMPORT_MODE_HARDLINK_MOVE else mode
+        archive_password = str(archive_password or "").strip() or None
         if not source.exists():
             raise ValueError(
                 "给定路径不存在。请注意：路径必须是服务器所在设备可访问的本机路径；"
                 "若你在局域网其他设备访问本服务，不能直接使用你那台设备的本地路径。"
             )
-        if mode == IMPORT_MODE_SOFTLINK_REF:
-            raise ValueError("软连接导入功能尚未启用，将在后续阶段开放。")
 
         session_id, _base, input_root, clean_root = self._create_empty_session()
         session_meta = {
@@ -752,6 +1323,24 @@ class LocalComicImportService:
         target = input_root / source.name
         warnings: List[str] = []
         try:
+            if mode == IMPORT_MODE_SOFTLINK_REF:
+                tree, _node_map, soft_warnings = self._build_softref_tree(source, archive_password=archive_password)
+                warnings.extend(soft_warnings)
+                response = self._finalize_session(
+                    session_id,
+                    source,
+                    warnings,
+                    meta_updates={
+                        "import_mode": display_mode,
+                        "effective_mode": mode,
+                        "source_path": str(source),
+                        "archive_password": archive_password or "",
+                    },
+                    tree_override=tree,
+                )
+                app_logger.info(f"本地导入解析会话创建成功(path-softref): {session_id}")
+                return response
+
             effective_mode = mode
             if mode == IMPORT_MODE_MOVE_HUGE:
                 if not source.is_dir():
@@ -887,7 +1476,6 @@ class LocalComicImportService:
         raw_assignments: Dict[str, str],
         raw_tag_assignments: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        clean_root = self._load_clean_root(session_id)
         meta = self._load_meta(session_id)
         assignments = self._normalize_assignments(raw_assignments)
         if raw_tag_assignments is None:
@@ -897,7 +1485,7 @@ class LocalComicImportService:
             tag_assignments = self._normalize_tag_assignments(raw_tag_assignments)
             self._save_assignments_to_meta(session_id, assignments, tag_assignments)
 
-        items, tree, _node_map = self._build_export_payload(clean_root, assignments, tag_assignments)
+        items, tree, _node_map = self._build_session_export_payload(session_id, assignments, tag_assignments)
         self._write_json(self._result_path(session_id), items)
         return {
             "session_id": session_id,
@@ -909,7 +1497,10 @@ class LocalComicImportService:
 
     @staticmethod
     def _normalize_existing_source(raw_source: str) -> str:
-        return os.path.normcase(os.path.abspath(str(raw_source or "").strip()))
+        normalized = str(raw_source or "").strip()
+        if normalized.startswith("softref://"):
+            return normalized
+        return os.path.normcase(os.path.abspath(normalized))
 
     def _build_local_comic_id(self, work_path: str, existing_ids: set[str]) -> str:
         normalized = self._normalize_existing_source(work_path)
@@ -1232,7 +1823,6 @@ class LocalComicImportService:
         raw_assignments: Optional[Dict[str, str]] = None,
         raw_tag_assignments: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        clean_root = self._load_clean_root(session_id)
         meta = self._load_meta(session_id)
         effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
 
@@ -1249,7 +1839,7 @@ class LocalComicImportService:
         self._save_assignments_to_meta(session_id, assignments, tag_assignments)
 
         existing_result_items = self._read_json(self._result_path(session_id), default=None)
-        computed_items, _tree, _node_map = self._build_export_payload(clean_root, assignments, tag_assignments)
+        computed_items, _tree, _node_map = self._build_session_export_payload(session_id, assignments, tag_assignments)
         items = computed_items
         if (
             effective_mode == IMPORT_MODE_MOVE_HUGE
@@ -1345,42 +1935,52 @@ class LocalComicImportService:
                     record["comic_id"] = comic_id
 
                 original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
-                target_dir = Path(LOCAL_PICTURES_DIR) / original_id
-                moved_flag = bool(record.get("data_moved", False))
-                work_dir = Path(work_path)
-                if effective_mode == IMPORT_MODE_MOVE_HUGE:
-                    if not moved_flag:
+                page_count = int(entry.get("图片数量", 0) or 0)
+                cover_path = "/static/default/default_cover.jpg"
+
+                if effective_mode == IMPORT_MODE_SOFTLINK_REF:
+                    if page_count <= 0:
+                        raise RuntimeError("作品中没有可导入图片")
+                    record["data_moved"] = False
+                    self._save_state(session_id, state)
+                else:
+                    target_dir = Path(LOCAL_PICTURES_DIR) / original_id
+                    moved_flag = bool(record.get("data_moved", False))
+                    work_dir = Path(work_path)
+                    if effective_mode == IMPORT_MODE_MOVE_HUGE:
+                        if not moved_flag:
+                            if not work_dir.exists() or not work_dir.is_dir():
+                                raise RuntimeError("作品目录不存在，可能已被删除")
+                            self._move_work_to_target(work_dir, target_dir)
+                            record["data_moved"] = True
+                            moved_flag = True
+                            self._save_state(session_id, state)
+                    else:
                         if not work_dir.exists() or not work_dir.is_dir():
                             raise RuntimeError("作品目录不存在，可能已被删除")
-                        self._move_work_to_target(work_dir, target_dir)
-                        record["data_moved"] = True
+                        staging_dir = staging_root / original_id
+                        copied_count = self._copy_work_to_staging(work_dir, staging_dir)
+                        if copied_count <= 0:
+                            raise RuntimeError("作品目录中没有可导入图片")
+                        if target_dir.exists():
+                            shutil.rmtree(target_dir, ignore_errors=True)
+                        target_dir.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(staging_dir), str(target_dir))
                         moved_flag = True
+                        record["data_moved"] = True
                         self._save_state(session_id, state)
-                else:
-                    if not work_dir.exists() or not work_dir.is_dir():
-                        raise RuntimeError("作品目录不存在，可能已被删除")
-                    staging_dir = staging_root / original_id
-                    copied_count = self._copy_work_to_staging(work_dir, staging_dir)
-                    if copied_count <= 0:
-                        raise RuntimeError("作品目录中没有可导入图片")
-                    if target_dir.exists():
-                        shutil.rmtree(target_dir, ignore_errors=True)
-                    target_dir.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(staging_dir), str(target_dir))
-                    moved_flag = True
-                    record["data_moved"] = True
-                    self._save_state(session_id, state)
 
-                if not target_dir.exists() or not target_dir.is_dir():
-                    raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
+                    if not target_dir.exists() or not target_dir.is_dir():
+                        raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
 
-                image_paths = file_parser.parse_comic_images(comic_id)
-                if not image_paths:
-                    raise RuntimeError("导入后未检测到可读图片")
+                    image_paths = file_parser.parse_comic_images(comic_id)
+                    if not image_paths:
+                        raise RuntimeError("导入后未检测到可读图片")
+                    page_count = len(image_paths)
+                    cover_path = image_handler.generate_cover(comic_id, image_paths[0])
+                    if not cover_path or cover_path == "/static/default/default_cover.jpg":
+                        cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
 
-                cover_path = image_handler.generate_cover(comic_id, image_paths[0])
-                if not cover_path or cover_path == "/static/default/default_cover.jpg":
-                    cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
                 now = self._timestamp()
                 comic_record = {
                     "id": comic_id,
@@ -1389,7 +1989,7 @@ class LocalComicImportService:
                     "author": author,
                     "desc": "",
                     "cover_path": cover_path,
-                    "total_page": len(image_paths),
+                    "total_page": page_count,
                     "current_page": 1,
                     "score": 8.0,
                     "tag_ids": target_tag_ids,
@@ -1399,6 +1999,9 @@ class LocalComicImportService:
                     "is_deleted": False,
                     "import_source": work_path,
                 }
+                if effective_mode == IMPORT_MODE_SOFTLINK_REF:
+                    comic_record["storage_mode"] = "soft_ref"
+                    comic_record["soft_ref_locator"] = work_path
 
                 ok, inserted = self._append_comic_record(comic_record)
                 if not ok:
