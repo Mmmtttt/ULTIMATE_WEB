@@ -128,6 +128,7 @@ const loadingTailPromise = ref(null)
 const controlsVisible = ref(false)
 const controlIndex = ref(0)
 const scrollerHeight = ref(0)
+const restoringViewState = ref(false)
 const preloadCache = new Set()
 
 const zoomState = reactive({
@@ -185,15 +186,23 @@ function readViewState() {
   }
 }
 
+function hasStoredViewStateForMode(targetMode = modeKey.value) {
+  const state = readViewState()
+  if (!state) return false
+  return String(state.mode || '') === String(targetMode || '')
+}
+
 function saveViewState() {
   if (typeof window === 'undefined') return
+  const scroller = feedScroller.value
+  if (!scroller) return
+  if (restoringViewState.value) return
   try {
     const payload = {
       mode: modeKey.value,
       activeIndex: activeIndex.value,
       controlIndex: controlIndex.value,
       controlsVisible: controlsVisible.value,
-      scrollTop: feedScroller.value?.scrollTop ?? 0,
       updatedAt: Date.now()
     }
     window.sessionStorage.setItem(VIEW_STATE_KEY, JSON.stringify(payload))
@@ -202,7 +211,7 @@ function saveViewState() {
   }
 }
 
-function applyStoredViewState() {
+async function applyStoredViewState() {
   const state = readViewState()
   if (!state || String(state.mode || '') !== modeKey.value) {
     return false
@@ -218,17 +227,16 @@ function applyStoredViewState() {
   controlIndex.value = nextControl
   controlsVisible.value = Boolean(state.controlsVisible)
 
-  const requestedScrollTop = Number(state.scrollTop)
-  nextTick(() => {
-    const scroller = feedScroller.value
-    if (!scroller) return
-    if (Number.isFinite(requestedScrollTop) && requestedScrollTop >= 0) {
-      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop = Math.min(maxTop, requestedScrollTop)
-      return
-    }
-    scroller.scrollTop = nextActive * getCardHeight()
-  })
+  await nextTick()
+  updateScrollerHeight()
+  await nextTick()
+
+  const scroller = feedScroller.value
+  if (!scroller) return true
+  const targetTop = nextActive * getCardHeight()
+  const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  scroller.scrollTop = Math.min(maxTop, Math.max(0, targetTop))
+  updateActiveIndexByScroll()
   return true
 }
 
@@ -478,20 +486,33 @@ function handleResize() {
   updateScrollerHeight()
 }
 
+function getScrollerBottomLimit(scroller) {
+  if (!scroller || typeof window === 'undefined') return 0
+  const mainContent = scroller.closest('.main-content')
+  if (mainContent) {
+    const contentRect = mainContent.getBoundingClientRect()
+    if (Number.isFinite(contentRect.bottom) && contentRect.bottom > 0) {
+      return contentRect.bottom
+    }
+  }
+  return Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
+}
+
 function updateScrollerHeight() {
   const scroller = feedScroller.value
   if (!scroller || typeof window === 'undefined') return
 
   const rect = scroller.getBoundingClientRect()
-  const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
-  const mobileReserve = window.matchMedia('(max-width: 1023px)').matches ? 56 : 0
-  const buffer = 8
-  const nextHeight = Math.max(300, Math.floor(viewportHeight - rect.top - mobileReserve - buffer))
+  const bottomLimit = getScrollerBottomLimit(scroller)
+  const buffer = 2
+  const nextHeight = Math.max(320, Math.floor(bottomLimit - rect.top - buffer))
   if (!Number.isFinite(nextHeight)) return
   scrollerHeight.value = nextHeight
 }
 
 watch(modeKey, async () => {
+  const shouldRestore = hasStoredViewStateForMode(modeKey.value)
+  restoringViewState.value = true
   activeIndex.value = 0
   controlIndex.value = 0
   controlsVisible.value = false
@@ -499,17 +520,20 @@ watch(modeKey, async () => {
   preloadCache.clear()
   await ensureRandomData()
   await nextTick()
-  if (feedScroller.value) {
+  if (feedScroller.value && !shouldRestore) {
     feedScroller.value.scrollTop = 0
   }
   updateScrollerHeight()
-  applyStoredViewState()
+  if (shouldRestore) {
+    await applyStoredViewState()
+  }
+  restoringViewState.value = false
 })
 
 watch(
   () => activeIndex.value,
   async (index, previous) => {
-    if (index !== previous) {
+    if (index !== previous && !restoringViewState.value) {
       controlIndex.value = index
       controlsVisible.value = false
       resetZoom()
@@ -538,10 +562,14 @@ onMounted(async () => {
   addWindowListener('resize', handleResize)
   addDocumentListener('mousemove', onMouseMove)
   addDocumentListener('mouseup', stopMouseDrag)
+  restoringViewState.value = true
   await ensureRandomData()
   await nextTick()
   updateScrollerHeight()
-  applyStoredViewState()
+  if (hasStoredViewStateForMode(modeKey.value)) {
+    await applyStoredViewState()
+  }
+  restoringViewState.value = false
 })
 
 onUnmounted(() => {
@@ -563,6 +591,7 @@ watch(
 <style scoped>
 .random-feed-page {
   height: 100%;
+  min-height: calc(var(--reader-vh, 100dvh) - 4px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -626,8 +655,8 @@ watch(
 }
 
 .feed-scroller {
-  height: var(--feed-card-height, calc(var(--reader-vh, 100vh) - 132px));
-  min-height: 500px;
+  height: var(--feed-card-height, calc(var(--reader-vh, 100dvh) - 24px));
+  min-height: 420px;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
   border-radius: 16px;
@@ -635,8 +664,8 @@ watch(
 
 .feed-card {
   position: relative;
-  height: var(--feed-card-height, calc(var(--reader-vh, 100vh) - 132px));
-  min-height: 500px;
+  height: var(--feed-card-height, calc(var(--reader-vh, 100dvh) - 24px));
+  min-height: 420px;
   scroll-snap-align: start;
   border-radius: 16px;
   overflow: hidden;
