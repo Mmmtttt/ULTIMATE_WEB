@@ -27,17 +27,17 @@
       <div class="mode-toggle" role="tablist" aria-label="导入源切换">
         <button
           class="mode-btn"
-          :class="{ active: sourceMode === 'upload' }"
-          @click="sourceMode = 'upload'"
-        >
-          从设备上传（推荐）
-        </button>
-        <button
-          class="mode-btn"
           :class="{ active: sourceMode === 'path' }"
           @click="sourceMode = 'path'"
         >
-          服务端路径导入
+          服务端路径导入（推荐）
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: sourceMode === 'upload' }"
+          @click="sourceMode = 'upload'"
+        >
+          从设备上传
         </button>
       </div>
 
@@ -87,21 +87,17 @@
           autocomplete="new-password"
           placeholder="可选：用于解析加密压缩包目录"
         />
-        <div class="import-mode-row">
-          <button
-            class="import-mode-btn"
-            :class="{ active: pathImportMode === 'hardlink_move' }"
-            @click="pathImportMode = 'hardlink_move'"
-          >
-            硬链接导入（移动源文件）
-          </button>
-          <button
-            class="import-mode-btn"
-            :class="{ active: pathImportMode === 'softlink_ref' }"
-            @click="pathImportMode = 'softlink_ref'"
-          >
-            软连接导入（不移动源文件）
-          </button>
+        <div class="import-mode-switch">
+          <div class="switch-main">
+            <span class="switch-title">是否移动源文件</span>
+            <van-switch
+              v-model="isSoftlinkMode"
+              size="20px"
+            />
+          </div>
+          <div class="switch-desc">
+            {{ pathImportMode === 'softlink_ref' ? '不移动源文件（软连接）' : '移动源文件（硬链接）' }}
+          </div>
         </div>
         <div v-if="recoverableSessions.length" class="recover-row">
           <div class="hint">检测到未完成导入会话，可继续上一次任务。</div>
@@ -117,6 +113,9 @@
         </div>
         <div v-if="pathImportMode === 'softlink_ref'" class="picker-tip">
           软连接导入会保持源文件不变：当前阶段会建立虚拟索引并入库，不会移动或删除源文件。
+        </div>
+        <div v-if="pathImportMode === 'softlink_ref'" class="picker-tip">
+          软连接导入当前仅支持单层压缩包，不支持继续解析压缩包内嵌套压缩包。
         </div>
         <div class="picker-tip">
           浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
@@ -291,7 +290,7 @@ const STORAGE_KEY = 'comic_local_import_session_v1'
 const comicStore = useComicStore()
 const tagStore = useTagStore()
 
-const sourceMode = ref('upload')
+const sourceMode = ref('path')
 const sourcePath = ref('')
 const archiveFiles = ref([])
 const pathImportMode = ref('hardlink_move')
@@ -403,6 +402,13 @@ const markModeText = computed(() => {
   if (markMode.value === 'tag') return '标记为标签层'
   if (markMode.value === 'clear') return '清除此层'
   return '未选择'
+})
+
+const isSoftlinkMode = computed({
+  get: () => pathImportMode.value === 'softlink_ref',
+  set: (enabled) => {
+    pathImportMode.value = enabled ? 'softlink_ref' : 'hardlink_move'
+  }
 })
 
 function roleText(role) {
@@ -1030,34 +1036,31 @@ onMounted(async () => {
   margin-bottom: 10px;
 }
 
-.import-mode-row {
-  display: inline-flex;
-  width: 100%;
+.import-mode-switch {
+  margin: 10px 0;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
-  overflow: hidden;
   background: var(--surface-1);
-  margin: 10px 0;
+  padding: 10px 12px;
 }
 
-.import-mode-btn {
-  border: 0;
-  flex: 1;
-  background: transparent;
+.switch-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.switch-title {
+  font-size: 13px;
   color: var(--text-secondary);
-  padding: 8px 10px;
-  cursor: pointer;
-  transition: all var(--motion-fast) var(--ease-standard);
+}
+
+.switch-desc {
+  margin-top: 6px;
   font-size: 12px;
-}
-
-.import-mode-btn + .import-mode-btn {
-  border-left: 1px solid var(--border-soft);
-}
-
-.import-mode-btn.active {
-  background: linear-gradient(140deg, rgba(89, 160, 255, 0.2), rgba(63, 132, 234, 0.12));
-  color: var(--brand-700);
+  color: var(--text-tertiary);
+  line-height: 1.45;
 }
 
 .recover-row {
