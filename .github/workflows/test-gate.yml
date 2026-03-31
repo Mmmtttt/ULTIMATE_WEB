@@ -57,6 +57,15 @@ jobs:
           set -o pipefail
           python -m pytest tests/features -m integration --junitxml=tests/ci-artifacts/integration-junit.xml 2>&1 | tee tests/ci-artifacts/integration.log
 
+      - name: Collect backend runtime logs
+        if: always()
+        run: |
+          mkdir -p tests/ci-artifacts/backend-runtime-logs
+          cp -f tests/.runtime/integration/backend-integration.log tests/ci-artifacts/backend-runtime-logs/backend-integration.log 2>/dev/null || true
+          cp -f comic_backend/logs/app.log tests/ci-artifacts/backend-runtime-logs/app.log 2>/dev/null || true
+          cp -f comic_backend/logs/error.log tests/ci-artifacts/backend-runtime-logs/error.log 2>/dev/null || true
+          cp -f comic_backend/logs/access.log tests/ci-artifacts/backend-runtime-logs/access.log 2>/dev/null || true
+
       - name: Run frontend E2E tests
         id: e2e_tests
         if: always()
