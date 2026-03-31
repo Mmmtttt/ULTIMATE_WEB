@@ -55,6 +55,19 @@ jobs:
           cache: "npm"
           cache-dependency-path: comic_frontend/package-lock.json
 
+      - name: install archive runtime tools (linux desktop)
+        if: ${{ matrix.build_desktop && matrix.target == 'linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full unrar-free
+
+      - name: install archive runtime tools (windows desktop)
+        if: ${{ matrix.build_desktop && matrix.target == 'windows' }}
+        shell: pwsh
+        run: |
+          choco install 7zip -y --no-progress
+
       - name: install backend dependencies (desktop only)
         if: ${{ matrix.build_desktop }}
         shell: bash

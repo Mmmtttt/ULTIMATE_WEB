@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
+from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from utils.file_parser import file_parser
@@ -47,6 +48,7 @@ SESSION_PHASE_FAILED = "failed"
 
 LOCAL_IMPORT_WORKSPACE_DIR = Path(CACHE_ROOT_DIR) / "comic_local_import_workspace"
 LOCAL_IMPORT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+ensure_rar_backend_configured(logger=app_logger)
 
 
 class LocalComicImportService:
@@ -203,7 +205,29 @@ class LocalComicImportService:
 
     @staticmethod
     def _sorted_entries(entries: List[Path]) -> List[Path]:
-        return sorted(entries, key=lambda item: (not item.is_dir(), item.name.lower(), item.name))
+        return sorted(entries, key=lambda item: (not item.is_dir(), LocalComicImportService._natural_sort_key(item.name)))
+
+    @staticmethod
+    def _natural_sort_key(text: str) -> List[Tuple[int, Any]]:
+        parts: List[Tuple[int, Any]] = []
+        chunk = ""
+        for ch in str(text or ""):
+            if ch.isdigit():
+                if chunk and not chunk[-1].isdigit():
+                    parts.append((1, chunk.lower()))
+                    chunk = ""
+                chunk += ch
+            else:
+                if chunk and chunk[-1].isdigit():
+                    parts.append((0, int(chunk)))
+                    chunk = ""
+                chunk += ch
+        if chunk:
+            if chunk.isdigit():
+                parts.append((0, int(chunk)))
+            else:
+                parts.append((1, chunk.lower()))
+        return parts
 
     @staticmethod
     def _is_safe_member_name(member_name: str) -> bool:
@@ -1790,29 +1814,10 @@ class LocalComicImportService:
                 continue
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 files.append(path)
-
-        def alphanum_key(text: str) -> List[Any]:
-            parts: List[Any] = []
-            chunk = ""
-            for ch in text:
-                if ch.isdigit():
-                    if chunk and not chunk[-1].isdigit():
-                        parts.append(chunk.lower())
-                        chunk = ""
-                    chunk += ch
-                else:
-                    if chunk and chunk[-1].isdigit():
-                        parts.append(int(chunk))
-                        chunk = ""
-                    chunk += ch
-            if chunk:
-                if chunk.isdigit():
-                    parts.append(int(chunk))
-                else:
-                    parts.append(chunk.lower())
-            return parts
-
-        return sorted(files, key=lambda p: alphanum_key(str(p).replace("\\", "/")))
+        return sorted(
+            files,
+            key=lambda p: LocalComicImportService._natural_sort_key(str(p).replace("\\", "/")),
+        )
 
     def _copy_work_to_staging(self, work_dir: Path, staging_dir: Path) -> int:
         if staging_dir.exists():

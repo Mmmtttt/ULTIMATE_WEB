@@ -8,11 +8,13 @@ import os
 import stat
 import tempfile
 import zipfile
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.constants import CACHE_ROOT_DIR, JSON_FILE, SUPPORTED_FORMATS
+from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.persistence.json_storage import JsonStorage
 
 try:
@@ -30,6 +32,8 @@ ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
 SOFTREF_PASSWORDS_FILE = Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
+SOFTREF_NESTED_ARCHIVE_CACHE_MAX_BYTES = 256 * 1024 * 1024
+SOFTREF_NESTED_ARCHIVE_CACHE_SINGLE_MAX_BYTES = 64 * 1024 * 1024
 
 
 class SoftRefError(Exception):
@@ -56,8 +60,29 @@ class _SoftRefContext:
 
 class SoftRefComicReader:
     def __init__(self):
+        ensure_rar_backend_configured()
         self._db_storage = JsonStorage(JSON_FILE)
         self._index_cache: Dict[str, Dict[str, Any]] = {}
+        self._nested_archive_cache: "OrderedDict[str, bytes]" = OrderedDict()
+        self._nested_archive_cache_total_bytes = 0
+        self._nested_archive_cache_max_bytes = self._resolve_positive_int_env(
+            "SOFTREF_NESTED_ARCHIVE_CACHE_MAX_BYTES",
+            SOFTREF_NESTED_ARCHIVE_CACHE_MAX_BYTES,
+        )
+        self._nested_archive_cache_single_max_bytes = self._resolve_positive_int_env(
+            "SOFTREF_NESTED_ARCHIVE_CACHE_SINGLE_MAX_BYTES",
+            SOFTREF_NESTED_ARCHIVE_CACHE_SINGLE_MAX_BYTES,
+        )
+
+    @staticmethod
+    def _resolve_positive_int_env(name: str, default_value: int) -> int:
+        try:
+            value = int(str(os.environ.get(name, "")).strip())
+            if value > 0:
+                return value
+        except Exception:
+            pass
+        return int(default_value)
 
     @staticmethod
     def _is_softref_locator(raw_path: str) -> bool:
@@ -100,25 +125,25 @@ class SoftRefComicReader:
         return Path(str(filename or "")).suffix.lower() in ARCHIVE_EXTENSIONS
 
     @staticmethod
-    def _natural_sort_key(text: str) -> List[Any]:
-        parts: List[Any] = []
+    def _natural_sort_key(text: str) -> List[Tuple[int, Any]]:
+        parts: List[Tuple[int, Any]] = []
         chunk = ""
         for ch in str(text or ""):
             if ch.isdigit():
                 if chunk and not chunk[-1].isdigit():
-                    parts.append(chunk.lower())
+                    parts.append((1, chunk.lower()))
                     chunk = ""
                 chunk += ch
             else:
                 if chunk and chunk[-1].isdigit():
-                    parts.append(int(chunk))
+                    parts.append((0, int(chunk)))
                     chunk = ""
                 chunk += ch
         if chunk:
             if chunk.isdigit():
-                parts.append(int(chunk))
+                parts.append((0, int(chunk)))
             else:
-                parts.append(chunk.lower())
+                parts.append((1, chunk.lower()))
         return parts
 
     @staticmethod
@@ -213,6 +238,42 @@ class SoftRefComicReader:
         if not archive_prefix_chain:
             return base
         return f"{base} :: {' / '.join(archive_prefix_chain)}"
+
+    @staticmethod
+    def _nested_archive_cache_key(top_archive_path: str, archive_chain: List[str]) -> str:
+        normalized_top = os.path.normcase(os.path.abspath(str(top_archive_path or "")))
+        chain = "|".join(str(item or "") for item in (archive_chain or []))
+        return f"{normalized_top}::{chain}"
+
+    def _get_nested_archive_cache(self, key: str) -> Optional[bytes]:
+        entry = self._nested_archive_cache.pop(key, None)
+        if entry is None:
+            return None
+        self._nested_archive_cache[key] = entry
+        return entry
+
+    def _put_nested_archive_cache(self, key: str, payload: bytes) -> None:
+        if not isinstance(payload, (bytes, bytearray)):
+            return
+        data = bytes(payload)
+        payload_size = len(data)
+        if payload_size <= 0:
+            return
+        if payload_size > self._nested_archive_cache_single_max_bytes:
+            return
+        if self._nested_archive_cache_max_bytes <= 0:
+            return
+
+        old = self._nested_archive_cache.pop(key, None)
+        if old is not None:
+            self._nested_archive_cache_total_bytes -= len(old)
+
+        self._nested_archive_cache[key] = data
+        self._nested_archive_cache_total_bytes += payload_size
+
+        while self._nested_archive_cache and self._nested_archive_cache_total_bytes > self._nested_archive_cache_max_bytes:
+            _, removed_payload = self._nested_archive_cache.popitem(last=False)
+            self._nested_archive_cache_total_bytes -= len(removed_payload)
 
     @staticmethod
     def _password_required_error(top_archive_path: str, archive_prefix_chain: List[str]) -> SoftRefPasswordRequiredError:
@@ -536,6 +597,16 @@ class SoftRefComicReader:
         current_chain: List[str] = []
 
         for nested_archive_name in archive_chain:
+            next_chain = list(current_chain) + [nested_archive_name]
+            cache_key = self._nested_archive_cache_key(top_archive_path, next_chain)
+            cached_nested = self._get_nested_archive_cache(cache_key)
+            if cached_nested is not None:
+                source_kind = "bytes"
+                source = cached_nested
+                suffix = Path(nested_archive_name).suffix.lower()
+                current_chain = next_chain
+                continue
+
             nested_bytes = self._read_archive_member_bytes(
                 archive_source_kind=source_kind,
                 archive_source=source,
@@ -544,10 +615,11 @@ class SoftRefComicReader:
                 archive_prefix_chain=current_chain,
                 member_name=nested_archive_name,
             )
+            self._put_nested_archive_cache(cache_key, nested_bytes)
             source_kind = "bytes"
             source = nested_bytes
             suffix = Path(nested_archive_name).suffix.lower()
-            current_chain.append(nested_archive_name)
+            current_chain = next_chain
 
         return self._read_archive_member_bytes(
             archive_source_kind=source_kind,
@@ -680,9 +752,11 @@ class SoftRefComicReader:
                 else zipfile.ZipFile(io.BytesIO(archive_source), "r")
             )
             with zip_obj as zf:
-                info_map = {str(info.filename or ""): info for info in zf.infolist()}
-                info = info_map.get(member_name)
-                if info is None:
+                try:
+                    info = zf.getinfo(member_name)
+                except KeyError:
+                    info = None
+                if info is None or stat.S_ISLNK(info.external_attr >> 16):
                     raise RuntimeError(f"压缩包内文件不存在: {member_name}")
                 try:
                     if password_bytes:
@@ -709,11 +783,10 @@ class SoftRefComicReader:
                 with rarfile.RarFile(rar_path) as rf:  # type: ignore[arg-type]
                     if password and hasattr(rf, "setpassword"):
                         rf.setpassword(password)
-                    info = None
-                    for candidate in rf.infolist():
-                        if str(getattr(candidate, "filename", "") or "") == member_name:
-                            info = candidate
-                            break
+                    try:
+                        info = rf.getinfo(member_name)
+                    except Exception:
+                        info = None
                     if info is None:
                         raise RuntimeError(f"压缩包内文件不存在: {member_name}")
                     kwargs: Dict[str, Any] = {}
@@ -758,3 +831,4 @@ class SoftRefComicReader:
 
 
 softref_comic_reader = SoftRefComicReader()
+

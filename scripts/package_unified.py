@@ -628,6 +628,69 @@ def is_desktop_target(target: str) -> bool:
     return target in {"windows", "linux"}
 
 
+def discover_archive_runtime_tools(target: str) -> Dict[str, Path]:
+    tools: Dict[str, Path] = {}
+
+    def _resolve(executable: str, windows_candidates: Optional[List[str]] = None) -> Optional[Path]:
+        resolved = shutil.which(executable)
+        if not resolved:
+            if os.name == "nt":
+                for raw in windows_candidates or []:
+                    candidate = Path(raw)
+                    if candidate.exists():
+                        resolved = str(candidate)
+                        break
+            if not resolved:
+                return None
+        try:
+            return Path(resolved).resolve()
+        except Exception:
+            return Path(resolved)
+
+    if target == "windows":
+        sevenzip = _resolve(
+            "7z",
+            windows_candidates=[
+                r"C:\Program Files\7-Zip\7z.exe",
+                r"C:\Program Files (x86)\7-Zip\7z.exe",
+            ],
+        ) or _resolve("7z.exe")
+        if sevenzip:
+            tools["7z.exe"] = sevenzip
+            dll = sevenzip.parent / "7z.dll"
+            if dll.exists():
+                tools["7z.dll"] = dll.resolve()
+        return tools
+
+    if target == "linux":
+        for name in ("unrar", "7z", "7zz", "bsdtar"):
+            resolved = _resolve(name)
+            if resolved:
+                tools[name] = resolved
+    return tools
+
+
+def copy_archive_runtime_tools(target: str, bundle_dir: Path) -> Optional[Path]:
+    if not is_desktop_target(target):
+        return None
+
+    tools = discover_archive_runtime_tools(target)
+    if not tools:
+        return None
+
+    out_dir = bundle_dir / "tools" / "archive"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for output_name, source_path in tools.items():
+        destination = out_dir / output_name
+        shutil.copy2(source_path, destination)
+        if target != "windows":
+            try:
+                destination.chmod(0o755)
+            except OSError:
+                pass
+    return out_dir
+
+
 def write_desktop_bundle_scripts(
     bundle_dir: Path,
     binary_name: str,
@@ -642,6 +705,8 @@ def write_desktop_bundle_scripts(
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
         "set SCRIPT_DIR=%~dp0\n"
+        "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
+        "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
         "set SERVER_CONFIG_PATH=%SCRIPT_DIR%server_config.json\n"
         "set BACKEND_DEBUG=false\n"
         "set FRONTEND_DIST_DIR=%SCRIPT_DIR%frontend_dist\n"
@@ -660,6 +725,10 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
+        "if (Test-Path $archiveTools) {\n"
+        "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
+        "}\n"
         "$env:SERVER_CONFIG_PATH = Join-Path $scriptDir \"server_config.json\"\n"
         "$env:BACKEND_DEBUG = \"false\"\n"
         "$env:FRONTEND_DIST_DIR = Join-Path $scriptDir \"frontend_dist\"\n"
@@ -681,6 +750,10 @@ def write_desktop_bundle_scripts(
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
+        "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
+        "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
+        "fi\n"
         "export SERVER_CONFIG_PATH=\"$SCRIPT_DIR/server_config.json\"\n"
         "export BACKEND_DEBUG=\"false\"\n"
         "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/frontend_dist\"\n"
@@ -768,6 +841,8 @@ def prepare_desktop_release_bundle(
     if manifest_src.exists():
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
+    archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
+
     notes = [
         "# Desktop Release Bundle",
         "",
@@ -775,12 +850,18 @@ def prepare_desktop_release_bundle(
         "- `backend_source/`: fallback Python source runtime",
         "- `frontend_dist/`: frontend static assets",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
-        "",
-        "Start commands:",
-        "- Windows cmd: `start_backend.bat`",
-        "- Windows PowerShell: `start_backend.ps1`",
-        "- Linux/macOS: `start_backend.sh`",
     ]
+    if archive_tools_dir is not None:
+        notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
+    notes.extend(
+        [
+            "",
+            "Start commands:",
+            "- Windows cmd: `start_backend.bat`",
+            "- Windows PowerShell: `start_backend.ps1`",
+            "- Linux/macOS: `start_backend.sh`",
+        ]
+    )
     write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
 
     (bundle_dir / "bin").mkdir(parents=True, exist_ok=True)

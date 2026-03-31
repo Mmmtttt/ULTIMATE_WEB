@@ -21,6 +21,7 @@ from core.constants import (
     VIDEO_DIR,
     ensure_storage_layout,
 )
+from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
@@ -295,6 +296,7 @@ def run_backend_server(host=None, port=None, debug=None):
         resolved_port = PORT
     resolved_debug = DEBUG if debug is None else bool(debug)
 
+    ensure_rar_backend_configured(logger=app_logger, force=True)
     init_temp_file_cleanup()
     init_tag_schema()
     init_default_data()

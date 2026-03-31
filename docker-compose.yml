@@ -16,6 +16,7 @@ services:
       BACKEND_HOST: 0.0.0.0
       BACKEND_PORT: "5000"
       BACKEND_DEBUG: "0"
+      RAR_BACKEND_MODE: auto
       TZ: Asia/Shanghai
     volumes:
       - ./server_config.json:/app/server_config.json:rw

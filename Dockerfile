@@ -16,6 +16,7 @@ FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     SERVER_CONFIG_PATH=/app/server_config.json \
+    RAR_BACKEND_MODE=auto \
     BACKEND_HOST=0.0.0.0 \
     BACKEND_PORT=5000 \
     BACKEND_DEBUG=0
