@@ -112,6 +112,110 @@ jobs:
           # 验证adb是否可用（确认SDK安装成功）
           adb --version || echo "adb not found, check SDK installation"
 
+      - name: prepare android archive runtime tools (7zz)
+        if: ${{ matrix.build_android }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import shutil
+          import subprocess
+          import tempfile
+          import urllib.request
+          from pathlib import Path
+
+          INDEX_URLS = [
+              "https://packages.termux.dev/apt/termux-main/pool/main/7/7zip/",
+              "https://packages-cf.termux.dev/apt/termux-main/pool/main/7/7zip/",
+          ]
+          ABI_MAP = {
+              "arm64-v8a": "aarch64",
+              "x86_64": "x86_64",
+          }
+          OUTPUT_ROOT = Path("build/android_archive_tools")
+          OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+          def parse_version_tuple(version_text: str):
+              parts = re.split(r"[._-]", version_text)
+              normalized = []
+              for part in parts:
+                  if part.isdigit():
+                      normalized.append((0, int(part)))
+                  else:
+                      normalized.append((1, part))
+              return tuple(normalized)
+
+          html = None
+          selected_index_url = None
+          for candidate in INDEX_URLS:
+              try:
+                  with urllib.request.urlopen(candidate, timeout=30) as resp:
+                      html = resp.read().decode("utf-8", errors="ignore")
+                  selected_index_url = candidate
+                  print(f"[android-archive] using index: {candidate}")
+                  break
+              except Exception as exc:
+                  print(f"[android-archive] index unavailable: {candidate} ({exc})")
+          if html is None or selected_index_url is None:
+              raise SystemExit("cannot fetch termux 7zip index from all mirrors")
+
+          with tempfile.TemporaryDirectory() as tmp:
+              tmp_root = Path(tmp)
+              for android_abi, termux_abi in ABI_MAP.items():
+                  pattern = re.compile(
+                      rf'href="(7zip_([0-9][^"_]*)_{re.escape(termux_abi)}\.deb)"'
+                  )
+                  matches = pattern.findall(html)
+                  if not matches:
+                      raise SystemExit(
+                          f"cannot find 7zip package for abi={termux_abi} from {selected_index_url}"
+                      )
+                  package_name, package_version = max(
+                      matches, key=lambda item: parse_version_tuple(item[1])
+                  )
+                  deb_path = tmp_root / package_name
+                  downloaded = False
+                  for base in INDEX_URLS:
+                      package_url = base + package_name
+                      try:
+                          print(f"[android-archive] downloading {package_url}")
+                          urllib.request.urlretrieve(package_url, deb_path)
+                          downloaded = True
+                          break
+                      except Exception as exc:
+                          print(f"[android-archive] download failed: {package_url} ({exc})")
+                  if not downloaded:
+                      raise SystemExit(f"failed to download package {package_name} from all mirrors")
+
+                  extract_dir = tmp_root / f"extract-{android_abi}"
+                  extract_dir.mkdir(parents=True, exist_ok=True)
+                  subprocess.run(["dpkg-deb", "-x", str(deb_path), str(extract_dir)], check=True)
+
+                  candidates = sorted(
+                      p for p in extract_dir.rglob("7zz") if p.is_file()
+                  )
+                  if not candidates:
+                      raise SystemExit(f"7zz not found after extracting {package_name}")
+                  preferred = next(
+                      (p for p in candidates if str(p).replace("\\", "/").endswith("/bin/7zz")),
+                      candidates[0],
+                  )
+
+                  abi_dir = OUTPUT_ROOT / android_abi
+                  abi_dir.mkdir(parents=True, exist_ok=True)
+                  target = abi_dir / "7zz"
+                  shutil.copy2(preferred, target)
+                  target.chmod(0o755)
+                  print(
+                      f"[android-archive] prepared abi={android_abi} version={package_version} "
+                      f"target={target.as_posix()} source={preferred.as_posix()}"
+                  )
+          PY
+
+          echo "[android-archive] final files:"
+          ls -lah build/android_archive_tools/arm64-v8a/7zz build/android_archive_tools/x86_64/7zz
+
       - name: run unified release script
         shell: bash
         run: |
