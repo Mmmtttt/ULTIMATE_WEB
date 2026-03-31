@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -56,6 +57,7 @@ class LocalComicImportService:
     def __init__(self):
         self._db_storage = JsonStorage()
         self._tag_storage = JsonStorage(TAGS_JSON_FILE)
+        self._softref_cover_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="softref-cover")
 
     @staticmethod
     def _timestamp() -> str:
@@ -1929,6 +1931,106 @@ class LocalComicImportService:
         ok = self._db_storage.atomic_update(updater)
         return ok, bool(status["inserted"])
 
+    def _update_softref_cover_path(self, comic_id: str, cover_path: str) -> bool:
+        comic_id = str(comic_id or "").strip()
+        cover_path = str(cover_path or "").strip()
+        if not comic_id or not cover_path:
+            return False
+
+        updated = {"ok": False}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            comics = data.get("comics", [])
+            if not isinstance(comics, list):
+                return data
+
+            for item in comics:
+                if str(item.get("id", "")).strip() != comic_id:
+                    continue
+                if str(item.get("storage_mode", "")).strip().lower() != "soft_ref":
+                    return data
+                current_cover = str(item.get("cover_path", "")).strip()
+                if current_cover == cover_path:
+                    return data
+                item["cover_path"] = cover_path
+                data["last_updated"] = time.strftime("%Y-%m-%d")
+                updated["ok"] = True
+                return data
+            return data
+
+        self._db_storage.atomic_update(updater)
+        return bool(updated["ok"])
+
+    @staticmethod
+    def _softref_cover_suffix_from_mimetype(mimetype: str) -> str:
+        lowered = str(mimetype or "").lower()
+        if "png" in lowered:
+            return ".png"
+        if "webp" in lowered:
+            return ".webp"
+        return ".jpg"
+
+    def _generate_static_cover_from_softref(self, comic_id: str) -> str:
+        reader = None
+        try:
+            from application.softref_reader_protocol import require_softref_reader
+            from core.constants import JM_COVER_DIR, PK_COVER_DIR
+            from core.platform import Platform, get_original_id, get_platform_from_id
+
+            reader = require_softref_reader("comic")
+            stream, mimetype = reader.get_image_stream(comic_id, 1)
+            image_bytes = stream.read() if stream else b""
+            if stream:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if not image_bytes:
+                return ""
+
+            platform = get_platform_from_id(comic_id)
+            if platform == Platform.PK:
+                cover_dir = PK_COVER_DIR
+                cover_prefix = "PK"
+            else:
+                cover_dir = JM_COVER_DIR
+                cover_prefix = "JM"
+
+            original_id = get_original_id(comic_id)
+            os.makedirs(cover_dir, exist_ok=True)
+            suffix = self._softref_cover_suffix_from_mimetype(mimetype)
+            cover_abs_path = os.path.join(cover_dir, f"{original_id}{suffix}")
+            with open(cover_abs_path, "wb") as f:
+                f.write(image_bytes)
+            if not os.path.exists(cover_abs_path):
+                return ""
+            return f"/static/cover/{cover_prefix}/{original_id}{suffix}"
+        except Exception as exc:
+            app_logger.error(f"异步生成软连接封面失败: {comic_id}, {exc}")
+            return ""
+        finally:
+            try:
+                if reader is not None and hasattr(reader, "_index_cache"):
+                    reader._index_cache.pop(comic_id, None)
+            except Exception:
+                pass
+
+    def _generate_and_persist_softref_cover(self, comic_id: str) -> None:
+        static_cover = self._generate_static_cover_from_softref(comic_id)
+        if not static_cover:
+            return
+        if self._update_softref_cover_path(comic_id, static_cover):
+            app_logger.info(f"软连接漫画封面已异步落地: {comic_id} -> {static_cover}")
+
+    def _submit_softref_cover_generation(self, comic_id: str) -> None:
+        comic_id = str(comic_id or "").strip()
+        if not comic_id:
+            return
+        try:
+            self._softref_cover_executor.submit(self._generate_and_persist_softref_cover, comic_id)
+        except Exception as exc:
+            app_logger.error(f"提交软连接封面异步任务失败: {comic_id}, {exc}")
+
     def _load_or_create_state(self, session_id: str, total_items: int) -> Dict[str, Any]:
         state_path = self._state_path(session_id)
         state = self._read_json(state_path, default=None)
@@ -2043,6 +2145,7 @@ class LocalComicImportService:
         staging_root.mkdir(parents=True, exist_ok=True)
 
         records = state.setdefault("records", {})
+        softref_cover_candidates: set[str] = set()
 
         for entry in items:
             work_path = str(entry.get("作品文件地址") or "").strip()
@@ -2174,6 +2277,8 @@ class LocalComicImportService:
                     self._remember_softref_archive_password(work_path, archive_password)
                 if not inserted and target_tag_ids:
                     self._ensure_comic_has_tags(comic_id, target_tag_ids)
+                if effective_mode == IMPORT_MODE_SOFTLINK_REF:
+                    softref_cover_candidates.add(comic_id)
 
                 existing_ids.add(comic_id)
                 existing_source_map[key] = comic_id
@@ -2198,6 +2303,8 @@ class LocalComicImportService:
                 "phase": SESSION_PHASE_FAILED if has_failed else SESSION_PHASE_COMPLETED,
             },
         )
+        for comic_id in softref_cover_candidates:
+            self._submit_softref_cover_generation(comic_id)
 
         session_removed = False
         if not has_failed:

@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import time
 import zipfile
 from pathlib import Path
 
@@ -637,7 +638,11 @@ def test_local_import_softlink_mode_commit_creates_soft_ref_records(integration_
             assert comic.get("storage_mode") == "soft_ref"
             assert str(comic.get("import_source") or "").strip()
             assert int(comic.get("total_page") or 0) >= 1
-            assert str(comic.get("cover_path") or "").startswith("/api/v1/comic/image?comic_id=")
+            cover_path = str(comic.get("cover_path") or "")
+            assert (
+                cover_path.startswith("/api/v1/comic/image?comic_id=")
+                or cover_path.startswith("/static/cover/")
+            )
 
         # 软连接压缩包作品可直接走阅读接口按页读取
         archive_comic_id = str(comic_b.get("id") or "")
@@ -664,6 +669,68 @@ def test_local_import_softlink_mode_commit_creates_soft_ref_records(integration_
         assert (source_dir / "作者软链" / "作品压缩.zip").stat().st_size == zip_size_before
     finally:
         _cleanup_imported_comics(base_url, ["作品目录", "作品压缩"])
+
+
+@pytest.mark.integration
+def test_local_import_softlink_mode_commit_generates_static_cover_async(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_softlink_async_cover"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者异步封面"
+    title = "作品异步封面"
+    _write_png(source_dir / author_name / title / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        node_map = _build_node_map(data["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        assert commit_payload["data"]["failed_count"] == 0
+
+        cover_ok = False
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            comics_data = _load_json(meta_dir / "comics_database.json")
+            comic = _find_comic_by_title(comics_data, title)
+            cover_path = str(comic.get("cover_path") or "").strip()
+            if cover_path.startswith("/static/cover/"):
+                rel = cover_path[len("/static/cover/") :].replace("/", os.sep)
+                cover_abs = data_dir / "static" / "cover" / rel
+                if cover_abs.exists():
+                    cover_ok = True
+                    break
+            time.sleep(0.25)
+
+        assert cover_ok, "软连接导入后未在预期时间内异步生成 static 封面"
+    finally:
+        _cleanup_imported_comics(base_url, [title])
 
 
 @pytest.mark.integration
@@ -775,7 +842,12 @@ def test_local_import_softlink_mode_reader_returns_missing_source_error_after_so
 
         comic_id = _find_comic_id_by_title(base_url, title)
 
-        shutil.rmtree(work_dir, ignore_errors=True)
+        for _ in range(50):
+            shutil.rmtree(work_dir, ignore_errors=True)
+            if not work_dir.exists():
+                break
+            time.sleep(0.1)
+        assert not work_dir.exists()
 
         images_resp = requests.get(
             f"{base_url}/api/v1/comic/images",
