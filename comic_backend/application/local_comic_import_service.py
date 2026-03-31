@@ -433,44 +433,8 @@ class LocalComicImportService:
             if not self._looks_like_archive_name(leaf_name):
                 continue
 
-            nested_chain = list(archive_chain) + [member_name]
-            nested_locator = self._make_archive_softref_locator(
-                source_path=source_path,
-                top_archive_path=top_archive_path,
-                archive_chain=nested_chain,
-                inner_path=".",
-            )
-            nested_name = self._strip_archive_suffix(leaf_name) or leaf_name
-            nested_node = self._ensure_virtual_dir_child(
-                leaf_parent,
-                nested_name,
-                nested_locator,
-                allow_reuse=False,
-            )
-
-            if depth + 1 > MAX_NESTED_DEPTH:
-                warnings.append(f"嵌套层级过深，已跳过: {member_name}")
-                continue
-
-            if read_member_bytes is None:
-                warnings.append(f"当前压缩格式暂不支持直接解析嵌套压缩包: {member_name}")
-                continue
-
-            try:
-                nested_bytes = read_member_bytes(member_name)
-                self._scan_archive_bytes_into_virtual_node(
-                    archive_node=nested_node,
-                    archive_name=leaf_name,
-                    archive_bytes=nested_bytes,
-                    source_path=source_path,
-                    top_archive_path=top_archive_path,
-                    archive_chain=nested_chain,
-                    depth=depth + 1,
-                    archive_password=archive_password,
-                    warnings=warnings,
-                )
-            except Exception as exc:
-                warnings.append(f"解析嵌套压缩包失败，已跳过 {member_name}: {exc}")
+            warnings.append(f"检测到内层压缩包，按导入规则已跳过: {member_name}")
+            continue
 
     def _scan_archive_path_into_virtual_node(
         self,
@@ -908,7 +872,7 @@ class LocalComicImportService:
         scratch_root = input_root.parent / "scratch"
         scratch_root.mkdir(parents=True, exist_ok=True)
 
-        def expand_entry(entry: Path, dst_parent: Path, depth: int) -> None:
+        def expand_entry(entry: Path, dst_parent: Path, depth: int, allow_archive_expand: bool = True) -> None:
             if depth > MAX_NESTED_DEPTH:
                 warnings.append(f"嵌套层级过深，已跳过: {entry}")
                 return
@@ -917,7 +881,7 @@ class LocalComicImportService:
                 target_dir = self._make_unique_path(dst_parent / entry.name)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 for child in self._sorted_entries(list(entry.iterdir())):
-                    expand_entry(child, target_dir, depth + 1)
+                    expand_entry(child, target_dir, depth + 1, allow_archive_expand=allow_archive_expand)
                 self._prune_empty_directories(target_dir)
                 return
 
@@ -928,6 +892,9 @@ class LocalComicImportService:
                 return
 
             if self._is_archive(entry):
+                if not allow_archive_expand:
+                    warnings.append(f"检测到内层压缩包，按导入规则已跳过: {entry.name}")
+                    return
                 target_dir = self._make_unique_path(dst_parent / self._strip_archive_suffix(entry.name))
                 target_dir.mkdir(parents=True, exist_ok=True)
                 temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
@@ -935,7 +902,7 @@ class LocalComicImportService:
                 try:
                     self._extract_archive(entry, temp_dir)
                     for child in self._sorted_entries(list(temp_dir.iterdir())):
-                        expand_entry(child, target_dir, depth + 1)
+                        expand_entry(child, target_dir, depth + 1, allow_archive_expand=False)
                     self._flatten_archive_directory(target_dir)
                     self._prune_empty_directories(target_dir)
                 except Exception as exc:
@@ -949,7 +916,7 @@ class LocalComicImportService:
 
         clean_root.mkdir(parents=True, exist_ok=True)
         for child in self._sorted_entries(list(input_root.iterdir())):
-            expand_entry(child, clean_root, 0)
+            expand_entry(child, clean_root, 0, allow_archive_expand=True)
 
         for child in list(clean_root.iterdir()):
             if child.is_dir():
@@ -1003,66 +970,72 @@ class LocalComicImportService:
         warning_set: set[str] = set()
         total_processed = 0
 
-        while True:
-            archives = self._scan_archives(source_root)
-            if not archives:
-                break
+        completed_extract_roots: List[Path] = []
+        for item in records.values():
+            if str((item or {}).get("status", "")).lower() != "completed":
+                continue
+            extracted_dir_raw = str((item or {}).get("extracted_dir", "")).strip()
+            if not extracted_dir_raw:
+                continue
+            extracted_dir = Path(extracted_dir_raw)
+            if extracted_dir.exists() and extracted_dir.is_dir():
+                completed_extract_roots.append(extracted_dir.resolve())
 
-            pending = []
-            for archive_path in archives:
-                key = self._build_prepare_record_key(archive_path)
-                record = records.get(key, {})
-                if str(record.get("status", "")).lower() == "running":
-                    record["status"] = "pending"
-                records[key] = record
-                if str(record.get("status", "")).lower() != "completed":
-                    pending.append((key, archive_path))
+        archives = self._scan_archives(source_root)
+        pending: List[Tuple[str, Path]] = []
+        for archive_path in archives:
+            abs_archive = archive_path.resolve()
+            if any(abs_archive.is_relative_to(root) for root in completed_extract_roots):
+                warning_set.add(f"检测到内层压缩包，按导入规则已跳过: {archive_path.name}")
+                continue
 
-            if not pending:
-                break
+            key = self._build_prepare_record_key(archive_path)
+            record = records.get(key, {})
+            if str(record.get("status", "")).lower() == "running":
+                record["status"] = "pending"
+            records[key] = record
+            if str(record.get("status", "")).lower() != "completed":
+                pending.append((key, archive_path))
 
-            for key, archive_path in pending:
-                if not archive_path.exists():
-                    continue
-                total_processed += 1
-                record = records.setdefault(key, {})
-                record.update(
-                    {
-                        "archive_path": str(archive_path),
-                        "status": "running",
-                        "updated_at": self._timestamp(),
-                        "error": "",
-                    }
-                )
+        for key, archive_path in pending:
+            if not archive_path.exists():
+                continue
+            total_processed += 1
+            record = records.setdefault(key, {})
+            record.update(
+                {
+                    "archive_path": str(archive_path),
+                    "status": "running",
+                    "updated_at": self._timestamp(),
+                    "error": "",
+                }
+            )
+            self._save_prepare_state(session_id, state)
+
+            target_dir = self._make_unique_path(archive_path.parent / self._strip_archive_suffix(archive_path.name))
+            temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self._extract_archive(archive_path, temp_dir)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                for child in self._sorted_entries(list(temp_dir.iterdir())):
+                    destination = self._make_unique_path(target_dir / child.name)
+                    shutil.move(str(child), str(destination))
+                self._flatten_archive_directory(target_dir)
+                self._prune_empty_directories(target_dir)
+
+                archive_path.unlink(missing_ok=True)
+                record["status"] = "completed"
+                record["error"] = ""
+                record["extracted_dir"] = str(target_dir.resolve())
+            except Exception as exc:
+                record["status"] = "failed"
+                record["error"] = str(exc)
+                warning_set.add(f"解压失败，已跳过 {archive_path.name}: {exc}")
+            finally:
+                record["updated_at"] = self._timestamp()
                 self._save_prepare_state(session_id, state)
-
-                target_dir = self._make_unique_path(archive_path.parent / self._strip_archive_suffix(archive_path.name))
-                temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                try:
-                    self._extract_archive(archive_path, temp_dir)
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    for child in self._sorted_entries(list(temp_dir.iterdir())):
-                        destination = self._make_unique_path(target_dir / child.name)
-                        shutil.move(str(child), str(destination))
-                    self._flatten_archive_directory(target_dir)
-                    self._prune_empty_directories(target_dir)
-
-                    archive_path.unlink(missing_ok=True)
-                    record["status"] = "completed"
-                    record["error"] = ""
-                    record["extracted_dir"] = str(target_dir.resolve())
-                except Exception as exc:
-                    record["status"] = "failed"
-                    record["error"] = str(exc)
-                    warning_set.add(f"解压失败，已跳过 {archive_path.name}: {exc}")
-                finally:
-                    record["updated_at"] = self._timestamp()
-                    self._save_prepare_state(session_id, state)
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-
-            # 继续下一轮扫描，处理新解压出来的嵌套压缩包
-            continue
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         failed_count = 0
         for record in records.values():

@@ -388,7 +388,7 @@ def test_local_import_hardlink_move_alias_matches_move_mode_behavior(integration
 
 
 @pytest.mark.integration
-def test_local_import_softlink_mode_parses_nested_archive_without_modifying_source(integration_runtime):
+def test_local_import_softlink_mode_skips_nested_archive_without_modifying_source(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
 
@@ -418,13 +418,15 @@ def test_local_import_softlink_mode_parses_nested_archive_without_modifying_sour
     assert payload["code"] == 200
     data = payload["data"]
     assert data.get("effective_mode") == "softlink_ref"
+    warnings = list(data.get("warnings") or [])
 
     node_map = _build_node_map(data["tree"])
     all_names = {str(node.get("real_name") or "") for node in node_map.values()}
     assert "作者软链" in all_names
     assert "作品目录" in all_names
     assert "作品压缩" in all_names
-    assert "内层" in all_names
+    assert "内层" not in all_names
+    assert any("内层压缩包" in item for item in warnings)
 
     # 源目录和压缩包不可被改动/删除
     assert (source_dir / "作者软链" / "作品目录").exists()
