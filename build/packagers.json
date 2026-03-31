@@ -31,13 +31,20 @@
       "chaquopy_version": "17.0.0",
       "chaquopy_python_version": "3.13",
       "chaquopy_min_sdk": 24,
+      "android_archive_tools_dir": "build/android_archive_tools",
+      "android_archive_tool_binary_name": "7zz",
+      "android_archive_tool_abis": [
+        "arm64-v8a",
+        "x86_64"
+      ],
       "embed_backend_requirements": [
         "flask==2.3.0",
         "flask-cors==4.0.0",
         "requests>=2.31.0",
         "PyYAML",
         "Pillow",
-        "beautifulsoup4"
+        "beautifulsoup4",
+        "rarfile>=4.2"
       ],
       "capacitor_core_version": "7",
       "capacitor_cli_version": "7",

@@ -287,6 +287,48 @@ def ensure_android_manifest_network(android_project_dir: Path) -> None:
         write_text(manifest, patched)
 
 
+def copy_android_archive_tools_to_python_source(py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
+    source_dir_raw = str(packager_cfg.get("android_archive_tools_dir", "build/android_archive_tools")).strip()
+    binary_name = str(packager_cfg.get("android_archive_tool_binary_name", "7zz")).strip() or "7zz"
+    configured_abis = packager_cfg.get("android_archive_tool_abis", ["arm64-v8a", "x86_64"])
+    if not isinstance(configured_abis, list) or not configured_abis:
+        configured_abis = ["arm64-v8a", "x86_64"]
+    abi_list = [str(item or "").strip() for item in configured_abis if str(item or "").strip()]
+    if not abi_list:
+        abi_list = ["arm64-v8a", "x86_64"]
+
+    if not source_dir_raw:
+        return {"copied": [], "missing": abi_list, "source_dir": ""}
+
+    source_dir = Path(source_dir_raw)
+    if not source_dir.is_absolute():
+        source_dir = (ROOT_DIR / source_dir).resolve()
+    if not source_dir.exists() or not source_dir.is_dir():
+        return {"copied": [], "missing": abi_list, "source_dir": str(source_dir)}
+
+    target_root = py_dir / "_android_tools" / "archive"
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    copied: List[str] = []
+    missing: List[str] = []
+    for abi in abi_list:
+        src = source_dir / abi / binary_name
+        if not src.exists() or not src.is_file():
+            missing.append(abi)
+            continue
+        dst_dir = target_root / abi
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / binary_name
+        shutil.copy2(src, dst)
+        try:
+            dst.chmod(0o755)
+        except OSError:
+            pass
+        copied.append(abi)
+
+    return {"copied": copied, "missing": missing, "source_dir": str(source_dir)}
+
+
 def ensure_android_project_chaquopy_app(
     android_project_dir: Path,
     workspace_dir: Path,
@@ -331,6 +373,7 @@ def ensure_android_project_chaquopy_app(
             "PyYAML",
             "Pillow",
             "beautifulsoup4",
+            "rarfile>=4.2",
         ]
     req_lines = "\n".join([f'                install("{item}")' for item in reqs if str(item).strip()])
     chaquopy_block = (
@@ -479,10 +522,21 @@ public class MainActivity extends BridgeActivity {{
             else:
                 shutil.copy2(item, target)
 
+    archive_copy_status = copy_android_archive_tools_to_python_source(py_dir, packager_cfg)
+    copied_abis = list(archive_copy_status.get("copied") or [])
+    missing_abis = list(archive_copy_status.get("missing") or [])
+    source_dir_text = str(archive_copy_status.get("source_dir") or "").strip()
+    if copied_abis:
+        print(f"[android-archive] copied 7zz for abi={copied_abis} from {source_dir_text}")
+    elif source_dir_text:
+        print(f"[android-archive] no 7zz copied; missing abi={missing_abis} under {source_dir_text}")
+
     py_bootstrap = py_dir / "ultimate_android_backend.py"
     bootstrap_build_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     py_source = """import os
 import sys
+import platform
+import shutil
 import threading
 import importlib
 import importlib.util
@@ -505,6 +559,43 @@ def _write_boot_log(files_dir, message):
         pass
 
 
+def _detect_android_abi():
+    machine = str(platform.machine() or "").strip().lower()
+    mapping = {
+        "aarch64": "arm64-v8a",
+        "arm64": "arm64-v8a",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+    }
+    return mapping.get(machine, "")
+
+
+def _prepare_android_archive_runtime(files_dir):
+    try:
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+        abi = _detect_android_abi()
+        if not abi:
+            _write_boot_log(files_dir, f"android archive runtime skipped: unknown abi machine={platform.machine()!r}")
+            return ""
+        source_tool = os.path.join(module_dir, "_android_tools", "archive", abi, "7zz")
+        if not os.path.isfile(source_tool):
+            _write_boot_log(files_dir, f"android archive runtime skipped: missing source tool abi={abi} path={source_tool!r}")
+            return ""
+        target_root = os.path.join(str(files_dir or "").strip() or ".", "tools", "archive")
+        os.makedirs(target_root, exist_ok=True)
+        target_tool = os.path.join(target_root, "7zz")
+        if (not os.path.exists(target_tool)) or (os.path.getsize(target_tool) != os.path.getsize(source_tool)):
+            shutil.copy2(source_tool, target_tool)
+        try:
+            os.chmod(target_tool, 0o755)
+        except Exception:
+            pass
+        return target_tool
+    except Exception as ex:
+        _write_boot_log(files_dir, f"android archive runtime prepare failed: {ex!r}")
+        return ""
+
+
 def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false"):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
@@ -519,6 +610,14 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_PORT"] = str(int(port or 5000))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
+    archive_tool = _prepare_android_archive_runtime(files_dir)
+    if archive_tool:
+        os.environ["RAR_BACKEND_MODE"] = "7z"
+        os.environ["RAR_7Z_PATH"] = archive_tool
+        os.environ["RAR_7ZZ_PATH"] = archive_tool
+        _write_boot_log(files_dir, f"android archive runtime enabled tool={archive_tool!r}")
+    else:
+        _write_boot_log(files_dir, "android archive runtime unavailable; RAR parsing may be limited")
     _write_boot_log(files_dir, f"start requested host={host} port={port}")
 
     try:
