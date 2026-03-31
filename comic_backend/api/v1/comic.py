@@ -2,10 +2,10 @@ from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
 from application.local_comic_import_service import local_comic_import_service
 from application.softref_comic_reader import (
-    softref_comic_reader,
     SoftRefPasswordRequiredError,
     SoftRefSourceMissingError,
 )
+from application.softref_reader_protocol import require_softref_reader
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
@@ -26,6 +26,7 @@ import time
 
 comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
+softref_comic_reader = require_softref_reader("comic")
 
 
 def success_response(data=None, msg="成功"):
@@ -336,7 +337,7 @@ def comic_images():
         if not comic_id:
             return error_response(400, "缺少参数")
 
-        if softref_comic_reader.is_soft_ref_comic(comic_id):
+        if softref_comic_reader.is_soft_ref_content(comic_id):
             try:
                 page_count = softref_comic_reader.get_page_count(comic_id)
                 if page_count > 0:
@@ -375,7 +376,7 @@ def comic_image():
         if not comic_id or not page_num:
             return error_response(400, "缺少参数")
 
-        if softref_comic_reader.is_soft_ref_comic(comic_id):
+        if softref_comic_reader.is_soft_ref_content(comic_id):
             try:
                 stream, mimetype = softref_comic_reader.get_image_stream(comic_id, page_num)
             except SoftRefPasswordRequiredError:

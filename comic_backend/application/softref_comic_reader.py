@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.constants import CACHE_ROOT_DIR, JSON_FILE, SUPPORTED_FORMATS
 from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.persistence.json_storage import JsonStorage
+from application.softref_reader_protocol import register_softref_reader
 
 try:
     import py7zr  # type: ignore
@@ -59,6 +60,8 @@ class _SoftRefContext:
 
 
 class SoftRefComicReader:
+    content_type = "comic"
+
     def __init__(self):
         ensure_rar_backend_configured()
         self._db_storage = JsonStorage(JSON_FILE)
@@ -329,6 +332,9 @@ class SoftRefComicReader:
         if not item:
             return False
         return str(item.get("storage_mode", "")).strip().lower() == "soft_ref"
+
+    def is_soft_ref_content(self, content_id: str) -> bool:
+        return self.is_soft_ref_comic(content_id)
 
     def set_archive_password(self, comic_id: str, archive_fingerprint: str, password: str) -> Dict[str, Any]:
         comic_record = self._get_raw_comic_record(comic_id)
@@ -831,4 +837,5 @@ class SoftRefComicReader:
 
 
 softref_comic_reader = SoftRefComicReader()
+register_softref_reader("comic", softref_comic_reader)
 

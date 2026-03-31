@@ -481,11 +481,12 @@ class ComicAppService:
             return False
 
     def _generate_static_cover_from_soft_ref(self, comic_id: str) -> str:
-        from application.softref_comic_reader import softref_comic_reader
+        from application.softref_reader_protocol import require_softref_reader
         from core.constants import JM_COVER_DIR, PK_COVER_DIR
         from core.platform import Platform, get_original_id, get_platform_from_id
 
         try:
+            softref_comic_reader = require_softref_reader("comic")
             stream, mimetype = softref_comic_reader.get_image_stream(comic_id, 1)
             image_bytes = stream.read() if stream else b""
             if not image_bytes:
