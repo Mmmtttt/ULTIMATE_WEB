@@ -478,6 +478,7 @@ public class MainActivity extends BridgeActivity {{
             dataRoot = getApplicationContext().getFilesDir().getAbsolutePath();
         }}
         final String filesDir = dataRoot;
+        final String internalFilesDir = getApplicationContext().getFilesDir().getAbsolutePath();
         final int backendPort = {backend_port};
         new Thread(() -> {{
             try {{
@@ -485,7 +486,7 @@ public class MainActivity extends BridgeActivity {{
                     Python.start(new AndroidPlatform(getApplicationContext()));
                 }}
                 PyObject module = Python.getInstance().getModule("ultimate_android_backend");
-                module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "{third_party_enabled}");
+                module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "{third_party_enabled}", internalFilesDir);
                 Log.i(TAG, "Embedded backend startup invoked on port " + backendPort);
             }} catch (Throwable ex) {{
                 Log.e(TAG, "Failed to start embedded backend", ex);
@@ -538,6 +539,7 @@ import sys
 import platform
 import shutil
 import threading
+import subprocess
 import importlib
 import importlib.util
 from datetime import datetime
@@ -570,7 +572,25 @@ def _detect_android_abi():
     return mapping.get(machine, "")
 
 
-def _prepare_android_archive_runtime(files_dir):
+def _validate_archive_tool(tool_path, files_dir):
+    try:
+        proc = subprocess.run(
+            [str(tool_path), "i"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+        if int(proc.returncode) in (0, 1, 2):
+            return True
+        _write_boot_log(files_dir, f"android archive runtime probe returned code={proc.returncode}")
+        return False
+    except Exception as ex:
+        _write_boot_log(files_dir, f"android archive runtime probe failed: {ex!r}")
+        return False
+
+
+def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
     try:
         module_dir = os.path.abspath(os.path.dirname(__file__))
         abi = _detect_android_abi()
@@ -581,7 +601,8 @@ def _prepare_android_archive_runtime(files_dir):
         if not os.path.isfile(source_tool):
             _write_boot_log(files_dir, f"android archive runtime skipped: missing source tool abi={abi} path={source_tool!r}")
             return ""
-        target_root = os.path.join(str(files_dir or "").strip() or ".", "tools", "archive")
+        exec_base = str(internal_exec_dir or "").strip() or str(files_dir or "").strip() or "."
+        target_root = os.path.join(exec_base, "tools", "archive")
         os.makedirs(target_root, exist_ok=True)
         target_tool = os.path.join(target_root, "7zz")
         if (not os.path.exists(target_tool)) or (os.path.getsize(target_tool) != os.path.getsize(source_tool)):
@@ -590,13 +611,15 @@ def _prepare_android_archive_runtime(files_dir):
             os.chmod(target_tool, 0o755)
         except Exception:
             pass
+        if not _validate_archive_tool(target_tool, files_dir):
+            return ""
         return target_tool
     except Exception as ex:
         _write_boot_log(files_dir, f"android archive runtime prepare failed: {ex!r}")
         return ""
 
 
-def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false"):
+def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false", internal_exec_dir=""):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
     with _lock:
@@ -610,7 +633,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_PORT"] = str(int(port or 5000))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
-    archive_tool = _prepare_android_archive_runtime(files_dir)
+    archive_tool = _prepare_android_archive_runtime(files_dir, internal_exec_dir=internal_exec_dir)
     if archive_tool:
         os.environ["RAR_BACKEND_MODE"] = "7z"
         os.environ["RAR_7Z_PATH"] = archive_tool

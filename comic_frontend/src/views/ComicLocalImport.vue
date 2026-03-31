@@ -21,7 +21,7 @@
     <section class="card-surface source-card">
       <div class="section-title">
         <h3>导入源</h3>
-        <span class="hint">压缩包支持 `.zip/.rar/.7z`，支持任意层级嵌套解包</span>
+        <span class="hint">压缩包支持 `.zip/.rar/.7z`，支持单层压缩包</span>
       </div>
 
       <div class="mode-toggle" role="tablist" aria-label="导入源切换">
@@ -116,9 +116,6 @@
         </div>
         <div v-if="pathImportMode === 'softlink_ref'" class="picker-tip">
           软连接导入当前仅支持单层压缩包，不支持继续解析压缩包内嵌套压缩包。
-        </div>
-        <div class="picker-tip">
-          浏览器文件选择器通常会返回 fakepath 虚拟路径，不能作为服务端路径使用。
         </div>
         <van-button
           type="primary"
