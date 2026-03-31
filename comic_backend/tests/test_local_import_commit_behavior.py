@@ -54,8 +54,8 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     comic = comics_data["comics"][0]
 
     comic_id = str(comic["id"])
-    assert comic_id.startswith("JMLOCAL")
-    original_id = comic_id[2:]
+    assert comic_id.startswith("LOCAL")
+    original_id = comic_id
 
     imported_dir = local_pictures_dir / original_id
     assert imported_dir.exists()

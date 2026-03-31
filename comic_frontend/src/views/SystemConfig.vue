@@ -476,7 +476,7 @@ async function organizeDatabase() {
   try {
     const response = await comicApi.organizeDatabase()
     const rewritten = response?.data?.home?.rewritten_total_pages ?? 0
-    const downloaded = (response?.data?.home?.downloaded_covers ?? 0) + (response?.data?.recommendation?.downloaded_covers ?? 0)
+    const downloaded = (response?.data?.home?.updated_cover_paths ?? 0) + (response?.data?.recommendation?.updated_cover_paths ?? 0)
     showSuccessToast(`整理完成：补全封面 ${downloaded}，回写页数 ${rewritten}`)
   } catch (error) {
     showFailToast(error?.message || '数据库整理失败')

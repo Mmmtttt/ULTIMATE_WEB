@@ -455,6 +455,138 @@ class ComicAppService:
             error_logger.error(f"永久删除失败: {e}")
             return ServiceResult.error("永久删除失败")
     
+    @staticmethod
+    def _is_soft_ref_storage_mode(storage_mode: str) -> bool:
+        return str(storage_mode or "").strip().lower() == "soft_ref"
+
+    @staticmethod
+    def _is_missing_cover_path(cover_path: str) -> bool:
+        normalized = str(cover_path or "").strip()
+        if not normalized:
+            return True
+        return normalized == "/static/default/default_cover.jpg"
+
+    @staticmethod
+    def _build_page1_cover_url(comic_id: str) -> str:
+        return f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
+
+    @staticmethod
+    def _is_local_import_comic_id(comic_id: str) -> bool:
+        try:
+            from core.platform import get_original_id
+
+            original_id = str(get_original_id(str(comic_id or "")) or "").strip().upper()
+            return original_id.startswith("LOCAL")
+        except Exception:
+            return False
+
+    def _generate_static_cover_from_soft_ref(self, comic_id: str) -> str:
+        from application.softref_comic_reader import softref_comic_reader
+        from core.constants import JM_COVER_DIR, PK_COVER_DIR
+        from core.platform import Platform, get_original_id, get_platform_from_id
+
+        try:
+            stream, mimetype = softref_comic_reader.get_image_stream(comic_id, 1)
+            image_bytes = stream.read() if stream else b""
+            if not image_bytes:
+                return ""
+
+            platform = get_platform_from_id(comic_id)
+            if platform == Platform.PK:
+                cover_dir = PK_COVER_DIR
+                cover_prefix = "PK"
+            else:
+                cover_dir = JM_COVER_DIR
+                cover_prefix = "JM"
+
+            original_id = get_original_id(comic_id)
+            os.makedirs(cover_dir, exist_ok=True)
+            lowered_mime = str(mimetype or "").lower()
+            suffix = ".jpg"
+            if "png" in lowered_mime:
+                suffix = ".png"
+            elif "webp" in lowered_mime:
+                suffix = ".webp"
+
+            cover_abs_path = os.path.join(cover_dir, f"{original_id}{suffix}")
+            with open(cover_abs_path, "wb") as f:
+                f.write(image_bytes)
+
+            if not os.path.exists(cover_abs_path):
+                return ""
+            return f"/static/cover/{cover_prefix}/{original_id}{suffix}"
+        except Exception as e:
+            error_logger.error(f"Generate soft_ref cover failed: {comic_id}, {e}")
+            return ""
+
+    def _repair_soft_ref_cover_for_record(self, comic_data: dict) -> tuple:
+        if not isinstance(comic_data, dict):
+            return False, False, False
+        if not self._is_soft_ref_storage_mode(comic_data.get("storage_mode", "")):
+            return False, False, False
+
+        comic_id = str(comic_data.get("id") or "").strip()
+        if not comic_id:
+            return False, False, False
+
+        current_cover = str(comic_data.get("cover_path") or "").strip()
+        if current_cover.startswith("/static/cover/"):
+            from core.constants import COVER_DIR
+
+            relative_cover = current_cover[len("/static/cover/") :].replace("/", os.sep)
+            local_cover_path = os.path.join(COVER_DIR, relative_cover)
+            if os.path.exists(local_cover_path):
+                return False, False, False
+
+        static_cover = self._generate_static_cover_from_soft_ref(comic_id)
+        if static_cover:
+            if current_cover == static_cover:
+                return False, False, False
+            comic_data["cover_path"] = static_cover
+            return True, True, False
+
+        fallback_cover = self._build_page1_cover_url(comic_id)
+        if self._is_missing_cover_path(current_cover) and current_cover != fallback_cover:
+            comic_data["cover_path"] = fallback_cover
+            return True, False, True
+
+        return False, False, False
+
+    def _repair_local_import_cover_for_record(self, comic_data: dict) -> tuple:
+        if not isinstance(comic_data, dict):
+            return False, False
+
+        comic_id = str(comic_data.get("id") or "").strip()
+        if not comic_id or not self._is_local_import_comic_id(comic_id):
+            return False, False
+
+        from utils.file_parser import file_parser
+        from utils.image_handler import ImageHandler
+
+        try:
+            image_paths = file_parser.parse_comic_images(comic_id)
+        except Exception:
+            image_paths = []
+
+        next_cover = ""
+        if image_paths:
+            generated_cover = ImageHandler().generate_cover(comic_id, image_paths[0])
+            if generated_cover and generated_cover != "/static/default/default_cover.jpg":
+                next_cover = generated_cover
+            else:
+                next_cover = self._build_page1_cover_url(comic_id)
+        elif self._is_missing_cover_path(comic_data.get("cover_path", "")):
+            # 数据存在但图片目录暂不可读时，仍给出可读接口兜底，避免列表空白。
+            next_cover = self._build_page1_cover_url(comic_id)
+
+        if not next_cover:
+            return False, False
+        if str(comic_data.get("cover_path") or "").strip() == next_cover:
+            return False, False
+
+        comic_data["cover_path"] = next_cover
+        return True, True
+
     def _cleanup_comic_files(self, comic):
         """清理漫画相关的所有文件"""
         import shutil
@@ -523,6 +655,14 @@ class ComicAppService:
         from core.constants import JM_COVER_DIR, PK_COVER_DIR
         from utils.file_parser import file_parser
         from utils.image_handler import ImageHandler
+
+        if self._is_soft_ref_storage_mode(getattr(comic, "storage_mode", "")):
+            if self._is_missing_cover_path(comic.cover_path):
+                fallback_cover_path = self._build_page1_cover_url(comic.id)
+                if comic.cover_path != fallback_cover_path:
+                    comic.cover_path = fallback_cover_path
+                    self._comic_repo.save(comic)
+            return
         
         platform = get_platform_from_id(comic.id)
         if platform not in (Platform.JM, Platform.PK):
@@ -613,6 +753,13 @@ class ComicAppService:
         """
         from core.platform import Platform, get_platform_from_id, get_original_id
         from core.constants import JM_COVER_DIR, PK_COVER_DIR
+
+        if self._is_soft_ref_storage_mode(comic_data.get("storage_mode", "")):
+            return False, False
+
+        if self._is_local_import_comic_id(comic_data.get("id", "")):
+            updated, _ = self._repair_local_import_cover_for_record(comic_data)
+            return False, updated
 
         comic_id = comic_data.get("id")
         platform = get_platform_from_id(comic_id)
@@ -772,6 +919,8 @@ class ComicAppService:
                 "total_comics": len(home_comics),
                 "downloaded_covers": 0,
                 "updated_cover_paths": 0,
+                "soft_ref_generated_covers": 0,
+                "soft_ref_fallback_covers": 0,
                 "rewritten_total_pages": 0,
                 "corrected_current_pages": 0,
                 "skipped_empty_local_pages": 0,
@@ -783,6 +932,18 @@ class ComicAppService:
             for comic in home_comics:
                 comic_id = comic.get("id", "")
                 try:
+                    soft_ref_updated, generated_static_cover, fallback_cover = self._repair_soft_ref_cover_for_record(comic)
+                    if soft_ref_updated:
+                        home_stats["updated_cover_paths"] += 1
+                    if generated_static_cover:
+                        home_stats["downloaded_covers"] += 1
+                        home_stats["soft_ref_generated_covers"] += 1
+                    if fallback_cover:
+                        home_stats["soft_ref_fallback_covers"] += 1
+
+                    if self._is_soft_ref_storage_mode(comic.get("storage_mode", "")):
+                        continue
+
                     downloaded, cover_updated = self._sync_cover_for_record(comic, platform_service)
                     if downloaded:
                         home_stats["downloaded_covers"] += 1

@@ -66,6 +66,10 @@ def add_platform_prefix(platform: Platform, original_id: str) -> str:
 def remove_platform_prefix(comic_id: str) -> Tuple[Optional[Platform], str]:
     if not comic_id:
         return None, comic_id
+
+    # 本地导入漫画 ID 形如 LOCALxxxx，归入漫画链路（JM 目录规则）处理。
+    if str(comic_id).startswith("LOCAL"):
+        return Platform.JM, comic_id
     
     for platform, prefix in PLATFORM_PREFIXES.items():
         if comic_id.startswith(prefix):

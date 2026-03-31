@@ -1683,7 +1683,7 @@ class LocalComicImportService:
     def _build_local_comic_id(self, work_path: str, existing_ids: set[str]) -> str:
         normalized = self._normalize_existing_source(work_path)
         digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12].upper()
-        base_id = f"JMLOCAL{digest}"
+        base_id = f"LOCAL{digest}"
         if base_id not in existing_ids:
             return base_id
         suffix = 2
@@ -2103,6 +2103,8 @@ class LocalComicImportService:
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF:
                     if page_count <= 0:
                         raise RuntimeError("作品中没有可导入图片")
+                    # 软连接模式不拷贝数据，封面使用首图接口兜底，避免依赖缺失的默认封面文件。
+                    cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
                     record["data_moved"] = False
                     self._save_state(session_id, state)
                 else:

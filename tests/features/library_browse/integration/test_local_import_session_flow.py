@@ -101,6 +101,10 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _save_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _find_comic_by_title(comics_data: dict, title: str) -> dict:
     for item in comics_data.get("comics") or []:
         if item.get("title") == title:
@@ -633,6 +637,7 @@ def test_local_import_softlink_mode_commit_creates_soft_ref_records(integration_
             assert comic.get("storage_mode") == "soft_ref"
             assert str(comic.get("import_source") or "").strip()
             assert int(comic.get("total_page") or 0) >= 1
+            assert str(comic.get("cover_path") or "").startswith("/api/v1/comic/image?comic_id=")
 
         # 软连接压缩包作品可直接走阅读接口按页读取
         archive_comic_id = str(comic_b.get("id") or "")
@@ -780,6 +785,67 @@ def test_local_import_softlink_mode_reader_returns_missing_source_error_after_so
         assert images_resp.status_code == 200
         images_payload = images_resp.json()
         assert images_payload["code"] == 404
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_organize_database_backfills_soft_ref_cover_from_default_placeholder(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    source_dir = runtime_root / "local_import_case_softlink_cover_backfill"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者封面修复"
+    title = "作品封面修复"
+    _write_png(source_dir / author_name / title / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "softlink_ref"},
+            timeout=30,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        session_id = parse_payload["data"]["session_id"]
+        node_map = _build_node_map(parse_payload["data"]["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        assert commit_resp.json()["code"] == 200
+
+        comics_db = meta_dir / "comics_database.json"
+        comics_data = _load_json(comics_db)
+        comic = _find_comic_by_title(comics_data, title)
+        comic["cover_path"] = f"/api/v1/comic/image?comic_id={comic.get('id')}&page_num=1"
+        _save_json(comics_db, comics_data)
+
+        organize_resp = requests.post(f"{base_url}/api/v1/comic/organize", timeout=60)
+        assert organize_resp.status_code == 200
+        organize_payload = organize_resp.json()
+        assert organize_payload["code"] == 200
+
+        refreshed_data = _load_json(comics_db)
+        refreshed = _find_comic_by_title(refreshed_data, title)
+        repaired_cover = str(refreshed.get("cover_path") or "").strip()
+        assert repaired_cover
+        assert repaired_cover.startswith("/static/cover/JM/")
+        cover_rel = repaired_cover[len("/static/cover/") :].replace("/", os.sep)
+        cover_abs = (integration_runtime["data_dir"] / "static" / "cover" / cover_rel)
+        assert cover_abs.exists()
     finally:
         _cleanup_imported_comics(base_url, [title])
 
