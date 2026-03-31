@@ -35,6 +35,7 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
+SOFTREF_PASSWORDS_FILE = Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
 LOCAL_IMPORT_TAG_NAME = "本地"
 IMPORT_MODE_COPY_SAFE = "copy_safe"
 IMPORT_MODE_MOVE_HUGE = "move_huge"
@@ -181,6 +182,71 @@ class LocalComicImportService:
         raw = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
         encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
         return f"softref://{encoded}"
+
+    @staticmethod
+    def _decode_softref_locator(locator: str) -> Dict[str, Any]:
+        raw = str(locator or "").strip()
+        if not raw.startswith("softref://"):
+            return {}
+        encoded = raw[len("softref://") :]
+        if not encoded:
+            return {}
+        padding = "=" * ((4 - len(encoded) % 4) % 4)
+        decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _softref_archive_fingerprint(top_archive_path: str, archive_chain: List[str]) -> str:
+        top = os.path.normcase(os.path.abspath(str(top_archive_path or "")))
+        chain = "|".join(str(item or "") for item in (archive_chain or []))
+        raw = f"{top}::{chain}"
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    def _load_softref_password_store(self) -> Dict[str, Any]:
+        if not SOFTREF_PASSWORDS_FILE.exists():
+            return {"archives": {}}
+        try:
+            payload = json.loads(SOFTREF_PASSWORDS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return {"archives": {}}
+            archives = payload.get("archives")
+            if not isinstance(archives, dict):
+                payload["archives"] = {}
+            return payload
+        except Exception:
+            return {"archives": {}}
+
+    def _save_softref_password_store(self, payload: Dict[str, Any]) -> None:
+        normalized = payload if isinstance(payload, dict) else {"archives": {}}
+        normalized.setdefault("archives", {})
+        SOFTREF_PASSWORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SOFTREF_PASSWORDS_FILE.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _remember_softref_archive_password(self, locator: str, archive_password: Optional[str]) -> bool:
+        password = str(archive_password or "").strip()
+        if not password:
+            return False
+        try:
+            payload = self._decode_softref_locator(locator)
+        except Exception:
+            return False
+        if str(payload.get("kind", "")).strip().lower() != "archive_dir":
+            return False
+        top_archive_path = str(payload.get("top_archive_path", "")).strip()
+        archive_chain = [str(item or "") for item in (payload.get("archive_chain") or [])]
+        if not top_archive_path:
+            return False
+
+        fingerprint = self._softref_archive_fingerprint(top_archive_path, archive_chain)
+        store = self._load_softref_password_store()
+        archives = store.setdefault("archives", {})
+        archives[fingerprint] = {
+            "password": password,
+            "updated_at": self._timestamp(),
+        }
+        self._save_softref_password_store(store)
+        return True
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -775,7 +841,8 @@ class LocalComicImportService:
                 warnings.append("未在给定路径中识别到可导入图片。")
         return tree, node_map, warnings
 
-    def _extract_zip(self, archive_path: Path, dest_dir: Path) -> None:
+    def _extract_zip(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
+        pwd_bytes = archive_password.encode("utf-8") if archive_password else None
         with zipfile.ZipFile(archive_path, "r") as zf:
             for info in zf.infolist():
                 target = self._safe_target_from_member(dest_dir, info.filename)
@@ -788,13 +855,18 @@ class LocalComicImportService:
                     target.mkdir(parents=True, exist_ok=True)
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(info, "r") as src, open(target, "wb") as dst:
+                open_kwargs: Dict[str, Any] = {}
+                if pwd_bytes:
+                    open_kwargs["pwd"] = pwd_bytes
+                with zf.open(info, "r", **open_kwargs) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
 
-    def _extract_rar(self, archive_path: Path, dest_dir: Path) -> None:
+    def _extract_rar(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
         if rarfile is None:
             raise RuntimeError("rarfile 未安装，无法处理 .rar")
         with rarfile.RarFile(archive_path) as rf:
+            if archive_password and hasattr(rf, "setpassword"):
+                rf.setpassword(archive_password)
             for info in rf.infolist():
                 target = self._safe_target_from_member(dest_dir, info.filename)
                 if target is None:
@@ -810,28 +882,31 @@ class LocalComicImportService:
                     target.mkdir(parents=True, exist_ok=True)
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with rf.open(info, "r") as src, open(target, "wb") as dst:
+                kwargs: Dict[str, Any] = {}
+                if archive_password:
+                    kwargs["pwd"] = archive_password
+                with rf.open(info, "r", **kwargs) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
 
-    def _extract_7z(self, archive_path: Path, dest_dir: Path) -> None:
+    def _extract_7z(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
         if py7zr is None:
             raise RuntimeError("py7zr 未安装，无法处理 .7z")
-        with py7zr.SevenZipFile(archive_path, "r") as archive:
+        with py7zr.SevenZipFile(archive_path, "r", password=(archive_password or None)) as archive:
             for name in archive.getnames():
                 if not self._is_safe_member_name(name):
                     raise ValueError(f"7z 包内包含非法路径: {name}")
             archive.extractall(path=dest_dir)
 
-    def _extract_archive(self, archive_path: Path, dest_dir: Path) -> None:
+    def _extract_archive(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
         suffix = archive_path.suffix.lower()
         if suffix == ".zip":
-            self._extract_zip(archive_path, dest_dir)
+            self._extract_zip(archive_path, dest_dir, archive_password=archive_password)
             return
         if suffix == ".rar":
-            self._extract_rar(archive_path, dest_dir)
+            self._extract_rar(archive_path, dest_dir, archive_password=archive_password)
             return
         if suffix == ".7z":
-            self._extract_7z(archive_path, dest_dir)
+            self._extract_7z(archive_path, dest_dir, archive_password=archive_password)
             return
         raise RuntimeError(f"不支持的压缩格式: {archive_path.suffix}")
 
@@ -867,7 +942,12 @@ class LocalComicImportService:
         with open(target_path, "wb") as dst:
             shutil.copyfileobj(upload_file.stream, dst)
 
-    def _normalize_to_clean_tree(self, input_root: Path, clean_root: Path) -> List[str]:
+    def _normalize_to_clean_tree(
+        self,
+        input_root: Path,
+        clean_root: Path,
+        archive_password: Optional[str] = None,
+    ) -> List[str]:
         warnings: List[str] = []
         scratch_root = input_root.parent / "scratch"
         scratch_root.mkdir(parents=True, exist_ok=True)
@@ -900,7 +980,7 @@ class LocalComicImportService:
                 temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 try:
-                    self._extract_archive(entry, temp_dir)
+                    self._extract_archive(entry, temp_dir, archive_password=archive_password)
                     for child in self._sorted_entries(list(temp_dir.iterdir())):
                         expand_entry(child, target_dir, depth + 1, allow_archive_expand=False)
                     self._flatten_archive_directory(target_dir)
@@ -954,7 +1034,12 @@ class LocalComicImportService:
         state["updated_at"] = self._timestamp()
         self._write_json(self._prepare_state_path(session_id), state)
 
-    def _prepare_source_inplace(self, session_id: str, source_root: Path) -> Dict[str, Any]:
+    def _prepare_source_inplace(
+        self,
+        session_id: str,
+        source_root: Path,
+        archive_password: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if not source_root.exists() or not source_root.is_dir():
             raise ValueError("仅支持文件夹启用超大文件移动导入")
 
@@ -1016,7 +1101,7 @@ class LocalComicImportService:
             temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
             temp_dir.mkdir(parents=True, exist_ok=True)
             try:
-                self._extract_archive(archive_path, temp_dir)
+                self._extract_archive(archive_path, temp_dir, archive_password=archive_password)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 for child in self._sorted_entries(list(temp_dir.iterdir())):
                     destination = self._make_unique_path(target_dir / child.name)
@@ -1392,6 +1477,7 @@ class LocalComicImportService:
             "source_path": str(source),
             "import_mode": display_mode,
             "effective_mode": mode,
+            "archive_password": archive_password or "",
             "phase": SESSION_PHASE_PREPARING,
             "created_at": self._timestamp(),
             "saved_assignments": {},
@@ -1442,7 +1528,11 @@ class LocalComicImportService:
             )
 
             if effective_mode == IMPORT_MODE_MOVE_HUGE:
-                prepare_result = self._prepare_source_inplace(session_id, source)
+                prepare_result = self._prepare_source_inplace(
+                    session_id,
+                    source,
+                    archive_password=archive_password,
+                )
                 warnings.extend(prepare_result.get("warnings", []))
                 response = self._finalize_session(
                     session_id,
@@ -1453,6 +1543,7 @@ class LocalComicImportService:
                         "effective_mode": effective_mode,
                         "source_path": str(source),
                         "prepare_status": prepare_result.get("status", "completed"),
+                        "archive_password": archive_password or "",
                     },
                 )
                 app_logger.info(f"本地导入解析会话创建成功(path-move): {session_id}")
@@ -1464,7 +1555,13 @@ class LocalComicImportService:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
 
-            warnings.extend(self._normalize_to_clean_tree(input_root, clean_root))
+            warnings.extend(
+                self._normalize_to_clean_tree(
+                    input_root,
+                    clean_root,
+                    archive_password=archive_password,
+                )
+            )
             response = self._finalize_session(
                 session_id,
                 clean_root,
@@ -1473,6 +1570,7 @@ class LocalComicImportService:
                     "import_mode": display_mode,
                     "effective_mode": effective_mode,
                     "source_path": str(source),
+                    "archive_password": archive_password or "",
                 },
             )
             app_logger.info(f"本地导入解析会话创建成功(path): {session_id}")
@@ -1886,6 +1984,7 @@ class LocalComicImportService:
     ) -> Dict[str, Any]:
         meta = self._load_meta(session_id)
         effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
+        archive_password = str(meta.get("archive_password", "") or "").strip() or None
 
         assignments = self._normalize_assignments(raw_assignments)
         if not assignments:
@@ -1981,6 +2080,8 @@ class LocalComicImportService:
 
             try:
                 if key in existing_source_map:
+                    if effective_mode == IMPORT_MODE_SOFTLINK_REF and archive_password and self._is_softref_locator(work_path):
+                        self._remember_softref_archive_password(work_path, archive_password)
                     record["status"] = "skipped"
                     record["comic_id"] = existing_source_map[key]
                     if target_tag_ids:
@@ -2067,6 +2168,8 @@ class LocalComicImportService:
                 ok, inserted = self._append_comic_record(comic_record)
                 if not ok:
                     raise RuntimeError("写入漫画数据库失败")
+                if effective_mode == IMPORT_MODE_SOFTLINK_REF and archive_password and self._is_softref_locator(work_path):
+                    self._remember_softref_archive_password(work_path, archive_password)
                 if not inserted and target_tag_ids:
                     self._ensure_comic_has_tags(comic_id, target_tag_ids)
 
@@ -2162,7 +2265,11 @@ class LocalComicImportService:
             source_root = Path(source_path)
             if not source_root.exists() or not source_root.is_dir():
                 raise ValueError("源目录不存在，无法恢复会话")
-            prepare_result = self._prepare_source_inplace(session_id, source_root)
+            prepare_result = self._prepare_source_inplace(
+                session_id,
+                source_root,
+                archive_password=str(meta.get("archive_password", "") or "").strip() or None,
+            )
             warnings.extend(prepare_result.get("warnings", []))
             payload = self._finalize_session(
                 session_id,

@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -118,6 +120,25 @@ def _resolve_comic_tag_names(meta_dir: Path, title: str) -> set[str]:
         if tag.get("id") in comic_tag_ids:
             tag_names.add(str(tag.get("name") or ""))
     return tag_names
+
+
+def _decode_softref_locator(locator: str) -> dict:
+    raw = str(locator or "").strip()
+    if not raw.startswith("softref://"):
+        return {}
+    encoded = raw[len("softref://") :]
+    if not encoded:
+        return {}
+    padding = "=" * ((4 - len(encoded) % 4) % 4)
+    decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
+    payload = json.loads(decoded)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _archive_fingerprint(top_archive_path: str, archive_chain: list[str]) -> str:
+    top = os.path.normcase(os.path.abspath(str(top_archive_path or "")))
+    chain = "|".join(str(item or "") for item in (archive_chain or []))
+    return hashlib.sha1(f"{top}::{chain}".encode("utf-8")).hexdigest()
 
 
 @pytest.mark.integration
@@ -388,6 +409,130 @@ def test_local_import_hardlink_move_alias_matches_move_mode_behavior(integration
 
 
 @pytest.mark.integration
+def test_local_import_copy_mode_supports_single_layer_archive_password(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    try:
+        import py7zr  # type: ignore
+    except Exception:
+        pytest.skip("py7zr not available")
+
+    source_dir = runtime_root / "local_import_case_copy_password"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者复制密码"
+    title = "作品加密copy"
+    archive_password = "copy-pass-001"
+    archive_path = source_dir / author_name / f"{title}.7z"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with py7zr.SevenZipFile(str(archive_path), "w", password=archive_password) as archive:
+        archive.writestr(PNG_1X1, "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={
+                "source_path": str(source_dir),
+                "import_mode": "copy_safe",
+                "archive_password": archive_password,
+            },
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        session_id = parse_payload["data"]["session_id"]
+        node_map = _build_node_map(parse_payload["data"]["tree"])
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        assert commit_payload["data"]["failed_count"] == 0
+
+        comic_id = _find_comic_id_by_title(base_url, title)
+        images_resp = requests.get(
+            f"{base_url}/api/v1/comic/images",
+            params={"comic_id": comic_id},
+            timeout=30,
+        )
+        assert images_resp.status_code == 200
+        images_payload = images_resp.json()
+        assert images_payload["code"] == 200
+        assert len(images_payload["data"]) >= 1
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_local_import_move_mode_supports_single_layer_archive_password(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    try:
+        import py7zr  # type: ignore
+    except Exception:
+        pytest.skip("py7zr not available")
+
+    source_dir = runtime_root / "local_import_case_move_password"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    author_name = "作者移动密码"
+    title = "作品加密move"
+    archive_password = "move-pass-001"
+    archive_path = source_dir / author_name / f"{title}.7z"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with py7zr.SevenZipFile(str(archive_path), "w", password=archive_password) as archive:
+        archive.writestr(PNG_1X1, "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={
+                "source_path": str(source_dir),
+                "import_mode": "move_huge",
+                "archive_password": archive_password,
+            },
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        session_id = parse_payload["data"]["session_id"]
+        node_map = _build_node_map(parse_payload["data"]["tree"])
+
+        assert not archive_path.exists()
+        assert (source_dir / author_name / title).exists()
+
+        assignments = {
+            _find_parent_id_by_name(node_map, author_name): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        assert commit_payload["data"]["failed_count"] == 0
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
 def test_local_import_softlink_mode_skips_nested_archive_without_modifying_source(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
@@ -640,7 +785,7 @@ def test_local_import_softlink_mode_reader_returns_missing_source_error_after_so
 
 
 @pytest.mark.integration
-def test_local_import_softlink_mode_reader_password_flow_with_encrypted_7z(integration_runtime):
+def test_local_import_softlink_mode_reader_uses_import_password_for_encrypted_7z(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
     data_dir: Path = integration_runtime["data_dir"]
@@ -695,40 +840,6 @@ def test_local_import_softlink_mode_reader_password_flow_with_encrypted_7z(integ
 
         comic_id = _find_comic_id_by_title(base_url, title)
 
-        challenge_resp = requests.get(
-            f"{base_url}/api/v1/comic/images",
-            params={"comic_id": comic_id},
-            timeout=30,
-        )
-        assert challenge_resp.status_code == 200
-        challenge_payload = challenge_resp.json()
-        assert challenge_payload["code"] == 200
-        challenge_data = challenge_payload["data"]
-        assert isinstance(challenge_data, dict)
-        assert challenge_data.get("images") == []
-        password_required = challenge_data.get("password_required")
-        assert isinstance(password_required, dict)
-        archive_fingerprint = str(password_required.get("archive_fingerprint") or "")
-        assert archive_fingerprint
-
-        set_password_resp = requests.post(
-            f"{base_url}/api/v1/comic/softref/password",
-            json={
-                "comic_id": comic_id,
-                "archive_fingerprint": archive_fingerprint,
-                "password": archive_password,
-            },
-            timeout=30,
-        )
-        assert set_password_resp.status_code == 200
-        set_password_payload = set_password_resp.json()
-        assert set_password_payload["code"] == 200
-
-        password_store = data_dir / "cache" / "comic_softref_passwords.json"
-        assert password_store.exists()
-        store_payload = json.loads(password_store.read_text(encoding="utf-8"))
-        assert store_payload["archives"][archive_fingerprint]["password"] == archive_password
-
         images_resp = requests.get(
             f"{base_url}/api/v1/comic/images",
             params={"comic_id": comic_id},
@@ -740,6 +851,21 @@ def test_local_import_softlink_mode_reader_password_flow_with_encrypted_7z(integ
         image_urls = images_payload["data"]
         assert isinstance(image_urls, list)
         assert len(image_urls) >= 2
+
+        comics_data = _load_json(data_dir / "meta_data" / "comics_database.json")
+        comic_entry = _find_comic_by_title(comics_data, title)
+        locator = str(comic_entry.get("soft_ref_locator") or comic_entry.get("import_source") or "")
+        locator_payload = _decode_softref_locator(locator)
+        archive_fingerprint = _archive_fingerprint(
+            str(locator_payload.get("top_archive_path") or ""),
+            list(locator_payload.get("archive_chain") or []),
+        )
+        assert archive_fingerprint
+
+        password_store = data_dir / "cache" / "comic_softref_passwords.json"
+        assert password_store.exists()
+        store_payload = json.loads(password_store.read_text(encoding="utf-8"))
+        assert store_payload["archives"][archive_fingerprint]["password"] == archive_password
 
         image_resp = requests.get(f"{base_url}{image_urls[0]}", timeout=30)
         assert image_resp.status_code == 200
