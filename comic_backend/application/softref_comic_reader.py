@@ -165,6 +165,20 @@ class SoftRefComicReader:
         return "application/octet-stream"
 
     @staticmethod
+    def _ensure_extract_tree_readable(root: Path) -> None:
+        if not root.exists():
+            return
+        for path in [root, *list(root.rglob("*"))]:
+            try:
+                current_mode = path.stat().st_mode
+                if path.is_dir():
+                    path.chmod(current_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+                else:
+                    path.chmod(current_mode | stat.S_IRUSR | stat.S_IWUSR)
+            except Exception:
+                continue
+
+    @staticmethod
     def _member_relative_to_base(member_name: str, base_inner_path: str) -> Optional[str]:
         normalized = str(member_name or "").replace("\\", "/")
         pure_member = PurePosixPath(normalized)
@@ -836,6 +850,7 @@ class SoftRefComicReader:
                         else:
                             with py7zr.SevenZipFile(io.BytesIO(archive_source), "r", password=(password or None)) as archive:
                                 archive.extractall(path=temp_dir)
+                    self._ensure_extract_tree_readable(Path(temp_dir))
                     target = Path(temp_dir) / PurePosixPath(member_name)
                     if not target.exists() or not target.is_file():
                         if targeted_error is not None:

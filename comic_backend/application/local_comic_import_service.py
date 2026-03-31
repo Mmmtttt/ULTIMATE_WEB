@@ -903,6 +903,23 @@ class LocalComicImportService:
                 raise ValueError(f"7z 包内包含非法路径: {name}")
         with py7zr.SevenZipFile(archive_path, "r", password=(archive_password or None)) as archive:
             archive.extractall(path=dest_dir)
+        self._ensure_extract_tree_readable(dest_dir)
+
+    @staticmethod
+    def _ensure_extract_tree_readable(root: Path) -> None:
+        # py7zr may preserve restrictive permission bits from archive metadata.
+        # Ensure extracted paths are traversable/readable for subsequent import steps.
+        if not root.exists():
+            return
+        for path in [root, *list(root.rglob("*"))]:
+            try:
+                current_mode = path.stat().st_mode
+                if path.is_dir():
+                    path.chmod(current_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+                else:
+                    path.chmod(current_mode | stat.S_IRUSR | stat.S_IWUSR)
+            except Exception:
+                continue
 
     def _extract_archive(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
         suffix = archive_path.suffix.lower()
