@@ -818,14 +818,28 @@ class SoftRefComicReader:
                 raise RuntimeError("缺少 py7zr 依赖，无法读取 7z 软连接漫画")
             try:
                 with tempfile.TemporaryDirectory(prefix="softref_7z_") as temp_dir:
-                    if archive_source_kind == "path":
-                        with py7zr.SevenZipFile(str(archive_source), "r", password=(password or None)) as archive:
-                            archive.extract(path=temp_dir, targets=[member_name])
-                    else:
-                        with py7zr.SevenZipFile(io.BytesIO(archive_source), "r", password=(password or None)) as archive:
-                            archive.extract(path=temp_dir, targets=[member_name])
+                    targeted_error: Optional[Exception] = None
+                    try:
+                        if archive_source_kind == "path":
+                            with py7zr.SevenZipFile(str(archive_source), "r", password=(password or None)) as archive:
+                                archive.extract(path=temp_dir, targets=[member_name])
+                        else:
+                            with py7zr.SevenZipFile(io.BytesIO(archive_source), "r", password=(password or None)) as archive:
+                                archive.extract(path=temp_dir, targets=[member_name])
+                    except Exception as exc:
+                        targeted_error = exc
+                        if self._is_password_error(exc):
+                            raise
+                        if archive_source_kind == "path":
+                            with py7zr.SevenZipFile(str(archive_source), "r", password=(password or None)) as archive:
+                                archive.extractall(path=temp_dir)
+                        else:
+                            with py7zr.SevenZipFile(io.BytesIO(archive_source), "r", password=(password or None)) as archive:
+                                archive.extractall(path=temp_dir)
                     target = Path(temp_dir) / PurePosixPath(member_name)
                     if not target.exists() or not target.is_file():
+                        if targeted_error is not None:
+                            raise RuntimeError(str(targeted_error))
                         raise RuntimeError(f"压缩包内文件不存在: {member_name}")
                     return target.read_bytes()
             except Exception as exc:

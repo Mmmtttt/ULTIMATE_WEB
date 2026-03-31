@@ -21,7 +21,7 @@ from core.constants import (
     VIDEO_DIR,
     ensure_storage_layout,
 )
-from infrastructure.archive import ensure_rar_backend_configured
+from infrastructure.archive import ensure_rar_backend_configured, probe_7z_encryption_capability
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
@@ -297,6 +297,19 @@ def run_backend_server(host=None, port=None, debug=None):
     resolved_debug = DEBUG if debug is None else bool(debug)
 
     ensure_rar_backend_configured(logger=app_logger, force=True)
+    sevenzip_capability = probe_7z_encryption_capability()
+    app_logger.info(
+        "7z encrypted archive capability: "
+        f"enabled={bool(sevenzip_capability.get('enabled', False))} "
+        f"py7zr_installed={bool(sevenzip_capability.get('py7zr_installed', False))} "
+        f"py7zr_version={sevenzip_capability.get('py7zr_version', '') or '<unknown>'} "
+        f"cryptodome_installed={bool(sevenzip_capability.get('cryptodome_installed', False))}"
+    )
+    if not bool(sevenzip_capability.get("enabled", False)):
+        app_logger.warning(
+            "7z encrypted archive capability unavailable: "
+            f"{sevenzip_capability.get('error', '') or 'unknown error'}"
+        )
     init_temp_file_cleanup()
     init_tag_schema()
     init_default_data()

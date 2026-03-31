@@ -893,10 +893,15 @@ class LocalComicImportService:
     def _extract_7z(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
         if py7zr is None:
             raise RuntimeError("py7zr 未安装，无法处理 .7z")
+        # Compatibility guard:
+        # some py7zr versions behave inconsistently when getnames() and extractall()
+        # are called on the same archive instance (especially with encrypted archives).
         with py7zr.SevenZipFile(archive_path, "r", password=(archive_password or None)) as archive:
-            for name in archive.getnames():
-                if not self._is_safe_member_name(name):
-                    raise ValueError(f"7z 包内包含非法路径: {name}")
+            member_names = [str(name or "") for name in archive.getnames()]
+        for name in member_names:
+            if not self._is_safe_member_name(name):
+                raise ValueError(f"7z 包内包含非法路径: {name}")
+        with py7zr.SevenZipFile(archive_path, "r", password=(archive_password or None)) as archive:
             archive.extractall(path=dest_dir)
 
     def _extract_archive(self, archive_path: Path, dest_dir: Path, archive_password: Optional[str] = None) -> None:
