@@ -31,6 +31,7 @@
     <van-cell-group class="mine-menu" inset>
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="数据同步" icon="share-o" to="/sync" is-link />
+      <van-cell title="数据库整理" icon="brush-o" @click="openOrganizePanel" is-link />
       <van-cell title="存储管理" icon="tosend" @click="showCachePanel = true" is-link />
     </van-cell-group>
     
@@ -151,6 +152,14 @@
         </div>
       </div>
     </van-popup>
+
+    <van-action-sheet
+      v-model:show="showOrganizeSheet"
+      :actions="organizeActions"
+      cancel-text="取消"
+      close-on-click-action
+      @select="handleOrganizeActionSelect"
+    />
     
   </div>
 </template>
@@ -159,7 +168,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
-import { configApi } from '@/api'
+import { configApi, organizeApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 
 const router = useRouter()
@@ -183,6 +192,10 @@ const importId = ref('')
 const importFile = ref(null)
 const importing = ref(false)
 const importFileInput = ref(null)
+const showOrganizeSheet = ref(false)
+const organizeActions = ref([])
+const runningOrganizeAction = ref(false)
+const loadingOrganizeOptions = ref(false)
 
 // Cache Info
 const cacheInfo = ref({
@@ -213,6 +226,7 @@ const stats = computed(() => {
 
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 const tagManagePath = computed(() => isVideoMode.value ? '/video-tags' : '/tags')
+const organizeModeKey = computed(() => (isVideoMode.value ? 'video' : 'comic'))
 
 // Cache Logic
 async function loadCacheInfo() {
@@ -267,6 +281,90 @@ watch(showCachePanel, (newVal) => {
 function goToFavorites() {
   const favoritesListId = isVideoMode.value ? 'list_favorites_video' : 'list_favorites_comic'
   router.push(`/list/${favoritesListId}`)
+}
+
+function mapOrganizeActions(rawOptions) {
+  if (!Array.isArray(rawOptions)) {
+    return []
+  }
+  return rawOptions.map((item) => ({
+    ...item,
+    name: item?.name || item?.action || '未知功能',
+    subname: item?.description || '',
+    disabled: item?.implemented === false,
+  }))
+}
+
+function buildOrganizeResultMessage(action, payload) {
+  if (payload?.summary) {
+    return payload.summary
+  }
+  if (action === 'repair_cover') {
+    const rewritten = Number(payload?.home?.rewritten_total_pages || 0)
+    const repaired = Number(payload?.home?.updated_cover_paths || 0) + Number(payload?.recommendation?.updated_cover_paths || 0)
+    return `修复封面完成：修复封面 ${repaired}，回写页数 ${rewritten}`
+  }
+  if (action === 'deduplicate_by_title') {
+    const home = Number(payload?.home?.moved_to_trash || 0)
+    const recommendation = Number(payload?.recommendation?.moved_to_trash || 0)
+    return `查重完成：本地库 ${home} 项，预览库 ${recommendation} 项`
+  }
+  if (action === 'enrich_local_metadata') {
+    const updated = Number(payload?.updated_records || 0)
+    const noMatch = Number(payload?.skipped_no_match || 0)
+    return `LOCAL 补全完成：成功 ${updated}，无匹配 ${noMatch}`
+  }
+  return '数据库整理已完成'
+}
+
+async function openOrganizePanel() {
+  if (runningOrganizeAction.value || loadingOrganizeOptions.value) {
+    return
+  }
+  loadingOrganizeOptions.value = true
+  try {
+    const response = await organizeApi.getOptions(organizeModeKey.value)
+    organizeActions.value = mapOrganizeActions(response?.data?.options)
+    if (!organizeActions.value.length) {
+      showFailToast('当前模式暂无可用整理功能')
+      return
+    }
+    showOrganizeSheet.value = true
+  } catch (error) {
+    showFailToast(error?.message || '加载数据库整理功能失败')
+  } finally {
+    loadingOrganizeOptions.value = false
+  }
+}
+
+async function handleOrganizeActionSelect(selectedAction) {
+  if (!selectedAction?.action) {
+    return
+  }
+  if (selectedAction?.implemented === false) {
+    showFailToast(selectedAction?.confirm_message || '该功能尚未实现')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: '数据库整理',
+      message: selectedAction?.confirm_message || `确定执行「${selectedAction?.name || selectedAction?.action}」吗？`
+    })
+  } catch {
+    return
+  }
+
+  runningOrganizeAction.value = true
+  try {
+    const response = await organizeApi.run(organizeModeKey.value, selectedAction.action)
+    const successText = buildOrganizeResultMessage(selectedAction.action, response?.data || {})
+    showSuccessToast(successText)
+  } catch (error) {
+    showFailToast(error?.message || '数据库整理失败')
+  } finally {
+    runningOrganizeAction.value = false
+  }
 }
 
 // Import Logic
@@ -438,6 +536,7 @@ onMounted(async () => {
 
 watch(() => modeStore.currentMode, () => {
   importPlatform.value = isVideoMode.value ? 'JAVDB' : 'JM'
+  organizeActions.value = []
 })
 </script>
 

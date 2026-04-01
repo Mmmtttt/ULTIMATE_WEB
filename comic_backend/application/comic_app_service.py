@@ -1,11 +1,13 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import os
+import re
 from domain.comic import Comic, ComicRepository
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
+from core.enums import ContentType
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
@@ -790,6 +792,528 @@ class ComicAppService:
             updated = True
 
         return downloaded, updated
+
+    @staticmethod
+    def _strip_bracket_segments(raw_title: str) -> str:
+        text = str(raw_title or "")
+        if not text:
+            return ""
+
+        patterns = (
+            r"\([^()]*\)",
+            r"（[^（）]*）",
+            r"\[[^\[\]]*\]",
+            r"【[^【】]*】",
+            r"\{[^{}]*\}",
+            r"＜[^＜＞]*＞",
+            r"<[^<>]*>",
+        )
+
+        previous = None
+        current = text
+        while previous != current:
+            previous = current
+            for pattern in patterns:
+                current = re.sub(pattern, "", current)
+        return current
+
+    @classmethod
+    def _normalize_title_for_compare(cls, raw_title: str) -> str:
+        text = cls._strip_bracket_segments(raw_title)
+        text = re.sub(r"\s+", "", text).strip().lower()
+        return text
+
+    @staticmethod
+    def _chinese_numeral_to_int(raw_value: str) -> Optional[int]:
+        text = str(raw_value or "").strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+
+        digits = {
+            "零": 0,
+            "〇": 0,
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }
+        units = {"十": 10, "百": 100, "千": 1000}
+
+        total = 0
+        current_digit = 0
+        has_value = False
+        for char in text:
+            if char in digits:
+                current_digit = digits[char]
+                has_value = True
+                continue
+            if char in units:
+                has_value = True
+                if current_digit == 0:
+                    current_digit = 1
+                total += current_digit * units[char]
+                current_digit = 0
+                continue
+            return None
+
+        if not has_value:
+            return None
+        total += current_digit
+        return total if total > 0 else None
+
+    @classmethod
+    def _extract_chapter_signature(cls, raw_title: str) -> str:
+        title_text = cls._strip_bracket_segments(raw_title)
+        if not title_text:
+            return ""
+        text = title_text.lower()
+
+        token_list: List[str] = []
+
+        for match in re.finditer(r"第\s*([0-9零〇一二两三四五六七八九十百千]+)\s*(章|话|回|卷|册|集)", text):
+            raw_num = str(match.group(1) or "").strip()
+            suffix = str(match.group(2) or "").strip()
+            normalized_num = cls._chinese_numeral_to_int(raw_num)
+            number_text = str(normalized_num) if normalized_num is not None else raw_num
+            if suffix and number_text:
+                token_list.append(f"{suffix}:{number_text}")
+
+        for match in re.finditer(r"(上|中|下|前|后)\s*(卷|册|篇|部)", text):
+            position = str(match.group(1) or "").strip()
+            category = str(match.group(2) or "").strip()
+            if position and category:
+                token_list.append(f"{category}:{position}")
+
+        for match in re.finditer(r"\b(vol(?:ume)?|ch(?:apter)?|ep(?:isode)?)\s*\.?\s*([0-9]+)\b", text):
+            raw_prefix = str(match.group(1) or "").strip().lower()
+            number_text = str(match.group(2) or "").strip()
+            if not number_text:
+                continue
+            if raw_prefix.startswith("vol"):
+                prefix = "vol"
+            elif raw_prefix.startswith("ch"):
+                prefix = "ch"
+            else:
+                prefix = "ep"
+            token_list.append(f"{prefix}:{number_text}")
+
+        for match in re.finditer(r"\b([0-9]+)\s*(卷|册|章|话|回|集)\b", text):
+            number_text = str(match.group(1) or "").strip()
+            suffix = str(match.group(2) or "").strip()
+            if suffix and number_text:
+                token_list.append(f"{suffix}:{number_text}")
+
+        unique_tokens: List[str] = []
+        seen_tokens = set()
+        for token in token_list:
+            normalized_token = str(token or "").strip().lower()
+            if not normalized_token or normalized_token in seen_tokens:
+                continue
+            seen_tokens.add(normalized_token)
+            unique_tokens.append(normalized_token)
+
+        return "|".join(unique_tokens)
+
+    @classmethod
+    def _build_dedupe_key(cls, raw_title: str) -> Tuple[str, str]:
+        clean_title = cls._normalize_title_for_compare(raw_title)
+        chapter_signature = cls._extract_chapter_signature(raw_title)
+        chapter_key = chapter_signature or "__no_chapter__"
+        return clean_title, chapter_key
+
+    def _deduplicate_records_by_title(self, records: List[dict]) -> Dict[str, Any]:
+        grouped: Dict[Tuple[str, str], List[dict]] = {}
+        stats = {
+            "total_records": len(records),
+            "candidate_records": 0,
+            "skipped_deleted_records": 0,
+            "skipped_invalid_title_records": 0,
+            "duplicate_groups": 0,
+            "kept_records": 0,
+            "moved_to_trash": 0,
+            "moved_ids": [],
+        }
+
+        for record in records:
+            if not isinstance(record, dict):
+                stats["skipped_invalid_title_records"] += 1
+                continue
+
+            if bool(record.get("is_deleted", False)):
+                stats["skipped_deleted_records"] += 1
+                continue
+
+            clean_title, chapter_key = self._build_dedupe_key(record.get("title", ""))
+            if not clean_title:
+                stats["skipped_invalid_title_records"] += 1
+                continue
+
+            stats["candidate_records"] += 1
+            grouped.setdefault((clean_title, chapter_key), []).append(record)
+
+        for group_records in grouped.values():
+            if len(group_records) <= 1:
+                continue
+            stats["duplicate_groups"] += 1
+            stats["kept_records"] += 1
+            for duplicate in group_records[1:]:
+                if bool(duplicate.get("is_deleted", False)):
+                    continue
+                duplicate["is_deleted"] = True
+                stats["moved_to_trash"] += 1
+                duplicate_id = str(duplicate.get("id") or "").strip()
+                if duplicate_id:
+                    stats["moved_ids"].append(duplicate_id)
+
+        return stats
+
+    def organize_deduplicate_by_title(self) -> ServiceResult:
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
+
+            home_storage = JsonStorage(JSON_FILE)
+            home_data = home_storage.read()
+            home_records = home_data.get("comics", [])
+            if not isinstance(home_records, list):
+                home_records = []
+                home_data["comics"] = home_records
+            home_stats = self._deduplicate_records_by_title(home_records)
+            if not home_storage.write(home_data):
+                return ServiceResult.error("Failed to write home database")
+
+            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+            rec_data = rec_storage.read()
+            rec_records = rec_data.get("recommendations", [])
+            if not isinstance(rec_records, list):
+                rec_records = []
+                rec_data["recommendations"] = rec_records
+            rec_stats = self._deduplicate_records_by_title(rec_records)
+            if not rec_storage.write(rec_data):
+                return ServiceResult.error("Failed to write recommendation database")
+
+            moved_total = int(home_stats.get("moved_to_trash", 0)) + int(rec_stats.get("moved_to_trash", 0))
+            summary = (
+                f"查重完成：本地库移入回收站 {home_stats.get('moved_to_trash', 0)} 项，"
+                f"预览库移入回收站 {rec_stats.get('moved_to_trash', 0)} 项，"
+                f"合计 {moved_total} 项"
+            )
+
+            return ServiceResult.ok(
+                {
+                    "home": home_stats,
+                    "recommendation": rec_stats,
+                    "summary": summary,
+                },
+                "Deduplicate completed",
+            )
+        except Exception as e:
+            error_logger.error(f"Organize deduplicate failed: {e}")
+            return ServiceResult.error("Deduplicate failed")
+
+    @staticmethod
+    def _normalize_tag_name(raw_name: Any) -> str:
+        text = str(raw_name or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    def _build_comic_tag_lookup(self, tags_data: dict) -> Tuple[Dict[str, str], int]:
+        tag_name_to_id: Dict[str, str] = {}
+        max_tag_num = 0
+        tag_items = tags_data.get("tags", [])
+        if not isinstance(tag_items, list):
+            tag_items = []
+            tags_data["tags"] = tag_items
+
+        for tag in tag_items:
+            if not isinstance(tag, dict):
+                continue
+            tag_name = self._normalize_tag_name(tag.get("name", ""))
+            tag_id = str(tag.get("id") or "").strip()
+            if not tag_name or not tag_id:
+                continue
+
+            content_type = str(tag.get("content_type", ContentType.COMIC.value) or "").strip().lower()
+            if content_type not in {ContentType.COMIC.value, ContentType.VIDEO.value}:
+                content_type = ContentType.COMIC.value
+            if content_type != ContentType.COMIC.value:
+                continue
+
+            tag_key = tag_name.lower()
+            if tag_key not in tag_name_to_id:
+                tag_name_to_id[tag_key] = tag_id
+
+            if tag_id.startswith("tag_"):
+                try:
+                    tag_num = int(tag_id[4:])
+                    max_tag_num = max(max_tag_num, tag_num)
+                except Exception:
+                    continue
+
+        return tag_name_to_id, max_tag_num
+
+    def _ensure_comic_tags_for_record(
+        self,
+        comic_data: dict,
+        raw_tag_names: List[Any],
+        tags_data: dict,
+        tag_name_to_id: Dict[str, str],
+        max_tag_num_holder: List[int],
+    ) -> Tuple[int, int]:
+        if not isinstance(comic_data, dict):
+            return 0, 0
+
+        normalized_tag_names: List[str] = []
+        seen_names = set()
+        for raw_tag_name in raw_tag_names or []:
+            tag_name = self._normalize_tag_name(raw_tag_name)
+            if not tag_name:
+                continue
+            tag_key = tag_name.lower()
+            if tag_key in seen_names:
+                continue
+            seen_names.add(tag_key)
+            normalized_tag_names.append(tag_name)
+
+        if not normalized_tag_names:
+            return 0, 0
+
+        tag_items = tags_data.setdefault("tags", [])
+        if not isinstance(tag_items, list):
+            tag_items = []
+            tags_data["tags"] = tag_items
+
+        created_count = 0
+        append_ids: List[str] = []
+
+        for tag_name in normalized_tag_names:
+            tag_key = tag_name.lower()
+            tag_id = tag_name_to_id.get(tag_key, "")
+            if not tag_id:
+                max_tag_num_holder[0] += 1
+                tag_id = f"tag_{max_tag_num_holder[0]:03d}"
+                tag_name_to_id[tag_key] = tag_id
+                tag_items.append(
+                    {
+                        "id": tag_id,
+                        "name": tag_name,
+                        "content_type": ContentType.COMIC.value,
+                        "create_time": get_current_time(),
+                    }
+                )
+                created_count += 1
+            append_ids.append(tag_id)
+
+        existing_tag_ids = comic_data.get("tag_ids", [])
+        if not isinstance(existing_tag_ids, list):
+            existing_tag_ids = []
+        merged_tag_ids = list(existing_tag_ids)
+        bound_count = 0
+        for tag_id in append_ids:
+            if tag_id in merged_tag_ids:
+                continue
+            merged_tag_ids.append(tag_id)
+            bound_count += 1
+
+        comic_data["tag_ids"] = merged_tag_ids
+        return created_count, bound_count
+
+    def _match_first_search_result(self, platform_service, platform, clean_title: str, chapter_key: str) -> Dict[str, Any]:
+        if not clean_title:
+            return {}
+
+        search_result = platform_service.search_albums(platform, clean_title, max_pages=1, fast_mode=False) or {}
+        albums = search_result.get("albums") or []
+        if not albums or not isinstance(albums[0], dict):
+            return {}
+
+        first_album = albums[0]
+        remote_title = str(first_album.get("title") or "").strip()
+        remote_clean, remote_chapter_key = self._build_dedupe_key(remote_title)
+        if remote_clean != clean_title or remote_chapter_key != chapter_key:
+            return {}
+
+        remote_album_id = str(first_album.get("album_id") or first_album.get("id") or "").strip()
+        if not remote_album_id:
+            return {}
+
+        detail = first_album
+        try:
+            detail_result = platform_service.get_album_by_id(platform, remote_album_id) or {}
+            detail_albums = detail_result.get("albums") or []
+            if detail_albums and isinstance(detail_albums[0], dict):
+                detail = detail_albums[0]
+        except Exception as detail_error:
+            error_logger.error(
+                f"Fetch remote detail failed: platform={getattr(platform, 'value', platform)}, album_id={remote_album_id}, error={detail_error}"
+            )
+
+        return {
+            "platform": getattr(platform, "value", str(platform)),
+            "album_id": remote_album_id,
+            "detail": detail,
+        }
+
+    def organize_enrich_local_metadata(self) -> ServiceResult:
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.constants import JSON_FILE, TAGS_JSON_FILE
+            from core.platform import Platform
+            from core.runtime_profile import is_third_party_enabled
+
+            home_storage = JsonStorage(JSON_FILE)
+            home_data = home_storage.read()
+            home_records = home_data.get("comics", [])
+            if not isinstance(home_records, list):
+                home_records = []
+                home_data["comics"] = home_records
+
+            stats = {
+                "total_records": len(home_records),
+                "total_local_candidates": 0,
+                "processed_candidates": 0,
+                "skipped_deleted": 0,
+                "skipped_already_enriched": 0,
+                "skipped_invalid_title": 0,
+                "skipped_no_match": 0,
+                "skipped_third_party_disabled": 0,
+                "matched_on_jm": 0,
+                "matched_on_pk": 0,
+                "updated_records": 0,
+                "updated_authors": 0,
+                "updated_tag_bindings": 0,
+                "created_tags": 0,
+                "failed_records": 0,
+                "updated_ids": [],
+            }
+
+            if not is_third_party_enabled():
+                for comic in home_records:
+                    if not isinstance(comic, dict):
+                        continue
+                    if bool(comic.get("is_deleted", False)):
+                        continue
+                    comic_id = str(comic.get("id") or "").strip()
+                    if not self._is_local_import_comic_id(comic_id):
+                        continue
+                    stats["total_local_candidates"] += 1
+                    stats["skipped_third_party_disabled"] += 1
+
+                summary = f"LOCAL 补全跳过：当前运行配置关闭第三方能力，跳过 {stats['skipped_third_party_disabled']} 项"
+                stats["summary"] = summary
+                return ServiceResult.ok(stats, "Local metadata enrich skipped")
+
+            from third_party.platform_service import get_platform_service
+
+            platform_service = get_platform_service()
+            tag_storage = JsonStorage(TAGS_JSON_FILE)
+            tags_data = tag_storage.read()
+            tag_name_to_id, max_tag_num = self._build_comic_tag_lookup(tags_data)
+            max_tag_num_holder = [max_tag_num]
+            tag_changed = False
+
+            for comic in home_records:
+                if not isinstance(comic, dict):
+                    continue
+
+                if bool(comic.get("is_deleted", False)):
+                    stats["skipped_deleted"] += 1
+                    continue
+
+                comic_id = str(comic.get("id") or "").strip()
+                if not self._is_local_import_comic_id(comic_id):
+                    continue
+
+                stats["total_local_candidates"] += 1
+
+                if bool(comic.get("local_metadata_enriched", False)):
+                    stats["skipped_already_enriched"] += 1
+                    continue
+
+                clean_title, chapter_key = self._build_dedupe_key(comic.get("title", ""))
+                if not clean_title:
+                    stats["skipped_invalid_title"] += 1
+                    continue
+
+                stats["processed_candidates"] += 1
+                matched = {}
+                try:
+                    matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
+                    if matched:
+                        stats["matched_on_jm"] += 1
+                    else:
+                        matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
+                        if matched:
+                            stats["matched_on_pk"] += 1
+                except Exception as match_error:
+                    stats["failed_records"] += 1
+                    error_logger.error(f"Match local metadata failed: comic_id={comic_id}, error={match_error}")
+                    continue
+
+                if not matched:
+                    stats["skipped_no_match"] += 1
+                    continue
+
+                detail = matched.get("detail") if isinstance(matched.get("detail"), dict) else {}
+                updated = False
+
+                remote_author = str(detail.get("author") or "").strip()
+                if remote_author and remote_author != str(comic.get("author") or "").strip():
+                    comic["author"] = remote_author
+                    stats["updated_authors"] += 1
+                    updated = True
+
+                remote_tags = detail.get("tags") if isinstance(detail.get("tags"), list) else []
+                created_count, bound_count = self._ensure_comic_tags_for_record(
+                    comic,
+                    remote_tags,
+                    tags_data,
+                    tag_name_to_id,
+                    max_tag_num_holder,
+                )
+                if created_count > 0:
+                    stats["created_tags"] += created_count
+                    tag_changed = True
+                    updated = True
+                if bound_count > 0:
+                    stats["updated_tag_bindings"] += bound_count
+                    updated = True
+
+                comic["local_metadata_enriched"] = True
+                if updated:
+                    stats["updated_records"] += 1
+                    if comic_id:
+                        stats["updated_ids"].append(comic_id)
+
+            if tag_changed:
+                if not tag_storage.write(tags_data):
+                    return ServiceResult.error("Failed to write tags database")
+
+            if not home_storage.write(home_data):
+                return ServiceResult.error("Failed to write home database")
+
+            summary = (
+                f"LOCAL 补全完成：成功 {stats['updated_records']}，"
+                f"无匹配 {stats['skipped_no_match']}，"
+                f"已补全跳过 {stats['skipped_already_enriched']}，"
+                f"新增标签 {stats['created_tags']}"
+            )
+            stats["summary"] = summary
+
+            return ServiceResult.ok(stats, "Local metadata enrich completed")
+        except Exception as e:
+            error_logger.error(f"Organize enrich local metadata failed: {e}")
+            return ServiceResult.error("Local metadata enrich failed")
 
     def check_comic_update(self, comic_id: str) -> ServiceResult:
         """Check whether remote comic has more pages than local files."""

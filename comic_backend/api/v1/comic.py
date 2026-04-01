@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
+from application.database_organize_service import DatabaseOrganizeService
 from application.local_comic_import_service import local_comic_import_service
 from application.softref_comic_reader import (
     SoftRefPasswordRequiredError,
@@ -26,6 +27,7 @@ import time
 
 comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
+database_organize_service = DatabaseOrganizeService(comic_service)
 softref_comic_reader = require_softref_reader("comic")
 
 
@@ -1524,7 +1526,7 @@ def move_to_trash():
 def organize_database():
     """整理数据库"""
     try:
-        result = comic_service.organize_database_v2()
+        result = database_organize_service.run("comic", "repair_cover")
         if result.success:
             return success_response(result.data, result.message)
         else:

@@ -12,6 +12,7 @@ class Comic(BaseContent):
     import_source: str = ""
     storage_mode: str = ""
     soft_ref_locator: str = ""
+    local_metadata_enriched: bool = False
     
     @property
     def author(self) -> str:
@@ -65,6 +66,7 @@ class Comic(BaseContent):
             import_source=data.get("import_source", ""),
             storage_mode=data.get("storage_mode", ""),
             soft_ref_locator=data.get("soft_ref_locator", ""),
+            local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
             content_type=ContentType.COMIC
         )
     
@@ -87,6 +89,7 @@ class Comic(BaseContent):
             "import_source": self.import_source,
             "storage_mode": self.storage_mode,
             "soft_ref_locator": self.soft_ref_locator,
+            "local_metadata_enriched": bool(self.local_metadata_enriched),
         }
     
     def update_progress(self, page: int) -> bool:

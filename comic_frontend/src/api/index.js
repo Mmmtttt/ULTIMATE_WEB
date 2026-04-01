@@ -14,6 +14,7 @@ export { configApi } from './config'
 export { imageApi, buildImageUrl, buildCoverUrl, buildThumbnailUrl } from './image'
 export { syncApi } from './sync'
 export { feedApi } from './feed'
+export { organizeApi } from './organize'
 
 import { comicApi } from './comic'
 export default comicApi

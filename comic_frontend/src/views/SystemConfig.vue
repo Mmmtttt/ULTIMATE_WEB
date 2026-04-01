@@ -149,10 +149,7 @@
     </van-popup>
 
     <div class="action-area">
-      <van-button type="primary" block round @click="organizeDatabase">
-        整理数据库
-      </van-button>
-      <van-button type="danger" block round style="margin-top: 10px" @click="confirmReset">
+      <van-button type="danger" block round @click="confirmReset">
         重置为默认设置
       </van-button>
     </div>
@@ -461,26 +458,6 @@ async function confirmReset() {
   await configStore.resetConfig()
   initValues()
   showSuccessToast('已重置为默认设置')
-}
-
-async function organizeDatabase() {
-  try {
-    await showConfirmDialog({
-      title: '整理数据库',
-      message: '将补全缺失封面，并回写本地实际页数，是否继续？',
-    })
-  } catch {
-    return
-  }
-
-  try {
-    const response = await comicApi.organizeDatabase()
-    const rewritten = response?.data?.home?.rewritten_total_pages ?? 0
-    const downloaded = (response?.data?.home?.updated_cover_paths ?? 0) + (response?.data?.recommendation?.updated_cover_paths ?? 0)
-    showSuccessToast(`整理完成：补全封面 ${downloaded}，回写页数 ${rewritten}`)
-  } catch (error) {
-    showFailToast(error?.message || '数据库整理失败')
-  }
 }
 
 onMounted(async () => {
