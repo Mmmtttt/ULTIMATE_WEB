@@ -81,11 +81,14 @@
         </div>
       </template>
 
-      <div v-if="hasMore" class="load-more">
-        <van-button block plain :loading="loadingMore" @click="loadMore">
-          加载更多
-        </van-button>
-      </div>
+      <AppPagination
+        v-if="totalWorks > 0"
+        :model-value="currentPage"
+        class="works-pagination"
+        :total-items="totalWorks"
+        :page-size="pageSize"
+        @update:model-value="handlePageChange"
+      />
     </div>
 
     <div class="floating-import-bar" v-if="selectedIds.length > 0">
@@ -102,33 +105,42 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useModeStore, useImportTaskStore } from '@/stores'
+import { useModeStore, useImportTaskStore, useConfigStore } from '@/stores'
 import { actorApi, authorApi } from '@/api'
+import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
+import { usePersistentPage } from '@/composables/useClientPagination'
 import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
 
 const route = useRoute()
 const modeStore = useModeStore()
 const importTaskStore = useImportTaskStore()
+const configStore = useConfigStore()
 
 const creatorName = computed(() => decodeURIComponent(route.params.name))
 const isVideoMode = computed(() => modeStore.isVideoMode)
+const pageSize = computed(() => {
+  const value = Number(configStore.listPageSize)
+  return Number.isFinite(value) && value > 0 ? value : 20
+})
+const pageStorageKey = computed(() => {
+  return `creator_detail_${isVideoMode.value ? 'video' : 'comic'}_${encodeURIComponent(creatorName.value)}`
+})
+const { currentPage, setPage, ensureWithinRange } = usePersistentPage(pageStorageKey)
 
 const loading = ref(false)
-const loadingMore = ref(false)
 const works = ref([])
 const totalWorks = ref(0)
-const hasMore = ref(false)
-const currentPage = ref(1)
 const selectedIds = ref([])
 const showImportSheet = ref(false)
 const isSubscribed = ref(false)
 const authorSubscriptionId = ref(null)
 const actorId = ref(null)
 const hasRemoteQueried = ref(false)
+const totalPages = computed(() => Math.max(1, Math.ceil((totalWorks.value || 0) / pageSize.value)))
 
 const isAllWorksSelected = computed(() => {
   return isAllSelected(selectedIds.value, works.value, (item) => getItemId(item))
@@ -151,19 +163,16 @@ async function resolveSubscription() {
   authorSubscriptionId.value = author?.id || null
 }
 
-function applyWorksPage(res, page) {
+function applyWorksPage(res) {
   const newWorks = res?.data?.works || []
   let incomingWorks = normalizeVideoWorkPlatforms(newWorks)
   if (isVideoMode.value) {
-    // 仅对“本次新增批次”做平台分组，避免重排历史结果导致新数据跳到前面
     incomingWorks = sortVideoWorksByPlatform(incomingWorks)
   }
 
-  if (page === 1) works.value = incomingWorks
-  else works.value = [...works.value, ...incomingWorks]
-
-  hasMore.value = Boolean(res?.data?.has_more)
+  works.value = incomingWorks
   totalWorks.value = res?.data?.total || works.value.length
+  ensureWithinRange(totalPages.value)
 }
 
 function normalizeVideoWorkPlatforms(items) {
@@ -233,10 +242,9 @@ function detectVideoPlatform(item) {
 }
 
 async function loadData(page = 1, options = {}) {
-  if (page === 1) loading.value = true
-  else loadingMore.value = true
-
+  loading.value = true
   const forceQuery = Boolean(options?.forceQuery)
+  const offset = (page - 1) * pageSize.value
 
   try {
     if (page === 1) {
@@ -248,33 +256,40 @@ async function loadData(page = 1, options = {}) {
 
     if (isVideoMode.value) {
       if (isSubscribed.value && actorId.value) {
-        const offset = (page - 1) * 20
         const cacheOnly = !forceQuery && !hasRemoteQueried.value
         const forceRefresh = Boolean(forceQuery && page === 1)
-        const res = await actorApi.getWorks(actorId.value, offset, 20, { cacheOnly, forceRefresh })
+        const res = await actorApi.getWorks(actorId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
         if (res.code === 200) {
-          applyWorksPage(res, page)
+          const previousPage = currentPage.value
+          applyWorksPage(res)
+          if (currentPage.value !== previousPage) {
+            await loadData(currentPage.value, { forceQuery })
+            return
+          }
           if (forceQuery) {
             hasRemoteQueried.value = true
           }
         }
       } else {
         if (!forceQuery) {
-          if (page === 1) {
-            works.value = []
-            hasMore.value = false
-            totalWorks.value = 0
-          }
+          works.value = []
+          totalWorks.value = 0
+          ensureWithinRange(totalPages.value)
           return
         }
         const res = await actorApi.searchWorksByName(
           creatorName.value,
-          (page - 1) * 20,
-          20,
+          offset,
+          pageSize.value,
           { forceRefresh: forceQuery && page === 1 }
         )
         if (res.code === 200) {
-          applyWorksPage(res, page)
+          const previousPage = currentPage.value
+          applyWorksPage(res)
+          if (currentPage.value !== previousPage) {
+            await loadData(currentPage.value, { forceQuery: true })
+            return
+          }
           hasRemoteQueried.value = true
         }
       }
@@ -282,12 +297,16 @@ async function loadData(page = 1, options = {}) {
     }
 
     if (isSubscribed.value && authorSubscriptionId.value) {
-      const offset = (page - 1) * 20
       const cacheOnly = !forceQuery && !hasRemoteQueried.value
       const forceRefresh = Boolean(forceQuery && page === 1)
-      const res = await authorApi.getWorks(authorSubscriptionId.value, offset, 20, { cacheOnly, forceRefresh })
+      const res = await authorApi.getWorks(authorSubscriptionId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
       if (res.code === 200) {
-        applyWorksPage(res, page)
+        const previousPage = currentPage.value
+        applyWorksPage(res)
+        if (currentPage.value !== previousPage) {
+          await loadData(currentPage.value, { forceQuery })
+          return
+        }
         if (forceQuery) {
           hasRemoteQueried.value = true
         }
@@ -296,38 +315,42 @@ async function loadData(page = 1, options = {}) {
     }
 
     if (!forceQuery) {
-      if (page === 1) {
-        works.value = []
-        hasMore.value = false
-        totalWorks.value = 0
-      }
+      works.value = []
+      totalWorks.value = 0
+      ensureWithinRange(totalPages.value)
       return
     }
 
-    const res = await authorApi.searchWorksByName(creatorName.value, (page - 1) * 20, 20)
+    const res = await authorApi.searchWorksByName(creatorName.value, offset, pageSize.value)
     if (res.code === 200) {
-      applyWorksPage(res, page)
+      const previousPage = currentPage.value
+      applyWorksPage(res)
+      if (currentPage.value !== previousPage) {
+        await loadData(currentPage.value, { forceQuery: true })
+        return
+      }
       hasRemoteQueried.value = true
     }
+
   } catch (e) {
     showToast('加载失败')
   } finally {
     loading.value = false
-    loadingMore.value = false
   }
 }
 
-async function loadMore() {
-  currentPage.value++
-  await loadData(currentPage.value, {
-    forceQuery: hasRemoteQueried.value
-  })
+async function queryWorks() {
+  await handlePageChange(1, true)
 }
 
-async function queryWorks() {
-  currentPage.value = 1
+async function handlePageChange(page, forceQuery = hasRemoteQueried.value) {
+  const nextPage = Number(page)
+  if (!Number.isFinite(nextPage) || nextPage < 1) {
+    return
+  }
+  setPage(nextPage)
   selectedIds.value = []
-  await loadData(1, { forceQuery: true })
+  await loadData(currentPage.value, { forceQuery })
 }
 
 function toggleSelection(item) {
@@ -416,8 +439,20 @@ async function toggleSubscribe() {
   showToast('订阅功能稍后完善')
 }
 
-onMounted(() => {
-  loadData(1, { forceQuery: false })
+watch(pageStorageKey, async () => {
+  selectedIds.value = []
+  hasRemoteQueried.value = false
+  await loadData(currentPage.value, { forceQuery: false })
+})
+
+watch(pageSize, async () => {
+  ensureWithinRange(totalPages.value)
+  await loadData(currentPage.value, { forceQuery: hasRemoteQueried.value })
+})
+
+onMounted(async () => {
+  ensureWithinRange(totalPages.value)
+  await loadData(currentPage.value, { forceQuery: false })
 })
 </script>
 <style scoped>
@@ -463,8 +498,8 @@ onMounted(() => {
   text-align: center;
 }
 
-.load-more {
-  margin-top: 20px;
+.works-pagination {
+  margin-top: 14px;
 }
 
 .remote-select-bar {
@@ -645,3 +680,5 @@ onMounted(() => {
   }
 }
 </style>
+
+

@@ -58,7 +58,7 @@
 
       <MediaGrid 
         v-else 
-        :items="items" 
+        :items="pagedItems" 
         :show-favorite="true"
         :is-favorited="isFavorited"
         :selectable="isManageMode"
@@ -70,6 +70,14 @@
         :class="{ 'video-mode': isVideoMode }"
       />
     </div>
+
+    <AppPagination
+      v-if="items.length > 0"
+      v-model="currentPage"
+      class="content-pagination"
+      :total-items="totalItems"
+      :page-size="pageSize"
+    />
 
     <!-- Management Bar (Bottom) -->
     <transition name="slide-up">
@@ -153,10 +161,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore } from '@/stores'
 import { comicApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { useDevice } from '@/composables/useDevice'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
@@ -228,7 +238,18 @@ const items = computed(() => {
   return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
-async function applyFilters() {
+const paginationStorageKey = computed(() => `library_${isVideoMode.value ? 'video' : 'comic'}`)
+const {
+  pageSize,
+  currentPage,
+  totalItems,
+  pagedItems,
+  goFirst
+} = useClientPagination(items, paginationStorageKey)
+
+async function applyFilters(options = {}) {
+  const shouldResetPage = options.resetPage !== false
+  const shouldClosePanel = options.closePanel !== false
   if (isVideoMode.value) {
     await videoStore.filterMulti(
       includeTags.value,
@@ -247,8 +268,13 @@ async function applyFilters() {
       unreadOnly.value
     )
   }
+  if (shouldResetPage) {
+    goFirst()
+  }
   saveFilterState()
-  showFilterPanel.value = false
+  if (shouldClosePanel) {
+    showFilterPanel.value = false
+  }
 }
 
 const isLoading = computed(() => currentStore.value.loading)
@@ -283,6 +309,7 @@ async function onSortConfirm({ selectedOptions }) {
     } else {
       await comicStore.sortComics(selectedValue)
     }
+    goFirst()
   } catch (e) {
     console.error('排序失败:', e)
     showToast('排序失败')
@@ -369,7 +396,7 @@ const activeFilters = computed(() => {
 })
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
+  return isAllSelected(selectedIds.value, pagedItems.value, (item) => item.id)
 })
 
 // Methods
@@ -403,7 +430,7 @@ function toggleSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, items.value, (item) => item.id)
+  toggleSelectAll(selectedIds, pagedItems.value, (item) => item.id)
 }
 
 function setViewMode(mode) {
@@ -468,6 +495,7 @@ function clearAllFilters() {
   minScore.value = 0
   unreadOnly.value = false
   currentStore.value.clearFilter()
+  goFirst()
   saveFilterState()
 }
 
@@ -527,7 +555,7 @@ async function initializePage(force = false) {
   }
 
   if (restored || hasActiveFilterState()) {
-    await applyFilters()
+    await applyFilters({ resetPage: false, closePanel: false })
   } else {
     currentStore.value.clearFilter()
   }
@@ -543,14 +571,14 @@ watch(() => modeStore.currentMode, async () => {
 watch(() => route.query.author, async (newAuthor) => {
   if (newAuthor) {
     selectedAuthors.value = [newAuthor]
-    await applyFilters()
+    await applyFilters({ closePanel: false })
   }
 })
 
 watch(() => route.query.tagId, async (newTagId) => {
   if (newTagId) {
     includeTags.value = [newTagId]
-    await applyFilters()
+    await applyFilters({ closePanel: false })
   }
 })
 
@@ -610,6 +638,10 @@ onMounted(async () => {
 
 .content-area {
   min-height: 200px;
+}
+
+.content-pagination {
+  padding: 0 8px;
 }
 
 .loading-center {

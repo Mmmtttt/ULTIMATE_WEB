@@ -41,7 +41,7 @@
             <span class="section-title">{{ contentLabel }}</span>
             <div class="section-right">
               <span class="selected-count" v-if="selectedContentIds.length > 0">
-                已选 {{ selectedContentIds.length }} 个
+                已选 {{ selectedContentIds.length }} 项
               </span>
               <van-button size="mini" plain type="primary" @click="toggleSelectAllContent">
                 {{ isAllContentSelected ? '取消全选' : '全选' }}
@@ -51,7 +51,7 @@
           
           <div class="content-select-grid">
             <div 
-              v-for="item in contentList" 
+              v-for="item in pagedContentList" 
               :key="item.id" 
               class="content-select-item"
               :class="{ selected: selectedContentIds.includes(item.id) }"
@@ -69,6 +69,14 @@
               </div>
             </div>
           </div>
+
+          <AppPagination
+            v-if="contentList.length > 0"
+            v-model="currentPage"
+            class="batch-pagination"
+            :total-items="totalItems"
+            :page-size="pageSize"
+          />
           
           <div class="section-header">
             <span class="section-title">选择标签</span>
@@ -156,7 +164,7 @@
     </van-popup>
     
     <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" :to="homePath">主页</van-tabbar-item>
+      <van-tabbar-item icon="home-o" :to="homePath">首页</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
   </div>
@@ -167,6 +175,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { getCoverUrl, isAllSelected, toggleSelection } from '@/utils/helpers'
+import AppPagination from '@/components/common/AppPagination.vue'
+import { useClientPagination } from '@/composables/useClientPagination'
 
 const props = defineProps({
   contentType: {
@@ -229,6 +239,15 @@ const allTags = computed(() => {
     : sortTags(props.tagStore.tags || [], 'comic_count')
 })
 
+const paginationStorageKey = computed(() => `tag_manage_batch_${props.contentType}`)
+const {
+  pageSize,
+  currentPage,
+  totalItems,
+  pagedItems
+} = useClientPagination(contentList, paginationStorageKey)
+const pagedContentList = computed(() => pagedItems.value)
+
 const canBatchAdd = computed(() => {
   return selectedContentIds.value.length > 0 && selectedTagIds.value.length > 0
 })
@@ -238,7 +257,7 @@ const canBatchRemove = computed(() => {
 })
 
 const isAllContentSelected = computed(() => {
-  return isAllSelected(selectedContentIds.value, contentList.value, (item) => item.id)
+  return isAllSelected(selectedContentIds.value, pagedContentList.value, (item) => item.id)
 })
 
 function getTagList(tabKey) {
@@ -359,7 +378,7 @@ async function confirmDelete(tag) {
     const unit = isVideo.value ? '视频' : '漫画'
     await showConfirmDialog({
       title: '确认删除',
-      message: `确定要删除标签"${tag.name}"吗？删除后该标签将从所有${unit}中移除。`,
+      message: `确定要删除标签「${tag.name}」吗？删除后将从所有${unit}中移除。`,
     })
     
     await deleteTag(tag.id)
@@ -396,7 +415,7 @@ function toggleSelectAllContent() {
     selectedContentIds.value = []
     return
   }
-  selectedContentIds.value = contentList.value.map(item => item.id)
+  selectedContentIds.value = pagedContentList.value.map(item => item.id)
 }
 
 function toggleTagSelection(id) {
@@ -408,7 +427,7 @@ async function batchAddTags() {
     const unit = isVideo.value ? '视频' : '漫画'
     await showConfirmDialog({
       title: '确认操作',
-      message: `确定为 ${selectedContentIds.value.length} 个${unit}添加 ${selectedTagIds.value.length} 个标签？`,
+      message: `确定为 ${selectedContentIds.value.length} 个${unit}添加 ${selectedTagIds.value.length} 个标签吗？`,
     })
     
     const contentData = contentList.value
@@ -437,7 +456,7 @@ async function batchRemoveTags() {
     const unit = isVideo.value ? '视频' : '漫画'
     await showConfirmDialog({
       title: '确认操作',
-      message: `确定从 ${selectedContentIds.value.length} 个${unit}移除 ${selectedTagIds.value.length} 个标签？`,
+      message: `确定从 ${selectedContentIds.value.length} 个${unit}移除 ${selectedTagIds.value.length} 个标签吗？`,
     })
     
     const contentData = contentList.value
@@ -541,6 +560,10 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.batch-pagination {
+  margin-bottom: 16px;
+}
+
 .content-select-item {
   position: relative;
   background: var(--surface-2);
@@ -615,3 +638,4 @@ onMounted(async () => {
   gap: 10px;
 }
 </style>
+

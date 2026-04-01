@@ -44,7 +44,7 @@
 
       <MediaGrid 
         v-else 
-        :items="items" 
+        :items="pagedItems" 
         :show-favorite="true"
         :is-favorited="isSaved"
         :selectable="isManageMode"
@@ -56,6 +56,14 @@
         :class="{ 'video-mode': isVideoMode }"
       />
     </div>
+
+    <AppPagination
+      v-if="items.length > 0"
+      v-model="currentPage"
+      class="content-pagination"
+      :total-items="totalItems"
+      :page-size="pageSize"
+    />
 
     <!-- Management Bar -->
     <transition name="slide-up">
@@ -142,10 +150,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore } from '@/stores'
 import { recommendationApi, videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
@@ -156,7 +166,7 @@ const videoRecStore = useVideoRecommendationStore()
 const listStore = useListStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
-const { isDesktop, isMobile } = useDevice()
+const { isDesktop } = useDevice()
 
 // State
 const showSortPanel = ref(false)
@@ -218,6 +228,15 @@ const items = computed(() => {
   return isVideoMode.value ? videoRecStore.recommendationList : comicRecStore.recommendationList
 })
 
+const paginationStorageKey = computed(() => `preview_${isVideoMode.value ? 'video' : 'comic'}`)
+const {
+  pageSize,
+  currentPage,
+  totalItems,
+  pagedItems,
+  goFirst
+} = useClientPagination(items, paginationStorageKey)
+
 const isLoading = computed(() => currentStore.value.loading)
 
 const searchPlaceholder = computed(() => 
@@ -254,7 +273,7 @@ const sortOptions = computed(() => [
 ])
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
+  return isAllSelected(selectedIds.value, pagedItems.value, (item) => item.id)
 })
 
 // Methods
@@ -288,7 +307,7 @@ function toggleSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, items.value, (item) => item.id)
+  toggleSelectAll(selectedIds, pagedItems.value, (item) => item.id)
 }
 
 function setViewMode(mode) {
@@ -368,18 +387,12 @@ async function onSortConfirm({ selectedOptions }) {
   const sortType = selectedOptions?.[0]?.value
   currentStore.value.setSortType(sortType)
   await loadData(true)
+  goFirst()
   showSortPanel.value = false
 }
 
 async function applyFilterAndClose() {
-  await currentStore.value.filterMulti(
-    tempIncludeTags.value,
-    tempExcludeTags.value,
-    tempSelectedAuthors.value,
-    tempSelectedListIds.value,
-    tempMinScore.value,
-    tempUnreadOnly.value
-  )
+  await applyCurrentFilters({ resetPage: true })
   saveFilterState()
   showFilterPanel.value = false
 }
@@ -407,7 +420,8 @@ function hasActiveFilterState() {
     tempUnreadOnly.value
 }
 
-async function applyCurrentFilters() {
+async function applyCurrentFilters(options = {}) {
+  const shouldResetPage = options.resetPage !== false
   await currentStore.value.filterMulti(
     tempIncludeTags.value,
     tempExcludeTags.value,
@@ -416,6 +430,9 @@ async function applyCurrentFilters() {
     tempMinScore.value,
     tempUnreadOnly.value
   )
+  if (shouldResetPage) {
+    goFirst()
+  }
 }
 
 async function initializePage(force = false) {
@@ -434,7 +451,7 @@ async function initializePage(force = false) {
   }
 
   if (restored || hasActiveFilterState()) {
-    await applyCurrentFilters()
+    await applyCurrentFilters({ resetPage: false })
   } else if (typeof currentStore.value.clearFilter === 'function') {
     currentStore.value.clearFilter()
   }
@@ -450,14 +467,14 @@ watch(() => modeStore.currentMode, async () => {
 watch(() => route.query.author, async (newAuthor) => {
   if (newAuthor) {
     tempSelectedAuthors.value = [newAuthor]
-    await applyCurrentFilters()
+    await applyCurrentFilters({ resetPage: true })
   }
 })
 
 watch(() => route.query.tagId, async (newTagId) => {
   if (newTagId) {
     tempIncludeTags.value = [newTagId]
-    await applyCurrentFilters()
+    await applyCurrentFilters({ resetPage: true })
   }
 })
 
@@ -502,6 +519,10 @@ onMounted(async () => {
 
 .content-area {
   min-height: 200px;
+}
+
+.content-pagination {
+  padding: 0 8px;
 }
 
 .loading-center {

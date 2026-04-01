@@ -46,7 +46,7 @@
           
           <div class="media-grid">
             <div 
-              v-for="item in getTrashList(tab.key)" 
+              v-for="item in getPagedTrashList(tab.key)" 
               :key="item.id" 
               class="media-item"
               :class="{ selected: getSelectedIds(tab.key).includes(item.id) }"
@@ -67,6 +67,14 @@
               </div>
             </div>
           </div>
+
+          <AppPagination
+            :model-value="getCurrentPage(tab.key)"
+            class="tab-pagination"
+            :total-items="getTrashList(tab.key).length"
+            :page-size="pageSize"
+            @update:model-value="(page) => onTabPageChange(tab.key, page)"
+          />
         </template>
       </van-tab>
     </van-tabs>
@@ -74,10 +82,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
-import { getCoverUrl, isAllSelected, toggleSelection } from '@/utils/helpers'
+import { useConfigStore } from '@/stores'
+import { getCoverUrl, isAllSelected, STORAGE_KEYS, toggleSelection } from '@/utils'
+import { getItem, setItem } from '@/utils/storage'
+import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const props = defineProps({
@@ -97,6 +108,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const configStore = useConfigStore()
 
 const activeTab = ref(0)
 const trashLists = ref({
@@ -111,6 +123,12 @@ const selectedIds = ref({
   video: [],
   videoRecommendation: []
 })
+const currentPages = ref({
+  home: 1,
+  recommendation: 1,
+  video: 1,
+  videoRecommendation: 1
+})
 const loading = ref({
   home: false,
   recommendation: false,
@@ -119,6 +137,10 @@ const loading = ref({
 })
 
 const isVideo = computed(() => props.contentType === 'video')
+const pageSize = computed(() => {
+  const value = Number(configStore.listPageSize)
+  return Number.isFinite(value) && value > 0 ? value : 20
+})
 
 const pageTitle = computed(() => isVideo.value ? '视频回收站' : '漫画回收站')
 
@@ -145,6 +167,54 @@ function getSelectedIds(key) {
   return selectedIds.value[key] || []
 }
 
+function getPaginationStorageKey(tabKey) {
+  return `${STORAGE_KEYS.PAGINATION_STATE}:trash_${props.contentType}_${tabKey}`
+}
+
+function normalizePageValue(page) {
+  const value = Number(page)
+  if (!Number.isFinite(value) || value < 1) {
+    return 1
+  }
+  return Math.floor(value)
+}
+
+function getTotalPages(tabKey) {
+  const totalItems = getTrashList(tabKey).length
+  return Math.max(1, Math.ceil(totalItems / pageSize.value))
+}
+
+function restorePageState(tabKey) {
+  const saved = getItem(getPaginationStorageKey(tabKey), 1)
+  currentPages.value[tabKey] = normalizePageValue(saved)
+}
+
+function getCurrentPage(tabKey) {
+  return normalizePageValue(currentPages.value[tabKey] || 1)
+}
+
+function onTabPageChange(tabKey, page) {
+  currentPages.value[tabKey] = normalizePageValue(page)
+  setItem(getPaginationStorageKey(tabKey), currentPages.value[tabKey])
+  normalizeTabPage(tabKey)
+}
+
+function normalizeTabPage(tabKey) {
+  const maxPage = getTotalPages(tabKey)
+  if (getCurrentPage(tabKey) > maxPage) {
+    currentPages.value[tabKey] = maxPage
+    setItem(getPaginationStorageKey(tabKey), maxPage)
+  }
+}
+
+function getPagedTrashList(tabKey) {
+  const list = getTrashList(tabKey)
+  const page = getCurrentPage(tabKey)
+  const start = (page - 1) * pageSize.value
+  const end = start + pageSize.value
+  return list.slice(start, end)
+}
+
 function toggleItemSelection(tabKey, id) {
   if (!selectedIds.value[tabKey]) {
     selectedIds.value[tabKey] = []
@@ -156,11 +226,11 @@ function toggleItemSelection(tabKey, id) {
 }
 
 function isAllTabSelected(tabKey) {
-  return isAllSelected(getSelectedIds(tabKey), getTrashList(tabKey), (item) => item.id)
+  return isAllSelected(getSelectedIds(tabKey), getPagedTrashList(tabKey), (item) => item.id)
 }
 
 function toggleTabSelectAll(tabKey) {
-  const list = getTrashList(tabKey)
+  const list = getPagedTrashList(tabKey)
   if (isAllTabSelected(tabKey)) {
     selectedIds.value[tabKey] = []
     return
@@ -188,6 +258,7 @@ async function fetchTrashList(key) {
       await props.stores.videoRecommendation.fetchTrashList()
       trashLists.value.videoRecommendation = props.stores.videoRecommendation.trashList || []
     }
+    normalizeTabPage(key)
   } catch (e) {
     showToast('获取回收站失败')
   } finally {
@@ -213,6 +284,7 @@ async function restoreItem(key, id) {
       showToast('已恢复')
       trashLists.value[key] = trashLists.value[key].filter(i => i.id !== id)
       selectedIds.value[key] = selectedIds.value[key].filter(i => i !== id)
+      normalizeTabPage(key)
     } else {
       showToast('恢复失败')
     }
@@ -244,6 +316,7 @@ async function deleteItem(key, id) {
       showToast('已永久删除')
       trashLists.value[key] = trashLists.value[key].filter(i => i.id !== id)
       selectedIds.value[key] = selectedIds.value[key].filter(i => i !== id)
+      normalizeTabPage(key)
     } else {
       showToast('删除失败')
     }
@@ -275,6 +348,7 @@ async function batchRestore(key) {
     showToast(`已恢复 ${ids.length} 个内容`)
     trashLists.value[key] = trashLists.value[key].filter(i => !ids.includes(i.id))
     selectedIds.value[key] = []
+    normalizeTabPage(key)
   } else {
     showToast('恢复失败')
   }
@@ -307,6 +381,7 @@ async function batchDelete(key) {
       showToast(`已永久删除 ${ids.length} 个内容`)
       trashLists.value[key] = trashLists.value[key].filter(i => !ids.includes(i.id))
       selectedIds.value[key] = []
+      normalizeTabPage(key)
     } else {
       showToast('删除失败')
     }
@@ -317,7 +392,12 @@ async function batchDelete(key) {
   }
 }
 
+watch(pageSize, () => {
+  tabs.value.forEach(tab => normalizeTabPage(tab.key))
+})
+
 onMounted(async () => {
+  tabs.value.forEach(tab => restorePageState(tab.key))
   for (const tab of tabs.value) {
     await fetchTrashList(tab.key)
   }
@@ -360,6 +440,10 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
   padding: 10px;
+}
+
+.tab-pagination {
+  padding: 0 10px 10px;
 }
 
 .media-item {

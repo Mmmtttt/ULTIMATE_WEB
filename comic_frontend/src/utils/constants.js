@@ -35,8 +35,11 @@ export const DEFAULT_CONFIG = {
   AUTO_HIDE_TOOLBAR: true,
   SHOW_PAGE_NUMBER: true,
   AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS: false,
-  SINGLE_PAGE_BROWSING: false
+  SINGLE_PAGE_BROWSING: false,
+  LIST_PAGE_SIZE: 20
 }
+
+export const LIST_PAGE_SIZE_OPTIONS = [20, 40, 60]
 
 // 评分范围
 export const SCORE_RANGE = {
@@ -67,7 +70,8 @@ function getCacheExpiry() {
 export const STORAGE_KEYS = {
   CONFIG: 'comic_config',
   READ_PROGRESS: 'comic_read_progress',
-  CACHE: 'comic_cache'
+  CACHE: 'comic_cache',
+  PAGINATION_STATE: 'pagination_state'
 }
 
 // 排序类型

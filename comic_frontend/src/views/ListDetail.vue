@@ -190,7 +190,7 @@
       
       <div v-else-if="listInfo.content_type === 'comic'" class="comic-grid">
         <div
-          v-for="comic in filteredComics"
+          v-for="comic in pagedComics"
           :key="comic.id"
           class="comic-card"
           :class="{ selected: isItemSelected(comic) }"
@@ -227,7 +227,7 @@
       
       <div v-else class="video-grid">
         <div
-          v-for="video in filteredVideos"
+          v-for="video in pagedVideos"
           :key="video.id"
           class="video-card"
           :class="{ selected: isItemSelected(video) }"
@@ -261,6 +261,14 @@
           />
         </div>
       </div>
+
+      <AppPagination
+        v-if="currentFilteredItems.length > 0"
+        v-model="currentPage"
+        class="content-pagination"
+        :total-items="totalItems"
+        :page-size="pageSize"
+      />
     </template>
     
     <van-popup 
@@ -351,6 +359,8 @@ import { comicApi } from '@/api/comic'
 import { recommendationApi, videoApi } from '@/api'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
 import { extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
 
@@ -616,13 +626,24 @@ const filteredVideos = computed(() => {
 })
 
 const currentFilteredItems = computed(() => activeContentType.value === 'video' ? filteredVideos.value : filteredComics.value)
+const paginationStorageKey = computed(() => `list_detail_${listId.value}_${activeContentType.value}`)
+const {
+  pageSize,
+  currentPage,
+  totalItems,
+  pagedItems,
+  goFirst
+} = useClientPagination(currentFilteredItems, paginationStorageKey)
+const pagedComics = computed(() => activeContentType.value === 'comic' ? pagedItems.value : [])
+const pagedVideos = computed(() => activeContentType.value === 'video' ? pagedItems.value : [])
+const currentPageItems = computed(() => activeContentType.value === 'video' ? pagedVideos.value : pagedComics.value)
 const selectedCount = computed(() => selectedItems.value.length)
 const allCurrentSelected = computed(() => {
-  if (currentFilteredItems.value.length === 0) {
+  if (currentPageItems.value.length === 0) {
     return false
   }
   const keySet = new Set(selectedItemKeys.value)
-  return currentFilteredItems.value.every(item => keySet.has(getItemSelectionKey(item)))
+  return currentPageItems.value.every(item => keySet.has(getItemSelectionKey(item)))
 })
 const canMoveToLocal = computed(() => selectedItems.value.some(item => item.source === 'preview'))
 
@@ -700,44 +721,52 @@ async function confirmDelete() {
 
 function setSortType(sortType) {
   currentSortType.value = sortType
+  goFirst()
   saveFilterState()
   showSortPanel.value = false
 }
 
 function clearSort() {
   currentSortType.value = ''
+  goFirst()
   saveFilterState()
 }
 
 function removeIncludeTag(tagId) {
   includeTags.value = includeTags.value.filter(id => id !== tagId)
+  goFirst()
   saveFilterState()
 }
 
 function removeExcludeTag(tagId) {
   excludeTags.value = excludeTags.value.filter(id => id !== tagId)
+  goFirst()
   saveFilterState()
 }
 
 function removeAuthor(author) {
   selectedAuthors.value = selectedAuthors.value.filter(item => item !== author)
+  goFirst()
   saveFilterState()
 }
 
 function removeList(listId) {
   selectedListIds.value = selectedListIds.value.filter(id => id !== listId)
+  goFirst()
   saveFilterState()
 }
 
 function removeUnreadOnly() {
   unreadOnly.value = false
   tempUnreadOnly.value = false
+  goFirst()
   saveFilterState()
 }
 
 function clearScoreFilter() {
   minScore.value = null
   tempMinScore.value = 0
+  goFirst()
   saveFilterState()
 }
 
@@ -755,6 +784,7 @@ function clearAllFilters() {
   tempSelectedAuthors.value = []
   tempSelectedListIds.value = []
   tempUnreadOnly.value = false
+  goFirst()
   saveFilterState()
 }
 
@@ -786,7 +816,7 @@ function toggleItemSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  const currentKeys = currentFilteredItems.value.map(getItemSelectionKey).filter(Boolean)
+  const currentKeys = currentPageItems.value.map(getItemSelectionKey).filter(Boolean)
   if (currentKeys.length === 0) {
     return
   }
@@ -842,6 +872,7 @@ function applyFilterAndClose() {
   selectedAuthors.value = [...tempSelectedAuthors.value]
   selectedListIds.value = [...tempSelectedListIds.value]
   unreadOnly.value = Boolean(tempUnreadOnly.value)
+  goFirst()
   saveFilterState()
   showFilterPanel.value = false
 }
@@ -1159,6 +1190,10 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 10px;
   padding: 10px;
+}
+
+.content-pagination {
+  padding: 0 10px 6px;
 }
 
 .comic-card {

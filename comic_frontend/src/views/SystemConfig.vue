@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="system-config desktop-page-shell">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
@@ -18,11 +18,30 @@
           </van-cell>
         </van-cell-group>
       </van-radio-group>
-      <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页漫画（可继续缩放、滑动与翻页）">
+      <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页内容（可继续缩放、滑动与翻页）">
         <template #right-icon>
           <van-switch v-model="singlePageBrowsingValue" @change="updateSinglePageBrowsing" />
         </template>
       </van-cell>
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
+      <van-cell title="列表分页数量" label="用于本地库、预览库、清单和回收站等页面" />
+      <van-radio-group v-model="pageSizeValue" @change="updatePageSize">
+        <van-cell-group inset>
+          <van-cell
+            v-for="size in pageSizeOptions"
+            :key="size"
+            :title="`每页 ${size} 条`"
+            clickable
+            @click="selectPageSize(size)"
+          >
+            <template #right-icon>
+              <van-radio :name="size" />
+            </template>
+          </van-cell>
+        </van-cell-group>
+      </van-radio-group>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -51,7 +70,7 @@
     <van-cell-group inset class="config-group">
       <van-cell
         title="预览库导入自动下载资源"
-        label="开启后：导入到预览库时自动异步下载高清封面和预览视频（JavBus 无预览视频时会自动跳过）"
+        label="开启后导入到预览库时将自动异步下载高清封面和预览视频（JavBus 无预览视频时自动跳过）"
       >
         <template #right-icon>
           <van-switch v-model="autoDownloadPreviewImportAssets" @change="updatePreviewImportAssetDownload" />
@@ -126,7 +145,7 @@
                 <div v-if="adapterName === 'javdb'" class="cookie-guide">
                   <div class="cookie-guide-text">JAVDB 先登录后获取 <code>_jdb_session</code> 的值，粘贴到上面的输入框即可，保存时会自动补全其余固定字段。</div>
                   <van-button plain type="primary" block @click="openJavdbCookieGuide">
-                    打开 Cookie 获取教学页
+                    打开 Cookie 获取教程页
                   </van-button>
                 </div>
 
@@ -173,6 +192,8 @@ const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
 const backgroundValue = ref('white')
 const autoDownloadPreviewImportAssets = ref(true)
+const pageSizeValue = ref(20)
+const pageSizeOptions = [20, 40, 60]
 
 const showThirdPartyConfig = ref(false)
 const savingAdapterMap = ref({})
@@ -216,6 +237,7 @@ function initValues() {
   singlePageBrowsingValue.value = configStore.singlePageBrowsing
   backgroundValue.value = configStore.defaultBackground
   autoDownloadPreviewImportAssets.value = configStore.autoDownloadPreviewImportAssets
+  pageSizeValue.value = configStore.listPageSize
 }
 
 function adapterLabel(adapterName) {
@@ -307,6 +329,18 @@ async function selectPageMode(mode) {
   }
   pageModeValue.value = mode
   await updatePageMode()
+}
+
+function updatePageSize() {
+  configStore.setListPageSize(pageSizeValue.value)
+}
+
+function selectPageSize(size) {
+  if (pageSizeValue.value === size) {
+    return
+  }
+  pageSizeValue.value = size
+  updatePageSize()
 }
 
 async function updateBackground() {
@@ -460,6 +494,26 @@ async function confirmReset() {
   showSuccessToast('已重置为默认设置')
 }
 
+async function organizeDatabase() {
+  try {
+    await showConfirmDialog({
+      title: '整理数据库',
+      message: '将补全缺失封面并回写本地实际页数，是否继续？',
+    })
+  } catch {
+    return
+  }
+
+  try {
+    const response = await comicApi.organizeDatabase()
+    const rewritten = response?.data?.home?.rewritten_total_pages ?? 0
+    const downloaded = (response?.data?.home?.updated_cover_paths ?? 0) + (response?.data?.recommendation?.updated_cover_paths ?? 0)
+    showSuccessToast(`整理完成：补全封面 ${downloaded}，回写页数 ${rewritten}`)
+  } catch (error) {
+    showFailToast(error?.message || '数据库整理失败')
+  }
+}
+
 onMounted(async () => {
   await configStore.loadConfigFromServer()
   initValues()
@@ -529,3 +583,4 @@ onMounted(async () => {
   padding: 20px 16px;
 }
 </style>
+

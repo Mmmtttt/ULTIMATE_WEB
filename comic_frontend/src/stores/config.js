@@ -4,6 +4,7 @@ import {
   DEFAULT_CONFIG,
   PAGE_MODE,
   BACKGROUND,
+  LIST_PAGE_SIZE_OPTIONS,
   STORAGE_KEYS
 } from '@/utils'
 import { getDocumentElement } from '@/runtime/browser'
@@ -17,6 +18,7 @@ export const useConfigStore = defineStore('config', () => {
   const showPageNumber = ref(DEFAULT_CONFIG.SHOW_PAGE_NUMBER)
   const autoDownloadPreviewImportAssets = ref(DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS)
   const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
+  const listPageSize = ref(DEFAULT_CONFIG.LIST_PAGE_SIZE)
   const loading = ref(false)
 
   const normalizePageMode = (mode) => {
@@ -40,6 +42,14 @@ export const useConfigStore = defineStore('config', () => {
     return DEFAULT_CONFIG.BACKGROUND
   }
 
+  const normalizeListPageSize = (size) => {
+    const normalized = Number(size)
+    if (LIST_PAGE_SIZE_OPTIONS.includes(normalized)) {
+      return normalized
+    }
+    return DEFAULT_CONFIG.LIST_PAGE_SIZE
+  }
+
   const resolveTheme = (background) => {
     const normalized = normalizeBackground(background)
     return normalized === BACKGROUND.DARK ? 'dark' : 'light'
@@ -58,7 +68,8 @@ export const useConfigStore = defineStore('config', () => {
     autoHideToolbar: autoHideToolbar.value,
     showPageNumber: showPageNumber.value,
     autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value,
-    singlePageBrowsing: singlePageBrowsing.value
+    singlePageBrowsing: singlePageBrowsing.value,
+    listPageSize: listPageSize.value
   }))
 
   const isLeftRightMode = computed(() => defaultPageMode.value === PAGE_MODE.LEFT_RIGHT)
@@ -87,7 +98,6 @@ export const useConfigStore = defineStore('config', () => {
   })
 
   const pageModeName = computed(() => (isLeftRightMode.value ? '左右翻页' : '上下翻页'))
-
   function loadConfig() {
     const saved = getItem(STORAGE_KEYS.CONFIG, null)
     if (!saved) {
@@ -104,6 +114,11 @@ export const useConfigStore = defineStore('config', () => {
       DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     )
     singlePageBrowsing.value = saved.singlePageBrowsing ?? DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
+    listPageSize.value = normalizeListPageSize(
+      saved.listPageSize ??
+      saved.pageSize ??
+      DEFAULT_CONFIG.LIST_PAGE_SIZE
+    )
     applyAppTheme(defaultBackground.value)
   }
 
@@ -127,6 +142,11 @@ export const useConfigStore = defineStore('config', () => {
       singlePageBrowsing.value = (
         serverConfig.single_page_browsing ??
         DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
+      )
+      listPageSize.value = normalizeListPageSize(
+        serverConfig.list_page_size ??
+        serverConfig.page_size ??
+        listPageSize.value
       )
       saveConfig()
       applyAppTheme(defaultBackground.value)
@@ -204,6 +224,11 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setListPageSize(size) {
+    listPageSize.value = normalizeListPageSize(size)
+    saveConfig()
+  }
+
   async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
@@ -211,6 +236,7 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber.value = DEFAULT_CONFIG.SHOW_PAGE_NUMBER
     autoDownloadPreviewImportAssets.value = DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
+    listPageSize.value = DEFAULT_CONFIG.LIST_PAGE_SIZE
     saveConfig()
     applyAppTheme(defaultBackground.value)
     await saveConfigToServer()
@@ -235,6 +261,9 @@ export const useConfigStore = defineStore('config', () => {
     if (newConfig.singlePageBrowsing !== undefined) {
       setSinglePageBrowsing(newConfig.singlePageBrowsing)
     }
+    if (newConfig.listPageSize !== undefined) {
+      setListPageSize(newConfig.listPageSize)
+    }
   }
 
   loadConfig()
@@ -246,6 +275,7 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber,
     autoDownloadPreviewImportAssets,
     singlePageBrowsing,
+    listPageSize,
     loading,
 
     config,
@@ -268,6 +298,7 @@ export const useConfigStore = defineStore('config', () => {
     setShowPageNumber,
     setAutoDownloadPreviewImportAssets,
     setSinglePageBrowsing,
+    setListPageSize,
     resetConfig,
     updateConfig
   }
