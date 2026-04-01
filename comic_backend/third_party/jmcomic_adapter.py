@@ -4,7 +4,6 @@ JMComic API 适配器实现
 """
 import sys
 import os
-import time
 from typing import Dict, List, Any, Optional, Tuple
 from .base_adapter import BaseAdapter
 from core.constants import JM_PICTURES_DIR
@@ -29,8 +28,6 @@ class JMComicAdapter(BaseAdapter):
         """
         super().__init__(config)
         self._jmcomic_api = None
-        self._html_search_probe_ok: Optional[bool] = None
-        self._html_search_probe_ts: float = 0.0
         self._load_jmcomic_api()
     
     @property
@@ -43,11 +40,19 @@ class JMComicAdapter(BaseAdapter):
 
     @staticmethod
     def _mask_username(username: str) -> str:
+        username = '' if username is None else str(username)
         if not username:
             return ""
         if len(username) <= 2:
             return "*" * len(username)
         return f"{username[:1]}***{username[-1:]}"
+
+    def _get_login_credentials(self) -> Tuple[str, str]:
+        username = self.get_config('username', '')
+        password = self.get_config('password', '')
+        username = '' if username is None else str(username).strip()
+        password = '' if password is None else str(password).strip()
+        return username, password
     
     def _load_jmcomic_api(self):
         """动态加载 JMComic API 模块并写入配置"""
@@ -132,74 +137,51 @@ class JMComicAdapter(BaseAdapter):
 
     def _get_search_client(self) -> Tuple[Any, bool]:
         """
-        Build search client with login-first strategy.
-        Prefer API login path first because html endpoint may be blocked by anti-bot (403).
+        Build search client in strict API-login mode.
+        Search should always run with logged-in API session.
         Returns:
             (client, is_logged_in_search)
         """
         from jmcomic_api import get_client
 
-        username = self.get_config('username')
-        password = self.get_config('password')
+        username, password = self._get_login_credentials()
 
-        if username and password:
-            try:
-                client = get_client(username=username, password=password)
-                client_key = getattr(client, 'client_key', type(client).__name__)
-                app_logger.info(
-                    f"JM search api login success, user={self._mask_username(username)}, client={client_key}"
-                )
-
-                if self._is_login_session_valid(client, username):
-                    app_logger.info(
-                        f"JM search api login verified, user={self._mask_username(username)}"
-                    )
-                    return client, True
-
-                error_logger.error(
-                    f"JM search api login invalid session, fallback to guest. "
-                    f"user={self._mask_username(username)}"
-                )
-                guest = get_client(username='', password='')
-                guest_key = getattr(guest, 'client_key', type(guest).__name__)
-                app_logger.info(f"JM search fallback client=guest({guest_key})")
-                return guest, False
-            except Exception as e:
-                error_logger.error(
-                    f"JM search api login failed, fallback to guest. "
-                    f"user={self._mask_username(username)}, error={e}"
-                )
-                guest = get_client(username='', password='')
-                guest_key = getattr(guest, 'client_key', type(guest).__name__)
-                app_logger.info(f"JM search fallback client=guest({guest_key})")
-                return guest, False
-
-            # API login is unavailable; try html client as secondary fallback.
-            now_ts = time.time()
-            html_cooldown_seconds = 300
-            html_on_cooldown = (
-                self._html_search_probe_ok is False
-                and (now_ts - self._html_search_probe_ts) < html_cooldown_seconds
+        if not username or not password:
+            raise RuntimeError(
+                "JM 账号或密码未配置。当前搜索仅支持 API 登录态，请检查 "
+                "third_party_config.json -> adapters -> jmcomic"
             )
 
-            if html_on_cooldown:
-                app_logger.info(
-                    f"JM search html probe skipped (cooldown), "
-                    f"user={self._mask_username(username)}"
-                )
-            else:
-                html_client = self._build_html_search_client(username, password)
-                self._html_search_probe_ts = now_ts
-                if html_client is not None:
-                    self._html_search_probe_ok = True
-                    return html_client, True
-                self._html_search_probe_ok = False
+        try:
+            client = get_client(username=username, password=password)
+            client_key = getattr(client, 'client_key', type(client).__name__)
+            app_logger.info(
+                f"JM search api login success, user={self._mask_username(username)}, client={client_key}"
+            )
+        except Exception as e:
+            error_logger.error(
+                f"JM search api login failed, user={self._mask_username(username)}, error={e}"
+            )
+            raise RuntimeError(
+                "JM API 登录失败，无法执行登录态搜索。请检查账号密码或网络后重试。"
+            ) from e
 
-        app_logger.info("JM search using guest mode (missing credentials)")
-        guest = get_client(username='', password='')
-        guest_key = getattr(guest, 'client_key', type(guest).__name__)
-        app_logger.info(f"JM search client=guest({guest_key})")
-        return guest, False
+        if getattr(client, 'client_key', '') != 'api':
+            error_logger.error(
+                f"JM search requires api client, got={getattr(client, 'client_key', type(client).__name__)}"
+            )
+            raise RuntimeError("JM 搜索客户端异常：未获取到 API 客户端。")
+
+        if not self._is_login_session_valid(client, username):
+            error_logger.error(
+                f"JM search api login invalid session, user={self._mask_username(username)}"
+            )
+            raise RuntimeError("JM 登录态校验失败，无法执行登录态搜索。")
+
+        app_logger.info(
+            f"JM search api login verified, user={self._mask_username(username)}"
+        )
+        return client, True
 
     def _build_html_search_client(self, username: str, password: str) -> Optional[Any]:
         """
@@ -347,7 +329,9 @@ class JMComicAdapter(BaseAdapter):
         try:
             from jmcomic_api import search_comics_full, search_comics
             search_client, is_logged_in_search = self._get_search_client()
-            search_user = self.get_config('username', '') if is_logged_in_search else ''
+            search_user, _ = self._get_login_credentials()
+            if not is_logged_in_search:
+                search_user = ''
             client_key = getattr(search_client, 'client_key', type(search_client).__name__)
             app_logger.info(
                 f"JM search start: mode={'login' if is_logged_in_search else 'guest'}, "
