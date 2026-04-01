@@ -123,7 +123,14 @@
       </div>
     </van-cell-group>
 
-    <van-popup v-model:show="showThirdPartyConfig" position="bottom" round :style="{ height: '82%' }">
+    <van-popup
+      v-model:show="showThirdPartyConfig"
+      class="third-party-popup"
+      position="bottom"
+      round
+      teleport="body"
+      :style="thirdPartyPopupStyle"
+    >
       <div class="third-party-config">
         <van-nav-bar title="第三方平台配置" left-text="关闭" @click-left="showThirdPartyConfig = false" />
 
@@ -204,12 +211,14 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
+import { useDevice } from '@/composables/useDevice'
 import { openExternalUrl, reloadPage } from '@/runtime/browser'
 import { useConfigStore, useModeStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const configStore = useConfigStore()
 const modeStore = useModeStore()
+const { isDesktop } = useDevice()
 
 const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
@@ -256,6 +265,10 @@ const runtimeDataDirLabel = computed(() => {
   }
   return `当前运行目录: ${runtimeDataDir.value}`
 })
+
+const thirdPartyPopupStyle = computed(() => ({
+  height: isDesktop.value ? '90vh' : '82%'
+}))
 
 function initValues() {
   pageModeValue.value = configStore.defaultPageMode
@@ -559,6 +572,12 @@ onMounted(async () => {
   padding-bottom: 20px;
 }
 
+@media (min-width: 1024px) {
+  .system-config.desktop-page-shell {
+    overflow: visible;
+  }
+}
+
 .config-group {
   margin-top: 12px;
 }
@@ -576,12 +595,14 @@ onMounted(async () => {
 
 .third-party-config {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
 .popup-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 8px 20px;
 }

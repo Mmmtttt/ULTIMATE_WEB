@@ -44,3 +44,6 @@ export { useImportTaskStore } from './importTask'
 
 // 随机流推荐
 export { useRandomFeedStore } from './randomFeed'
+
+// 应用更新
+export { useAppUpdateStore } from './appUpdate'

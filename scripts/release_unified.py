@@ -34,6 +34,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--packagers-config", default="build/packagers.json", help="Path to packagers config.")
     parser.add_argument("--skip-frontend-build", action="store_true", help="Skip frontend build in stage-1.")
     parser.add_argument("--execute", action="store_true", help="Execute packager commands when available.")
+    parser.add_argument(
+        "--app-version",
+        default="",
+        help="Set packaged app version (e.g. 2.0.0). If empty, build script auto-resolves from env/tag/package.json.",
+    )
     return parser.parse_args()
 
 
@@ -50,6 +55,8 @@ def main() -> int:
         "--config",
         args.targets_config,
     ]
+    if str(args.app_version or "").strip():
+        build_cmd.extend(["--app-version", str(args.app_version).strip()])
     if args.skip_frontend_build:
         build_cmd.append("--skip-frontend-build")
 

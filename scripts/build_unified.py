@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,7 @@ BACKEND_DIR = ROOT_DIR / "comic_backend"
 FRONTEND_DIR = ROOT_DIR / "comic_frontend"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "output" / "multi_target"
+DEFAULT_APP_VERSION = "0.0.0"
 
 BASE_BACKEND_EXCLUDE_DIRS = {
     "__pycache__",
@@ -52,8 +54,11 @@ ANDROID_BACKEND_EXCLUDE_FILES = {
 }
 
 
-def run_cmd(cmd: List[str], cwd: Path) -> None:
-    result = subprocess.run(cmd, cwd=str(cwd), check=False)
+def run_cmd(cmd: List[str], cwd: Path, env: Dict[str, str] | None = None) -> None:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    result = subprocess.run(cmd, cwd=str(cwd), check=False, env=merged_env)
     if result.returncode != 0:
         raise RuntimeError(f"command failed ({result.returncode}): {' '.join(cmd)}")
 
@@ -96,12 +101,53 @@ def load_targets(config_path: Path) -> List[Dict]:
     return normalized
 
 
-def build_frontend_if_needed(skip_frontend_build: bool) -> Path:
+def normalize_app_version(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+
+    if text.lower().startswith("refs/tags/"):
+        text = text.split("/", 2)[-1]
+    if text.startswith(("v", "V")) and re.search(r"\d", text[1:]):
+        text = text[1:]
+    return text.strip()
+
+
+def resolve_app_version(cli_app_version: str = "") -> str:
+    candidates = [
+        cli_app_version,
+        os.environ.get("ULTIMATE_APP_VERSION", ""),
+        os.environ.get("GITHUB_REF_NAME", ""),
+        os.environ.get("GITHUB_REF", ""),
+    ]
+    for candidate in candidates:
+        normalized = normalize_app_version(candidate)
+        if normalized and re.search(r"\d", normalized):
+            return normalized
+
+    package_json = FRONTEND_DIR / "package.json"
+    if package_json.exists():
+        try:
+            raw = json.loads(package_json.read_text(encoding="utf-8"))
+            package_version = normalize_app_version(raw.get("version", ""))
+            if package_version:
+                return package_version
+        except Exception:
+            pass
+
+    return DEFAULT_APP_VERSION
+
+
+def build_frontend_if_needed(skip_frontend_build: bool, app_version: str) -> Path:
     dist_dir = FRONTEND_DIR / "dist"
     if not skip_frontend_build:
         print("[build] frontend: npm run build")
+        frontend_env = {
+            "VITE_APP_VERSION": app_version,
+            "ULTIMATE_APP_VERSION": app_version,
+        }
         try:
-            run_cmd([get_npm_command(), "run", "build"], cwd=FRONTEND_DIR)
+            run_cmd([get_npm_command(), "run", "build"], cwd=FRONTEND_DIR, env=frontend_env)
         except RuntimeError as exc:
             raise RuntimeError(
                 f"{exc}. if dist already exists, retry with --skip-frontend-build"
@@ -130,11 +176,12 @@ def copy_tree_with_filters(
     shutil.copytree(src, dst, ignore=_ignore)
 
 
-def write_runtime_env(target: Dict, target_dir: Path) -> Path:
+def write_runtime_env(target: Dict, target_dir: Path, app_version: str) -> Path:
     env_path = target_dir / "runtime.env"
     lines = [
         f"BACKEND_RUNTIME_PROFILE={target['runtime_profile']}",
         f"BACKEND_ENABLE_THIRD_PARTY={'true' if target['third_party_enabled'] else 'false'}",
+        f"ULTIMATE_APP_VERSION={app_version}",
     ]
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return env_path
@@ -178,11 +225,12 @@ def write_launchers(target: Dict, target_dir: Path) -> None:
         pass
 
 
-def write_manifest(target: Dict, target_dir: Path) -> None:
+def write_manifest(target: Dict, target_dir: Path, app_version: str) -> None:
     manifest = {
         "target": target["id"],
         "runtime_profile": target["runtime_profile"],
         "third_party_enabled": target["third_party_enabled"],
+        "app_version": app_version,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "layout": {
             "backend_dir": "comic_backend",
@@ -197,7 +245,7 @@ def write_manifest(target: Dict, target_dir: Path) -> None:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def build_target(target: Dict, frontend_dist_dir: Path, output_dir: Path) -> Path:
+def build_target(target: Dict, frontend_dist_dir: Path, output_dir: Path, app_version: str) -> Path:
     target_dir = output_dir / target["id"]
     if target_dir.exists():
         shutil.rmtree(target_dir)
@@ -221,9 +269,9 @@ def build_target(target: Dict, frontend_dist_dir: Path, output_dir: Path) -> Pat
     if server_config_src.exists():
         shutil.copy2(server_config_src, target_dir / "server_config.json")
 
-    write_runtime_env(target, target_dir)
+    write_runtime_env(target, target_dir, app_version)
     write_launchers(target, target_dir)
-    write_manifest(target, target_dir)
+    write_manifest(target, target_dir, app_version)
     return target_dir
 
 
@@ -249,6 +297,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip 'npm run build' and reuse existing comic_frontend/dist.",
     )
+    parser.add_argument(
+        "--app-version",
+        default="",
+        help="Set packaged app version (e.g. 2.0.0). Defaults to env/tag/package.json resolution.",
+    )
     return parser.parse_args()
 
 
@@ -271,12 +324,17 @@ def main() -> int:
     selected_targets = [target_map[item] for item in selected_ids]
     print(f"[build] targets: {', '.join(selected_ids)}")
     print(f"[build] output: {output_dir}")
+    app_version = resolve_app_version(args.app_version)
+    print(f"[build] app_version: {app_version}")
 
-    frontend_dist_dir = build_frontend_if_needed(skip_frontend_build=args.skip_frontend_build)
+    frontend_dist_dir = build_frontend_if_needed(
+        skip_frontend_build=args.skip_frontend_build,
+        app_version=app_version,
+    )
 
     built_dirs = []
     for target in selected_targets:
-        built_dir = build_target(target, frontend_dist_dir, output_dir)
+        built_dir = build_target(target, frontend_dist_dir, output_dir, app_version)
         built_dirs.append(built_dir)
         print(f"[build] prepared: {built_dir}")
 

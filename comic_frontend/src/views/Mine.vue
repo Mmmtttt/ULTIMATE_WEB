@@ -17,7 +17,7 @@
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="导入内容" icon="add-o" @click="showImportDialog = true" is-link />
+      <van-cell title="通过ID导入" icon="add-o" @click="showImportDialog = true" is-link />
       <van-cell title="导入任务" icon="clock-o" to="/import-tasks" is-link>
         <template #value>
           <van-tag v-if="activeTaskCount > 0" type="primary" round>
@@ -36,10 +36,32 @@
     </van-cell-group>
     
     <div class="about">
-      <p class="version">版本 2.0.0</p>
+      <p class="version">版本 {{ appVersionLabel }}</p>
       <p class="copyright">© 2026 Ultimate Web </p>
       <p><span class="mmmtttt">github@Mmmtttt</span></p>
-      <p><span class="mmmtttt">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB.git</span></p>
+      <p><span class="mmmtttt">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB</span></p>
+      <div class="update-card">
+        <div class="update-status">{{ updateStatusText }}</div>
+        <div class="update-meta">上次检查：{{ updateCheckedAtText }}</div>
+        <div class="update-actions">
+          <van-button
+            size="small"
+            type="primary"
+            :loading="updateChecking"
+            @click="handleManualCheckUpdate"
+          >
+            检查更新
+          </van-button>
+          <van-button
+            v-if="hasNewVersion"
+            size="small"
+            plain
+            @click="handleOpenReleasePage"
+          >
+            前往下载
+          </van-button>
+        </div>
+      </div>
     </div>
     
     <!-- 存储管理面板 -->
@@ -167,9 +189,10 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
+import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore, useAppUpdateStore } from '@/stores'
 import { configApi, organizeApi } from '@/api'
-import { closeToast, showFailToast, showConfirmDialog, showLoadingToast } from 'vant'
+import { closeToast, showFailToast, showConfirmDialog, showLoadingToast, showSuccessToast } from 'vant'
+import { openReleasePage } from '@/services/appUpdate'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -179,6 +202,7 @@ const cacheStore = useCacheStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
 const importTaskStore = useImportTaskStore()
+const appUpdateStore = useAppUpdateStore()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -227,6 +251,31 @@ const stats = computed(() => {
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 const tagManagePath = computed(() => isVideoMode.value ? '/video-tags' : '/tags')
 const organizeModeKey = computed(() => (isVideoMode.value ? 'video' : 'comic'))
+const appVersionLabel = computed(() => String(import.meta.env.VITE_APP_VERSION || '0.0.0').trim() || '0.0.0')
+const updateChecking = computed(() => appUpdateStore.checking)
+const hasNewVersion = computed(() => appUpdateStore.hasUpdate)
+const updateStatusText = computed(() => appUpdateStore.statusText)
+const updateCheckedAtText = computed(() => appUpdateStore.checkedAtText)
+const updateReleaseUrl = computed(() => appUpdateStore.releaseUrl)
+
+async function handleManualCheckUpdate() {
+  const result = await appUpdateStore.checkForUpdates({ source: 'manual', showPrompt: true })
+  if (result?.hasUpdate) {
+    showSuccessToast(`发现新版本 ${result.latestVersion}`)
+    return
+  }
+  if (result?.reason === 'up-to-date') {
+    showSuccessToast('当前已是最新版本')
+    return
+  }
+  if (result?.reason === 'network-error') {
+    showFailToast('检查更新失败，请稍后重试')
+  }
+}
+
+function handleOpenReleasePage() {
+  openReleasePage(updateReleaseUrl.value)
+}
 
 // Cache Logic
 async function loadCacheInfo() {
@@ -630,6 +679,35 @@ watch(() => modeStore.currentMode, () => {
 .mmmtttt {
   color: #969799;
   font-size: 12px;
+}
+
+.update-card {
+  margin: 14px auto 0;
+  max-width: 360px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.update-status {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.update-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.update-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* Panels & Dialogs */

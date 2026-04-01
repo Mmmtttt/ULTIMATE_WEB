@@ -223,8 +223,14 @@ jobs:
           python --version
           node --version
           java --version 2>&1 | head -n1
+          APP_VERSION="${GITHUB_REF_NAME:-}"
+          APP_VERSION="${APP_VERSION#v}"
+          if [[ -z "$APP_VERSION" || ! "$APP_VERSION" =~ [0-9] ]]; then
+            APP_VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "Resolved APP_VERSION: $APP_VERSION"
           # 执行发布脚本（单行命令，避免多行换行问题）
-          python scripts/release_unified.py --targets "${{ matrix.target }}" --execute --build-output output/ci_stage --package-output output/ci_packages
+          python scripts/release_unified.py --targets "${{ matrix.target }}" --execute --build-output output/ci_stage --package-output output/ci_packages --app-version "$APP_VERSION"
           # 打印安卓日志（仅安卓平台）
           if [ "${{ matrix.build_android }}" = "true" ]; then
             if [ -f "output/ci_packages/android/android_build.log" ]; then

@@ -32,6 +32,7 @@ DEFAULT_STAGED_DIR = ROOT_DIR / "output" / "multi_target"
 DEFAULT_PACKAGES_DIR = ROOT_DIR / "output" / "packages"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
+DEFAULT_APP_VERSION = "0.0.0"
 
 
 @dataclass
@@ -61,6 +62,58 @@ def parse_runtime_env(path: Path) -> Dict[str, str]:
         key, val = line.split("=", 1)
         values[key.strip()] = val.strip()
     return values
+
+
+def normalize_app_version(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if text.lower().startswith("refs/tags/"):
+        text = text.split("/", 2)[-1]
+    if text.startswith(("v", "V")) and re.search(r"\d", text[1:]):
+        text = text[1:]
+    return text.strip()
+
+
+def resolve_app_version_from_staged(staged_target_dir: Path) -> str:
+    candidates: List[str] = []
+
+    manifest_path = staged_target_dir / "package_manifest.json"
+    if manifest_path.exists():
+        try:
+            payload = load_json(manifest_path)
+            candidates.append(str(payload.get("app_version", "")).strip())
+        except Exception:
+            pass
+
+    runtime_env = parse_runtime_env(staged_target_dir / "runtime.env")
+    candidates.append(runtime_env.get("ULTIMATE_APP_VERSION", ""))
+    candidates.extend(
+        [
+            os.environ.get("ULTIMATE_APP_VERSION", ""),
+            os.environ.get("GITHUB_REF_NAME", ""),
+            os.environ.get("GITHUB_REF", ""),
+        ]
+    )
+
+    for candidate in candidates:
+        normalized = normalize_app_version(candidate)
+        if normalized and re.search(r"\d", normalized):
+            return normalized
+    return DEFAULT_APP_VERSION
+
+
+def resolve_android_version_meta(app_version: str) -> Tuple[str, int]:
+    version_name = normalize_app_version(app_version) or DEFAULT_APP_VERSION
+    nums = [int(part) for part in re.findall(r"\d+", version_name)]
+    major = nums[0] if len(nums) > 0 else 0
+    minor = nums[1] if len(nums) > 1 else 0
+    patch = nums[2] if len(nums) > 2 else 0
+    major = max(0, min(major, 999))
+    minor = max(0, min(minor, 999))
+    patch = max(0, min(patch, 999))
+    version_code = major * 1_000_000 + minor * 1_000 + patch
+    return version_name, max(1, version_code)
 
 
 def run_cmd(cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> Tuple[int, str]:
@@ -287,6 +340,168 @@ def ensure_android_manifest_network(android_project_dir: Path) -> None:
         write_text(manifest, patched)
 
 
+def parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def resolve_android_signing_config(packager_cfg: Dict) -> Dict[str, str | bool | Path]:
+    enabled = parse_bool(packager_cfg.get("android_signing_enabled", True), default=True)
+    keystore_raw = str(
+        packager_cfg.get("android_signing_keystore", "build/android_signing/ultimate-release.keystore")
+    ).strip() or "build/android_signing/ultimate-release.keystore"
+    keystore_path = Path(keystore_raw)
+    if not keystore_path.is_absolute():
+        keystore_path = (ROOT_DIR / keystore_path).resolve()
+
+    module_keystore_name = str(
+        packager_cfg.get("android_signing_module_keystore_name", "ultimate-release.keystore")
+    ).strip() or "ultimate-release.keystore"
+    key_alias = str(packager_cfg.get("android_signing_key_alias", "ultimate")).strip() or "ultimate"
+    store_password = (
+        str(packager_cfg.get("android_signing_store_password", "ultimate123456")).strip() or "ultimate123456"
+    )
+    key_password = str(packager_cfg.get("android_signing_key_password", store_password)).strip() or store_password
+    dname = str(
+        packager_cfg.get(
+            "android_signing_dname",
+            "CN=Ultimate Web, OU=ULTIMATE_WEB, O=Mmmtttt, L=Internet, ST=Internet, C=CN",
+        )
+    ).strip() or "CN=Ultimate Web, OU=ULTIMATE_WEB, O=Mmmtttt, L=Internet, ST=Internet, C=CN"
+    validity_days = int(packager_cfg.get("android_signing_validity_days", 36500))
+    validity_days = max(1, validity_days)
+
+    return {
+        "enabled": enabled,
+        "keystore_path": keystore_path,
+        "module_keystore_name": module_keystore_name,
+        "key_alias": key_alias,
+        "store_password": store_password,
+        "key_password": key_password,
+        "dname": dname,
+        "validity_days": validity_days,
+    }
+
+
+def ensure_android_signing_keystore(signing_cfg: Dict[str, str | bool | Path]) -> None:
+    if not bool(signing_cfg.get("enabled", False)):
+        return
+
+    keystore_path = Path(str(signing_cfg.get("keystore_path", "")))
+    if not str(keystore_path):
+        raise RuntimeError("android signing keystore path is empty")
+    if keystore_path.exists():
+        return
+
+    keytool = shutil.which("keytool")
+    if not keytool:
+        raise RuntimeError("android signing requires keytool, but keytool was not found in PATH")
+
+    keystore_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        keytool,
+        "-genkeypair",
+        "-v",
+        "-storetype",
+        "PKCS12",
+        "-keystore",
+        str(keystore_path),
+        "-alias",
+        str(signing_cfg.get("key_alias", "ultimate")),
+        "-storepass",
+        str(signing_cfg.get("store_password", "")),
+        "-keypass",
+        str(signing_cfg.get("key_password", "")),
+        "-keyalg",
+        "RSA",
+        "-keysize",
+        "2048",
+        "-validity",
+        str(signing_cfg.get("validity_days", 36500)),
+        "-dname",
+        str(signing_cfg.get("dname", "")),
+        "-noprompt",
+    ]
+    code, output = run_cmd(cmd, cwd=ROOT_DIR)
+    if code != 0 or not keystore_path.exists():
+        raise RuntimeError(
+            f"failed to generate android signing keystore: {keystore_path}\n{output}"
+        )
+
+
+def _groovy_escape(text: str) -> str:
+    return str(text or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+def apply_android_version_and_signing(
+    app_build_gradle: Path,
+    version_name: str,
+    version_code: int,
+    signing_cfg: Dict[str, str | bool | Path],
+) -> None:
+    raw = app_build_gradle.read_text(encoding="utf-8")
+    patched = raw
+
+    marker_start = "// ULTIMATE_ANDROID_VERSION_SIGNING_START"
+    marker_end = "// ULTIMATE_ANDROID_VERSION_SIGNING_END"
+    block_regex = re.compile(
+        re.escape(marker_start) + r".*?" + re.escape(marker_end) + r"\n?",
+        flags=re.DOTALL,
+    )
+    patched = re.sub(block_regex, "", patched).rstrip() + "\n\n"
+
+    if bool(signing_cfg.get("enabled", False)):
+        signing_block = (
+            f"{marker_start}\n"
+            "android {\n"
+            "    defaultConfig {\n"
+            f"        versionName \"{_groovy_escape(version_name)}\"\n"
+            f"        versionCode {int(version_code)}\n"
+            "    }\n"
+            "    signingConfigs {\n"
+            "        create(\"ultimateRelease\") {\n"
+            f"            storeFile file(\"{_groovy_escape(str(signing_cfg.get('module_keystore_name', 'ultimate-release.keystore')))}\")\n"
+            f"            storePassword \"{_groovy_escape(str(signing_cfg.get('store_password', '')))}\"\n"
+            f"            keyAlias \"{_groovy_escape(str(signing_cfg.get('key_alias', 'ultimate')))}\"\n"
+            f"            keyPassword \"{_groovy_escape(str(signing_cfg.get('key_password', '')))}\"\n"
+            "        }\n"
+            "    }\n"
+            "    buildTypes {\n"
+            "        debug {\n"
+            "            signingConfig signingConfigs.ultimateRelease\n"
+            "        }\n"
+            "        release {\n"
+            "            signingConfig signingConfigs.ultimateRelease\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            f"{marker_end}\n"
+        )
+    else:
+        signing_block = (
+            f"{marker_start}\n"
+            "android {\n"
+            "    defaultConfig {\n"
+            f"        versionName \"{_groovy_escape(version_name)}\"\n"
+            f"        versionCode {int(version_code)}\n"
+            "    }\n"
+            "}\n"
+            f"{marker_end}\n"
+        )
+
+    patched += signing_block
+    if patched != raw:
+        write_text(app_build_gradle, patched)
+
+
 def copy_android_archive_tools_to_python_source(py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
     source_dir_raw = str(packager_cfg.get("android_archive_tools_dir", "build/android_archive_tools")).strip()
     binary_name = str(packager_cfg.get("android_archive_tool_binary_name", "7zz")).strip() or "7zz"
@@ -333,6 +548,7 @@ def ensure_android_project_chaquopy_app(
     android_project_dir: Path,
     workspace_dir: Path,
     packager_cfg: Dict,
+    app_version: str,
 ) -> None:
     workspace_web_dir = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     app_build_gradle = android_project_dir / "app" / "build.gradle"
@@ -400,6 +616,23 @@ def ensure_android_project_chaquopy_app(
 
     if patched != raw:
         write_text(app_build_gradle, patched)
+
+    version_name, version_code = resolve_android_version_meta(app_version)
+    signing_cfg = resolve_android_signing_config(packager_cfg)
+    if bool(signing_cfg.get("enabled", False)):
+        ensure_android_signing_keystore(signing_cfg)
+        source_keystore = Path(str(signing_cfg.get("keystore_path", "")))
+        module_keystore_name = str(signing_cfg.get("module_keystore_name", "ultimate-release.keystore"))
+        module_keystore_path = android_project_dir / "app" / module_keystore_name
+        module_keystore_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_keystore, module_keystore_path)
+
+    apply_android_version_and_signing(
+        app_build_gradle=app_build_gradle,
+        version_name=version_name,
+        version_code=version_code,
+        signing_cfg=signing_cfg,
+    )
 
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip() or "com.ultimate.web"
     backend_port = int(packager_cfg.get("backend_port", 5000))
@@ -633,6 +866,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_PORT"] = str(int(port or 5000))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
+    os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
     archive_tool = _prepare_android_archive_runtime(files_dir, internal_exec_dir=internal_exec_dir)
     if archive_tool:
         os.environ["RAR_BACKEND_MODE"] = "7z"
@@ -674,6 +908,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     return "started"
 """
     py_source = py_source.replace("__BOOTSTRAP_BUILD_ID__", bootstrap_build_id)
+    py_source = py_source.replace("__APP_VERSION__", normalize_app_version(app_version) or DEFAULT_APP_VERSION)
     write_text(py_bootstrap, py_source)
 
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
@@ -690,6 +925,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
 def inject_android_embedded_backend(
     workspace_dir: Path,
     packager_cfg: Dict,
+    app_version: str,
 ) -> None:
     android_project_dir = workspace_dir / "android"
     if not android_project_dir.exists():
@@ -699,7 +935,7 @@ def inject_android_embedded_backend(
     patch_android_min_sdk(android_project_dir, min_sdk)
     ensure_android_project_chaquopy_root(android_project_dir, chaquopy_version)
     ensure_android_manifest_network(android_project_dir)
-    ensure_android_project_chaquopy_app(android_project_dir, workspace_dir, packager_cfg)
+    ensure_android_project_chaquopy_app(android_project_dir, workspace_dir, packager_cfg, app_version)
 
 
 def resolve_android_java_env() -> Dict[str, str]:
@@ -1172,6 +1408,7 @@ def write_android_capacitor_plan(
     target_out_dir: Path,
     staged_target_dir: Path,
     packager_cfg: Dict,
+    app_version: str,
 ) -> Tuple[List[List[str]], Path, str]:
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip()
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
@@ -1241,7 +1478,7 @@ def write_android_capacitor_plan(
     package_json = {
         "name": "ultimate-android-shell",
         "private": True,
-        "version": "1.0.0",
+        "version": normalize_app_version(app_version) or DEFAULT_APP_VERSION,
         "description": "Android shell build workspace for Ultimate Web",
     }
     write_text(
@@ -1297,6 +1534,7 @@ def write_android_capacitor_plan(
         plan.append(f"{idx}. `{cmd}`")
     plan.append("")
     plan.append("Notes:")
+    plan.append(f"- app version: `{normalize_app_version(app_version) or DEFAULT_APP_VERSION}`")
     plan.append(f"- source staged web dir: `{staged_web_dir_name}`")
     plan.append(f"- workspace web dir: `{workspace_web_dir_name}`")
     plan.append(f"- workspace dir: `{workspace_dir}`")
@@ -1337,10 +1575,12 @@ def package_android(
     target_out_dir: Path,
     execute: bool,
 ) -> PackageResult:
+    app_version = resolve_app_version_from_staged(staged_target_dir)
     commands, workspace_dir, apk_relative_path = write_android_capacitor_plan(
         target_out_dir,
         staged_target_dir,
         packager_cfg,
+        app_version,
     )
     embed_backend = bool(packager_cfg.get("embed_backend", False))
     android_env = resolve_android_java_env()
@@ -1379,7 +1619,7 @@ def package_android(
         cwd = workspace_dir
         if embed_backend and idx == 4:
             try:
-                inject_android_embedded_backend(workspace_dir, packager_cfg)
+                inject_android_embedded_backend(workspace_dir, packager_cfg, app_version)
                 logs.append("$ [internal] inject android embedded backend\n[ok] chaquopy + backend launcher injected\n")
             except Exception as ex:
                 log_path = target_out_dir / "android_build.log"
