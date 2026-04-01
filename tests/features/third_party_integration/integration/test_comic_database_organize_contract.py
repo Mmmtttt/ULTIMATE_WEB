@@ -35,7 +35,14 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
                 if platform_name == "JM":
                     return {"albums": []}
                 if platform_name == "PK":
-                    return {"albums": [{"album_id": "pk_2", "title": "神秘岛 第2话"}]}
+                    return {"albums": [{"album_id": "pk_2", "title": "完全不同标题"}]}
+                return {"albums": []}
+
+            if keyword == "回退测试第1话":
+                if platform_name == "JM":
+                    raise RuntimeError("jm search temporary error")
+                if platform_name == "PK":
+                    return {"albums": [{"album_id": "pk_4", "title": "回退测试 第1话"}]}
                 return {"albums": []}
 
             return {"albums": []}
@@ -60,9 +67,20 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
                     "albums": [
                         {
                             "album_id": "pk_2",
-                            "title": "神秘岛 第2话",
+                            "title": "完全不同标题",
                             "author": "作者PK",
                             "tags": ["悬疑"],
+                        }
+                    ]
+                }
+            if str(album_id) == "pk_4":
+                return {
+                    "albums": [
+                        {
+                            "album_id": "pk_4",
+                            "title": "回退测试 第1话",
+                            "author": "作者PK回退",
+                            "tags": ["科幻"],
                         }
                     ]
                 }
@@ -76,14 +94,15 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
             {
                 "collection_name": "Test Comics",
                 "user": "test-user",
-                "total_comics": 6,
+                "total_comics": 7,
                 "last_updated": "2026-04-01",
                 "comics": [
                     {"id": "LOCAL1001", "title": "少女冒险【汉化】第1话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "LOCAL1002", "title": "神秘岛 第2话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "LOCAL1003", "title": "少女冒险 第1话", "author": "", "tag_ids": [], "is_deleted": False, "local_metadata_enriched": True},
-                    {"id": "LOCAL1004", "title": "无结果作品 第1话", "author": "", "tag_ids": [], "is_deleted": False},
+                    {"id": "LOCAL1004", "title": "回退测试 第1话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "LOCAL1005", "title": "少女冒险（修订）第1话", "author": "", "tag_ids": [], "is_deleted": False},
+                    {"id": "LOCAL1006", "title": "无结果作品 第1话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "JM100001", "title": "普通在线漫画", "author": "A", "tag_ids": [], "is_deleted": False},
                 ],
             },
@@ -111,17 +130,19 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
 
         first_data = first_payload["data"] or {}
         assert first_data["matched_on_jm"] == 2
-        assert first_data["matched_on_pk"] == 1
-        assert first_data["updated_records"] == 3
-        assert first_data["updated_authors"] == 3
-        assert first_data["created_tags"] == 2
-        assert first_data["updated_tag_bindings"] == 5
+        assert first_data["matched_on_pk"] == 2
+        assert first_data["updated_records"] == 4
+        assert first_data["updated_authors"] == 4
+        assert first_data["created_tags"] == 3
+        assert first_data["updated_tag_bindings"] == 6
         assert first_data["skipped_no_match"] == 1
         assert first_data["skipped_already_enriched"] == 1
 
         first_run_calls = list(calls)
         assert ("search", "JM", "神秘岛第2话", True) in first_run_calls
         assert ("search", "PK", "神秘岛第2话", True) in first_run_calls
+        assert ("search", "JM", "回退测试第1话", True) in first_run_calls
+        assert ("search", "PK", "回退测试第1话", True) in first_run_calls
         assert all(item[3] is True for item in first_run_calls if item[0] == "search")
         assert sum(1 for item in first_run_calls if item == ("search", "JM", "少女冒险第1话", True)) == 1
 
@@ -133,22 +154,27 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         local_1002 = find_by_id(refreshed_comics, "LOCAL1002")
         local_1004 = find_by_id(refreshed_comics, "LOCAL1004")
         local_1005 = find_by_id(refreshed_comics, "LOCAL1005")
+        local_1006 = find_by_id(refreshed_comics, "LOCAL1006")
         assert local_1001 is not None
         assert local_1002 is not None
         assert local_1004 is not None
         assert local_1005 is not None
+        assert local_1006 is not None
 
         assert local_1001["author"] == "作者JM"
         assert local_1002["author"] == "作者PK"
+        assert local_1004["author"] == "作者PK回退"
         assert local_1005["author"] == "作者JM"
         assert local_1001["local_metadata_enriched"] is True
         assert local_1002["local_metadata_enriched"] is True
+        assert local_1004["local_metadata_enriched"] is True
         assert local_1005["local_metadata_enriched"] is True
-        assert bool(local_1004.get("local_metadata_enriched", False)) is False
+        assert bool(local_1006.get("local_metadata_enriched", False)) is False
 
         assert refreshed_tag_names.count("冒险") == 1
         assert "奇幻" in refreshed_tag_names
         assert "悬疑" in refreshed_tag_names
+        assert "科幻" in refreshed_tag_names
 
         second_resp = client.post(
             "/api/v1/organize/run",
@@ -159,7 +185,7 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         assert second_payload["code"] == 200
         second_data = second_payload["data"] or {}
         assert second_data["updated_records"] == 0
-        assert second_data["skipped_already_enriched"] >= 4
+        assert second_data["skipped_already_enriched"] >= 5
     finally:
         save_json(comics_path, original_comics)
         save_json(tags_path, original_tags)

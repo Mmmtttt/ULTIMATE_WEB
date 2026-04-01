@@ -1139,11 +1139,6 @@ class ComicAppService:
             return {}
 
         first_album = albums[0]
-        remote_title = str(first_album.get("title") or "").strip()
-        remote_clean, remote_chapter_key = self._build_dedupe_key(remote_title)
-        if remote_clean != clean_title or remote_chapter_key != chapter_key:
-            return {}
-
         remote_album_id = str(first_album.get("album_id") or first_album.get("id") or "").strip()
         if not remote_album_id:
             return {}
@@ -1250,19 +1245,29 @@ class ComicAppService:
                 stats["processed_candidates"] += 1
                 matched = {}
                 cache_key = (clean_title, chapter_key)
-                try:
-                    if cache_key in match_cache:
-                        cached = match_cache.get(cache_key)
-                        matched = dict(cached) if isinstance(cached, dict) else {}
-                    else:
+                if cache_key in match_cache:
+                    cached = match_cache.get(cache_key)
+                    matched = dict(cached) if isinstance(cached, dict) else {}
+                else:
+                    jm_error = None
+                    pk_error = None
+                    try:
                         matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
-                        if not matched:
+                    except Exception as match_error:
+                        jm_error = match_error
+                        error_logger.error(f"Match on JM failed: comic_id={comic_id}, error={match_error}")
+
+                    if not matched:
+                        try:
                             matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
-                        match_cache[cache_key] = dict(matched) if isinstance(matched, dict) and matched else None
-                except Exception as match_error:
-                    stats["failed_records"] += 1
-                    error_logger.error(f"Match local metadata failed: comic_id={comic_id}, error={match_error}")
-                    continue
+                        except Exception as match_error:
+                            pk_error = match_error
+                            error_logger.error(f"Match on PK failed: comic_id={comic_id}, error={match_error}")
+
+                    if not matched and (jm_error is not None or pk_error is not None):
+                        stats["failed_records"] += 1
+
+                    match_cache[cache_key] = dict(matched) if isinstance(matched, dict) and matched else None
 
                 if not matched:
                     stats["skipped_no_match"] += 1
