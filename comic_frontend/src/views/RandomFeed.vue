@@ -55,7 +55,6 @@
           @touchend="handleTouchEnd($event, index)"
           @touchcancel="handleTouchEnd($event, index)"
           @mousedown.prevent="startMouseDrag($event, index)"
-          @dblclick.prevent="toggleZoom(index)"
         >
           <img
             class="feed-image"
@@ -129,7 +128,10 @@ const controlsVisible = ref(false)
 const controlIndex = ref(0)
 const scrollerHeight = ref(0)
 const restoringViewState = ref(false)
+const suppressScrollSync = ref(false)
+const layoutAnchorIndex = ref(null)
 const preloadCache = new Set()
+let releaseScrollSyncRaf = 0
 
 const zoomState = reactive({
   scale: 1,
@@ -171,6 +173,99 @@ function resetZoom() {
 
 function clampZoom(scale) {
   return Math.max(1, Math.min(5, Number(scale || 1)))
+}
+
+function clampIndex(index) {
+  if (!items.value.length) return 0
+  return Math.max(0, Math.min(items.value.length - 1, Number(index) || 0))
+}
+
+function getZoomViewportRect() {
+  const scroller = feedScroller.value
+  if (!scroller || typeof scroller.getBoundingClientRect !== 'function') return null
+  const rect = scroller.getBoundingClientRect()
+  const width = Math.max(1, Number(scroller.clientWidth) || Math.round(rect.width) || 1)
+  const height = Math.max(1, getCardHeight() || Math.round(rect.height) || 1)
+  return {
+    left: rect.left,
+    top: rect.top,
+    width,
+    height
+  }
+}
+
+function clampPan(nextX, nextY, scale = zoomState.scale) {
+  if (!Number.isFinite(scale) || scale <= 1) {
+    return { x: 0, y: 0 }
+  }
+  const viewport = getZoomViewportRect()
+  if (!viewport) {
+    return {
+      x: Number.isFinite(nextX) ? nextX : 0,
+      y: Number.isFinite(nextY) ? nextY : 0
+    }
+  }
+  const maxX = Math.max(0, (viewport.width * (scale - 1)) / 2)
+  const maxY = Math.max(0, (viewport.height * (scale - 1)) / 2)
+  const safeX = Number.isFinite(nextX) ? nextX : 0
+  const safeY = Number.isFinite(nextY) ? nextY : 0
+  return {
+    x: Math.max(-maxX, Math.min(maxX, safeX)),
+    y: Math.max(-maxY, Math.min(maxY, safeY))
+  }
+}
+
+function applyPan(nextX, nextY, scale = zoomState.scale) {
+  const clamped = clampPan(nextX, nextY, scale)
+  zoomState.x = clamped.x
+  zoomState.y = clamped.y
+}
+
+function zoomAtClientPoint(nextScaleRaw, clientX, clientY) {
+  const prevScale = Number(zoomState.scale) || 1
+  const nextScale = clampZoom(nextScaleRaw)
+
+  if (!Number.isFinite(prevScale) || prevScale <= 0) {
+    zoomState.scale = nextScale
+    if (nextScale <= 1) {
+      applyPan(0, 0, 1)
+    } else {
+      applyPan(zoomState.x, zoomState.y, nextScale)
+    }
+    return
+  }
+
+  if (Math.abs(nextScale - prevScale) < 0.0001) return
+
+  if (nextScale <= 1) {
+    zoomState.scale = 1
+    applyPan(0, 0, 1)
+    return
+  }
+
+  const viewport = getZoomViewportRect()
+  if (!viewport) {
+    zoomState.scale = nextScale
+    applyPan(zoomState.x, zoomState.y, nextScale)
+    return
+  }
+
+  const originX = viewport.width / 2
+  const originY = viewport.height / 2
+  const fallbackClientX = viewport.left + originX
+  const fallbackClientY = viewport.top + originY
+  const safeClientX = Number.isFinite(clientX) ? clientX : fallbackClientX
+  const safeClientY = Number.isFinite(clientY) ? clientY : fallbackClientY
+  const localX = Math.max(0, Math.min(viewport.width, safeClientX - viewport.left))
+  const localY = Math.max(0, Math.min(viewport.height, safeClientY - viewport.top))
+  const anchorX = localX - originX
+  const anchorY = localY - originY
+  const ratio = nextScale / prevScale
+  const nextX = anchorX - (anchorX - zoomState.x) * ratio
+  const nextY = anchorY - (anchorY - zoomState.y) * ratio
+
+  zoomState.scale = nextScale
+  applyPan(nextX, nextY, nextScale)
 }
 
 function readViewState() {
@@ -265,7 +360,7 @@ function getImageStyle(index) {
   }
   return {
     transform: `translate3d(${zoomState.x}px, ${zoomState.y}px, 0) scale(${zoomState.scale})`,
-    cursor: zoomState.scale > 1 ? 'grab' : 'default'
+    cursor: zoomState.scale > 1 && (zoomState.mouseDragging || zoomState.touchDragging) ? 'grabbing' : zoomState.scale > 1 ? 'grab' : 'default'
   }
 }
 
@@ -273,6 +368,33 @@ function getCardHeight() {
   const scroller = feedScroller.value
   if (!scroller) return 0
   return Math.max(1, scroller.clientHeight)
+}
+
+function alignScrollerToIndex(index) {
+  const scroller = feedScroller.value
+  if (!scroller || !items.value.length) return
+  const cardHeight = getCardHeight()
+  if (!Number.isFinite(cardHeight) || cardHeight <= 0) return
+  const targetTop = clampIndex(index) * cardHeight
+  const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  const nextTop = Math.min(maxTop, Math.max(0, targetTop))
+  if (Math.abs(scroller.scrollTop - nextTop) > 1) {
+    scroller.scrollTop = nextTop
+  }
+}
+
+function scheduleReleaseScrollSync() {
+  if (releaseScrollSyncRaf && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(releaseScrollSyncRaf)
+  }
+  if (typeof window === 'undefined') {
+    suppressScrollSync.value = false
+    return
+  }
+  releaseScrollSyncRaf = window.requestAnimationFrame(() => {
+    suppressScrollSync.value = false
+    releaseScrollSyncRaf = 0
+  })
 }
 
 function updateActiveIndexByScroll() {
@@ -360,18 +482,26 @@ function goToDetail(item = currentItem.value) {
 }
 
 function handleScroll() {
+  if (suppressScrollSync.value) return
   updateActiveIndexByScroll()
   saveViewState()
 }
 
 function handleImageTap(index) {
   if (index !== activeIndex.value) {
+    const shouldToggleControls = controlsVisible.value !== true
+    if (shouldToggleControls) {
+      suppressScrollSync.value = true
+      layoutAnchorIndex.value = index
+    }
     activeIndex.value = index
     controlIndex.value = index
     controlsVisible.value = true
     return
   }
   controlIndex.value = index
+  layoutAnchorIndex.value = index
+  suppressScrollSync.value = true
   controlsVisible.value = !controlsVisible.value
 }
 
@@ -379,10 +509,10 @@ function isOverlayVisible(index) {
   return controlsVisible.value && index === activeIndex.value
 }
 
-function toggleZoom(index) {
+function toggleZoom(event, index) {
   if (index !== activeIndex.value) return
   if (zoomState.scale <= 1) {
-    zoomState.scale = 2
+    zoomAtClientPoint(2, event?.clientX, event?.clientY)
   } else {
     resetZoom()
   }
@@ -398,18 +528,12 @@ function handleWheel(event, index) {
 
   if (event.ctrlKey) {
     const factor = event.deltaY > 0 ? 0.9 : 1.1
-    const nextScale = clampZoom(zoomState.scale * factor)
-    zoomState.scale = nextScale
-    if (nextScale <= 1) {
-      zoomState.x = 0
-      zoomState.y = 0
-    }
+    zoomAtClientPoint(zoomState.scale * factor, event.clientX, event.clientY)
     return
   }
 
   if (zoomState.scale > 1) {
-    zoomState.x -= event.deltaX
-    zoomState.y -= event.deltaY
+    applyPan(zoomState.x - event.deltaX, zoomState.y - event.deltaY)
   }
 }
 
@@ -424,8 +548,10 @@ function startMouseDrag(event, index) {
 
 function onMouseMove(event) {
   if (!zoomState.mouseDragging) return
-  zoomState.x = zoomState.startX + (event.clientX - zoomState.mouseStartX)
-  zoomState.y = zoomState.startY + (event.clientY - zoomState.mouseStartY)
+  applyPan(
+    zoomState.startX + (event.clientX - zoomState.mouseStartX),
+    zoomState.startY + (event.clientY - zoomState.mouseStartY)
+  )
 }
 
 function stopMouseDrag() {
@@ -456,19 +582,25 @@ function handleTouchMove(event, index) {
   if (index !== activeIndex.value) return
 
   if (event.touches.length === 2) {
+    event.preventDefault()
     const nextDistance = getTouchDistance(event.touches[0], event.touches[1])
     if (zoomState.pinchDistance > 0) {
       const ratio = nextDistance / zoomState.pinchDistance
-      zoomState.scale = clampZoom(zoomState.scale * ratio)
+      const centerX = (event.touches[0].clientX + event.touches[1].clientX) / 2
+      const centerY = (event.touches[0].clientY + event.touches[1].clientY) / 2
+      zoomAtClientPoint(zoomState.scale * ratio, centerX, centerY)
     }
     zoomState.pinchDistance = nextDistance
     return
   }
 
   if (event.touches.length === 1 && zoomState.touchDragging && zoomState.scale > 1) {
+    event.preventDefault()
     const touch = event.touches[0]
-    zoomState.x = zoomState.startX + (touch.clientX - zoomState.mouseStartX)
-    zoomState.y = zoomState.startY + (touch.clientY - zoomState.mouseStartY)
+    applyPan(
+      zoomState.startX + (touch.clientX - zoomState.mouseStartX),
+      zoomState.startY + (touch.clientY - zoomState.mouseStartY)
+    )
   }
 }
 
@@ -482,20 +614,27 @@ function handleTouchEnd() {
 }
 
 function handleResize() {
+  const anchorIndex = clampIndex(activeIndex.value)
+  suppressScrollSync.value = true
   updateViewportHeightCssVar('--reader-vh')
   updateScrollerHeight()
+  activeIndex.value = anchorIndex
+  controlIndex.value = anchorIndex
+  alignScrollerToIndex(anchorIndex)
+  scheduleReleaseScrollSync()
 }
 
 function getScrollerBottomLimit(scroller) {
   if (!scroller || typeof window === 'undefined') return 0
+  const viewportBottom = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
   const mainContent = scroller.closest('.main-content')
   if (mainContent) {
     const contentRect = mainContent.getBoundingClientRect()
     if (Number.isFinite(contentRect.bottom) && contentRect.bottom > 0) {
-      return contentRect.bottom
+      return Math.min(viewportBottom, contentRect.bottom)
     }
   }
-  return Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
+  return viewportBottom
 }
 
 function updateScrollerHeight() {
@@ -505,9 +644,13 @@ function updateScrollerHeight() {
   const rect = scroller.getBoundingClientRect()
   const bottomLimit = getScrollerBottomLimit(scroller)
   const buffer = 2
-  const nextHeight = Math.max(320, Math.floor(bottomLimit - rect.top - buffer))
+  const nextHeight = Math.max(320, bottomLimit - rect.top - buffer)
   if (!Number.isFinite(nextHeight)) return
+  if (Math.abs(nextHeight - scrollerHeight.value) < 0.5) return
   scrollerHeight.value = nextHeight
+  if (zoomState.scale > 1) {
+    applyPan(zoomState.x, zoomState.y, zoomState.scale)
+  }
 }
 
 watch(modeKey, async () => {
@@ -574,6 +717,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   saveViewState()
+  if (releaseScrollSyncRaf && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(releaseScrollSyncRaf)
+    releaseScrollSyncRaf = 0
+  }
   removeWindowListener('resize', handleResize)
   removeDocumentListener('mousemove', onMouseMove)
   removeDocumentListener('mouseup', stopMouseDrag)
@@ -584,6 +731,15 @@ watch(
   async () => {
     await nextTick()
     updateScrollerHeight()
+    if (restoringViewState.value) return
+    const anchorIndex = clampIndex(layoutAnchorIndex.value ?? activeIndex.value)
+    suppressScrollSync.value = true
+    activeIndex.value = anchorIndex
+    controlIndex.value = anchorIndex
+    alignScrollerToIndex(anchorIndex)
+    layoutAnchorIndex.value = null
+    scheduleReleaseScrollSync()
+    saveViewState()
   }
 )
 </script>
@@ -658,6 +814,7 @@ watch(
   height: var(--feed-card-height, calc(var(--reader-vh, 100dvh) - 24px));
   min-height: 420px;
   overflow-y: auto;
+  overflow-anchor: none;
   scroll-snap-type: y mandatory;
   border-radius: 16px;
 }
