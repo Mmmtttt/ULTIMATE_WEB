@@ -19,6 +19,7 @@ export const useConfigStore = defineStore('config', () => {
   const autoDownloadPreviewImportAssets = ref(DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS)
   const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
   const listPageSize = ref(DEFAULT_CONFIG.LIST_PAGE_SIZE)
+  const leftRightReadingReversed = ref(DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED)
   const loading = ref(false)
 
   const normalizePageMode = (mode) => {
@@ -69,7 +70,8 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber: showPageNumber.value,
     autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value,
     singlePageBrowsing: singlePageBrowsing.value,
-    listPageSize: listPageSize.value
+    listPageSize: listPageSize.value,
+    leftRightReadingReversed: leftRightReadingReversed.value
   }))
 
   const isLeftRightMode = computed(() => defaultPageMode.value === PAGE_MODE.LEFT_RIGHT)
@@ -119,6 +121,11 @@ export const useConfigStore = defineStore('config', () => {
       saved.pageSize ??
       DEFAULT_CONFIG.LIST_PAGE_SIZE
     )
+    leftRightReadingReversed.value = Boolean(
+      saved.leftRightReadingReversed ??
+      saved.left_right_reading_reversed ??
+      DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
+    )
     applyAppTheme(defaultBackground.value)
   }
 
@@ -147,6 +154,11 @@ export const useConfigStore = defineStore('config', () => {
         serverConfig.list_page_size ??
         serverConfig.page_size ??
         listPageSize.value
+      )
+      leftRightReadingReversed.value = Boolean(
+        serverConfig.left_right_reading_reversed ??
+        serverConfig.leftRightReadingReversed ??
+        leftRightReadingReversed.value
       )
       saveConfig()
       applyAppTheme(defaultBackground.value)
@@ -229,6 +241,11 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setLeftRightReadingReversed(value) {
+    leftRightReadingReversed.value = !!value
+    saveConfig()
+  }
+
   async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
@@ -237,6 +254,7 @@ export const useConfigStore = defineStore('config', () => {
     autoDownloadPreviewImportAssets.value = DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
     listPageSize.value = DEFAULT_CONFIG.LIST_PAGE_SIZE
+    leftRightReadingReversed.value = DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
     saveConfig()
     applyAppTheme(defaultBackground.value)
     await saveConfigToServer()
@@ -264,6 +282,9 @@ export const useConfigStore = defineStore('config', () => {
     if (newConfig.listPageSize !== undefined) {
       setListPageSize(newConfig.listPageSize)
     }
+    if (newConfig.leftRightReadingReversed !== undefined) {
+      setLeftRightReadingReversed(newConfig.leftRightReadingReversed)
+    }
   }
 
   loadConfig()
@@ -276,6 +297,7 @@ export const useConfigStore = defineStore('config', () => {
     autoDownloadPreviewImportAssets,
     singlePageBrowsing,
     listPageSize,
+    leftRightReadingReversed,
     loading,
 
     config,
@@ -299,6 +321,7 @@ export const useConfigStore = defineStore('config', () => {
     setAutoDownloadPreviewImportAssets,
     setSinglePageBrowsing,
     setListPageSize,
+    setLeftRightReadingReversed,
     resetConfig,
     updateConfig
   }

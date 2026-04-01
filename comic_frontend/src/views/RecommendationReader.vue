@@ -285,6 +285,9 @@ const isProgrammaticScroll = ref(false)
 const isMobile = ref(detectMobileDevice())
 const supportsTouch = ref(detectTouchSupport())
 const isSinglePageBrowsing = computed(() => Boolean(configStore.singlePageBrowsing))
+const isLeftRightReadingReversed = computed(() =>
+  pageMode.value === 'left_right' && Boolean(configStore.leftRightReadingReversed)
+)
 const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 const pendingRestorePage = ref(null)
@@ -335,8 +338,29 @@ const currentZoomImage = computed(() => {
 
 const displayedPageNumbers = computed(() => {
   if (totalPage.value <= 0) return []
+  if (isLeftRightReadingReversed.value) {
+    return Array.from({ length: totalPage.value }, (_, index) => totalPage.value - index)
+  }
   return Array.from({ length: totalPage.value }, (_, index) => index + 1)
 })
+
+const getDisplayIndexFromPage = (page, total = totalPage.value) => {
+  if (total <= 0) return 0
+  const safePage = clampPage(page, total)
+  if (isLeftRightReadingReversed.value) {
+    return total - safePage
+  }
+  return safePage - 1
+}
+
+const getPageFromDisplayIndex = (index, total = totalPage.value) => {
+  if (total <= 0) return 1
+  const safeIndex = Math.max(0, Math.min(total - 1, Number(index) || 0))
+  if (isLeftRightReadingReversed.value) {
+    return clampPage(total - safeIndex, total)
+  }
+  return clampPage(safeIndex + 1, total)
+}
 
 const getContainerStyle = computed(() => {
   if (zoomLevel.value <= 1 || isZoomMode.value) {
@@ -738,7 +762,7 @@ const getRectAxisCenter = (rect) => {
 const getPageElementByNumber = (container, page) => {
   const pages = getPageElements(container)
   if (!pages.length) return null
-  const index = clampPage(page, pages.length) - 1
+  const index = getDisplayIndexFromPage(page, pages.length)
   return pages[index] || null
 }
 
@@ -839,7 +863,7 @@ const animateSinglePageScroll = (container, position) => {
 const getPageScrollOffset = (container, page) => {
   const pages = getPageElements(container)
   if (!pages.length) return 0
-  const targetIndex = clampPage(page, pages.length) - 1
+  const targetIndex = getDisplayIndexFromPage(page, pages.length)
   return getAxisStart(pages[targetIndex])
 }
 
@@ -864,8 +888,9 @@ const estimatePageFromScroll = (container) => {
     const viewportExtent = Math.max(1, getViewportExtent(container))
     const currentScroll = getContainerScrollPosition(container)
     const delta = currentScroll - lastObservedScrollPosition
-    if (Math.abs(delta) > 0.5) {
-      lastSinglePageDirection = delta > 0 ? 1 : -1
+    const normalizedDelta = isLeftRightReadingReversed.value ? -delta : delta
+    if (Math.abs(normalizedDelta) > 0.5) {
+      lastSinglePageDirection = normalizedDelta > 0 ? 1 : -1
     }
     lastObservedScrollPosition = currentScroll
 
@@ -883,12 +908,14 @@ const estimatePageFromScroll = (container) => {
       const start = getAxisStart(pages[index])
       const end = start + extent
       if (probePosition >= start - epsilon && probePosition < end - epsilon) {
-        return clampPage(index + 1, totalPage.value)
+        return getPageFromDisplayIndex(index, totalPage.value)
       }
     }
 
-    if (probePosition <= 0) return 1
-    return clampPage(totalPage.value, totalPage.value)
+    if (probePosition <= 0) {
+      return isLeftRightReadingReversed.value ? clampPage(totalPage.value, totalPage.value) : 1
+    }
+    return isLeftRightReadingReversed.value ? 1 : clampPage(totalPage.value, totalPage.value)
   }
 
   let bestPage = safeCurrentPage
@@ -912,7 +939,7 @@ const estimatePageFromScroll = (container) => {
       visibleExtent > bestVisible + epsilon ||
       (Math.abs(visibleExtent - bestVisible) <= epsilon && centerDistance < bestDistance - epsilon)
     ) {
-      bestPage = index + 1
+      bestPage = getPageFromDisplayIndex(index, totalPage.value)
       bestVisible = visibleExtent
       bestDistance = centerDistance
     }
@@ -927,7 +954,7 @@ const estimatePageFromScroll = (container) => {
     const extent = pageMode.value === 'left_right' ? rect.width : rect.height
     if (extent <= 0) continue
     if (getRectAxisEnd(rect) > viewportStart + epsilon) {
-      return clampPage(index + 1, totalPage.value)
+      return getPageFromDisplayIndex(index, totalPage.value)
     }
   }
 
@@ -1397,8 +1424,9 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
   if (container) {
     const preferredOffset = getPageScrollOffset(container, targetPage)
     const fallbackOffset = (targetPage - 1) * getViewportExtent(container)
+    const hasPreferredElement = Boolean(getPageElementByNumber(container, targetPage))
     const scrollPosition =
-      preferredOffset > 0 || targetPage === 1 ? preferredOffset : fallbackOffset
+      hasPreferredElement ? preferredOffset : fallbackOffset
     const shouldAnimateSinglePage = smooth && isSinglePageBrowsing.value && zoomLevel.value <= 1
     const programmaticGuardDuration = smooth
       ? shouldAnimateSinglePage
@@ -1685,7 +1713,8 @@ const handleWheel = (event) => {
   if (pageMode.value === 'left_right' && leftRightContainer.value) {
     if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
       event.preventDefault()
-      leftRightContainer.value.scrollLeft += event.deltaY
+      const scrollDelta = isLeftRightReadingReversed.value ? -event.deltaY : event.deltaY
+      leftRightContainer.value.scrollLeft += scrollDelta
     }
   }
 }
@@ -2091,12 +2120,26 @@ const handleKeydown = (event) => {
 
   switch (event.key) {
     case 'ArrowLeft':
+      event.preventDefault()
+      if (pageMode.value === 'left_right' && isLeftRightReadingReversed.value) {
+        nextPage()
+      } else {
+        prevPage()
+      }
+      break
+    case 'ArrowRight':
+      event.preventDefault()
+      if (pageMode.value === 'left_right' && isLeftRightReadingReversed.value) {
+        prevPage()
+      } else {
+        nextPage()
+      }
+      break
     case 'ArrowUp':
     case 'PageUp':
       event.preventDefault()
       prevPage()
       break
-    case 'ArrowRight':
     case 'ArrowDown':
     case 'PageDown':
     case ' ':

@@ -18,6 +18,18 @@
           </van-cell>
         </van-cell-group>
       </van-radio-group>
+      <van-cell
+        title="左右翻页方向（漫画阅读）"
+        :label="pageModeValue === 'left_right' ? '开启后按右→左方向翻页（更接近日漫阅读习惯）' : '仅在左右翻页模式下生效'"
+      >
+        <template #right-icon>
+          <van-switch
+            :model-value="leftRightReadingReversedValue"
+            :disabled="pageModeValue !== 'left_right'"
+            @update:model-value="updateLeftRightReadingReversed"
+          />
+        </template>
+      </van-cell>
       <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页内容（可继续缩放、滑动与翻页）">
         <template #right-icon>
           <van-switch v-model="singlePageBrowsingValue" @change="updateSinglePageBrowsing" />
@@ -26,7 +38,16 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="列表分页数量" label="用于本地库、预览库、清单和回收站等页面" />
+      <van-cell title="内容模式">
+        <template #right-icon>
+          <ModeSwitch class="settings-mode-switch" />
+        </template>
+      </van-cell>
+      <van-cell :title="`当前模式：${currentModeLabel}`" />
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
+      <van-cell title="列表分页数量" :label="`当前每页 ${pageSizeValue} 条，用于本地库、预览库、清单和回收站等页面`" />
       <van-radio-group v-model="pageSizeValue" @change="updatePageSize">
         <van-cell-group inset>
           <van-cell
@@ -184,15 +205,18 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
 import { openExternalUrl, reloadPage } from '@/runtime/browser'
-import { useConfigStore } from '@/stores'
+import { useConfigStore, useModeStore } from '@/stores'
+import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const configStore = useConfigStore()
+const modeStore = useModeStore()
 
 const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
 const backgroundValue = ref('white')
 const autoDownloadPreviewImportAssets = ref(true)
 const pageSizeValue = ref(20)
+const leftRightReadingReversedValue = ref(false)
 const pageSizeOptions = [20, 40, 60]
 
 const showThirdPartyConfig = ref(false)
@@ -208,6 +232,7 @@ const systemDataDir = ref('')
 const runtimeDataDir = ref('')
 const resolvedDataDir = ref('')
 const savingSystemConfig = ref(false)
+const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
 
 const displayAdapters = computed(() => {
   if (Array.isArray(thirdPartyAdapterOrder.value) && thirdPartyAdapterOrder.value.length > 0) {
@@ -238,6 +263,7 @@ function initValues() {
   backgroundValue.value = configStore.defaultBackground
   autoDownloadPreviewImportAssets.value = configStore.autoDownloadPreviewImportAssets
   pageSizeValue.value = configStore.listPageSize
+  leftRightReadingReversedValue.value = configStore.leftRightReadingReversed
 }
 
 function adapterLabel(adapterName) {
@@ -341,6 +367,11 @@ function selectPageSize(size) {
   }
   pageSizeValue.value = size
   updatePageSize()
+}
+
+function updateLeftRightReadingReversed(value) {
+  leftRightReadingReversedValue.value = Boolean(value)
+  configStore.setLeftRightReadingReversed(leftRightReadingReversedValue.value)
 }
 
 async function updateBackground() {
@@ -581,6 +612,11 @@ onMounted(async () => {
 
 .action-area {
   padding: 20px 16px;
+}
+
+.settings-mode-switch {
+  transform: scale(0.78);
+  transform-origin: right center;
 }
 </style>
 
