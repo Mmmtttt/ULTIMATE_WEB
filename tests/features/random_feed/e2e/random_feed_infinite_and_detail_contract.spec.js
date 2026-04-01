@@ -113,9 +113,16 @@ test("random feed keeps browsing position after entering detail and going back",
   await openRandomFeed(page);
 
   const scroller = page.getByTestId("random-feed-scroller");
-  const rememberedTop = await scroller.evaluate((node) => {
+  const rememberedState = await scroller.evaluate((node) => {
+    const card = node.querySelector("[data-testid='random-feed-card']");
+    const cardHeight = card ? card.getBoundingClientRect().height : node.clientHeight || 1;
     node.scrollTop = node.clientHeight * 2;
-    return node.scrollTop;
+    const rememberedTop = node.scrollTop;
+    return {
+      rememberedTop,
+      rememberedIndex: Math.round(rememberedTop / Math.max(cardHeight, 1)),
+      cardHeight,
+    };
   });
 
   await expect
@@ -134,6 +141,26 @@ test("random feed keeps browsing position after entering detail and going back",
   await expect
     .poll(async () => await scroller.evaluate((node) => node.scrollTop))
     .toBeGreaterThan(0);
-  const restoredTop = await scroller.evaluate((node) => node.scrollTop);
-  expect(Math.abs(restoredTop - rememberedTop)).toBeLessThan(180);
+  const restoredState = await scroller.evaluate((node) => {
+    const card = node.querySelector("[data-testid='random-feed-card']");
+    const cardHeight = card ? card.getBoundingClientRect().height : node.clientHeight || 1;
+    const restoredTop = node.scrollTop;
+    return {
+      restoredTop,
+      restoredIndex: Math.round(restoredTop / Math.max(cardHeight, 1)),
+      cardHeight,
+    };
+  });
+
+  // View-state now restores by active index; toolbar visibility can change card height
+  // between leave/back, so absolute pixel scrollTop may differ while logical position
+  // remains correct.
+  expect(Math.abs(restoredState.restoredIndex - rememberedState.rememberedIndex)).toBeLessThanOrEqual(1);
+
+  const expectedTopByRestoredCardHeight =
+    rememberedState.rememberedIndex * Math.max(restoredState.cardHeight, 1);
+  const pixelTolerance = Math.max(72, restoredState.cardHeight * 0.35);
+  expect(Math.abs(restoredState.restoredTop - expectedTopByRestoredCardHeight)).toBeLessThan(
+    pixelTolerance
+  );
 });
