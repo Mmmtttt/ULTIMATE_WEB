@@ -1132,7 +1132,8 @@ class ComicAppService:
         if not clean_title:
             return {}
 
-        search_result = platform_service.search_albums(platform, clean_title, max_pages=1, fast_mode=False) or {}
+        # Use lightweight search and only inspect the first candidate, then fetch detail for that one item.
+        search_result = platform_service.search_albums(platform, clean_title, max_pages=1, fast_mode=True) or {}
         albums = search_result.get("albums") or []
         if not albums or not isinstance(albums[0], dict):
             return {}
@@ -1221,6 +1222,7 @@ class ComicAppService:
             tag_name_to_id, max_tag_num = self._build_comic_tag_lookup(tags_data)
             max_tag_num_holder = [max_tag_num]
             tag_changed = False
+            match_cache: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
 
             for comic in home_records:
                 if not isinstance(comic, dict):
@@ -1247,14 +1249,16 @@ class ComicAppService:
 
                 stats["processed_candidates"] += 1
                 matched = {}
+                cache_key = (clean_title, chapter_key)
                 try:
-                    matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
-                    if matched:
-                        stats["matched_on_jm"] += 1
+                    if cache_key in match_cache:
+                        cached = match_cache.get(cache_key)
+                        matched = dict(cached) if isinstance(cached, dict) else {}
                     else:
-                        matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
-                        if matched:
-                            stats["matched_on_pk"] += 1
+                        matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
+                        if not matched:
+                            matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
+                        match_cache[cache_key] = dict(matched) if isinstance(matched, dict) and matched else None
                 except Exception as match_error:
                     stats["failed_records"] += 1
                     error_logger.error(f"Match local metadata failed: comic_id={comic_id}, error={match_error}")
@@ -1263,6 +1267,12 @@ class ComicAppService:
                 if not matched:
                     stats["skipped_no_match"] += 1
                     continue
+
+                matched_platform = str(matched.get("platform") or "").strip().upper()
+                if matched_platform == Platform.JM.value:
+                    stats["matched_on_jm"] += 1
+                elif matched_platform == Platform.PK.value:
+                    stats["matched_on_pk"] += 1
 
                 detail = matched.get("detail") if isinstance(matched.get("detail"), dict) else {}
                 updated = False
