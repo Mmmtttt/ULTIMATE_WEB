@@ -169,7 +169,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore } from '@/stores'
 import { configApi, organizeApi } from '@/api'
-import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
+import { closeToast, showFailToast, showConfirmDialog, showLoadingToast } from 'vant'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -317,6 +317,28 @@ function buildOrganizeResultMessage(action, payload) {
   return '数据库整理已完成'
 }
 
+function buildOrganizeResultDetail(action, payload) {
+  const summary = buildOrganizeResultMessage(action, payload)
+  if (action === 'enrich_local_metadata') {
+    return [
+      summary,
+      `处理候选: ${Number(payload?.processed_candidates || 0)}`,
+      `JM命中: ${Number(payload?.matched_on_jm || 0)}`,
+      `PK命中: ${Number(payload?.matched_on_pk || 0)}`,
+      `无匹配: ${Number(payload?.skipped_no_match || 0)}`,
+      `已补全跳过: ${Number(payload?.skipped_already_enriched || 0)}`
+    ].join('\n')
+  }
+  if (action === 'deduplicate_by_title') {
+    return [
+      summary,
+      `本地库移入回收站: ${Number(payload?.home?.moved_to_trash || 0)}`,
+      `预览库移入回收站: ${Number(payload?.recommendation?.moved_to_trash || 0)}`
+    ].join('\n')
+  }
+  return summary
+}
+
 async function openOrganizePanel() {
   if (runningOrganizeAction.value || loadingOrganizeOptions.value) {
     return
@@ -356,11 +378,23 @@ async function handleOrganizeActionSelect(selectedAction) {
   }
 
   runningOrganizeAction.value = true
+  showLoadingToast({
+    message: `正在执行「${selectedAction?.name || '数据库整理'}」...`,
+    forbidClick: true,
+    duration: 0
+  })
   try {
     const response = await organizeApi.run(organizeModeKey.value, selectedAction.action)
-    const successText = buildOrganizeResultMessage(selectedAction.action, response?.data || {})
-    showSuccessToast(successText)
+    closeToast()
+    const resultText = buildOrganizeResultDetail(selectedAction.action, response?.data || {})
+    await showConfirmDialog({
+      title: '执行完成',
+      message: resultText,
+      confirmButtonText: '知道了',
+      showCancelButton: false
+    })
   } catch (error) {
+    closeToast()
     showFailToast(error?.message || '数据库整理失败')
   } finally {
     runningOrganizeAction.value = false
