@@ -19,6 +19,8 @@ from core.constants import (
     SERVER_CONFIG_PATH,
     VIDEO_RECOMMENDATION_CACHE_DIR,
     VIDEO_RECOMMENDATION_JSON_FILE,
+    get_config_directory_info,
+    set_app_config_dir,
 )
 from core.runtime_profile import is_third_party_enabled, runtime_capabilities
 from infrastructure.logger import app_logger, error_logger
@@ -471,6 +473,48 @@ def update_system_config():
         return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"更新系统配置失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/system/config-dir', methods=['GET'])
+def get_system_config_dir():
+    try:
+        info = get_config_directory_info()
+        return success_response(info)
+    except Exception as e:
+        error_logger.error(f"获取配置目录信息失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/system/config-dir', methods=['PUT'])
+def update_system_config_dir():
+    try:
+        data = request.json or {}
+        config_dir = str(data.get('config_dir', '')).strip()
+        if not config_dir:
+            return error_response(400, "config_dir 不能为空")
+
+        migrate_configs = bool(data.get('migrate_configs', True))
+        restart_now = bool(data.get('restart_now', True))
+
+        result = set_app_config_dir(config_dir, migrate_existing=migrate_configs)
+
+        changed = bool(result.get('changed', False))
+        if changed and restart_now:
+            _restart_backend_later(delay_seconds=1.0)
+
+        payload = dict(result or {})
+        payload['restart_scheduled'] = bool(changed and restart_now)
+
+        app_logger.info(
+            f"配置目录更新成功: config_dir={payload.get('selected_config_dir', '')}, "
+            f"migrate_configs={migrate_configs}, restart_now={restart_now}"
+        )
+        return success_response(payload, "配置目录更新成功")
+    except (ValueError, RuntimeError) as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"更新配置目录失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

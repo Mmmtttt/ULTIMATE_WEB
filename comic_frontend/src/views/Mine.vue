@@ -30,10 +30,13 @@
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
       <van-cell title="数据同步" icon="share-o" to="/sync" is-link />
       <van-cell title="数据库整理" icon="brush-o" @click="openOrganizePanel" is-link />
       <van-cell title="存储管理" icon="tosend" @click="showCachePanel = true" is-link />
+    </van-cell-group>
+
+    <van-cell-group class="mine-menu" inset>
+      <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
     </van-cell-group>
     
     <div class="about">

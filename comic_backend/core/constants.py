@@ -18,8 +18,8 @@ DEFAULT_THIRD_PARTY_CONFIG = {
         "jmcomic": {
             "enabled": True,
             "config_path": "JMComic-Crawler-Python/config.json",
-            "username": "",
-            "password": "",
+            "username": "请输入账号",
+            "password": "请输入密码",
             "download_dir": "./comic_backend/data/comic/JM",
             "output_json": "comics_database.json",
             "progress_file": "download_progress.json",
@@ -29,8 +29,8 @@ DEFAULT_THIRD_PARTY_CONFIG = {
         },
         "picacomic": {
             "enabled": True,
-            "account": "",
-            "password": "",
+            "account": "请输入账号",
+            "password": "请输入密码",
             "base_dir": "./comic_backend/data/comic/PK",
         },
         "javdb": {
@@ -40,7 +40,7 @@ DEFAULT_THIRD_PARTY_CONFIG = {
             "retry_times": 3,
             "sleep_time": 0.5,
             "cookies": {
-                "_jdb_session": "",
+                "_jdb_session": "请输入cookie",
                 "list_mode": "h",
                 "theme": "auto",
                 "over18": "1",
@@ -74,11 +74,11 @@ def _resolve_project_root() -> str:
 PROJECT_ROOT = _resolve_project_root()
 
 
-def _resolve_platform_config_dir() -> str:
-    explicit_dir = str(os.environ.get("ULTIMATE_CONFIG_DIR", "")).strip()
-    if explicit_dir:
-        return _expand_path(explicit_dir)
+def _is_same_path(path_a: str, path_b: str) -> bool:
+    return os.path.normcase(os.path.abspath(path_a)) == os.path.normcase(os.path.abspath(path_b))
 
+
+def _resolve_platform_default_config_dir() -> str:
     runtime_profile = str(os.environ.get("BACKEND_RUNTIME_PROFILE", "")).strip().lower()
     android_files_dir = str(os.environ.get("ANDROID_APP_FILES_DIR", "")).strip()
     if runtime_profile == "android" or android_files_dir:
@@ -101,7 +101,49 @@ def _resolve_platform_config_dir() -> str:
     return os.path.abspath(os.path.join(os.path.expanduser("~"), ".config", "ULTIMATE_WEB"))
 
 
-APP_CONFIG_DIR = _resolve_platform_config_dir()
+DEFAULT_APP_CONFIG_DIR = _resolve_platform_default_config_dir()
+CONFIG_DIR_OVERRIDE_FILE = os.path.join(DEFAULT_APP_CONFIG_DIR, "config_dir.override.json")
+
+
+def _load_persisted_config_dir() -> str:
+    try:
+        with open(CONFIG_DIR_OVERRIDE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        configured = str((payload or {}).get("config_dir", "")).strip()
+        if configured:
+            return _expand_path(configured)
+    except Exception:
+        pass
+    return ""
+
+
+def _write_persisted_config_dir(config_dir: str) -> None:
+    os.makedirs(DEFAULT_APP_CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_DIR_OVERRIDE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"config_dir": config_dir}, f, ensure_ascii=False, indent=2)
+
+
+def _clear_persisted_config_dir() -> None:
+    if os.path.exists(CONFIG_DIR_OVERRIDE_FILE):
+        try:
+            os.remove(CONFIG_DIR_OVERRIDE_FILE)
+        except Exception:
+            pass
+
+
+def _resolve_platform_config_dir():
+    env_override = str(os.environ.get("ULTIMATE_CONFIG_DIR", "")).strip()
+    if env_override:
+        return _expand_path(env_override), "env"
+
+    persisted = _load_persisted_config_dir()
+    if persisted:
+        return persisted, "persisted"
+
+    return DEFAULT_APP_CONFIG_DIR, "default"
+
+
+APP_CONFIG_DIR, APP_CONFIG_DIR_SOURCE = _resolve_platform_config_dir()
 
 
 def _load_json_template(template_path: str, fallback: dict) -> dict:
@@ -157,6 +199,95 @@ def _resolve_or_init_config_path(
 
     _create_config_from_template(target_path, template_path, fallback)
     return target_path
+
+
+def get_config_directory_info() -> dict:
+    runtime_config_dir = os.path.abspath(os.path.dirname(SERVER_CONFIG_PATH))
+    selected_config_dir = os.path.abspath(APP_CONFIG_DIR)
+    return {
+        "runtime_config_dir": runtime_config_dir,
+        "selected_config_dir": selected_config_dir,
+        "default_config_dir": os.path.abspath(DEFAULT_APP_CONFIG_DIR),
+        "source": APP_CONFIG_DIR_SOURCE,
+        "override_file_path": os.path.abspath(CONFIG_DIR_OVERRIDE_FILE),
+        "server_config_path": os.path.abspath(SERVER_CONFIG_PATH),
+        "third_party_config_path": os.path.abspath(THIRD_PARTY_CONFIG_PATH),
+        "env_override": bool(str(os.environ.get("ULTIMATE_CONFIG_DIR", "")).strip()),
+        "requires_restart": not _is_same_path(runtime_config_dir, selected_config_dir),
+    }
+
+
+def _prepare_config_file(target_dir: str, filename: str, source_path: str, template_path: str, fallback: dict, migrate_existing: bool) -> str:
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.abspath(os.path.join(target_dir, filename))
+
+    if migrate_existing and source_path and os.path.exists(source_path):
+        try:
+            if not _is_same_path(source_path, target_path):
+                shutil.copy2(source_path, target_path)
+            elif not os.path.exists(target_path):
+                shutil.copy2(source_path, target_path)
+        except Exception:
+            pass
+
+    if not os.path.exists(target_path):
+        _create_config_from_template(target_path, template_path, fallback)
+
+    return target_path
+
+
+def set_app_config_dir(new_dir: str, migrate_existing: bool = True) -> dict:
+    global APP_CONFIG_DIR, APP_CONFIG_DIR_SOURCE
+
+    info = get_config_directory_info()
+    if info.get("source") == "env":
+        raise RuntimeError("当前配置目录由环境变量 ULTIMATE_CONFIG_DIR 控制，无法在页面中修改")
+
+    target_dir = _expand_path(new_dir)
+    if not str(target_dir or "").strip():
+        raise ValueError("配置目录不能为空")
+
+    previous_selected_dir = os.path.abspath(APP_CONFIG_DIR)
+
+    next_server_path = _prepare_config_file(
+        target_dir,
+        "server_config.json",
+        SERVER_CONFIG_PATH,
+        SERVER_CONFIG_TEMPLATE_PATH,
+        DEFAULT_SERVER_CONFIG,
+        migrate_existing,
+    )
+    next_third_path = _prepare_config_file(
+        target_dir,
+        "third_party_config.json",
+        THIRD_PARTY_CONFIG_PATH,
+        THIRD_PARTY_CONFIG_TEMPLATE_PATH,
+        DEFAULT_THIRD_PARTY_CONFIG,
+        migrate_existing,
+    )
+
+    if _is_same_path(target_dir, DEFAULT_APP_CONFIG_DIR):
+        _clear_persisted_config_dir()
+        APP_CONFIG_DIR_SOURCE = "default"
+    else:
+        _write_persisted_config_dir(target_dir)
+        APP_CONFIG_DIR_SOURCE = "persisted"
+
+    APP_CONFIG_DIR = os.path.abspath(target_dir)
+    changed = not _is_same_path(previous_selected_dir, APP_CONFIG_DIR)
+    runtime_config_dir = os.path.abspath(os.path.dirname(SERVER_CONFIG_PATH))
+
+    return {
+        "changed": changed,
+        "runtime_config_dir": runtime_config_dir,
+        "selected_config_dir": APP_CONFIG_DIR,
+        "default_config_dir": os.path.abspath(DEFAULT_APP_CONFIG_DIR),
+        "source": APP_CONFIG_DIR_SOURCE,
+        "override_file_path": os.path.abspath(CONFIG_DIR_OVERRIDE_FILE),
+        "next_server_config_path": next_server_path,
+        "next_third_party_config_path": next_third_path,
+        "requires_restart": not _is_same_path(runtime_config_dir, APP_CONFIG_DIR),
+    }
 
 
 def _resolve_backend_root() -> str:

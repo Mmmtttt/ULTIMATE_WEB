@@ -40,7 +40,7 @@ def test_get_search_client_uses_api_login_and_returns_login_mode(monkeypatch):
 
     adapter = _build_adapter(
         monkeypatch,
-        {"username": REDACTED_USERNAME, "password": "REDACTED_PASSWORD"},
+        {"username": "请输入账号", "password": "请输入密码"},
     )
     monkeypatch.setattr(adapter, "_is_login_session_valid", lambda client, username: True)
 
@@ -51,8 +51,8 @@ def test_get_search_client_uses_api_login_and_returns_login_mode(monkeypatch):
 
     assert is_login is True
     assert getattr(client, "client_key", "") == "api"
-    assert called["username"] == "REDACTED_USERNAME"
-    assert called["password"] == "REDACTED_PASSWORD"
+    assert called["username"] == "请输入账号"
+    assert called["password"] == "请输入密码"
 
 
 def test_get_search_client_raises_when_login_probe_fails(monkeypatch):
@@ -61,7 +61,7 @@ def test_get_search_client_raises_when_login_probe_fails(monkeypatch):
 
     adapter = _build_adapter(
         monkeypatch,
-        {"username": "REDACTED_USERNAME", "password": "REDACTED_PASSWORD"},
+        {"username": "请输入账号", "password": "请输入密码"},
     )
     monkeypatch.setattr(adapter, "_is_login_session_valid", lambda client, username: False)
 

@@ -123,6 +123,28 @@
       </div>
     </van-cell-group>
 
+    <van-cell-group inset class="config-group">
+      <van-cell title="配置文件目录" :label="configDirStatusLabel" />
+      <van-cell title="默认目录" :value="defaultConfigDir || '-'" />
+      <van-cell title="目录来源" :value="configDirSourceLabel" />
+      <van-field
+        v-model="configDirInput"
+        label="config_dir"
+        placeholder="例如 C:\\Users\\用户名\\AppData\\Roaming\\ULTIMATE_WEB"
+      />
+      <div class="inline-actions">
+        <van-button
+          type="primary"
+          block
+          round
+          :loading="savingConfigDir"
+          @click="saveConfigDir"
+        >
+          保存配置目录并迁移配置文件
+        </van-button>
+      </div>
+    </van-cell-group>
+
     <van-popup
       v-model:show="showThirdPartyConfig"
       class="third-party-popup"
@@ -241,6 +263,12 @@ const systemDataDir = ref('')
 const runtimeDataDir = ref('')
 const resolvedDataDir = ref('')
 const savingSystemConfig = ref(false)
+const configDirInput = ref('')
+const runtimeConfigDir = ref('')
+const selectedConfigDir = ref('')
+const defaultConfigDir = ref('')
+const configDirSource = ref('')
+const savingConfigDir = ref(false)
 const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
 
 const displayAdapters = computed(() => {
@@ -264,6 +292,30 @@ const runtimeDataDirLabel = computed(() => {
     return `当前运行目录: ${runtimeDataDir.value}（待生效: ${resolvedDataDir.value}）`
   }
   return `当前运行目录: ${runtimeDataDir.value}`
+})
+
+const configDirSourceLabel = computed(() => {
+  const source = String(configDirSource.value || '').toLowerCase()
+  if (source === 'env') return '环境变量'
+  if (source === 'persisted') return '用户设置'
+  if (source === 'default') return '系统默认'
+  return source || '-'
+})
+
+const configDirStatusLabel = computed(() => {
+  if (!runtimeConfigDir.value) {
+    return '配置目录读取中...'
+  }
+
+  const segments = [`当前运行: ${runtimeConfigDir.value}`]
+  if (selectedConfigDir.value && selectedConfigDir.value !== runtimeConfigDir.value) {
+    segments.push(`重启后生效: ${selectedConfigDir.value}`)
+  }
+  if (defaultConfigDir.value) {
+    segments.push(`默认: ${defaultConfigDir.value}`)
+  }
+  segments.push(`来源: ${configDirSourceLabel.value}`)
+  return segments.join('；')
 })
 
 const thirdPartyPopupStyle = computed(() => ({
@@ -351,6 +403,23 @@ async function loadSystemConfig() {
     resolvedDataDir.value = response.data.resolved_data_dir || ''
   } catch (error) {
     showFailToast(error?.message || '加载系统配置失败')
+  }
+}
+
+async function loadConfigDirInfo() {
+  try {
+    const response = await configApi.getConfigDirInfo()
+    if (response.code !== 200 || !response.data) {
+      return
+    }
+
+    runtimeConfigDir.value = response.data.runtime_config_dir || ''
+    selectedConfigDir.value = response.data.selected_config_dir || ''
+    defaultConfigDir.value = response.data.default_config_dir || ''
+    configDirSource.value = response.data.source || ''
+    configDirInput.value = response.data.selected_config_dir || response.data.runtime_config_dir || ''
+  } catch (error) {
+    showFailToast(error?.message || '加载配置目录信息失败')
   }
 }
 
@@ -515,6 +584,54 @@ async function saveSystemDataDir() {
   }
 }
 
+async function saveConfigDir() {
+  const value = String(configDirInput.value || '').trim()
+  if (!value) {
+    showFailToast('请填写 config_dir')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: '确认修改配置目录',
+      message: '将迁移 server_config.json 和 third_party_config.json 到新目录，并重启后端使其生效，是否继续？',
+      confirmButtonText: '继续',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+
+  savingConfigDir.value = true
+  try {
+    const response = await configApi.updateConfigDir({
+      config_dir: value,
+      migrate_configs: true,
+      restart_now: true,
+    })
+
+    if (response.code === 200) {
+      showSuccessToast('配置目录已保存，后端正在重启，请稍后刷新页面')
+      setTimeout(() => {
+        reloadPage()
+      }, 2800)
+    } else {
+      showFailToast(response.msg || '保存失败')
+    }
+  } catch (error) {
+    if (String(error?.message || '').includes('Network Error')) {
+      showSuccessToast('配置目录已提交，后端重启中，请稍后刷新页面')
+      setTimeout(() => {
+        reloadPage()
+      }, 2800)
+      return
+    }
+    showFailToast(error?.message || '保存失败')
+  } finally {
+    savingConfigDir.value = false
+  }
+}
+
 function openJavdbCookieGuide() {
   const url = configApi.getJavdbCookieGuideUrl()
   const win = openExternalUrl(url, '_blank')
@@ -561,7 +678,7 @@ async function organizeDatabase() {
 onMounted(async () => {
   await configStore.loadConfigFromServer()
   initValues()
-  await Promise.all([loadSystemConfig(), loadThirdPartyConfig()])
+  await Promise.all([loadSystemConfig(), loadThirdPartyConfig(), loadConfigDirInfo()])
 })
 </script>
 

@@ -22,6 +22,14 @@ export const configApi = {
     return request.put('/v1/config/system', data)
   },
 
+  getConfigDirInfo() {
+    return request.get('/v1/config/system/config-dir')
+  },
+
+  updateConfigDir(data) {
+    return request.put('/v1/config/system/config-dir', data)
+  },
+
   getJavdbCookieGuideUrl() {
     return resolveBackendApiUrl('/v1/config/javdb-cookie-guide')
   },

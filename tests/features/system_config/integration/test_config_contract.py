@@ -152,6 +152,68 @@ def test_config_cache_clear_executes(integration_runtime):
 
 
 @pytest.mark.integration
+def test_config_dir_info_returns_paths(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 验证配置目录信息接口返回完整路径信息。
+    - 测试步骤:
+      1. 调用 GET /api/v1/config/system/config-dir。
+      2. 检查返回字段和类型。
+    - 预期结果:
+      1. HTTP 200，业务 code=200。
+      2. 返回数据包含运行目录、选中目录、默认目录与配置文件路径。
+    - 历史变更:
+      - 2026-04-02: 新增配置目录信息接口合同测试。
+    """
+    base_url = integration_runtime["base_url"]
+
+    response = requests.get(
+        f"{base_url}/api/v1/config/system/config-dir",
+        timeout=5,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    data = payload["data"]
+    assert isinstance(data.get("runtime_config_dir"), str)
+    assert isinstance(data.get("selected_config_dir"), str)
+    assert isinstance(data.get("default_config_dir"), str)
+    assert isinstance(data.get("source"), str)
+    assert isinstance(data.get("server_config_path"), str)
+    assert isinstance(data.get("third_party_config_path"), str)
+    assert isinstance(data.get("requires_restart"), bool)
+
+
+@pytest.mark.integration
+def test_config_dir_update_rejects_empty_path(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 验证配置目录更新接口对空参数做输入校验。
+    - 测试步骤:
+      1. 调用 PUT /api/v1/config/system/config-dir，传入空 config_dir。
+      2. 检查返回错误信息。
+    - 预期结果:
+      1. HTTP 200，业务 code=400。
+      2. 错误消息提示 config_dir 不能为空。
+    - 历史变更:
+      - 2026-04-02: 新增配置目录更新参数校验合同测试。
+    """
+    base_url = integration_runtime["base_url"]
+
+    response = requests.put(
+        f"{base_url}/api/v1/config/system/config-dir",
+        json={"config_dir": "   "},
+        timeout=5,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 400
+    assert "config_dir" in str(payload.get("msg", ""))
+
+
+@pytest.mark.integration
 def test_health_check_returns_ok(integration_runtime):
     """
     用例描述:
