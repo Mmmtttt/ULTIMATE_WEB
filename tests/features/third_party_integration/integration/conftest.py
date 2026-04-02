@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -54,6 +55,39 @@ def _ensure_flask_cors_available() -> None:
 @pytest.fixture(scope="module")
 def third_party_client():
     prepared = prepare_profile("integration_third_party", clean=True)
+    third_party_config_path = Path(prepared["third_party_config_path"])
+    try:
+        payload = json.loads(third_party_config_path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    adapters = payload.setdefault("adapters", {})
+    adapters["jmcomic"] = {
+        **dict(adapters.get("jmcomic") or {}),
+        "enabled": True,
+        "username": "test-jm-user",
+        "password": "test-jm-pass",
+    }
+    adapters["picacomic"] = {
+        **dict(adapters.get("picacomic") or {}),
+        "enabled": True,
+        "account": "test-pk-account",
+        "password": "test-pk-pass",
+    }
+    adapters["javdb"] = {
+        **dict(adapters.get("javdb") or {}),
+        "enabled": True,
+        "cookies": {
+            "_jdb_session": "test-jdb-session",
+            "over18": "1",
+            "locale": "zh",
+            "theme": "auto",
+            "list_mode": "h",
+        },
+    }
+    third_party_config_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     env_overrides = {
         "SERVER_CONFIG_PATH": prepared["server_config_path"],

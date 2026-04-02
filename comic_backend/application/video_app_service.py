@@ -986,12 +986,29 @@ class VideoAppService(BaseContentAppService):
         return True
 
     def _build_video_metadata_adapters(self) -> Dict[str, Any]:
-        from third_party.javdb_api_scraper import JavdbAdapter, JavbusAdapter
+        adapters: Dict[str, Any] = {}
 
-        return {
-            "javdb": JavdbAdapter(),
-            "javbus": JavbusAdapter(),
-        }
+        try:
+            from third_party.javdb_api_scraper import JavbusAdapter
+            adapters["javbus"] = JavbusAdapter()
+        except Exception as e:
+            error_logger.error(f"init javbus adapter failed: {e}")
+
+        try:
+            from third_party.adapter_factory import AdapterConfig
+            from third_party.credential_guard import get_adapter_credential_status
+
+            javdb_config = AdapterConfig().get_adapter_config("javdb") or {}
+            javdb_status = get_adapter_credential_status("javdb", javdb_config)
+            if bool(javdb_status.get("configured", False)):
+                from third_party.javdb_api_scraper import JavdbAdapter
+                adapters["javdb"] = JavdbAdapter()
+            else:
+                app_logger.info(f"skip javdb metadata adapter: {javdb_status.get('message')}")
+        except Exception as e:
+            error_logger.error(f"init javdb adapter failed: {e}")
+
+        return adapters
 
     def organize_enrich_local_metadata(self) -> ServiceResult:
         try:

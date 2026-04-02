@@ -168,6 +168,78 @@ def test_comic_search_third_party_rejects_invalid_platform(third_party_client):
 
 
 @pytest.mark.integration
+def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
+    external_api = importlib.import_module("third_party.external_api")
+    original_config = load_json(config_path)
+
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("jmcomic", {}).update(
+        {"enabled": True, "username": "jm-user", "password": "jm-pass"}
+    )
+    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+        {"enabled": True, "account": "", "password": ""}
+    )
+    save_json(config_path, config)
+
+    calls = []
+
+    def fake_search_albums(keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
+        calls.append(str(adapter_name))
+        return {
+            "albums": [{"album_id": "jm-id", "title": "jm-title", "tags": []}],
+            "page": page,
+            "total_pages": 1,
+            "has_next": False,
+        }
+
+    monkeypatch.setattr(external_api, "search_albums", fake_search_albums)
+
+    try:
+        response = client.get(
+            "/api/v1/comic/search-third-party",
+            query_string={"keyword": "test", "platform": "all", "page": 1},
+        )
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["code"] == 200
+        assert calls == ["jmcomic"]
+        assert len((payload["data"] or {}).get("results") or []) == 1
+        platform_errors = (payload["data"] or {}).get("platform_errors") or {}
+        assert "PK" in platform_errors
+        assert "未配置账号或密码" in str(platform_errors.get("PK", ""))
+    finally:
+        save_json(config_path, original_config)
+
+
+@pytest.mark.integration
+def test_comic_search_third_party_specific_platform_requires_credentials(third_party_client):
+    client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
+    original_config = load_json(config_path)
+
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+        {"enabled": True, "account": "", "password": ""}
+    )
+    save_json(config_path, config)
+
+    try:
+        response = client.get(
+            "/api/v1/comic/search-third-party",
+            query_string={"keyword": "need-pk", "platform": "PK", "page": 1},
+        )
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["code"] == 400
+        assert "PK" in str(payload["msg"])
+        assert "未配置账号或密码" in str(payload["msg"])
+    finally:
+        save_json(config_path, original_config)
+
+
+@pytest.mark.integration
 def test_comic_import_online_by_id_forwards_platform_service_contract(third_party_client, monkeypatch):
     """
     用例描述:
@@ -257,8 +329,14 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
       - 2026-03-23: 初始创建，覆盖 by_search 参数映射契约。
     """
     client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
     external_api = importlib.import_module("third_party.external_api")
     platform_service_module = importlib.import_module("third_party.platform_service")
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+        {"enabled": True, "account": "pk-user", "password": "pk-pass"}
+    )
+    save_json(config_path, config)
 
     captured = {}
 
@@ -380,10 +458,16 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
       - 2026-03-23: 初始创建，覆盖推荐库在线导入契约。
     """
     client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
     data_dir = third_party_client["data_dir"]
     meta_dir = third_party_client["meta_dir"]
     external_api = importlib.import_module("third_party.external_api")
     platform_service_module = importlib.import_module("third_party.platform_service")
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+        {"enabled": True, "account": "pk-user", "password": "pk-pass"}
+    )
+    save_json(config_path, config)
     captured = {"cover": [], "preview": []}
 
     monkeypatch.setattr(

@@ -577,7 +577,9 @@ def search_third_party_comics():
             return error_response(400, "缺少参数: keyword")
         
         from third_party.external_api import search_albums
-        from core.platform import Platform, is_platform_supported, get_comic_platforms, is_comic_platform
+        from third_party.adapter_factory import AdapterConfig
+        from third_party.credential_guard import get_adapter_credential_status
+        from core.platform import get_comic_platforms, is_comic_platform
         
         platforms_to_search = []
         if platform == 'all':
@@ -590,11 +592,31 @@ def search_third_party_comics():
                 return error_response(400, f"不支持的漫画平台: {platform}，支持的平台: {get_comic_platforms()}")
         
         platform_results = {}
+        platform_errors = {}
         all_albums = []
+        config_manager = AdapterConfig()
+        platform_to_adapter = {
+            'JM': 'jmcomic',
+            'PK': 'picacomic',
+        }
         
         for plat in platforms_to_search:
+            adapter_name = platform_to_adapter.get(plat)
+            if not adapter_name:
+                platform_errors[plat] = f"未找到平台 {plat} 对应的适配器"
+                if platform != 'all':
+                    return error_response(400, platform_errors[plat])
+                continue
+
+            adapter_config = config_manager.get_adapter_config(adapter_name) or {}
+            credential_status = get_adapter_credential_status(adapter_name, adapter_config)
+            if not bool(credential_status.get("configured", False)):
+                platform_errors[plat] = str(credential_status.get("message") or f"{plat} 平台未配置查询凭据")
+                if platform != 'all':
+                    return error_response(400, platform_errors[plat])
+                continue
+
             try:
-                adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
                 result = search_albums(
                     keyword, 
                     page=page, 
@@ -622,8 +644,16 @@ def search_third_party_comics():
                     
                     all_albums.extend(albums_with_platform)
                     
+            except RuntimeError as e:
+                platform_errors[plat] = str(e)
+                error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                if platform != 'all':
+                    return error_response(400, platform_errors[plat])
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                platform_errors[plat] = f"{plat} 平台搜索失败"
+                if platform != 'all':
+                    return error_response(500, platform_errors[plat])
                 continue
         
         has_more = any(info.get('has_next', False) for info in platform_results.values())
@@ -634,7 +664,8 @@ def search_third_party_comics():
             'platform_info': platform_results,
             'page': page,
             'limit': limit,
-            'has_more': has_more
+            'has_more': has_more,
+            'platform_errors': platform_errors,
         })
         
     except Exception as e:
@@ -1272,6 +1303,13 @@ def import_online():
         
         # 根据平台选择适配器
         adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
+        from third_party.adapter_factory import AdapterConfig
+        from third_party.credential_guard import get_adapter_credential_status
+
+        adapter_config = AdapterConfig().get_adapter_config(adapter_name) or {}
+        credential_status = get_adapter_credential_status(adapter_name, adapter_config)
+        if not bool(credential_status.get("configured", False)):
+            return error_response(400, str(credential_status.get("message") or f"{platform_name} 平台未配置查询凭据"))
         
         if import_type == 'by_id':
             comic_id = data.get('comic_id')
@@ -1482,6 +1520,9 @@ def import_online():
             "failed_downloads": failed_downloads
         })
         
+    except RuntimeError as e:
+        error_logger.error(f"在线导入失败(配置): {e}")
+        return error_response(400, str(e))
     except ImportError as e:
         error_logger.error(f"第三方库未安装: {e}")
         return error_response(500, "第三方库未配置，请先配置外部 API")

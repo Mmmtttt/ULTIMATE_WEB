@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from core.platform import Platform
 from .adapter_factory import AdapterFactory, AdapterConfig
 from .base_adapter import BaseAdapter
+from .credential_guard import ensure_adapter_query_ready
 from infrastructure.logger import app_logger, error_logger
 
 
@@ -43,6 +44,7 @@ class PlatformService:
         # 每次获取适配器都刷新配置，确保 third_party_config.json 的改动可立即生效
         self._config_manager.reload_config()
         config = self._config_manager.get_adapter_config(adapter_name)
+        ensure_adapter_query_ready(adapter_name, config)
         cached = self._adapters.get(platform)
         if cached is None or getattr(cached, 'config', {}) != config:
             AdapterFactory.reset_instance(adapter_name)

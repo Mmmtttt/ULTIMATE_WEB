@@ -597,13 +597,34 @@ def get_video_adapter(platform_name="javdb", *args, **kwargs):
         raise RuntimeError(
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
-    if platform_name.lower() == "javdb":
+    normalized_platform = str(platform_name or "").strip().lower()
+    if normalized_platform == "javdb":
+        status = _get_video_platform_query_status("javdb")
+        if not bool(status.get("configured", False)):
+            raise RuntimeError(str(status.get("message") or "JAVDB 平台未配置 cookie"))
         from third_party.javdb_api_scraper import JavdbAdapter
         return JavdbAdapter(*args, **kwargs)
-    elif platform_name.lower() == "javbus":
+    elif normalized_platform == "javbus":
         from third_party.javdb_api_scraper import JavbusAdapter
         return JavbusAdapter(*args, **kwargs)
     raise ValueError(f"不支持的视频平台: {platform_name}")
+
+
+def _get_video_platform_query_status(platform_name: str) -> dict:
+    normalized_platform = str(platform_name or "").strip().lower()
+    if normalized_platform != "javdb":
+        return {
+            "configured": True,
+            "message": "",
+            "missing_fields": [],
+        }
+
+    from third_party.adapter_factory import AdapterConfig
+    from third_party.credential_guard import get_adapter_credential_status
+
+    config_manager = AdapterConfig()
+    javdb_config = config_manager.get_adapter_config("javdb") or {}
+    return get_adapter_credential_status("javdb", javdb_config)
 
 
 def get_all_video_adapters(*args, **kwargs):
@@ -1125,9 +1146,11 @@ def _get_javdb_cookie_config_status():
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
     from third_party.adapter_factory import AdapterConfig
+    from third_party.credential_guard import get_adapter_credential_status
 
     config_manager = AdapterConfig()
     javdb_config = config_manager.get_adapter_config('javdb') or {}
+    status = get_adapter_credential_status("javdb", javdb_config)
     cookies = javdb_config.get('cookies') or {}
 
     normalized_cookies = {}
@@ -1139,11 +1162,12 @@ def _get_javdb_cookie_config_status():
                 normalized_cookies[key] = value
 
     cookie_keys = sorted(normalized_cookies.keys())
-    has_session_cookie = bool(normalized_cookies.get("_jdb_session"))
+    has_session_cookie = bool(status.get("configured", False))
     return {
-        "configured": has_session_cookie,
+        "configured": bool(status.get("configured", False)),
         "cookie_keys": cookie_keys,
-        "has_session_cookie": has_session_cookie
+        "has_session_cookie": has_session_cookie,
+        "message": str(status.get("message") or ""),
     }
 
 
@@ -1159,16 +1183,27 @@ def third_party_search():
             return error_response(400, "缺少搜索关键词")
         
         app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}, 页码: {page}")
-        
+
+        normalized_platform = str(platform or "").strip().lower()
+        if normalized_platform == 'all':
+            platforms_to_search = ['javdb', 'javbus']
+        elif normalized_platform in {'javdb', 'javbus'}:
+            platforms_to_search = [normalized_platform]
+        else:
+            return error_response(400, f"不支持的视频平台: {platform}")
+
         all_videos = []
         platform_results = {}
-        
-        if platform.lower() == 'all':
-            platforms_to_search = ['javdb', 'javbus']
-        else:
-            platforms_to_search = [platform.lower()]
+        platform_errors = {}
         
         for plat in platforms_to_search:
+            status = _get_video_platform_query_status(plat)
+            if not bool(status.get("configured", False)):
+                platform_errors[plat] = str(status.get("message") or f"{plat} 平台未配置查询凭据")
+                if normalized_platform != "all":
+                    return error_response(400, platform_errors[plat])
+                continue
+
             try:
                 adapter = get_video_adapter(plat)
                 result = adapter.search_videos(keyword, page=page, max_pages=1)
@@ -1191,8 +1226,16 @@ def third_party_search():
                 all_videos.extend(videos)
                 app_logger.info(f"搜索完成，平台: {plat}, 页码: {page}, 找到 {len(videos)} 个视频")
                 
+            except RuntimeError as e:
+                platform_errors[plat] = str(e)
+                error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                if normalized_platform != "all":
+                    return error_response(400, platform_errors[plat])
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
+                platform_errors[plat] = f"{plat} 平台搜索失败"
+                if normalized_platform != "all":
+                    return error_response(500, platform_errors[plat])
                 continue
         
         has_more = any(info.get('has_next', False) for info in platform_results.values())
@@ -1201,12 +1244,13 @@ def third_party_search():
         total_pages = max(total_pages_list) if total_pages_list else 1
         
         response_data = {
-            "platform": 'all' if platform.lower() == 'all' else platform,
+            "platform": 'all' if normalized_platform == 'all' else normalized_platform,
             "page": page,
             "has_next": has_more,
             "total_pages": total_pages,
             "videos": all_videos,
-            "platform_info": platform_results
+            "platform_info": platform_results,
+            "platform_errors": platform_errors,
         }
         
         return success_response(response_data)
@@ -1245,7 +1289,7 @@ def third_party_javdb_tags():
                 "source_ready": False,
                 "tag_search_available": False,
                 "cookie_configured": False,
-                "message": "未配置cookie，请先在系统配置中填写JAVDB cookie"
+                "message": str(cookie_status.get("message") or "未配置cookie，请先在系统配置中填写JAVDB cookie")
             })
 
         adapter = get_video_adapter('javdb')
@@ -1370,6 +1414,9 @@ def third_party_javdb_search_by_tags():
             "invalid_tag_ids": invalid_tag_ids,
             "overridden_tag_ids": overridden_tag_ids
         })
+    except RuntimeError as e:
+        error_logger.error(f"JAVDB 标签搜索失败(配置): {e}")
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"JAVDB 标签搜索失败: {e}")
         return error_response(500, "server error")
@@ -1392,6 +1439,9 @@ def third_party_detail():
             return success_response(detail)
         else:
             return error_response(404, "视频不存在")
+    except RuntimeError as e:
+        error_logger.error(f"获取第三方详情失败(配置): {e}")
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"获取第三方详情失败: {e}")
         return error_response(500, "服务器内部错误")
@@ -1411,6 +1461,9 @@ def third_party_actor_search():
         actors = adapter.search_actor(actor_name)
         
         return success_response(actors)
+    except RuntimeError as e:
+        error_logger.error(f"第三方演员搜索失败(配置): {e}")
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"第三方演员搜索失败: {e}")
         return error_response(500, "服务器内部错误")
@@ -1459,6 +1512,9 @@ def third_party_actor_works():
         }
         
         return success_response(response_data)
+    except RuntimeError as e:
+        error_logger.error(f"获取演员作品失败(配置): {e}")
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"获取演员作品失败: {e}")
         return error_response(500, "服务器内部错误")
@@ -1666,6 +1722,9 @@ def third_party_import():
             
             app_logger.info(f"视频导入成功: {video_id_full}, 目标: {target}")
             return success_response(video_data, "导入成功")
+    except RuntimeError as e:
+        error_logger.error(f"第三方导入失败(配置): {e}")
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"第三方导入失败: {e}")
         return error_response(500, "服务器内部错误")

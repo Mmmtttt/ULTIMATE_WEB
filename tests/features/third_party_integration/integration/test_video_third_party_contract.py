@@ -96,7 +96,13 @@ def test_video_third_party_search_all_forwards_adapter_calls(third_party_client,
       - 2026-03-23: 初始创建，覆盖视频第三方搜索调用契约。
     """
     client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
     video_api = third_party_client["video_api"]
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("javdb", {}).update(
+        {"enabled": True, "cookies": {"_jdb_session": "test-session"}}
+    )
+    save_json(config_path, config)
     calls = []
 
     class FakeAdapter:
@@ -146,6 +152,78 @@ def test_video_third_party_search_all_forwards_adapter_calls(third_party_client,
 
     # javbus cover_url should be rewritten to proxy URL.
     assert any(str(item.get("cover_url", "")).startswith("/api/v1/video/proxy2?url=") for item in data["videos"])
+
+
+@pytest.mark.integration
+def test_video_third_party_search_all_skips_unconfigured_javdb(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
+    video_api = third_party_client["video_api"]
+    original_config = load_json(config_path)
+
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("javdb", {}).update(
+        {"enabled": True, "cookies": {"_jdb_session": ""}}
+    )
+    save_json(config_path, config)
+
+    calls = []
+
+    class FakeAdapter:
+        def __init__(self, platform):
+            self.platform = platform
+
+        def search_videos(self, keyword, page=1, max_pages=1):
+            calls.append(self.platform)
+            return {
+                "videos": [{"id": f"{self.platform}-1", "title": f"{self.platform}-title"}],
+                "page": page,
+                "has_next": False,
+                "total_pages": 1,
+            }
+
+    monkeypatch.setattr(video_api, "get_video_adapter", lambda platform, *a, **k: FakeAdapter(platform))
+
+    try:
+        response = client.get(
+            "/api/v1/video/third-party/search",
+            query_string={"keyword": "abc", "platform": "all", "page": 1},
+        )
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["code"] == 200
+        assert calls == ["javbus"]
+        assert len((payload["data"] or {}).get("videos") or []) == 1
+        platform_errors = (payload["data"] or {}).get("platform_errors") or {}
+        assert "javdb" in platform_errors
+        assert "cookie" in str(platform_errors.get("javdb", "")).lower()
+    finally:
+        save_json(config_path, original_config)
+
+
+@pytest.mark.integration
+def test_video_third_party_detail_requires_javdb_cookie(third_party_client):
+    client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
+    original_config = load_json(config_path)
+
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("javdb", {}).update(
+        {"enabled": True, "cookies": {"_jdb_session": ""}}
+    )
+    save_json(config_path, config)
+
+    try:
+        response = client.get(
+            "/api/v1/video/third-party/detail",
+            query_string={"video_id": "X-001", "platform": "javdb"},
+        )
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["code"] == 400
+        assert "cookie" in str(payload["msg"]).lower()
+    finally:
+        save_json(config_path, original_config)
 
 
 @pytest.mark.integration

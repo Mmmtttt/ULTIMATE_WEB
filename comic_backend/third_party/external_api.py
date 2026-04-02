@@ -4,6 +4,7 @@
 """
 from typing import Dict, Any, Optional
 from .adapter_factory import AdapterFactory, AdapterConfig
+from .credential_guard import ensure_adapter_query_ready
 
 
 _config_manager = None
@@ -41,6 +42,7 @@ def get_adapter(adapter_name: Optional[str] = None):
     
     config_manager = get_config_manager()
     adapter_config = config_manager.get_adapter_config(adapter_name)
+    ensure_adapter_query_ready(adapter_name, adapter_config)
     
     return AdapterFactory.get_adapter(adapter_name, adapter_config)
 
