@@ -20,8 +20,10 @@ def _reset_backend_modules() -> None:
         "api.v1.runtime_guard",
         "api.v1.comic",
         "api.v1.video",
+        "api.v1.organize",
         "core.constants",
         "core.runtime_profile",
+        "application.database_organize_service",
         "application.video_app_service",
     ]
     for name in module_names:
