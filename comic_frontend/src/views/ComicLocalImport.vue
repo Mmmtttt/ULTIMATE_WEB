@@ -279,14 +279,17 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api'
 import { useComicStore, useTagStore } from '@/stores'
 
 const STORAGE_KEY = 'comic_local_import_session_v1'
+const ARCHIVE_INTENT_SESSION_KEY = 'ultimate_android_open_archive_path'
 
 const comicStore = useComicStore()
 const tagStore = useTagStore()
+const route = useRoute()
 
 const sourceMode = ref('path')
 const sourcePath = ref('')
@@ -408,6 +411,55 @@ const isSoftlinkMode = computed({
     pathImportMode.value = enabled ? 'softlink_ref' : 'hardlink_move'
   }
 })
+
+function normalizeIncomingArchivePath(raw) {
+  const text = String(raw || '').trim()
+  return text || ''
+}
+
+function applyIncomingArchivePath(rawPath) {
+  const nextPath = normalizeIncomingArchivePath(rawPath)
+  if (!nextPath) return false
+  sourceMode.value = 'path'
+  sourcePath.value = nextPath
+  return true
+}
+
+function consumeIncomingArchivePath() {
+  let queryPath = route?.query?.source_path
+  if (Array.isArray(queryPath)) {
+    queryPath = queryPath[0]
+  }
+  const normalizedQueryPath = normalizeIncomingArchivePath(queryPath)
+
+  let storagePath = ''
+  if (typeof window !== 'undefined') {
+    try {
+      storagePath = normalizeIncomingArchivePath(
+        window.sessionStorage.getItem(ARCHIVE_INTENT_SESSION_KEY)
+      )
+    } catch (_error) {
+      storagePath = ''
+    }
+  }
+
+  const finalPath = normalizedQueryPath || storagePath
+  if (!finalPath) return
+
+  const applied = applyIncomingArchivePath(finalPath)
+  if (!applied || typeof window === 'undefined') return
+
+  try {
+    const currentStored = normalizeIncomingArchivePath(
+      window.sessionStorage.getItem(ARCHIVE_INTENT_SESSION_KEY)
+    )
+    if (currentStored && currentStored === finalPath) {
+      window.sessionStorage.removeItem(ARCHIVE_INTENT_SESSION_KEY)
+    }
+  } catch (_error) {
+    // ignore storage errors
+  }
+}
 
 function roleText(role) {
   if (role === 'author') return '作者层'
@@ -928,7 +980,15 @@ watch([sessionId, assignments, tagAssignments, selectedNodeId, markMode], () => 
 onMounted(async () => {
   await restoreSessionDraft()
   await loadRecoverableSessions()
+  consumeIncomingArchivePath()
 })
+
+watch(
+  () => route.query.source_path,
+  () => {
+    consumeIncomingArchivePath()
+  }
+)
 </script>
 
 <style scoped>

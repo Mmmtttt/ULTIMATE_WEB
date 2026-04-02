@@ -352,6 +352,35 @@ def ensure_android_manifest_network(android_project_dir: Path) -> None:
             patched = patched.replace("<application", f"    {line}\n\n    <application", 1)
     if 'android:usesCleartextTraffic="true"' not in patched and "<application" in patched:
         patched = patched.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
+
+    archive_intent_marker = "ULTIMATE_ARCHIVE_OPEN_INTENT_START"
+    if archive_intent_marker not in patched:
+        archive_intent_block = (
+            "            <!-- ULTIMATE_ARCHIVE_OPEN_INTENT_START -->\n"
+            "            <intent-filter>\n"
+            "                <action android:name=\"android.intent.action.VIEW\" />\n"
+            "                <action android:name=\"android.intent.action.SEND\" />\n"
+            "                <category android:name=\"android.intent.category.DEFAULT\" />\n"
+            "                <data android:mimeType=\"application/zip\" />\n"
+            "                <data android:mimeType=\"application/x-zip-compressed\" />\n"
+            "                <data android:mimeType=\"application/vnd.rar\" />\n"
+            "                <data android:mimeType=\"application/x-rar-compressed\" />\n"
+            "                <data android:mimeType=\"application/x-7z-compressed\" />\n"
+            "                <data android:mimeType=\"application/octet-stream\" />\n"
+            "            </intent-filter>\n"
+            "            <!-- ULTIMATE_ARCHIVE_OPEN_INTENT_END -->\n"
+        )
+        activity_pattern = re.compile(
+            r"(<activity[^>]*android:name=\"(?:\\.MainActivity|[^\"]*MainActivity)\"[^>]*>)(.*?)(</activity>)",
+            flags=re.DOTALL,
+        )
+        match = activity_pattern.search(patched)
+        if match:
+            body = match.group(2)
+            if archive_intent_marker not in body:
+                new_body = body.rstrip() + "\n" + archive_intent_block + "        "
+                patched = patched[:match.start(2)] + new_body + patched[match.end(2):]
+
     if patched != raw:
         write_text(manifest, patched)
 
@@ -658,12 +687,17 @@ def ensure_android_project_chaquopy_app(
     java_source = f"""package {app_id};
 
 import android.Manifest;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.util.Log;
 import android.webkit.WebView;
@@ -676,12 +710,24 @@ import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends BridgeActivity {{
     private static final String TAG = "UltimateEmbeddedBackend";
     private static final AtomicBoolean BACKEND_STARTED = new AtomicBoolean(false);
     private static final int REQUEST_STORAGE_PERMISSION = 1101;
+    private static final int ARCHIVE_EVENT_RETRY_COUNT = 6;
+    private static final long ARCHIVE_EVENT_RETRY_INTERVAL_MS = 420L;
+    private static final String ARCHIVE_SESSION_KEY = "ultimate_android_open_archive_path";
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingArchiveDispatchTask = null;
+    private volatile String pendingArchivePath = null;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {{
@@ -689,12 +735,22 @@ public class MainActivity extends BridgeActivity {{
         normalizeWebViewTextScale();
         ensureStorageAccessPermission();
         startEmbeddedBackend();
+        captureArchiveIntent(getIntent());
     }}
 
     @Override
     public void onResume() {{
         super.onResume();
         normalizeWebViewTextScale();
+        dispatchPendingArchivePathWithRetry();
+    }}
+
+    @Override
+    protected void onNewIntent(Intent intent) {{
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureArchiveIntent(intent);
+        dispatchPendingArchivePathWithRetry();
     }}
 
     @Override
@@ -783,6 +839,222 @@ public class MainActivity extends BridgeActivity {{
                 Log.e(TAG, "Failed to start embedded backend", ex);
             }}
         }}, "ultimate-backend-thread").start();
+    }}
+
+    private boolean isSupportedArchiveName(String name) {{
+        String lower = String.valueOf(name == null ? "" : name).trim().toLowerCase();
+        return lower.endsWith(".zip") || lower.endsWith(".rar") || lower.endsWith(".7z");
+    }}
+
+    private String sanitizeFileName(String name) {{
+        String base = String.valueOf(name == null ? "" : name).trim();
+        if (base.isEmpty()) {{
+            return "incoming_archive.zip";
+        }}
+        String sanitized = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (!isSupportedArchiveName(sanitized)) {{
+            sanitized = sanitized + ".zip";
+        }}
+        return sanitized;
+    }}
+
+    private String queryDisplayName(Uri uri) {{
+        if (uri == null) {{
+            return "";
+        }}
+        Cursor cursor = null;
+        try {{
+            cursor = getContentResolver().query(uri, null, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {{
+                int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {{
+                    String value = cursor.getString(idx);
+                    if (value != null) {{
+                        return value;
+                    }}
+                }}
+            }}
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to query display name from uri", ex);
+        }} finally {{
+            if (cursor != null) {{
+                cursor.close();
+            }}
+        }}
+        return "";
+    }}
+
+    private String inferArchiveFileName(Uri uri) {{
+        String displayName = queryDisplayName(uri);
+        if (isSupportedArchiveName(displayName)) {{
+            return displayName;
+        }}
+        String fromPath = uri != null ? uri.getLastPathSegment() : "";
+        if (isSupportedArchiveName(fromPath)) {{
+            return fromPath;
+        }}
+        return "incoming_archive.zip";
+    }}
+
+    private String copyContentUriToLocalArchive(Uri uri) {{
+        if (uri == null) {{
+            return null;
+        }}
+        try {{
+            ContentResolver resolver = getContentResolver();
+            InputStream input = resolver.openInputStream(uri);
+            if (input == null) {{
+                return null;
+            }}
+
+            File root = getApplicationContext().getExternalFilesDir(null);
+            if (root == null) {{
+                root = getApplicationContext().getFilesDir();
+            }}
+            File incomingDir = new File(root, "incoming_archives");
+            if (!incomingDir.exists() && !incomingDir.mkdirs()) {{
+                Log.w(TAG, "Failed to create incoming archive dir: " + incomingDir.getAbsolutePath());
+            }}
+
+            String fileName = sanitizeFileName(inferArchiveFileName(uri));
+            String uniqueName = System.currentTimeMillis() + "_" + fileName;
+            File target = new File(incomingDir, uniqueName);
+
+            try (InputStream in = input; OutputStream out = new FileOutputStream(target)) {{
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = in.read(buffer)) > 0) {{
+                    out.write(buffer, 0, read);
+                }}
+                out.flush();
+            }}
+
+            if (target.exists()) {{
+                return target.getAbsolutePath();
+            }}
+        }} catch (Throwable ex) {{
+            Log.e(TAG, "Failed to copy content uri archive to local storage", ex);
+        }}
+        return null;
+    }}
+
+    private String resolveArchivePathFromIntent(Intent intent) {{
+        if (intent == null) {{
+            return null;
+        }}
+        try {{
+            String action = intent.getAction();
+            Uri uri = null;
+
+            if (Intent.ACTION_VIEW.equals(action)) {{
+                uri = intent.getData();
+            }} else if (Intent.ACTION_SEND.equals(action)) {{
+                Object streamObj = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                if (streamObj instanceof Uri) {{
+                    uri = (Uri) streamObj;
+                }}
+                if (uri == null) {{
+                    uri = intent.getData();
+                }}
+            }} else {{
+                return null;
+            }}
+
+            if (uri == null) {{
+                return null;
+            }}
+
+            String scheme = String.valueOf(uri.getScheme() == null ? "" : uri.getScheme()).trim().toLowerCase();
+            if ("file".equals(scheme)) {{
+                String path = uri.getPath();
+                if (isSupportedArchiveName(path)) {{
+                    return path;
+                }}
+                return null;
+            }}
+            if ("content".equals(scheme)) {{
+                return copyContentUriToLocalArchive(uri);
+            }}
+            return null;
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to resolve archive path from intent", ex);
+            return null;
+        }}
+    }}
+
+    private void captureArchiveIntent(Intent intent) {{
+        String path = resolveArchivePathFromIntent(intent);
+        if (path == null || path.trim().isEmpty()) {{
+            return;
+        }}
+        pendingArchivePath = path.trim();
+        Log.i(TAG, "Captured archive open intent path: " + pendingArchivePath);
+    }}
+
+    private boolean emitArchivePathToWeb(String path) {{
+        try {{
+            if (path == null || path.trim().isEmpty()) {{
+                return false;
+            }}
+            if (bridge == null) {{
+                return false;
+            }}
+            WebView webView = bridge.getWebView();
+            if (webView == null) {{
+                return false;
+            }}
+            final String archivePath = path.trim();
+            final String escaped = JSONObject.quote(archivePath);
+            final String js = "try {{"
+                + "window.sessionStorage.setItem(" + JSONObject.quote(ARCHIVE_SESSION_KEY) + ", " + escaped + ");"
+                + "window.dispatchEvent(new CustomEvent('ultimateArchiveOpen', {{ detail: {{ path: " + escaped + " }} }}));"
+                + "}} catch (e) {{}}";
+            webView.post(() -> {{
+                try {{
+                    webView.evaluateJavascript(js, null);
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to dispatch archive open event to web", ex);
+                }}
+            }});
+            return true;
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to emit archive path to web", ex);
+            return false;
+        }}
+    }}
+
+    private void dispatchPendingArchivePathWithRetry() {{
+        final String path = pendingArchivePath;
+        if (path == null || path.trim().isEmpty()) {{
+            return;
+        }}
+        if (pendingArchiveDispatchTask != null) {{
+            mainHandler.removeCallbacks(pendingArchiveDispatchTask);
+            pendingArchiveDispatchTask = null;
+        }}
+
+        final int[] retries = new int[] {{ ARCHIVE_EVENT_RETRY_COUNT }};
+        pendingArchiveDispatchTask = new Runnable() {{
+            @Override
+            public void run() {{
+                if (retries[0] <= 0) {{
+                    pendingArchivePath = null;
+                    pendingArchiveDispatchTask = null;
+                    return;
+                }}
+
+                emitArchivePathToWeb(path);
+                retries[0] -= 1;
+
+                if (retries[0] <= 0) {{
+                    pendingArchivePath = null;
+                    pendingArchiveDispatchTask = null;
+                    return;
+                }}
+                mainHandler.postDelayed(this, ARCHIVE_EVENT_RETRY_INTERVAL_MS);
+            }}
+        }};
+        mainHandler.postDelayed(pendingArchiveDispatchTask, 240L);
     }}
 }}
 """
