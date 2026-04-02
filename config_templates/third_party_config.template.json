@@ -4,9 +4,9 @@
     "jmcomic": {
       "enabled": true,
       "config_path": "JMComic-Crawler-Python/config.json",
-      "username": "REDACTED_USERNAME",
-      "password": "REDACTED_PASSWORD",
-      "download_dir": "D:\\code\\临时并行开发目录\\ULTIMATE_WEB\\comic_backend\\data\\comic\\JM",
+      "username": "请输入账号",
+      "password": "请输入密码",
+      "download_dir": "./comic_backend/data/comic/JM",
       "output_json": "comics_database.json",
       "progress_file": "download_progress.json",
       "favorite_list_file": "favorite_comics.txt",
@@ -15,9 +15,9 @@
     },
     "picacomic": {
       "enabled": true,
-      "account": "REDACTED_USERNAME",
-      "password": "REDACTED_PASSWORD",
-      "base_dir": "D:\\code\\临时并行开发目录\\ULTIMATE_WEB\\comic_backend\\data\\comic\\PK"
+      "account": "请输入账号",
+      "password": "请输入密码",
+      "base_dir": "./comic_backend/data/comic/PK"
     },
     "javdb": {
       "enabled": true,
@@ -26,7 +26,7 @@
       "retry_times": 3,
       "sleep_time": 0.5,
       "cookies": {
-        "_jdb_session": "REDACTED_COOKIE",
+        "_jdb_session": "请输入cookie",
         "list_mode": "h",
         "theme": "auto",
         "over18": "1",

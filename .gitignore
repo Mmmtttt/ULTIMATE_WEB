@@ -34,3 +34,7 @@ output/*
 tests/.runtime/
 tests/playwright-report/
 tests/test-results/
+
+# runtime local config (sensitive / machine-specific)
+server_config.json
+comic_backend/third_party_config.json

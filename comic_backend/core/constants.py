@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 
 # Mmmtttt
@@ -8,60 +9,159 @@ import sys
 DEFAULT_SERVER_CONFIG = {
     "backend": {"host": "0.0.0.0", "port": 5000},
     "frontend": {"host": "0.0.0.0", "port": 5173},
-    "storage": {"data_dir": "./comic_backend/data"},
+    "storage": {"data_dir": "./../UltimateData"},
 }
+
+DEFAULT_THIRD_PARTY_CONFIG = {
+    "default_adapter": "jmcomic",
+    "adapters": {
+        "jmcomic": {
+            "enabled": True,
+            "config_path": "JMComic-Crawler-Python/config.json",
+            "username": "",
+            "password": "",
+            "download_dir": "./comic_backend/data/comic/JM",
+            "output_json": "comics_database.json",
+            "progress_file": "download_progress.json",
+            "favorite_list_file": "favorite_comics.txt",
+            "consecutive_hit_threshold": 10,
+            "collection_name": "我的最爱",
+        },
+        "picacomic": {
+            "enabled": True,
+            "account": "",
+            "password": "",
+            "base_dir": "./comic_backend/data/comic/PK",
+        },
+        "javdb": {
+            "enabled": True,
+            "domain_index": 0,
+            "timeout": 30,
+            "retry_times": 3,
+            "sleep_time": 0.5,
+            "cookies": {
+                "_jdb_session": "",
+                "list_mode": "h",
+                "theme": "auto",
+                "over18": "1",
+                "locale": "zh",
+            },
+        },
+    },
+}
+
+
+SOURCE_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+SOURCE_PROJECT_ROOT = os.path.abspath(os.path.join(SOURCE_BACKEND_ROOT, ".."))
+CONFIG_TEMPLATES_DIR = os.path.join(SOURCE_PROJECT_ROOT, "config_templates")
+SERVER_CONFIG_TEMPLATE_PATH = os.path.join(CONFIG_TEMPLATES_DIR, "server_config.template.json")
+THIRD_PARTY_CONFIG_TEMPLATE_PATH = os.path.join(CONFIG_TEMPLATES_DIR, "third_party_config.template.json")
 
 
 def _expand_path(path_value: str) -> str:
     return os.path.abspath(os.path.expandvars(os.path.expanduser(str(path_value or "").strip())))
 
 
-def _default_server_config_path() -> str:
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
-        if os.path.basename(exe_dir).lower() == "bin":
-            return os.path.abspath(os.path.join(exe_dir, "..", "server_config.json"))
-        return os.path.abspath(os.path.join(exe_dir, "server_config.json"))
-
-    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    source_project_root = os.path.abspath(os.path.join(source_backend_root, ".."))
-    return os.path.abspath(os.path.join(source_project_root, "server_config.json"))
+def _resolve_project_root() -> str:
+    if not getattr(sys, "frozen", False):
+        return SOURCE_PROJECT_ROOT
+    exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+    if os.path.basename(exe_dir).lower() == "bin":
+        return os.path.abspath(os.path.join(exe_dir, ".."))
+    return exe_dir
 
 
-def resolve_server_config_path() -> str:
-    env_override = str(os.environ.get("SERVER_CONFIG_PATH", "")).strip()
-    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    source_project_root = os.path.abspath(os.path.join(source_backend_root, ".."))
-    candidates = []
+PROJECT_ROOT = _resolve_project_root()
 
+
+def _resolve_platform_config_dir() -> str:
+    explicit_dir = str(os.environ.get("ULTIMATE_CONFIG_DIR", "")).strip()
+    if explicit_dir:
+        return _expand_path(explicit_dir)
+
+    runtime_profile = str(os.environ.get("BACKEND_RUNTIME_PROFILE", "")).strip().lower()
+    android_files_dir = str(os.environ.get("ANDROID_APP_FILES_DIR", "")).strip()
+    if runtime_profile == "android" or android_files_dir:
+        if android_files_dir:
+            return os.path.abspath(os.path.join(_expand_path(android_files_dir), "config"))
+        return os.path.abspath(os.path.join(os.path.expanduser("~"), ".config", "ULTIMATE_WEB"))
+
+    if sys.platform.startswith("win"):
+        base = str(os.environ.get("APPDATA", "")).strip() or str(os.environ.get("LOCALAPPDATA", "")).strip()
+        if base:
+            return os.path.abspath(os.path.join(_expand_path(base), "ULTIMATE_WEB"))
+        return os.path.abspath(os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "ULTIMATE_WEB"))
+
+    if sys.platform == "darwin":
+        return os.path.abspath(os.path.join(os.path.expanduser("~"), "Library", "Application Support", "ULTIMATE_WEB"))
+
+    xdg_config_home = str(os.environ.get("XDG_CONFIG_HOME", "")).strip()
+    if xdg_config_home:
+        return os.path.abspath(os.path.join(_expand_path(xdg_config_home), "ULTIMATE_WEB"))
+    return os.path.abspath(os.path.join(os.path.expanduser("~"), ".config", "ULTIMATE_WEB"))
+
+
+APP_CONFIG_DIR = _resolve_platform_config_dir()
+
+
+def _load_json_template(template_path: str, fallback: dict) -> dict:
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            if isinstance(loaded, dict):
+                return loaded
+    except Exception:
+        pass
+    return dict(fallback)
+
+
+def _create_config_from_template(path: str, template_path: str, fallback: dict) -> None:
+    parent_dir = os.path.dirname(path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    payload = _load_json_template(template_path, fallback)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _resolve_or_init_config_path(
+    filename: str,
+    env_key: str,
+    template_path: str,
+    fallback: dict,
+    legacy_candidates,
+) -> str:
+    env_override = str(os.environ.get(env_key, "")).strip()
     if env_override:
-        candidates.append(_expand_path(env_override))
+        target_path = _expand_path(env_override)
+        if not os.path.exists(target_path):
+            _create_config_from_template(target_path, template_path, fallback)
+        return target_path
 
-    if getattr(sys, "frozen", False):
-        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
-        candidates.append(os.path.abspath(os.path.join(exe_dir, "server_config.json")))
-        candidates.append(os.path.abspath(os.path.join(exe_dir, "..", "server_config.json")))
+    target_path = os.path.abspath(os.path.join(APP_CONFIG_DIR, filename))
+    if os.path.exists(target_path):
+        return target_path
 
-    candidates.append(os.path.abspath(os.path.join(source_project_root, "server_config.json")))
-    candidates.append(os.path.abspath(os.path.join(os.getcwd(), "server_config.json")))
+    for candidate in legacy_candidates:
+        if not candidate:
+            continue
+        source_path = os.path.abspath(candidate)
+        if source_path == target_path:
+            continue
+        if os.path.exists(source_path):
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            try:
+                shutil.copy2(source_path, target_path)
+            except Exception:
+                _create_config_from_template(target_path, template_path, fallback)
+            return target_path
 
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-
-    if env_override:
-        return _expand_path(env_override)
-    return _default_server_config_path()
-
-
-SERVER_CONFIG_PATH = resolve_server_config_path()
-PROJECT_ROOT = os.path.abspath(os.path.dirname(SERVER_CONFIG_PATH))
+    _create_config_from_template(target_path, template_path, fallback)
+    return target_path
 
 
 def _resolve_backend_root() -> str:
-    source_backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if not getattr(sys, "frozen", False):
-        return source_backend_root
+        return SOURCE_BACKEND_ROOT
 
     candidates = (
         os.path.join(PROJECT_ROOT, "backend_source"),
@@ -76,32 +176,58 @@ def _resolve_backend_root() -> str:
 BACKEND_ROOT = _resolve_backend_root()
 
 
+def resolve_server_config_path() -> str:
+    legacy_candidates = []
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+        legacy_candidates.append(os.path.abspath(os.path.join(exe_dir, "server_config.json")))
+        legacy_candidates.append(os.path.abspath(os.path.join(exe_dir, "..", "server_config.json")))
+
+    legacy_candidates.append(os.path.abspath(os.path.join(SOURCE_PROJECT_ROOT, "server_config.json")))
+    legacy_candidates.append(os.path.abspath(os.path.join(os.getcwd(), "server_config.json")))
+
+    return _resolve_or_init_config_path(
+        filename="server_config.json",
+        env_key="SERVER_CONFIG_PATH",
+        template_path=SERVER_CONFIG_TEMPLATE_PATH,
+        fallback=DEFAULT_SERVER_CONFIG,
+        legacy_candidates=legacy_candidates,
+    )
+
+
+SERVER_CONFIG_PATH = resolve_server_config_path()
+
+
 def resolve_third_party_config_path() -> str:
-    env_override = str(os.environ.get("THIRD_PARTY_CONFIG_PATH", "")).strip()
-    candidates = []
+    legacy_candidates = []
 
-    if env_override:
-        candidates.append(_expand_path(env_override))
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+        legacy_candidates.append(os.path.abspath(os.path.join(exe_dir, "third_party_config.json")))
+        legacy_candidates.append(os.path.abspath(os.path.join(exe_dir, "..", "third_party_config.json")))
 
-    candidates.extend(
+    legacy_candidates.extend(
         [
             os.path.abspath(os.path.join(BACKEND_ROOT, "third_party_config.json")),
             os.path.abspath(os.path.join(PROJECT_ROOT, "backend_source", "third_party_config.json")),
             os.path.abspath(os.path.join(PROJECT_ROOT, "comic_backend", "third_party_config.json")),
             os.path.abspath(os.path.join(PROJECT_ROOT, "third_party_config.json")),
+            os.path.abspath(os.path.join(SOURCE_BACKEND_ROOT, "third_party_config.json")),
+            os.path.abspath(os.path.join(SOURCE_PROJECT_ROOT, "third_party_config.json")),
             os.path.abspath(os.path.join(os.getcwd(), "backend_source", "third_party_config.json")),
             os.path.abspath(os.path.join(os.getcwd(), "comic_backend", "third_party_config.json")),
             os.path.abspath(os.path.join(os.getcwd(), "third_party_config.json")),
         ]
     )
 
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-
-    if env_override:
-        return _expand_path(env_override)
-    return os.path.abspath(os.path.join(BACKEND_ROOT, "third_party_config.json"))
+    return _resolve_or_init_config_path(
+        filename="third_party_config.json",
+        env_key="THIRD_PARTY_CONFIG_PATH",
+        template_path=THIRD_PARTY_CONFIG_TEMPLATE_PATH,
+        fallback=DEFAULT_THIRD_PARTY_CONFIG,
+        legacy_candidates=legacy_candidates,
+    )
 
 
 THIRD_PARTY_CONFIG_PATH = resolve_third_party_config_path()
