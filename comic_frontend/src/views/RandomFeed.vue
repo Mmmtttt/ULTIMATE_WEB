@@ -624,27 +624,12 @@ function handleResize() {
   scheduleReleaseScrollSync()
 }
 
-function getScrollerBottomLimit(scroller) {
-  if (!scroller || typeof window === 'undefined') return 0
-  const viewportBottom = Math.max(window.innerHeight || 0, document.documentElement?.clientHeight || 0)
-  const mainContent = scroller.closest('.main-content')
-  if (mainContent) {
-    const contentRect = mainContent.getBoundingClientRect()
-    if (Number.isFinite(contentRect.bottom) && contentRect.bottom > 0) {
-      return Math.min(viewportBottom, contentRect.bottom)
-    }
-  }
-  return viewportBottom
-}
-
 function updateScrollerHeight() {
   const scroller = feedScroller.value
   if (!scroller || typeof window === 'undefined') return
 
   const rect = scroller.getBoundingClientRect()
-  const bottomLimit = getScrollerBottomLimit(scroller)
-  const buffer = 2
-  const nextHeight = Math.max(320, bottomLimit - rect.top - buffer)
+  const nextHeight = Math.max(1, rect.height)
   if (!Number.isFinite(nextHeight)) return
   if (Math.abs(nextHeight - scrollerHeight.value) < 0.5) return
   scrollerHeight.value = nextHeight
@@ -747,10 +732,11 @@ watch(
 <style scoped>
 .random-feed-page {
   height: 100%;
-  min-height: calc(var(--reader-vh, 100dvh) - 4px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
+  overflow: hidden;
 }
 
 .feed-toolbar {
@@ -811,26 +797,27 @@ watch(
 }
 
 .feed-scroller {
-  height: var(--feed-card-height, calc(var(--reader-vh, 100dvh) - 24px));
-  min-height: 420px;
+  flex: 1;
+  min-height: 0;
+  height: var(--feed-card-height, 100%);
   overflow-y: auto;
   overflow-anchor: none;
   scroll-snap-type: y mandatory;
-  border-radius: 16px;
+  border-radius: 0;
 }
 
 .feed-card {
   position: relative;
-  height: var(--feed-card-height, calc(var(--reader-vh, 100dvh) - 24px));
-  min-height: 420px;
+  height: var(--feed-card-height, 100%);
+  min-height: 0;
   scroll-snap-align: start;
-  border-radius: 16px;
+  border-radius: 0;
   overflow: hidden;
   background:
     radial-gradient(circle at 20% 20%, rgba(25, 137, 250, 0.2), transparent 50%),
     radial-gradient(circle at 80% 80%, rgba(255, 159, 0, 0.18), transparent 45%),
     var(--surface-1);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
+  box-shadow: none;
 }
 
 .feed-image-shell {
@@ -942,11 +929,6 @@ watch(
   .feed-toolbar-actions {
     width: 100%;
     justify-content: space-between;
-  }
-
-  .feed-scroller,
-  .feed-card {
-    min-height: 420px;
   }
 
   .feed-overlay {

@@ -48,7 +48,15 @@
     </header>
 
     <!-- Main Content -->
-    <main class="main-content" :class="{ 'with-sidebar': isDesktop, 'with-header': isMobile, 'with-tabbar': isMobile }">
+    <main
+      class="main-content"
+      :class="{
+        'with-sidebar': isDesktop,
+        'with-header': isMobile,
+        'with-tabbar': isMobile,
+        'random-feed-immersive': isRandomFeedRoute
+      }"
+    >
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
           <component :is="Component" />
@@ -75,6 +83,7 @@ import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const { isDesktop, isMobile } = useDevice()
 const route = useRoute()
+const isRandomFeedRoute = computed(() => route.path === '/random-feed')
 
 const pageTitle = computed(() => {
   switch (route.path) {
@@ -231,9 +240,19 @@ const pageTitle = computed(() => {
   width: 100%;
 }
 
+.main-content.random-feed-immersive {
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
 .with-sidebar {
   margin-left: var(--sidebar-width);
   padding: clamp(14px, 1.8vw, 24px);
+}
+
+.with-sidebar.random-feed-immersive {
+  padding: 0;
 }
 
 .with-header {
