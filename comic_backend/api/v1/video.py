@@ -1858,6 +1858,91 @@ def migrate_video_recommendations_to_local():
         return error_response(500, "internal server error")
 
 
+@video_bp.route('/recommendation/edit', methods=['PUT'])
+def edit_video_recommendation():
+    """编辑推荐视频元数据"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        if not data or 'video_id' not in data:
+            return error_response(400, "缺少参数: video_id")
+        
+        video_id = data['video_id']
+        meta = {
+            'title': data.get('title'),
+            'code': data.get('code'),
+            'date': data.get('date'),
+            'series': data.get('series'),
+            'actors': data.get('actors'),
+            'desc': data.get('desc'),
+            'cover_path': data.get('cover_path')
+        }
+        meta = {k: v for k, v in meta.items() if v is not None}
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        found = False
+        for video in videos:
+            if video.get('id') == video_id:
+                video.update(meta)
+                found = True
+                break
+        
+        if not found:
+            return error_response(404, "视频不存在")
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        app_logger.info(f"编辑推荐视频成功: {video_id}")
+        return success_response({"message": "编辑成功"})
+    except Exception as e:
+        error_logger.error(f"编辑推荐视频失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/tag/bind', methods=['PUT'])
+def bind_video_recommendation_tags():
+    """绑定推荐视频标签"""
+    try:
+        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+        from infrastructure.persistence.json_storage import JsonStorage
+        
+        data = request.json
+        if not data or 'video_id' not in data or 'tag_id_list' not in data:
+            return error_response(400, "缺少参数: video_id 或 tag_id_list")
+        
+        video_id = data['video_id']
+        tag_id_list = data['tag_id_list']
+        
+        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+        db_data = storage.read()
+        videos = db_data.get('video_recommendations', [])
+        
+        found = False
+        for video in videos:
+            if video.get('id') == video_id:
+                video['tag_ids'] = tag_id_list
+                found = True
+                break
+        
+        if not found:
+            return error_response(404, "视频不存在")
+        
+        if not storage.write(db_data):
+            return error_response(500, "数据写入失败")
+        
+        app_logger.info(f"绑定推荐视频标签成功: {video_id}, 标签: {tag_id_list}")
+        return success_response({"message": "标签绑定成功"})
+    except Exception as e:
+        error_logger.error(f"绑定推荐视频标签失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @video_bp.route('/recommendation/score', methods=['PUT'])
 def update_video_recommendation_score():
     """更新推荐视频评分"""

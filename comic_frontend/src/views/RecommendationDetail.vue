@@ -182,6 +182,33 @@
     />
 
     <van-popup
+      v-model:show="showEditPopup"
+      position="bottom"
+      round
+      :style="{ height: '60%' }"
+    >
+      <div class="edit-popup">
+        <van-nav-bar title="编辑漫画信息">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveEdit">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <van-cell-group inset>
+          <van-field v-model="editForm.title" label="标题" placeholder="请输入标题" />
+          <van-field v-model="editForm.author" label="作者" placeholder="请输入作者" />
+          <van-field
+            v-model="editForm.desc"
+            label="简介"
+            type="textarea"
+            rows="3"
+            placeholder="请输入简介"
+          />
+        </van-cell-group>
+      </div>
+    </van-popup>
+
+    <van-popup
       v-model:show="showTagPopup"
       position="bottom"
       round
@@ -283,7 +310,16 @@ const favoriteLoading = ref(false)
 const isSubscribed = ref(false)
 const subscribing = ref(false)
 
+const showEditPopup = ref(false)
+
+const editForm = ref({
+  title: '',
+  author: '',
+  desc: ''
+})
+
 const actions = [
+  { name: '编辑信息', value: 'edit' },
   { name: '绑定标签', value: 'tags' },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ]
@@ -450,10 +486,35 @@ async function handleScoreChange(value) {
  */
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'tags') {
+  if (action.value === 'edit') {
+    editForm.value = {
+      title: recommendation.value.title || '',
+      author: recommendation.value.author || '',
+      desc: recommendation.value.desc || ''
+    }
+    showEditPopup.value = true
+  } else if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {
     handleMoveToTrash()
+  }
+}
+
+async function saveEdit() {
+  try {
+    const response = await recommendationApi.edit(recommendation.value.id, editForm.value)
+    if (response.code === 200) {
+      recommendation.value.title = editForm.value.title
+      recommendation.value.author = editForm.value.author
+      recommendation.value.desc = editForm.value.desc
+      showEditPopup.value = false
+      showSuccessToast('保存成功')
+    } else {
+      showFailToast(response.msg || '保存失败')
+    }
+  } catch (error) {
+    console.error('保存失败:', error)
+    showFailToast('保存失败')
   }
 }
 

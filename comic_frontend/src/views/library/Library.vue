@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="library-page">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
@@ -88,6 +88,9 @@
           <van-button size="small" plain @click="toggleSelectAllItems">
             {{ isAllItemsSelected ? '取消全选' : '全选' }}
           </van-button>
+          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="showBatchListPopup = true">
+            加入清单
+          </van-button>
           <van-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="batchDelete">
             删除
           </van-button>
@@ -152,6 +155,44 @@
       </div>
     </van-popup>
 
+    <!-- Batch List Popup -->
+    <van-popup
+      v-model:show="showBatchListPopup"
+      position="bottom"
+      round
+      :style="{ height: '60%' }"
+    >
+      <div class="batch-list-popup">
+        <van-nav-bar title="批量加入清单">
+          <template #right>
+            <van-button type="primary" size="small" @click="batchAddToLists">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <van-checkbox-group v-model="batchSelectedListIds">
+          <van-cell-group inset>
+            <van-cell
+              v-for="list in availableLists"
+              :key="list.id"
+              clickable
+              @click="toggleBatchListItem(list.id)"
+            >
+              <template #title>
+                <span>{{ list.name }}</span>
+                <span class="list-count">({{ list.item_count || 0 }})</span>
+              </template>
+              <template #right-icon>
+                <van-checkbox :name="list.id" />
+              </template>
+            </van-cell>
+          </van-cell-group>
+        </van-checkbox-group>
+
+        <div class="list-action">
+          <van-button type="primary" block @click="batchAddToLists">保存</van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -183,8 +224,10 @@ const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
 const showMenu = ref(false)
 const showViewModeSheet = ref(false)
+const showBatchListPopup = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
+const batchSelectedListIds = ref([])
 const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
@@ -487,6 +530,50 @@ async function batchDelete() {
   }
 }
 
+function toggleBatchListItem(listId) {
+  const index = batchSelectedListIds.value.indexOf(listId)
+  if (index > -1) {
+    batchSelectedListIds.value.splice(index, 1)
+  } else {
+    batchSelectedListIds.value.push(listId)
+  }
+}
+
+async function batchAddToLists() {
+  if (batchSelectedListIds.value.length === 0) {
+    showToast('请选择清单')
+    return
+  }
+
+  try {
+    const source = 'local'
+    let successCount = 0
+    
+    for (const listId of batchSelectedListIds.value) {
+      let result = false
+      if (isVideoMode.value) {
+        result = await listStore.bindVideos(listId, selectedIds.value, source)
+      } else {
+        result = await listStore.bindComics(listId, selectedIds.value, source)
+      }
+      if (result) {
+        successCount += 1
+      }
+    }
+
+    showBatchListPopup.value = false
+    batchSelectedListIds.value = []
+    selectedIds.value = []
+    isManageMode.value = false
+    const contentType = isVideoMode.value ? 'video' : 'comic'
+    await listStore.fetchLists(contentType)
+    showToast(`已添加到 ${successCount} 个清单`)
+  } catch (error) {
+    console.error('批量加入清单失败:', error)
+    showToast('操作失败')
+  }
+}
+
 function clearAllFilters() {
   includeTags.value = []
   excludeTags.value = []
@@ -698,6 +785,22 @@ onMounted(async () => {
 
 .view-mode-sheet {
   padding-bottom: 10px;
+}
+
+.batch-list-popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+.list-action {
+  padding: 16px;
 }
 
 @media (max-width: 767px) {

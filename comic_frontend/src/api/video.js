@@ -217,6 +217,20 @@ export const videoApi = {
     authors.forEach(author => params.append('authors', author))
     listIds.forEach(id => params.append('list_ids', id))
     return request.get(`/v1/video/recommendation/filter?${params.toString()}`)
+  },
+
+  editVideoRecommendation(videoId, data) {
+    return request.put('/v1/video/recommendation/edit', {
+      video_id: videoId,
+      ...data
+    })
+  },
+
+  bindVideoRecommendationTags(videoId, tagIdList) {
+    return request.put('/v1/video/recommendation/tag/bind', {
+      video_id: videoId,
+      tag_id_list: tagIdList
+    })
   }
 }
 

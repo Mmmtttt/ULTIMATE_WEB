@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="video-detail" :class="{ 'video-detail-desktop': isDesktop, 'video-detail-mobile': isMobile }">
     <van-nav-bar
       :title="recommendation?.title || '视频详情'"
@@ -296,6 +296,78 @@
         </div>
       </div>
     </van-popup>
+
+    <!-- 编辑弹窗 -->
+    <van-popup 
+      v-model:show="showEditPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '60%' }"
+    >
+      <div class="edit-popup">
+        <van-nav-bar title="编辑视频信息">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveEdit">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <van-cell-group inset>
+          <van-field v-model="editForm.title" label="标题" placeholder="请输入标题" />
+          <van-field v-model="editForm.code" label="番号" placeholder="请输入番号" />
+          <van-field v-model="editForm.date" label="日期" placeholder="请输入发布日期" />
+          <van-field v-model="editForm.series" label="系列" placeholder="请输入系列名称" />
+          <van-field
+            v-model="editForm.actors"
+            label="演员"
+            placeholder="多个演员请用逗号分隔"
+          />
+          <van-field
+            v-model="editForm.desc"
+            label="简介"
+            type="textarea"
+            rows="3"
+            placeholder="请输入简介"
+          />
+        </van-cell-group>
+      </div>
+    </van-popup>
+
+    <!-- 标签弹窗 -->
+    <van-popup 
+      v-model:show="showTagPopup" 
+      position="bottom" 
+      round 
+      :style="{ height: '60%' }"
+    >
+      <div class="tag-popup">
+        <van-nav-bar title="绑定标签">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveTags">保存</van-button>
+          </template>
+        </van-nav-bar>
+
+        <div class="tag-select-list">
+          <van-checkbox-group v-model="selectedTagIds">
+            <van-cell-group inset>
+              <van-cell
+                v-for="tag in allTags"
+                :key="tag.id"
+                clickable
+                @click="toggleTag(tag.id)"
+              >
+                <template #title>
+                  <span>{{ tag.name }}</span>
+                  <span class="tag-count">({{ tag.video_count || 0 }})</span>
+                </template>
+                <template #right-icon>
+                  <van-checkbox :name="tag.id" />
+                </template>
+              </van-cell>
+            </van-cell-group>
+          </van-checkbox-group>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -307,7 +379,7 @@ import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stor
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
-import { canShare, copyTextToClipboard, shareContent } from '@/runtime/browser'
+import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
 import Hls from 'hls.js'
 
@@ -322,7 +394,11 @@ const recommendation = ref(null)
 const loading = ref(true)
 const showActions = ref(false)
 const showListPopup = ref(false)
+const showEditPopup = ref(false)
+const showTagPopup = ref(false)
 const selectedListIds = ref([])
+const selectedTagIds = ref([])
+const allTags = ref([])
 const scoreValue = ref(0)
 const subscribingActors = ref([])
 const showMagnets = ref(false)
@@ -340,16 +416,25 @@ const refreshingPreviewVideo = ref(false)
 const hls = ref(null)
 const previewHls = ref(null)
 
+const editForm = ref({
+  title: '',
+  code: '',
+  date: '',
+  series: '',
+  actors: '',
+  desc: ''
+})
+
 const actions = computed(() => {
   if (recommendation.value?.is_deleted) {
     return [
-      { name: '永久删除', value: 'delete', color: '#ee0a24' },
-      { name: '分享', value: 'share' }
+      { name: '永久删除', value: 'delete', color: '#ee0a24' }
     ]
   }
   return [
-    { name: '移入回收站', value: 'trash', color: '#ee0a24' },
-    { name: '分享', value: 'share' }
+    { name: '编辑信息', value: 'edit' },
+    { name: '绑定标签', value: 'tags' },
+    { name: '移入回收站', value: 'trash', color: '#ee0a24' }
   ]
 })
 
@@ -727,7 +812,21 @@ async function handleMoveToTrash() {
 async function handleAction(action) {
   showActions.value = false
   
-  if (action.value === 'trash') {
+  if (action.value === 'edit') {
+    editForm.value = {
+      title: recommendation.value.title || '',
+      code: recommendation.value.code || '',
+      date: recommendation.value.date || '',
+      series: recommendation.value.series || '',
+      actors: (recommendation.value.actors || []).join(', '),
+      desc: recommendation.value.desc || ''
+    }
+    showEditPopup.value = true
+  } else if (action.value === 'tags') {
+    selectedTagIds.value = [...(recommendation.value.tag_ids || [])]
+    await fetchAllTags()
+    showTagPopup.value = true
+  } else if (action.value === 'trash') {
     await handleMoveToTrash()
   } else if (action.value === 'delete') {
     try {
@@ -746,20 +845,76 @@ async function handleAction(action) {
     } catch (e) {
       // 取消操作
     }
-  } else if (action.value === 'share') {
-    if (canShare()) {
-      shareContent({
-        title: recommendation.value.title,
-        text: `${recommendation.value.code} - ${recommendation.value.title}`
-      })
-    } else {
-      showToast('当前浏览器不支持分享')
-    }
   }
 }
 
 function goBack() {
   router.back()
+}
+
+async function fetchAllTags() {
+  try {
+    const response = await videoApi.getTags()
+    if (response.code === 200) {
+      allTags.value = response.data || []
+    }
+  } catch (error) {
+    console.error('获取标签列表失败:', error)
+  }
+}
+
+function toggleTag(tagId) {
+  const index = selectedTagIds.value.indexOf(tagId)
+  if (index > -1) {
+    selectedTagIds.value.splice(index, 1)
+  } else {
+    selectedTagIds.value.push(tagId)
+  }
+}
+
+async function saveEdit() {
+  try {
+    const response = await videoApi.editVideoRecommendation(recommendationId.value, editForm.value)
+    if (response.code === 200) {
+      recommendation.value.title = editForm.value.title
+      recommendation.value.code = editForm.value.code
+      recommendation.value.date = editForm.value.date
+      recommendation.value.series = editForm.value.series
+      recommendation.value.actors = editForm.value.actors.split(',').map(a => a.trim()).filter(a => a)
+      recommendation.value.desc = editForm.value.desc
+      showEditPopup.value = false
+      showSuccessToast('保存成功')
+    } else {
+      showFailToast(response.msg || '保存失败')
+    }
+  } catch (error) {
+    console.error('保存失败:', error)
+    showFailToast('保存失败')
+  }
+}
+
+async function saveTags() {
+  try {
+    const response = await videoApi.bindVideoRecommendationTags(recommendationId.value, selectedTagIds.value)
+    if (response.code === 200) {
+      recommendation.value.tag_ids = [...selectedTagIds.value]
+      const tagMap = {}
+      allTags.value.forEach(tag => {
+        tagMap[tag.id] = tag.name
+      })
+      recommendation.value.tags = selectedTagIds.value.map(id => ({
+        id,
+        name: tagMap[id] || id
+      }))
+      showTagPopup.value = false
+      showSuccessToast('标签绑定成功')
+    } else {
+      showFailToast(response.msg || '标签绑定失败')
+    }
+  } catch (error) {
+    console.error('标签绑定失败:', error)
+    showFailToast('标签绑定失败')
+  }
 }
 
 // 播放器相关函数
@@ -1338,6 +1493,29 @@ onUnmounted(() => {
 
 .list-action {
   padding: 16px;
+}
+
+.edit-popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tag-popup {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tag-select-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tag-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
 }
 
 @media (max-width: 767px) {

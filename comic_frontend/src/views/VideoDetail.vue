@@ -404,7 +404,7 @@ import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/store
 import { EmptyState } from '@/components'
 import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
-import { canShare, copyTextToClipboard, shareContent } from '@/runtime/browser'
+import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
 import Hls from 'hls.js'
 
@@ -461,8 +461,7 @@ const isLocalVideo = computed(() => video.value?.source !== 'preview')
 const actions = computed(() => {
   if (video.value?.is_deleted) {
     return [
-      { name: '永久删除', value: 'delete', color: '#ee0a24' },
-      { name: '分享', value: 'share' }
+      { name: '永久删除', value: 'delete', color: '#ee0a24' }
     ]
   }
 
@@ -474,8 +473,7 @@ const actions = computed(() => {
     )
   }
   menuActions.push(
-    { name: '移入回收站', value: 'trash', color: '#ee0a24' },
-    { name: '分享', value: 'share' }
+    { name: '移入回收站', value: 'trash', color: '#ee0a24' }
   )
   return menuActions
 })
@@ -1117,15 +1115,6 @@ async function handleAction(action) {
       }
     } catch (e) {
       // 取消操作
-    }
-  } else if (action.value === 'share') {
-    if (canShare()) {
-      shareContent({
-        title: video.value.title,
-        text: `${video.value.code} - ${video.value.title}`
-      })
-    } else {
-      showToast('当前浏览器不支持分享')
     }
   }
 }
