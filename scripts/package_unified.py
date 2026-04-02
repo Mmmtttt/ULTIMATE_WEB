@@ -334,6 +334,22 @@ def ensure_android_manifest_network(android_project_dir: Path) -> None:
         return
     raw = manifest.read_text(encoding="utf-8")
     patched = raw
+    permission_lines = [
+        '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+        '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
+        '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
+        '<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />',
+        '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />',
+    ]
+    for line in permission_lines:
+        permission_name = ""
+        marker = 'android:name="'
+        if marker in line:
+            permission_name = line.split(marker, 1)[1].split('"', 1)[0]
+        if permission_name and permission_name in patched:
+            continue
+        if "<application" in patched:
+            patched = patched.replace("<application", f"    {line}\n\n    <application", 1)
     if 'android:usesCleartextTraffic="true"' not in patched and "<application" in patched:
         patched = patched.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
     if patched != raw:
@@ -641,9 +657,19 @@ def ensure_android_project_chaquopy_app(
     java_path = android_project_dir / "app" / "src" / "main" / "java" / java_rel
     java_source = f"""package {app_id};
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.Settings;
 import android.util.Log;
 import android.webkit.WebView;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
@@ -655,11 +681,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MainActivity extends BridgeActivity {{
     private static final String TAG = "UltimateEmbeddedBackend";
     private static final AtomicBoolean BACKEND_STARTED = new AtomicBoolean(false);
+    private static final int REQUEST_STORAGE_PERMISSION = 1101;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         normalizeWebViewTextScale();
+        ensureStorageAccessPermission();
         startEmbeddedBackend();
     }}
 
@@ -696,6 +724,36 @@ public class MainActivity extends BridgeActivity {{
             webView.getSettings().setLoadWithOverviewMode(false);
         }} catch (Throwable ex) {{
             Log.w(TAG, "Failed to normalize WebView text scale", ex);
+        }}
+    }}
+
+    private void ensureStorageAccessPermission() {{
+        try {{
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {{
+                if (!Environment.isExternalStorageManager()) {{
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }}
+                return;
+            }}
+
+            boolean readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+            boolean writeGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+            if (!readGranted || !writeGranted) {{
+                ActivityCompat.requestPermissions(
+                    this,
+                    new String[] {{
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    }},
+                    REQUEST_STORAGE_PERMISSION
+                );
+            }}
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to request storage permissions", ex);
         }}
     }}
 
@@ -807,6 +865,11 @@ def _detect_android_abi():
 
 def _validate_archive_tool(tool_path, files_dir):
     try:
+        stat_info = os.stat(str(tool_path))
+        _write_boot_log(
+            files_dir,
+            f"android archive runtime probe start path={tool_path!r} mode={oct(stat_info.st_mode)} size={stat_info.st_size}",
+        )
         proc = subprocess.run(
             [str(tool_path), "i"],
             stdout=subprocess.DEVNULL,
@@ -817,6 +880,9 @@ def _validate_archive_tool(tool_path, files_dir):
         if int(proc.returncode) in (0, 1, 2):
             return True
         _write_boot_log(files_dir, f"android archive runtime probe returned code={proc.returncode}")
+        return False
+    except PermissionError as ex:
+        _write_boot_log(files_dir, f"android archive runtime probe permission denied: {ex!r}")
         return False
     except Exception as ex:
         _write_boot_log(files_dir, f"android archive runtime probe failed: {ex!r}")
@@ -844,6 +910,10 @@ def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
             os.chmod(target_tool, 0o755)
         except Exception:
             pass
+        skip_probe = str(os.environ.get("ULTIMATE_ANDROID_ARCHIVE_SKIP_PROBE", "1")).strip().lower()
+        if skip_probe not in {"0", "false", "no", "off"}:
+            _write_boot_log(files_dir, "android archive runtime probe skipped by config")
+            return target_tool
         if not _validate_archive_tool(target_tool, files_dir):
             return ""
         return target_tool
