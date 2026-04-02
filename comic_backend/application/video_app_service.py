@@ -55,6 +55,8 @@ class VideoAppService(BaseContentAppService):
     LOCAL_VIDEO_FILENAME = "source"
     LOCAL_IMPORT_MODE_HARDLINK_MOVE = "hardlink_move"
     LOCAL_IMPORT_MODE_SOFTLINK_REF = "softlink_ref"
+    SOURCE_ORIGIN_LOCAL_IMPORT = "local_import"
+    SOURCE_ORIGIN_MAGNET_DOWNLOAD = "magnet_download"
     VIDEO_FILE_EXTENSIONS = (
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
         ".m4v", ".ts", ".m2ts", ".rmvb", ".mpg", ".mpeg",
@@ -429,6 +431,32 @@ class VideoAppService(BaseContentAppService):
         extracted = self.extract_code_from_filename(filename_without_ext)
         return extracted or self._generate_abnormal_code()
 
+    @classmethod
+    def _normalize_code_for_storage(cls, code: str) -> str:
+        raw = str(code or "").strip()
+        if not raw:
+            return ""
+
+        extracted = cls.extract_code_from_filename(raw)
+        if extracted and cls._normalize_code_for_compare(extracted) == cls._normalize_code_for_compare(raw):
+            return extracted
+        return raw
+
+    def _build_local_source_file_target(self, video_id: str, extension: str) -> Tuple[str, str]:
+        normalized_ext = str(extension or "").strip().lower() or ".mp4"
+        safe_video_id = self._sanitize_video_asset_id(video_id)
+        platform_dir = self._get_video_platform_key(video_id)
+        target_dir = os.path.join(VIDEO_DIR, platform_dir, safe_video_id)
+        os.makedirs(target_dir, exist_ok=True)
+        target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
+        return target_dir, target_file
+
+    def _has_video_source_file(self, video: Optional[Video]) -> bool:
+        if not isinstance(video, Video):
+            return False
+        resolved = self.resolve_local_video_file_path(video.id)
+        return bool(resolved and os.path.isfile(resolved))
+
     def import_local_videos_from_path(self, source_path: str, import_mode: str = "") -> ServiceResult:
         try:
             source_dir = os.path.abspath(os.path.expandvars(os.path.expanduser(str(source_path or "").strip())))
@@ -443,6 +471,7 @@ class VideoAppService(BaseContentAppService):
             scanned_files = 0
             scanned_video_files = 0
             imported_count = 0
+            attached_source_count = 0
             skipped_count = 0
             failed_count = 0
             imported_ids: List[str] = []
@@ -470,26 +499,38 @@ class VideoAppService(BaseContentAppService):
                         stem, ext = os.path.splitext(filename)
                         normalized_ext = ext.lower() if ext else ".mp4"
                         code = self._extract_or_generate_code(stem)
-                        duplicate_id = self._find_local_video_duplicate("", code)
-                        if duplicate_id:
-                            skipped_count += 1
-                            skipped_items.append(
-                                {
-                                    "file": abs_file_path,
-                                    "reason": "duplicate_code",
-                                    "duplicate_id": duplicate_id,
-                                    "code": code,
-                                }
-                            )
-                            continue
+                        duplicate_video = self._find_local_video_duplicate_entity("", code)
+                        bind_existing_video = None
+                        if duplicate_video:
+                            if self._is_local_video_id(duplicate_video.id):
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": abs_file_path,
+                                        "reason": "duplicate_local_import",
+                                        "duplicate_id": duplicate_video.id,
+                                        "code": code,
+                                    }
+                                )
+                                continue
 
-                        video_id = self._generate_local_video_id()
+                            if self._has_video_source_file(duplicate_video):
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": abs_file_path,
+                                        "reason": "duplicate_code_source_exists",
+                                        "duplicate_id": duplicate_video.id,
+                                        "code": code,
+                                    }
+                                )
+                                continue
+
+                            bind_existing_video = duplicate_video
+
+                        video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
                         if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
-                            safe_video_id = self._sanitize_video_asset_id(video_id)
-                            target_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
-                            os.makedirs(target_dir, exist_ok=True)
-
-                            target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
+                            target_dir, target_file = self._build_local_source_file_target(video_id, normalized_ext)
                             source_restore_path = abs_file_path
                             shutil.move(abs_file_path, target_file)
 
@@ -502,6 +543,21 @@ class VideoAppService(BaseContentAppService):
                             local_source_path = os.path.abspath(abs_file_path)
                             if not local_video_path:
                                 raise RuntimeError("failed to build local stream path")
+
+                        if bind_existing_video:
+                            existing_video = self._video_repo.get_by_id(video_id) or bind_existing_video
+                            existing_video.local_video_path = local_video_path
+                            existing_video.local_source_path = local_source_path
+                            existing_video.source_origin = self.SOURCE_ORIGIN_LOCAL_IMPORT
+                            existing_video.source_updated_time = get_current_time()
+
+                            if not self._video_repo.save(existing_video):
+                                raise RuntimeError("save local source on existing video failed")
+
+                            imported_count += 1
+                            attached_source_count += 1
+                            imported_ids.append(video_id)
+                            continue
 
                         payload = {
                             "id": video_id,
@@ -524,6 +580,8 @@ class VideoAppService(BaseContentAppService):
                             "cover_path_local": "",
                             "local_video_path": local_video_path,
                             "local_source_path": local_source_path,
+                            "source_origin": self.SOURCE_ORIGIN_LOCAL_IMPORT,
+                            "source_updated_time": get_current_time(),
                             "local_metadata_enriched": False,
                         }
 
@@ -582,7 +640,7 @@ class VideoAppService(BaseContentAppService):
             summary = (
                 f"本地视频导入完成（{mode_label}）："
                 f"扫描 {scanned_video_files} 个视频，"
-                f"成功 {imported_count}，跳过 {skipped_count}，失败 {failed_count}"
+                f"成功 {imported_count}（其中补齐source {attached_source_count}），跳过 {skipped_count}，失败 {failed_count}"
             )
             return ServiceResult.ok(
                 {
@@ -591,6 +649,7 @@ class VideoAppService(BaseContentAppService):
                     "scanned_files": scanned_files,
                     "scanned_video_files": scanned_video_files,
                     "imported_count": imported_count,
+                    "attached_source_count": attached_source_count,
                     "skipped_count": skipped_count,
                     "failed_count": failed_count,
                     "imported_ids": imported_ids,
@@ -627,10 +686,16 @@ class VideoAppService(BaseContentAppService):
                 return expanded_source
 
         safe_video_id = self._sanitize_video_asset_id(video.id)
-        local_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
-        if os.path.isdir(local_dir):
+        candidate_dirs = list(self._get_video_storage_dirs(video.id))
+        legacy_local_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
+        if legacy_local_dir not in candidate_dirs:
+            candidate_dirs.append(legacy_local_dir)
+
+        for base_dir in candidate_dirs:
+            if not os.path.isdir(base_dir):
+                continue
             for ext in self.VIDEO_FILE_EXTENSIONS:
-                candidate = os.path.join(local_dir, f"{self.LOCAL_VIDEO_FILENAME}{ext}")
+                candidate = os.path.join(base_dir, f"{self.LOCAL_VIDEO_FILENAME}{ext}")
                 if os.path.isfile(candidate):
                     return candidate
         return None
@@ -638,7 +703,7 @@ class VideoAppService(BaseContentAppService):
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
             incoming_id = str(video_data.get("id") or "").strip()
-            incoming_code = str(video_data.get("code") or "").strip()
+            incoming_code = self._normalize_code_for_storage(video_data.get("code"))
             duplicate_id = self._find_local_video_duplicate(incoming_id, incoming_code)
             if duplicate_id and duplicate_id != incoming_id:
                 return ServiceResult.error("该番号已存在")
@@ -661,6 +726,8 @@ class VideoAppService(BaseContentAppService):
                 preview_video_local=video_data.get("preview_video_local", ""),
                 local_video_path=video_data.get("local_video_path", ""),
                 local_source_path=video_data.get("local_source_path", ""),
+                source_origin=video_data.get("source_origin", ""),
+                source_updated_time=video_data.get("source_updated_time", ""),
                 local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
                 create_time=get_current_time(),
                 last_access_time=get_current_time()
@@ -682,9 +749,11 @@ class VideoAppService(BaseContentAppService):
         raw = str(code or "").upper()
         return "".join(ch for ch in raw if ch.isalnum())
 
-    def _find_local_video_duplicate(self, video_id: str, code: str) -> Optional[str]:
-        if video_id and self._video_repo.get_by_id(video_id):
-            return video_id
+    def _find_local_video_duplicate_entity(self, video_id: str, code: str) -> Optional[Video]:
+        if video_id:
+            existing_by_id = self._video_repo.get_by_id(video_id)
+            if existing_by_id:
+                return existing_by_id
 
         normalized_code = self._normalize_code_for_compare(code)
         if not normalized_code:
@@ -692,8 +761,14 @@ class VideoAppService(BaseContentAppService):
 
         for local_video in self._video_repo.get_all():
             if self._normalize_code_for_compare(local_video.code) == normalized_code:
-                return local_video.id
+                return local_video
         return None
+
+    def _find_local_video_duplicate(self, video_id: str, code: str) -> Optional[str]:
+        duplicate_video = self._find_local_video_duplicate_entity(video_id, code)
+        if not duplicate_video:
+            return None
+        return duplicate_video.id
 
     @staticmethod
     def _deduplicate_video_collection(records: List[Dict[str, Any]]) -> Dict[str, int]:

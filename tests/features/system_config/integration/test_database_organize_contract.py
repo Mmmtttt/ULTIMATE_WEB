@@ -301,3 +301,182 @@ def test_video_local_import_softlink_mode_keeps_source_and_streams_from_local_so
         assert second_file.exists()
     finally:
         save_json(videos_path, original_videos)
+
+
+@pytest.mark.integration
+def test_video_local_import_duplicate_local_record_skips(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_videos = load_json(videos_path)
+    source_root = runtime_root / "video_local_import_duplicate_local"
+    source_root.mkdir(parents=True, exist_ok=True)
+    incoming_file = source_root / "ABP-123 sample.mp4"
+    incoming_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    try:
+        save_json(
+            videos_path,
+            {
+                "collection_name": "Test Videos",
+                "user": "test-user",
+                "total_videos": 1,
+                "last_updated": "2026-04-01",
+                "videos": [
+                    {
+                        "id": "LOCALV_DUP_001",
+                        "code": "abp_123",
+                        "title": "existing local",
+                        "local_video_path": "/api/v1/video/local-stream/LOCALV_DUP_001",
+                        "local_source_path": "",
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+
+        response = requests.post(
+            f"{base_url}/api/v1/video/local-import/from-path",
+            json={"source_path": str(source_root), "import_mode": "hardlink_move"},
+            timeout=90,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        data = payload["data"] or {}
+        assert data.get("imported_count") == 0
+        assert data.get("skipped_count") == 1
+        skipped_items = data.get("skipped_items") or []
+        assert skipped_items
+        assert skipped_items[0].get("reason") == "duplicate_local_import"
+        assert skipped_items[0].get("duplicate_id") == "LOCALV_DUP_001"
+        assert incoming_file.exists()
+    finally:
+        save_json(videos_path, original_videos)
+
+
+@pytest.mark.integration
+def test_video_local_import_duplicate_non_local_without_source_attaches_source(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_videos = load_json(videos_path)
+    source_root = runtime_root / "video_local_import_attach_source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    incoming_file = source_root / "abp 123 from_local.mp4"
+    incoming_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    try:
+        save_json(
+            videos_path,
+            {
+                "collection_name": "Test Videos",
+                "user": "test-user",
+                "total_videos": 1,
+                "last_updated": "2026-04-01",
+                "videos": [
+                    {
+                        "id": "JAVDB900001",
+                        "code": "ABP_123",
+                        "title": "remote only",
+                        "local_video_path": "",
+                        "local_source_path": "",
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+
+        response = requests.post(
+            f"{base_url}/api/v1/video/local-import/from-path",
+            json={"source_path": str(source_root), "import_mode": "hardlink_move"},
+            timeout=90,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        data = payload["data"] or {}
+        assert data.get("imported_count") == 1
+        assert data.get("attached_source_count") == 1
+        assert data.get("imported_ids") == ["JAVDB900001"]
+
+        refreshed = load_json(videos_path).get("videos") or []
+        assert len(refreshed) == 1
+        record = find_by_id(refreshed, "JAVDB900001")
+        assert record is not None
+        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/JAVDB900001/source.")
+        assert str(record.get("local_source_path") or "").endswith(os.path.join("video", "JAVDB", "JAVDB900001", "source.mp4"))
+        assert record.get("source_origin") == "local_import"
+        assert str(record.get("source_updated_time") or "").strip()
+
+        media_rel = str(record.get("local_video_path") or "")[len("/media/"):].replace("/", os.sep)
+        assert (data_dir / media_rel).exists()
+        assert not incoming_file.exists()
+    finally:
+        save_json(videos_path, original_videos)
+
+
+@pytest.mark.integration
+def test_video_local_import_duplicate_non_local_with_source_skips(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_videos = load_json(videos_path)
+    source_root = runtime_root / "video_local_import_skip_existing_source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    incoming_file = source_root / "ABP123 another.mp4"
+    incoming_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    existing_source_rel = "video/JAVDB/JAVDB900001/source.mp4"
+    existing_source_abs = data_dir / existing_source_rel.replace("/", os.sep)
+    existing_source_abs.parent.mkdir(parents=True, exist_ok=True)
+    existing_source_abs.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+
+    try:
+        save_json(
+            videos_path,
+            {
+                "collection_name": "Test Videos",
+                "user": "test-user",
+                "total_videos": 1,
+                "last_updated": "2026-04-01",
+                "videos": [
+                    {
+                        "id": "JAVDB900001",
+                        "code": "ABP-123",
+                        "title": "remote with source",
+                        "local_video_path": "/media/video/JAVDB/JAVDB900001/source.mp4",
+                        "local_source_path": str(existing_source_abs),
+                        "source_origin": "magnet_download",
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+
+        response = requests.post(
+            f"{base_url}/api/v1/video/local-import/from-path",
+            json={"source_path": str(source_root), "import_mode": "hardlink_move"},
+            timeout=90,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        data = payload["data"] or {}
+        assert data.get("imported_count") == 0
+        assert data.get("skipped_count") == 1
+        skipped_items = data.get("skipped_items") or []
+        assert skipped_items
+        assert skipped_items[0].get("reason") == "duplicate_code_source_exists"
+        assert skipped_items[0].get("duplicate_id") == "JAVDB900001"
+        assert incoming_file.exists()
+    finally:
+        save_json(videos_path, original_videos)
