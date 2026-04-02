@@ -1,4 +1,4 @@
-﻿import request from './request'
+import request from './request'
 
 export const organizeApi = {
   getOptions: (mode = 'comic') => {
@@ -11,6 +11,8 @@ export const organizeApi = {
     return request.post('/v1/organize/run', {
       mode,
       action
+    }, {
+      timeout: 0
     })
   }
 }

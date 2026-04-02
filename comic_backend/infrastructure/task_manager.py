@@ -191,11 +191,11 @@ class TaskManager:
                 current_time = time.time()
                 for task in self._tasks.values():
                     if task.status == TaskStatus.PROCESSING:
-                        # 检查任务是否超时（超过10分钟）
+                        # 检查任务是否超时（超过60分钟）
                         if task.start_time:
                             try:
                                 start_timestamp = time.mktime(time.strptime(task.start_time, "%Y-%m-%dT%H:%M:%S"))
-                                if current_time - start_timestamp > 600:  # 10分钟
+                                if current_time - start_timestamp > 3600:  # 60分钟
                                     task.status = TaskStatus.FAILED
                                     task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                                     task.error_msg = "任务执行超时"

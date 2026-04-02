@@ -1881,7 +1881,7 @@ class VideoAppService(BaseContentAppService):
         url: str,
         headers: Dict[str, str],
         stream: bool = False,
-        timeout: int = 30,
+        timeout: int = 0,
         allow_redirects: bool = True,
     ):
         # Prefer Missav client's request stack to reuse curl_cffi impersonation and anti-bot handling.
@@ -2023,7 +2023,7 @@ class VideoAppService(BaseContentAppService):
                     playlist_url,
                     headers=self._build_preview_video_headers(playlist_url),
                     stream=False,
-                    timeout=30,
+                    timeout=0,
                     allow_redirects=True,
                 )
                 if response.status_code != 200:
@@ -2070,7 +2070,7 @@ class VideoAppService(BaseContentAppService):
                     asset_url,
                     headers=self._build_preview_video_headers(asset_url),
                     stream=True,
-                    timeout=60,
+                    timeout=0,
                     allow_redirects=True,
                 )
                 if resp.status_code not in (200, 206):
@@ -2216,7 +2216,7 @@ class VideoAppService(BaseContentAppService):
                 sanitized_url,
                 headers=self._build_preview_video_headers(sanitized_url),
                 stream=True,
-                timeout=60,
+                timeout=0,
                 allow_redirects=True,
             )
             if response.status_code not in (200, 206):
@@ -2679,7 +2679,7 @@ class VideoAppService(BaseContentAppService):
                 resolved_url,
                 headers=headers,
                 stream=False,
-                timeout=30,
+                timeout=0,
                 allow_redirects=True,
             )
             if response.status_code != 200:
