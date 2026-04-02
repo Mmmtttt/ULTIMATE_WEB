@@ -56,6 +56,14 @@ export const videoApi = {
   batchImport(videos) {
     return request.post('/v1/video/import/batch', { videos })
   },
+
+  localImportFromPath(sourcePath) {
+    return request.post('/v1/video/local-import/from-path', {
+      source_path: sourcePath
+    }, {
+      timeout: 0
+    })
+  },
   
   getByTag(tagId) {
     return request.get(`/v1/video/tag/${tagId}`)

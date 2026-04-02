@@ -383,6 +383,23 @@ def batch_import():
         return error_response(500, "服务器内部错误")
 
 
+@video_bp.route('/local-import/from-path', methods=['POST'])
+def local_import_from_path():
+    try:
+        data = request.json or {}
+        source_path = str(data.get('source_path') or '').strip()
+        if not source_path:
+            return error_response(400, "missing parameter: source_path")
+
+        result = video_service.import_local_videos_from_path(source_path)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"local video import from path failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @video_bp.route('/tag/<tag_id>', methods=['GET'])
 def get_by_tag(tag_id):
     try:
@@ -2333,5 +2350,4 @@ def clear_actor_works_cache():
     except Exception as e:
         error_logger.error(f"清理演员作品缓存失败: {e}")
         return error_response(500, "服务器内部错误")
-
 

@@ -21,6 +21,9 @@ class Video(BaseContent):
     cover_path_local: str = ""
     thumbnail_images_local: List[str] = field(default_factory=list)
     preview_video_local: str = ""
+    local_video_path: str = ""
+    local_source_path: str = ""
+    local_metadata_enriched: bool = False
     
     @property
     def actors(self) -> List[str]:
@@ -59,6 +62,9 @@ class Video(BaseContent):
             cover_path_local=data.get("cover_path_local", ""),
             thumbnail_images_local=data.get("thumbnail_images_local", []),
             preview_video_local=data.get("preview_video_local", ""),
+            local_video_path=data.get("local_video_path", ""),
+            local_source_path=data.get("local_source_path", ""),
+            local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
             _actors=data.get("actors", [])
         )
     
@@ -74,6 +80,9 @@ class Video(BaseContent):
             "cover_path_local": self.cover_path_local,
             "thumbnail_images_local": self.thumbnail_images_local,
             "preview_video_local": self.preview_video_local,
+            "local_video_path": self.local_video_path,
+            "local_source_path": self.local_source_path,
+            "local_metadata_enriched": bool(self.local_metadata_enriched),
             "actors": self._actors
         })
         return base_dict

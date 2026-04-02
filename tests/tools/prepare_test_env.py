@@ -439,7 +439,9 @@ def _seed_structures(data_dir: Path) -> None:
         "recommendation_cache/video/JAVDB",
         "video/JAVDB",
         "video/JAVBUS",
+        "video/LOCAL",
         "comic/PK",
+        "static/cover/LOCAL",
     ):
         (data_dir / rel).mkdir(parents=True, exist_ok=True)
 

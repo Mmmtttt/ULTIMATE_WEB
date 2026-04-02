@@ -3,7 +3,7 @@
 Mmmtttt
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Tuple
 import base64
 import os
 import re
@@ -26,13 +26,14 @@ from infrastructure.persistence.repositories.actor_repository_impl import ActorJ
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.utils import get_current_time, generate_id
+from core.utils import get_current_time, generate_id, generate_uuid
 from core.constants import (
     DATA_DIR,
     STATIC_DIR,
     THIRD_PARTY_CONFIG_PATH,
     JAVDB_COVER_DIR,
     JAVBUS_COVER_DIR,
+    LOCAL_VIDEO_COVER_DIR,
     VIDEO_CACHE_DIR,
     VIDEO_DIR,
     VIDEO_RECOMMENDATION_CACHE_DIR,
@@ -49,6 +50,18 @@ class VideoAppService(BaseContentAppService):
     PREVIEW_ASSET_COVER_NAME = "cover.jpg"
     PREVIEW_VIDEO_MAX_BYTES = 180 * 1024 * 1024
     PREVIEW_VIDEO_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v", ".m3u8")
+    LOCAL_VIDEO_ID_PREFIX = "LOCALV"
+    ABNORMAL_CODE_PREFIX = "LOCALERR_"
+    LOCAL_VIDEO_FILENAME = "source"
+    VIDEO_FILE_EXTENSIONS = (
+        ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+        ".m4v", ".ts", ".m2ts", ".rmvb", ".mpg", ".mpeg",
+    )
+    ARCHIVE_FILE_EXTENSIONS = (".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz")
+    CODE_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,7})[\s_-]?([0-9]{2,4})(?![A-Za-z0-9])")
+    FC2_PATTERN = re.compile(
+        r"(?i)(?:^|[^a-z0-9])(fc2)\s*[-_ ]?\s*(?:ppv\s*[-_ ]?)?([0-9]{4,8})(?:$|[^a-z0-9])"
+    )
     _asset_download_lock = threading.Lock()
     _asset_download_tasks = set()
     
@@ -302,6 +315,7 @@ class VideoAppService(BaseContentAppService):
             self._remove_preview_video_file(thumb_url)
         self._remove_preview_video_file(getattr(video, "cover_path_local", ""))
         self._remove_preview_video_file(getattr(video, "preview_video_local", ""))
+        self._remove_preview_video_file(getattr(video, "local_video_path", ""))
         for thumb_url in getattr(video, "thumbnail_images_local", []) or []:
             self._remove_preview_video_file(thumb_url)
     
@@ -336,16 +350,219 @@ class VideoAppService(BaseContentAppService):
         for thumb_url in thumbnail_images_local or []:
             self._remove_preview_video_file(thumb_url)
     
+    @staticmethod
+    def _is_local_video_id(video_id: str) -> bool:
+        return str(video_id or "").strip().upper().startswith("LOCAL")
+
+    @classmethod
+    def _is_video_file_path(cls, file_path: str) -> bool:
+        ext = os.path.splitext(str(file_path or ""))[1].lower()
+        return ext in cls.VIDEO_FILE_EXTENSIONS
+
+    @classmethod
+    def _is_archive_file_path(cls, file_path: str) -> bool:
+        ext = os.path.splitext(str(file_path or ""))[1].lower()
+        return ext in cls.ARCHIVE_FILE_EXTENSIONS
+
+    @staticmethod
+    def _to_media_url(abs_path: str) -> str:
+        target_path = os.path.abspath(str(abs_path or ""))
+        data_root = os.path.abspath(DATA_DIR)
+        try:
+            if os.path.commonpath([data_root, target_path]) != data_root:
+                return ""
+        except Exception:
+            return ""
+
+        relative = os.path.relpath(target_path, data_root).replace("\\", "/").lstrip("/")
+        return f"/media/{relative}" if relative else ""
+
+    def _generate_local_video_id(self) -> str:
+        return f"{self.LOCAL_VIDEO_ID_PREFIX}_{generate_uuid()[:12]}"
+
+    def _generate_abnormal_code(self) -> str:
+        while True:
+            candidate = f"{self.ABNORMAL_CODE_PREFIX}{generate_uuid()[:10].upper()}"
+            if self._find_local_video_duplicate("", candidate):
+                continue
+            return candidate
+
+    @classmethod
+    def extract_code_from_filename(cls, filename_without_ext: str) -> str:
+        raw_name = str(filename_without_ext or "").strip()
+        if not raw_name:
+            return ""
+
+        fc2_match = cls.FC2_PATTERN.search(raw_name)
+        if fc2_match:
+            number = str(fc2_match.group(2) or "").strip()
+            if number:
+                return f"FC2-PPV-{number}"
+
+        normal_match = cls.CODE_PATTERN.search(raw_name)
+        if not normal_match:
+            return ""
+
+        prefix = str(normal_match.group(1) or "").upper()
+        number = str(normal_match.group(2) or "").strip()
+        if not prefix or not number:
+            return ""
+        return f"{prefix}-{number}"
+
+    def _extract_or_generate_code(self, filename_without_ext: str) -> str:
+        extracted = self.extract_code_from_filename(filename_without_ext)
+        return extracted or self._generate_abnormal_code()
+
+    def import_local_videos_from_path(self, source_path: str) -> ServiceResult:
+        try:
+            source_dir = os.path.abspath(os.path.expandvars(os.path.expanduser(str(source_path or "").strip())))
+            if not source_dir:
+                return ServiceResult.error("source_path is required")
+            if not os.path.exists(source_dir):
+                return ServiceResult.error("source_path does not exist")
+            if not os.path.isdir(source_dir):
+                return ServiceResult.error("source_path must be a directory")
+
+            scanned_files = 0
+            scanned_video_files = 0
+            imported_count = 0
+            skipped_count = 0
+            failed_count = 0
+            imported_ids: List[str] = []
+            skipped_items: List[Dict[str, str]] = []
+            failed_items: List[Dict[str, str]] = []
+
+            for root, _, files in os.walk(source_dir):
+                for filename in files:
+                    scanned_files += 1
+                    abs_file_path = os.path.join(root, filename)
+
+                    if self._is_archive_file_path(filename):
+                        skipped_count += 1
+                        skipped_items.append({"file": abs_file_path, "reason": "archive_ignored"})
+                        continue
+                    if not self._is_video_file_path(filename):
+                        continue
+
+                    scanned_video_files += 1
+
+                    try:
+                        stem, ext = os.path.splitext(filename)
+                        normalized_ext = ext.lower() if ext else ".mp4"
+                        code = self._extract_or_generate_code(stem)
+                        duplicate_id = self._find_local_video_duplicate("", code)
+                        if duplicate_id:
+                            skipped_count += 1
+                            skipped_items.append(
+                                {
+                                    "file": abs_file_path,
+                                    "reason": "duplicate_code",
+                                    "duplicate_id": duplicate_id,
+                                    "code": code,
+                                }
+                            )
+                            continue
+
+                        video_id = self._generate_local_video_id()
+                        safe_video_id = self._sanitize_video_asset_id(video_id)
+                        target_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
+                        os.makedirs(target_dir, exist_ok=True)
+
+                        target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
+                        shutil.copy2(abs_file_path, target_file)
+                        local_video_path = self._to_media_url(target_file)
+                        if not local_video_path:
+                            raise RuntimeError("failed to map local video path")
+
+                        payload = {
+                            "id": video_id,
+                            "title": stem.strip() or filename,
+                            "code": code,
+                            "date": "",
+                            "series": "",
+                            "creator": "",
+                            "actors": [],
+                            "desc": "",
+                            "score": None,
+                            "tag_ids": [],
+                            "list_ids": [],
+                            "magnets": [],
+                            "thumbnail_images": [],
+                            "preview_video": "",
+                            "cover_path": "",
+                            "thumbnail_images_local": [],
+                            "preview_video_local": "",
+                            "cover_path_local": "",
+                            "local_video_path": local_video_path,
+                            "local_source_path": abs_file_path,
+                            "local_metadata_enriched": False,
+                        }
+
+                        result = self.import_video(payload)
+                        if not result.success:
+                            failed_count += 1
+                            failed_items.append(
+                                {
+                                    "file": abs_file_path,
+                                    "reason": result.message or "import_failed",
+                                    "code": code,
+                                }
+                            )
+                            try:
+                                if os.path.isdir(target_dir):
+                                    shutil.rmtree(target_dir, ignore_errors=True)
+                            except Exception:
+                                pass
+                            continue
+
+                        imported_count += 1
+                        imported_ids.append(video_id)
+                    except Exception as item_error:
+                        failed_count += 1
+                        failed_items.append({"file": abs_file_path, "reason": str(item_error)})
+
+            if imported_ids:
+                recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
+                if not recent_result.success:
+                    app_logger.warning(
+                        f"update recent import tags failed after local video import: {recent_result.message}"
+                    )
+
+            summary = (
+                f"提示信息"
+                f"提示信息"
+            )
+            return ServiceResult.ok(
+                {
+                    "source_path": source_dir,
+                    "scanned_files": scanned_files,
+                    "scanned_video_files": scanned_video_files,
+                    "imported_count": imported_count,
+                    "skipped_count": skipped_count,
+                    "failed_count": failed_count,
+                    "imported_ids": imported_ids,
+                    "skipped_items": skipped_items,
+                    "failed_items": failed_items,
+                    "summary": summary,
+                },
+                "local video import completed",
+            )
+        except Exception as e:
+            error_logger.error(f"import local videos from path failed: {e}")
+            return ServiceResult.error("import local videos failed")
+
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
-            existing = self._video_repo.get_by_code(video_data.get("code", ""))
-            if existing:
+            incoming_id = str(video_data.get("id") or "").strip()
+            incoming_code = str(video_data.get("code") or "").strip()
+            duplicate_id = self._find_local_video_duplicate(incoming_id, incoming_code)
+            if duplicate_id and duplicate_id != incoming_id:
                 return ServiceResult.error("该番号已存在")
-            
+
             video = Video(
-                id=video_data.get("id") or generate_id("video"),
+                id=incoming_id or generate_id("video"),
                 title=video_data.get("title", ""),
-                code=video_data.get("code", ""),
+                code=incoming_code,
                 date=video_data.get("date", ""),
                 series=video_data.get("series", ""),
                 creator=video_data.get("creator", ""),
@@ -358,12 +575,15 @@ class VideoAppService(BaseContentAppService):
                 cover_path_local=video_data.get("cover_path_local", ""),
                 thumbnail_images_local=video_data.get("thumbnail_images_local", []),
                 preview_video_local=video_data.get("preview_video_local", ""),
+                local_video_path=video_data.get("local_video_path", ""),
+                local_source_path=video_data.get("local_source_path", ""),
+                local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
                 create_time=get_current_time(),
                 last_access_time=get_current_time()
             )
             video.actors = video_data.get("actors", [])
             video.list_ids = video_data.get("list_ids", [])
-            
+
             if not self._video_repo.save(video):
                 return ServiceResult.error("保存视频失败")
             
@@ -390,6 +610,443 @@ class VideoAppService(BaseContentAppService):
             if self._normalize_code_for_compare(local_video.code) == normalized_code:
                 return local_video.id
         return None
+
+    @staticmethod
+    def _deduplicate_video_collection(records: List[Dict[str, Any]]) -> Dict[str, int]:
+        seen = {}
+        moved_to_trash = 0
+        duplicate_group_keys = set()
+        scanned = 0
+
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            if bool(item.get("is_deleted", False)):
+                continue
+
+            scanned += 1
+            normalized_code = VideoAppService._normalize_code_for_compare(item.get("code", ""))
+            if not normalized_code:
+                continue
+
+            if normalized_code not in seen:
+                seen[normalized_code] = item
+                continue
+
+            item["is_deleted"] = True
+            moved_to_trash += 1
+            duplicate_group_keys.add(normalized_code)
+
+        return {
+            "scanned": scanned,
+            "duplicate_groups": len(duplicate_group_keys),
+            "moved_to_trash": moved_to_trash,
+            "kept": len(seen),
+        }
+
+    def organize_deduplicate_by_code(self) -> ServiceResult:
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+            from core.constants import VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
+
+            home_storage = JsonStorage(VIDEO_JSON_FILE)
+            recommendation_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+
+            home_data = home_storage.read()
+            recommendation_data = recommendation_storage.read()
+
+            home_records = home_data.get("videos", [])
+            if not isinstance(home_records, list):
+                home_records = []
+                home_data["videos"] = home_records
+
+            recommendation_records = recommendation_data.get("video_recommendations", [])
+            if not isinstance(recommendation_records, list):
+                recommendation_records = []
+                recommendation_data["video_recommendations"] = recommendation_records
+
+            home_stats = self._deduplicate_video_collection(home_records)
+            recommendation_stats = self._deduplicate_video_collection(recommendation_records)
+
+            if not home_storage.write(home_data):
+                return ServiceResult.error("failed to write local video database")
+            if not recommendation_storage.write(recommendation_data):
+                return ServiceResult.error("failed to write recommendation video database")
+
+            summary = (
+                f"视频去重完成：本地库 {home_stats.get('moved_to_trash', 0)} 条，"
+                f"预览库 {recommendation_stats.get('moved_to_trash', 0)} 条已移入回收站"
+            )
+            return ServiceResult.ok(
+                {
+                    "home": home_stats,
+                    "recommendation": recommendation_stats,
+                    "summary": summary,
+                },
+                "video deduplicate completed",
+            )
+        except Exception as e:
+            error_logger.error(f"organize deduplicate by code failed: {e}")
+            return ServiceResult.error("video deduplicate failed")
+
+    @staticmethod
+    def _normalize_video_remote_tags(raw_tags: Any) -> List[str]:
+        if not isinstance(raw_tags, list):
+            return []
+        normalized = []
+        seen = set()
+        for item in raw_tags:
+            if isinstance(item, dict):
+                tag_name = str(item.get("name") or item.get("tag") or "").strip()
+            else:
+                tag_name = str(item or "").strip()
+            if not tag_name:
+                continue
+            key = tag_name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(tag_name)
+        return normalized
+
+    @staticmethod
+    def _normalize_actor_names(raw_actors: Any) -> List[str]:
+        if not isinstance(raw_actors, list):
+            return []
+        normalized = []
+        seen = set()
+        for actor in raw_actors:
+            name = str(actor or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(name)
+        return normalized
+
+    def _ensure_video_tags_for_record(
+        self,
+        video: Video,
+        remote_tags: Any,
+        tag_name_to_id: Dict[str, str],
+    ) -> Tuple[int, int]:
+        remote_tag_names = self._normalize_video_remote_tags(remote_tags)
+        if not remote_tag_names:
+            return 0, 0
+
+        current_tag_ids = list(video.tag_ids or [])
+        created_count = 0
+        bound_count = 0
+
+        for tag_name in remote_tag_names:
+            key = tag_name.lower()
+            tag_id = tag_name_to_id.get(key, "")
+            if not tag_id:
+                created_tag = self._tag_repo.create(tag_name, ContentType.VIDEO)
+                if created_tag:
+                    tag_id = created_tag.id
+                    tag_name_to_id[key] = tag_id
+                    created_count += 1
+                else:
+                    for tag in self._tag_repo.get_all(ContentType.VIDEO):
+                        if str(tag.name or "").strip().lower() == key:
+                            tag_id = tag.id
+                            tag_name_to_id[key] = tag_id
+                            break
+
+            if not tag_id:
+                continue
+
+            if tag_id in current_tag_ids:
+                continue
+            current_tag_ids.append(tag_id)
+            bound_count += 1
+
+        if bound_count > 0:
+            video.tag_ids = current_tag_ids
+        return created_count, bound_count
+
+    @staticmethod
+    def _first_item_from_search_result(search_result: Dict[str, Any]) -> Dict[str, Any]:
+        videos = (search_result or {}).get("videos", [])
+        if not isinstance(videos, list) or not videos:
+            return {}
+        first = videos[0]
+        return first if isinstance(first, dict) else {}
+
+    def _search_first_video_detail(self, adapter: Any, code: str) -> Dict[str, Any]:
+        search_result = adapter.search_videos(code, page=1, max_pages=1) or {}
+        first_result = self._first_item_from_search_result(search_result)
+        if not first_result:
+            return {}
+
+        video_id = str(first_result.get("video_id") or first_result.get("id") or "").strip()
+        detail = {}
+        if video_id and hasattr(adapter, "get_video_detail"):
+            try:
+                detail = adapter.get_video_detail(video_id) or {}
+            except Exception as detail_error:
+                error_logger.error(f"fetch video detail failed: code={code}, video_id={video_id}, error={detail_error}")
+
+        if not detail and hasattr(adapter, "get_video_by_code"):
+            try:
+                detail = adapter.get_video_by_code(code) or {}
+            except Exception as detail_error:
+                error_logger.error(f"fetch video by code failed: code={code}, error={detail_error}")
+
+        if not detail:
+            detail = first_result
+
+        return {
+            "video_id": video_id or str(detail.get("video_id") or "").strip(),
+            "detail": detail if isinstance(detail, dict) else {},
+        }
+
+    @staticmethod
+    def _pick_first_non_empty(*values) -> str:
+        for value in values:
+            normalized = str(value or "").strip()
+            if normalized:
+                return normalized
+        return ""
+
+    def _apply_remote_detail_to_video(
+        self,
+        video: Video,
+        detail: Dict[str, Any],
+        tag_name_to_id: Dict[str, str],
+    ) -> Dict[str, int]:
+        updated_fields = 0
+
+        remote_title = self._pick_first_non_empty(detail.get("title"))
+        if remote_title and remote_title != str(video.title or ""):
+            video.title = remote_title
+            updated_fields += 1
+
+        remote_date = self._pick_first_non_empty(detail.get("date"))
+        if remote_date and remote_date != str(video.date or ""):
+            video.date = remote_date
+            updated_fields += 1
+
+        remote_series = self._pick_first_non_empty(detail.get("series"))
+        if remote_series and remote_series != str(video.series or ""):
+            video.series = remote_series
+            updated_fields += 1
+
+        remote_actors = self._normalize_actor_names(detail.get("actors"))
+        if remote_actors and remote_actors != list(video.actors or []):
+            video.actors = remote_actors
+            updated_fields += 1
+
+        remote_creator = self._pick_first_non_empty(
+            detail.get("creator"),
+            detail.get("author"),
+            remote_actors[0] if remote_actors else "",
+        )
+        if remote_creator and remote_creator != str(video.creator or ""):
+            video.creator = remote_creator
+            updated_fields += 1
+
+        remote_cover = self._pick_first_non_empty(detail.get("cover_url"), detail.get("cover_path"))
+        if remote_cover and remote_cover != str(video.cover_path or ""):
+            video.cover_path = remote_cover
+            updated_fields += 1
+
+        remote_preview = self._sanitize_preview_video_url(detail.get("preview_video", ""))
+        if remote_preview and remote_preview != str(video.preview_video or ""):
+            video.preview_video = remote_preview
+            updated_fields += 1
+
+        remote_thumbnails = []
+        for item in list(detail.get("thumbnail_images") or []):
+            thumb = str(item or "").strip()
+            if thumb:
+                remote_thumbnails.append(thumb)
+        if remote_thumbnails and remote_thumbnails != list(video.thumbnail_images or []):
+            video.thumbnail_images = remote_thumbnails
+            updated_fields += 1
+
+        remote_magnets = list(detail.get("magnets") or [])
+        if remote_magnets and remote_magnets != list(video.magnets or []):
+            video.magnets = remote_magnets
+            updated_fields += 1
+
+        created_tags, bound_tags = self._ensure_video_tags_for_record(video, detail.get("tags"), tag_name_to_id)
+        if bound_tags > 0:
+            updated_fields += 1
+
+        if not bool(getattr(video, "local_metadata_enriched", False)):
+            video.local_metadata_enriched = True
+            updated_fields += 1
+
+        return {
+            "updated_fields": updated_fields,
+            "created_tags": created_tags,
+            "bound_tags": bound_tags,
+        }
+
+    @staticmethod
+    def _can_enrich_local_video(video: Video) -> bool:
+        if not video:
+            return False
+        if bool(video.is_deleted):
+            return False
+        if not VideoAppService._is_local_video_id(video.id):
+            return False
+        if bool(getattr(video, "local_metadata_enriched", False)):
+            return False
+        if not str(video.code or "").strip():
+            return False
+        return True
+
+    def _build_video_metadata_adapters(self) -> Dict[str, Any]:
+        from third_party.javdb_api_scraper import JavdbAdapter, JavbusAdapter
+
+        return {
+            "javdb": JavdbAdapter(),
+            "javbus": JavbusAdapter(),
+        }
+
+    def organize_enrich_local_metadata(self) -> ServiceResult:
+        try:
+            from core.runtime_profile import is_third_party_enabled
+
+            stats = {
+                "total_records": 0,
+                "total_local_candidates": 0,
+                "processed_candidates": 0,
+                "skipped_deleted": 0,
+                "skipped_no_code": 0,
+                "skipped_already_enriched": 0,
+                "skipped_no_match": 0,
+                "skipped_third_party_disabled": 0,
+                "matched_on_javdb": 0,
+                "matched_on_javbus": 0,
+                "updated_records": 0,
+                "updated_titles": 0,
+                "updated_creators": 0,
+                "updated_tag_bindings": 0,
+                "created_tags": 0,
+                "failed_records": 0,
+                "updated_ids": [],
+            }
+
+            videos = self._video_repo.get_all()
+            stats["total_records"] = len(videos)
+
+            if not is_third_party_enabled():
+                for video in videos:
+                    if not isinstance(video, Video):
+                        continue
+                    if bool(video.is_deleted):
+                        continue
+                    if self._is_local_video_id(video.id):
+                        stats["total_local_candidates"] += 1
+                        stats["skipped_third_party_disabled"] += 1
+                stats["summary"] = (
+                    f"LOCAL 补全已跳过：当前运行配置关闭第三方能力，跳过 {stats['skipped_third_party_disabled']} 条"
+                )
+                return ServiceResult.ok(stats, "local video metadata enrich skipped")
+
+            adapters = self._build_video_metadata_adapters()
+            javdb_adapter = adapters.get("javdb")
+            javbus_adapter = adapters.get("javbus")
+
+            video_tags = self._tag_repo.get_all(ContentType.VIDEO)
+            tag_name_to_id = {
+                str(tag.name or "").strip().lower(): tag.id
+                for tag in video_tags
+                if str(tag.name or "").strip()
+            }
+
+            for video in videos:
+                if not isinstance(video, Video):
+                    continue
+
+                if bool(video.is_deleted):
+                    stats["skipped_deleted"] += 1
+                    continue
+
+                if not self._is_local_video_id(video.id):
+                    continue
+
+                stats["total_local_candidates"] += 1
+
+                if bool(getattr(video, "local_metadata_enriched", False)):
+                    stats["skipped_already_enriched"] += 1
+                    continue
+
+                code = str(video.code or "").strip()
+                if not code:
+                    stats["skipped_no_code"] += 1
+                    continue
+
+                stats["processed_candidates"] += 1
+                matched_platform = ""
+                detail = {}
+
+                try:
+                    if javdb_adapter:
+                        matched = self._search_first_video_detail(javdb_adapter, code)
+                        detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
+                        if detail:
+                            matched_platform = "javdb"
+                except Exception as search_error:
+                    error_logger.error(f"search on javdb failed: code={code}, error={search_error}")
+
+                if not detail and javbus_adapter:
+                    try:
+                        matched = self._search_first_video_detail(javbus_adapter, code)
+                        detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
+                        if detail:
+                            matched_platform = "javbus"
+                    except Exception as search_error:
+                        error_logger.error(f"search on javbus failed: code={code}, error={search_error}")
+
+                if not detail:
+                    stats["skipped_no_match"] += 1
+                    continue
+
+                update_stats = self._apply_remote_detail_to_video(video, detail, tag_name_to_id)
+                if matched_platform == "javdb":
+                    stats["matched_on_javdb"] += 1
+                elif matched_platform == "javbus":
+                    stats["matched_on_javbus"] += 1
+
+                if update_stats.get("updated_fields", 0) > 0:
+                    stats["updated_records"] += 1
+                    stats["updated_ids"].append(video.id)
+
+                if str(detail.get("title") or "").strip():
+                    stats["updated_titles"] += 1
+                if str(video.creator or "").strip():
+                    stats["updated_creators"] += 1
+                stats["updated_tag_bindings"] += int(update_stats.get("bound_tags", 0))
+                stats["created_tags"] += int(update_stats.get("created_tags", 0))
+
+                if not self._video_repo.save(video):
+                    stats["failed_records"] += 1
+                    error_logger.error(f"save enriched local video failed: id={video.id}, code={code}")
+                    continue
+
+                if str(video.cover_path or "").strip():
+                    self.cache_cover_to_static_async(video.id, video.cover_path, source="local")
+                if list(video.thumbnail_images or []):
+                    self.cache_thumbnail_images_async(video.id, list(video.thumbnail_images or []), source="local", force=True)
+                if str(video.preview_video or "").strip():
+                    self.cache_preview_video_async(video.id, video.preview_video, source="local", force=True)
+
+            stats["summary"] = (
+                f"视频 LOCAL 补全完成：成功 {stats['updated_records']}，"
+                f"JAVDB 命中 {stats['matched_on_javdb']}，JAVBUS 命中 {stats['matched_on_javbus']}，"
+                f"无匹配 {stats['skipped_no_match']}"
+            )
+            return ServiceResult.ok(stats, "local video metadata enrich completed")
+        except Exception as e:
+            error_logger.error(f"organize enrich local video metadata failed: {e}")
+            return ServiceResult.error("local video metadata enrich failed")
 
     def _build_preview_asset_prefixes(self, video_id: str) -> tuple:
         safe_video_id = self._sanitize_video_asset_id(video_id)
@@ -827,6 +1484,10 @@ class VideoAppService(BaseContentAppService):
 
     @staticmethod
     def _get_video_platform_key(video_id: str) -> str:
+        normalized_id = str(video_id or "").strip().upper()
+        if normalized_id.startswith("LOCAL"):
+            return "LOCAL"
+
         try:
             from core.platform import Platform, remove_platform_prefix
 
@@ -1613,7 +2274,12 @@ class VideoAppService(BaseContentAppService):
         from core.platform import remove_platform_prefix
 
         platform_key = self._get_video_platform_key(video_id)
-        cover_dir = JAVBUS_COVER_DIR if platform_key == "JAVBUS" else JAVDB_COVER_DIR
+        if platform_key == "JAVBUS":
+            cover_dir = JAVBUS_COVER_DIR
+        elif platform_key == "LOCAL":
+            cover_dir = LOCAL_VIDEO_COVER_DIR
+        else:
+            cover_dir = JAVDB_COVER_DIR
         os.makedirs(cover_dir, exist_ok=True)
 
         _, original_id = remove_platform_prefix(str(video_id or ""))

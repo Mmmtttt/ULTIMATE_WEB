@@ -206,6 +206,25 @@
         </van-cell-group>
       </div>
 
+      <div v-if="isLocalVideo" class="preview-video-section">
+        <van-cell-group title="本地视频">
+          <div class="preview-video-player-container">
+            <video
+              v-if="hasLocalVideo"
+              controls
+              playsinline
+              preload="metadata"
+              :src="localVideoPlayerUrl"
+              @error="handleLocalVideoError"
+              class="preview-video-player"
+            ></video>
+            <div v-else class="preview-video-empty">
+              暂无可用本地视频文件
+            </div>
+          </div>
+        </van-cell-group>
+      </div>
+
       <div v-if="video" class="preview-video-section">
         <van-cell-group title="预览视频">
           <div class="preview-video-actions">
@@ -496,8 +515,13 @@ const previewVideoPlayerUrl = computed(() => {
   const remotePreview = String(video.value?.preview_video || '').trim()
   return resolvePreviewVideoUrl(localPreview || remotePreview)
 })
+const localVideoPlayerUrl = computed(() => {
+  const localVideoPath = String(video.value?.local_video_path || '').trim()
+  return resolveLocalVideoUrl(localVideoPath)
+})
 const previewRefreshSource = computed(() => (video.value?.source === 'preview' ? 'preview' : 'local'))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
+const hasLocalVideo = computed(() => Boolean(localVideoPlayerUrl.value))
 
 function clearAssetRefreshTimer() {
   if (assetRefreshTimer.value) {
@@ -629,6 +653,35 @@ function resolvePreviewVideoUrl(rawUrl) {
   }
 
   return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`)
+}
+
+function resolveLocalVideoUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return ''
+  }
+
+  const url = rawUrl.trim()
+  if (!url) {
+    return ''
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    return url
+  }
+
+  if (url.startsWith('/')) {
+    return toBackendUrl(url)
+  }
+
+  return ''
+}
+
+function handleLocalVideoError(event) {
+  const mediaErrorCode = event?.target?.error?.code
+  console.warn('本地视频加载失败', {
+    url: localVideoPlayerUrl.value,
+    mediaErrorCode
+  })
 }
 
 function handlePreviewVideoError(event) {

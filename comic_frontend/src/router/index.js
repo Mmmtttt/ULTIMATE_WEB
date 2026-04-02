@@ -147,6 +147,12 @@ const routes = [
     name: 'ComicLocalImport',
     component: () => import('@/views/ComicLocalImport.vue'),
     meta: { title: '本地漫画导入' }
+  },
+  {
+    path: '/video-local-import',
+    name: 'VideoLocalImport',
+    component: () => import('@/views/VideoLocalImport.vue'),
+    meta: { title: '本地视频导入' }
   }
 ]
 

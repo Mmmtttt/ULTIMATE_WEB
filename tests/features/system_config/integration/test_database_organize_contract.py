@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -39,9 +40,10 @@ def test_organize_options_returns_mode_specific_actions(integration_runtime):
     assert video_payload["code"] == 200
     video_data = video_payload["data"] or {}
     assert video_data.get("mode") == "video"
-    video_actions = video_data.get("options") or []
-    assert len(video_actions) >= 1
-    assert any(item.get("implemented") is False for item in video_actions)
+    video_action_map = {item.get("action"): item for item in (video_data.get("options") or [])}
+    assert {"deduplicate_by_code", "enrich_local_metadata"}.issubset(set(video_action_map))
+    assert video_action_map["deduplicate_by_code"]["implemented"] is True
+    assert video_action_map["enrich_local_metadata"]["implemented"] is True
 
 
 @pytest.mark.integration
@@ -109,3 +111,128 @@ def test_deduplicate_by_title_keeps_different_chapter_records(integration_runtim
     finally:
         save_json(home_path, original_home)
         save_json(recommendation_path, original_recommendation)
+
+
+@pytest.mark.integration
+def test_video_deduplicate_by_code_moves_duplicates_to_trash(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+
+    home_path = meta_dir / "videos_database.json"
+    recommendation_path = meta_dir / "video_recommendations_database.json"
+
+    original_home = load_json(home_path)
+    original_recommendation = load_json(recommendation_path)
+
+    try:
+        home_data = {
+            "collection_name": "Test Videos",
+            "user": "test-user",
+            "total_videos": 4,
+            "last_updated": "2026-04-01",
+            "videos": [
+                {"id": "LOCALV_A", "code": "ABP-123", "title": "A", "is_deleted": False},
+                {"id": "LOCALV_B", "code": "abp_123", "title": "B", "is_deleted": False},
+                {"id": "LOCALV_C", "code": "FC2-PPV-123456", "title": "C", "is_deleted": False},
+                {"id": "LOCALV_D", "code": "FC2PPV123456", "title": "D", "is_deleted": False},
+            ],
+        }
+        recommendation_data = {
+            "collection_name": "Test Video Recommendations",
+            "user": "test-user",
+            "total_video_recommendations": 3,
+            "last_updated": "2026-04-01",
+            "video_recommendations": [
+                {"id": "JAVDB_A", "code": "IPX-001", "title": "A", "is_deleted": False},
+                {"id": "JAVDB_B", "code": "ipx001", "title": "B", "is_deleted": False},
+                {"id": "JAVBUS_C", "code": "SSIS-777", "title": "C", "is_deleted": False},
+            ],
+        }
+        save_json(home_path, home_data)
+        save_json(recommendation_path, recommendation_data)
+
+        run_resp = requests.post(
+            f"{base_url}/api/v1/organize/run",
+            json={"mode": "video", "action": "deduplicate_by_code"},
+            timeout=60,
+        )
+        assert run_resp.status_code == 200
+        run_payload = run_resp.json()
+        assert run_payload["code"] == 200
+        result = run_payload["data"] or {}
+        assert (result.get("home") or {}).get("moved_to_trash") == 2
+        assert (result.get("recommendation") or {}).get("moved_to_trash") == 1
+
+        refreshed_home = load_json(home_path).get("videos") or []
+        refreshed_recommendation = load_json(recommendation_path).get("video_recommendations") or []
+
+        assert find_by_id(refreshed_home, "LOCALV_A")["is_deleted"] is False
+        assert find_by_id(refreshed_home, "LOCALV_B")["is_deleted"] is True
+        assert find_by_id(refreshed_home, "LOCALV_C")["is_deleted"] is False
+        assert find_by_id(refreshed_home, "LOCALV_D")["is_deleted"] is True
+
+        assert find_by_id(refreshed_recommendation, "JAVDB_A")["is_deleted"] is False
+        assert find_by_id(refreshed_recommendation, "JAVDB_B")["is_deleted"] is True
+        assert find_by_id(refreshed_recommendation, "JAVBUS_C")["is_deleted"] is False
+    finally:
+        save_json(home_path, original_home)
+        save_json(recommendation_path, original_recommendation)
+
+
+@pytest.mark.integration
+def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_videos = load_json(videos_path)
+
+    source_root = runtime_root / "video_local_import_source"
+    nested = source_root / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+
+    (source_root / "ABP-123 demo.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    (source_root / "fc2_ppv_123456 clip.mkv").write_bytes(b"\x1A\x45\xDF\xA3")
+    (nested / "XYZ999 trailer.avi").write_bytes(b"RIFF")
+    (nested / "no_code_sample.webm").write_bytes(b"\x1A\x45\xDF\xA3")
+    (source_root / "archive.zip").write_bytes(b"PK\x03\x04")
+    (source_root / "readme.txt").write_text("ignore", encoding="utf-8")
+
+    try:
+        response = requests.post(
+            f"{base_url}/api/v1/video/local-import/from-path",
+            json={"source_path": str(source_root)},
+            timeout=90,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+
+        data = payload["data"] or {}
+        assert data.get("imported_count") == 4
+        assert data.get("scanned_video_files") == 4
+        assert data.get("skipped_count", 0) >= 1
+        imported_ids = data.get("imported_ids") or []
+        assert len(imported_ids) == 4
+
+        refreshed_videos = load_json(videos_path).get("videos") or []
+        imported_records = [item for item in refreshed_videos if item.get("id") in imported_ids]
+        assert len(imported_records) == 4
+
+        imported_codes = {str(item.get("code") or "") for item in imported_records}
+        assert "ABP-123" in imported_codes
+        assert "FC2-PPV-123456" in imported_codes
+        assert "XYZ-999" in imported_codes
+        assert any(code.startswith("LOCALERR_") for code in imported_codes)
+
+        for item in imported_records:
+            local_video_path = str(item.get("local_video_path") or "")
+            assert local_video_path.startswith("/media/video/LOCAL/")
+            assert "/source." in local_video_path
+            rel = local_video_path[len("/media/"):].replace("/", os.sep)
+            abs_path = data_dir / rel
+            assert abs_path.exists(), f"missing imported file: {abs_path}"
+    finally:
+        save_json(videos_path, original_videos)

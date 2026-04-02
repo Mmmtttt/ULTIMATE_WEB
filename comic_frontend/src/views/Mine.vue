@@ -26,6 +26,7 @@
         </template>
       </van-cell>
       <van-cell v-if="!isVideoMode" title="本地漫画导入" icon="description" to="/comic-local-import" is-link />
+      <van-cell v-else title="本地视频导入" icon="description" to="/video-local-import" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
@@ -353,10 +354,10 @@ function buildOrganizeResultMessage(action, payload) {
     const repaired = Number(payload?.home?.updated_cover_paths || 0) + Number(payload?.recommendation?.updated_cover_paths || 0)
     return `修复封面完成：修复封面 ${repaired}，回写页数 ${rewritten}`
   }
-  if (action === 'deduplicate_by_title') {
+  if (action === 'deduplicate_by_title' || action === 'deduplicate_by_code') {
     const home = Number(payload?.home?.moved_to_trash || 0)
     const recommendation = Number(payload?.recommendation?.moved_to_trash || 0)
-    return `查重完成：本地库 ${home} 项，预览库 ${recommendation} 项`
+    return `查重完成：本地库 ${home} 条，预览库 ${recommendation} 条`
   }
   if (action === 'enrich_local_metadata') {
     const updated = Number(payload?.updated_records || 0)
@@ -369,16 +370,22 @@ function buildOrganizeResultMessage(action, payload) {
 function buildOrganizeResultDetail(action, payload) {
   const summary = buildOrganizeResultMessage(action, payload)
   if (action === 'enrich_local_metadata') {
-    return [
+    const lines = [
       summary,
       `处理候选: ${Number(payload?.processed_candidates || 0)}`,
-      `JM命中: ${Number(payload?.matched_on_jm || 0)}`,
-      `PK命中: ${Number(payload?.matched_on_pk || 0)}`,
       `无匹配: ${Number(payload?.skipped_no_match || 0)}`,
       `已补全跳过: ${Number(payload?.skipped_already_enriched || 0)}`
-    ].join('\n')
+    ]
+    if (isVideoMode.value) {
+      lines.push(`JAVDB命中: ${Number(payload?.matched_on_javdb || 0)}`)
+      lines.push(`JAVBUS命中: ${Number(payload?.matched_on_javbus || 0)}`)
+    } else {
+      lines.push(`JM命中: ${Number(payload?.matched_on_jm || 0)}`)
+      lines.push(`PK命中: ${Number(payload?.matched_on_pk || 0)}`)
+    }
+    return lines.join('\n')
   }
-  if (action === 'deduplicate_by_title') {
+  if (action === 'deduplicate_by_title' || action === 'deduplicate_by_code') {
     return [
       summary,
       `本地库移入回收站: ${Number(payload?.home?.moved_to_trash || 0)}`,
