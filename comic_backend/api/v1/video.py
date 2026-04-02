@@ -2,7 +2,7 @@
 视频 API 路由
 """
 
-from flask import Blueprint, request, jsonify, Response, make_response
+from flask import Blueprint, request, jsonify, Response, make_response, send_file
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.config_app_service import ConfigAppService
@@ -13,9 +13,11 @@ from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
 from bs4 import BeautifulSoup, FeatureNotFound
 import re
+import os
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
+import mimetypes
 from .runtime_guard import require_third_party
 
 video_bp = Blueprint('video', __name__)
@@ -388,16 +390,39 @@ def local_import_from_path():
     try:
         data = request.json or {}
         source_path = str(data.get('source_path') or '').strip()
+        import_mode = str(data.get('import_mode') or '').strip()
         if not source_path:
             return error_response(400, "missing parameter: source_path")
 
-        result = video_service.import_local_videos_from_path(source_path)
+        result = video_service.import_local_videos_from_path(source_path, import_mode=import_mode)
         if result.success:
             return success_response(result.data, result.message)
         return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"local video import from path failed: {e}")
         return error_response(500, "internal server error")
+
+
+@video_bp.route('/local-stream/<video_id>', methods=['GET'])
+def stream_local_video(video_id):
+    try:
+        resolved = video_service.resolve_local_video_file_path(video_id)
+        if not resolved or not os.path.isfile(resolved):
+            return make_response("Not Found", 404)
+
+        guessed_type, _ = mimetypes.guess_type(resolved)
+        response = make_response(
+            send_file(
+                resolved,
+                mimetype=guessed_type or "application/octet-stream",
+                conditional=True,
+            )
+        )
+        response.headers["Accept-Ranges"] = "bytes"
+        return response
+    except Exception as e:
+        error_logger.error(f"stream local video failed: id={video_id}, error={e}")
+        return make_response("Internal Server Error", 500)
 
 
 @video_bp.route('/tag/<tag_id>', methods=['GET'])
@@ -2350,4 +2375,3 @@ def clear_actor_works_cache():
     except Exception as e:
         error_logger.error(f"清理演员作品缓存失败: {e}")
         return error_response(500, "服务器内部错误")
-

@@ -203,7 +203,7 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
     try:
         response = requests.post(
             f"{base_url}/api/v1/video/local-import/from-path",
-            json={"source_path": str(source_root)},
+            json={"source_path": str(source_root), "import_mode": "hardlink_move"},
             timeout=90,
         )
         assert response.status_code == 200
@@ -212,6 +212,7 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
 
         data = payload["data"] or {}
         assert data.get("imported_count") == 4
+        assert data.get("import_mode") == "hardlink_move"
         assert data.get("scanned_video_files") == 4
         assert data.get("skipped_count", 0) >= 1
         imported_ids = data.get("imported_ids") or []
@@ -234,5 +235,69 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
             rel = local_video_path[len("/media/"):].replace("/", os.sep)
             abs_path = data_dir / rel
             assert abs_path.exists(), f"missing imported file: {abs_path}"
+
+        assert not (source_root / "ABP-123 demo.mp4").exists()
+        assert not (source_root / "fc2_ppv_123456 clip.mkv").exists()
+        assert not (nested / "XYZ999 trailer.avi").exists()
+        assert not (nested / "no_code_sample.webm").exists()
+    finally:
+        save_json(videos_path, original_videos)
+
+
+@pytest.mark.integration
+def test_video_local_import_softlink_mode_keeps_source_and_streams_from_local_source(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_videos = load_json(videos_path)
+
+    source_root = runtime_root / "video_local_import_source_softlink"
+    nested = source_root / "nested"
+    nested.mkdir(parents=True, exist_ok=True)
+
+    first_file = source_root / "SOFT-321 sample.mp4"
+    second_file = nested / "fc2_ppv_765432 sample.mkv"
+    first_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    second_file.write_bytes(b"\x1A\x45\xDF\xA3")
+
+    try:
+        response = requests.post(
+            f"{base_url}/api/v1/video/local-import/from-path",
+            json={"source_path": str(source_root), "import_mode": "softlink_ref"},
+            timeout=90,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+
+        data = payload["data"] or {}
+        assert data.get("import_mode") == "softlink_ref"
+        assert data.get("imported_count") == 2
+
+        imported_ids = data.get("imported_ids") or []
+        assert len(imported_ids) == 2
+
+        refreshed_videos = load_json(videos_path).get("videos") or []
+        imported_records = [item for item in refreshed_videos if item.get("id") in imported_ids]
+        assert len(imported_records) == 2
+
+        for item in imported_records:
+            local_video_path = str(item.get("local_video_path") or "")
+            local_source_path = str(item.get("local_source_path") or "")
+            assert local_video_path.startswith("/api/v1/video/local-stream/")
+            assert local_source_path
+            assert os.path.isfile(local_source_path)
+
+            stream_resp = requests.get(
+                f"{base_url}{local_video_path}",
+                timeout=30,
+            )
+            assert stream_resp.status_code == 200
+            assert stream_resp.content
+
+        assert first_file.exists()
+        assert second_file.exists()
     finally:
         save_json(videos_path, original_videos)

@@ -9,8 +9,8 @@
     <section class="card-surface intro-card">
       <h2>服务端路径导入</h2>
       <p>
-        仅支持输入服务端本机“文件夹路径”。系统会递归扫描常见视频文件并导入到本地库，
-        自动忽略压缩包与非视频文件。
+        仅支持输入服务端本机“文件夹路径”。系统会递归扫描常见视频文件并导入到本地库。
+        你可以选择软连接（保留源文件）或硬链接（移动源文件），系统会自动忽略压缩包与非视频文件。
       </p>
     </section>
 
@@ -21,6 +21,22 @@
         placeholder="例如 D:\\Videos\\LOCAL"
         clearable
       />
+      <div class="import-mode-switch">
+        <div class="switch-main">
+          <span class="switch-side" :class="{ active: importMode === 'hardlink_move' }">硬链接</span>
+          <van-switch
+            v-model="isSoftlinkMode"
+            size="20px"
+          />
+          <span class="switch-side" :class="{ active: importMode === 'softlink_ref' }">软连接</span>
+        </div>
+        <div class="switch-desc">
+          {{ importMode === 'softlink_ref' ? '软连接：保留源文件，直接引用源路径播放' : '硬链接：移动源文件到本地库目录' }}
+        </div>
+      </div>
+      <div v-if="importMode === 'hardlink_move'" class="mode-tip danger-tip">
+        已启用硬链接导入（移动源文件）：将直接移动源目录中的视频文件，请先确认路径和备份。
+      </div>
       <van-button
         type="primary"
         block
@@ -83,7 +99,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { closeToast, showFailToast, showLoadingToast, showSuccessToast } from 'vant'
+import { closeToast, showConfirmDialog, showFailToast, showLoadingToast, showSuccessToast } from 'vant'
 import { videoApi } from '@/api'
 import { useVideoStore } from '@/stores'
 
@@ -92,6 +108,14 @@ const videoStore = useVideoStore()
 const sourcePath = ref('')
 const importing = ref(false)
 const result = ref(null)
+const importMode = ref('hardlink_move')
+
+const isSoftlinkMode = computed({
+  get: () => importMode.value === 'softlink_ref',
+  set: (enabled) => {
+    importMode.value = enabled ? 'softlink_ref' : 'hardlink_move'
+  }
+})
 
 const previewSkippedItems = computed(() => {
   const items = Array.isArray(result.value?.skipped_items) ? result.value.skipped_items : []
@@ -110,6 +134,19 @@ async function runImport() {
     return
   }
 
+  if (importMode.value === 'hardlink_move') {
+    try {
+      await showConfirmDialog({
+        title: '风险提示',
+        message: '硬链接导入会移动源文件，若路径填写错误可能导致源目录文件变化，是否继续？',
+        confirmButtonText: '继续',
+        cancelButtonText: '取消'
+      })
+    } catch {
+      return
+    }
+  }
+
   importing.value = true
   showLoadingToast({
     message: '正在导入本地视频...',
@@ -118,7 +155,9 @@ async function runImport() {
   })
 
   try {
-    const response = await videoApi.localImportFromPath(path)
+    const response = await videoApi.localImportFromPath(path, {
+      importMode: importMode.value
+    })
     closeToast()
     if (response?.code !== 200) {
       showFailToast(response?.msg || '导入失败')
@@ -163,6 +202,50 @@ async function runImport() {
   margin: 10px 0 0;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.import-mode-switch {
+  margin: 10px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  padding: 10px 12px;
+}
+
+.switch-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.switch-side {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.switch-side.active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.switch-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+
+.mode-tip {
+  margin: 8px 0 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  font-size: 12px;
+}
+
+.danger-tip {
+  color: #9a3412;
 }
 
 .section-title h3 {

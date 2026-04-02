@@ -53,6 +53,8 @@ class VideoAppService(BaseContentAppService):
     LOCAL_VIDEO_ID_PREFIX = "LOCALV"
     ABNORMAL_CODE_PREFIX = "LOCALERR_"
     LOCAL_VIDEO_FILENAME = "source"
+    LOCAL_IMPORT_MODE_HARDLINK_MOVE = "hardlink_move"
+    LOCAL_IMPORT_MODE_SOFTLINK_REF = "softlink_ref"
     VIDEO_FILE_EXTENSIONS = (
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
         ".m4v", ".ts", ".m2ts", ".rmvb", ".mpg", ".mpeg",
@@ -388,6 +390,20 @@ class VideoAppService(BaseContentAppService):
             return candidate
 
     @classmethod
+    def normalize_local_import_mode(cls, raw_mode: str) -> str:
+        mode = str(raw_mode or "").strip().lower()
+        if mode in {"softlink_ref", "soft_ref", "softlink", "soft"}:
+            return cls.LOCAL_IMPORT_MODE_SOFTLINK_REF
+        if mode in {"hardlink_move", "move_huge", "move", "hardlink"}:
+            return cls.LOCAL_IMPORT_MODE_HARDLINK_MOVE
+        return cls.LOCAL_IMPORT_MODE_HARDLINK_MOVE
+
+    @staticmethod
+    def _build_local_stream_url(video_id: str) -> str:
+        safe_id = str(video_id or "").strip()
+        return f"/api/v1/video/local-stream/{safe_id}" if safe_id else ""
+
+    @classmethod
     def extract_code_from_filename(cls, filename_without_ext: str) -> str:
         raw_name = str(filename_without_ext or "").strip()
         if not raw_name:
@@ -413,7 +429,7 @@ class VideoAppService(BaseContentAppService):
         extracted = self.extract_code_from_filename(filename_without_ext)
         return extracted or self._generate_abnormal_code()
 
-    def import_local_videos_from_path(self, source_path: str) -> ServiceResult:
+    def import_local_videos_from_path(self, source_path: str, import_mode: str = "") -> ServiceResult:
         try:
             source_dir = os.path.abspath(os.path.expandvars(os.path.expanduser(str(source_path or "").strip())))
             if not source_dir:
@@ -422,6 +438,7 @@ class VideoAppService(BaseContentAppService):
                 return ServiceResult.error("source_path does not exist")
             if not os.path.isdir(source_dir):
                 return ServiceResult.error("source_path must be a directory")
+            normalized_mode = self.normalize_local_import_mode(import_mode)
 
             scanned_files = 0
             scanned_video_files = 0
@@ -446,6 +463,9 @@ class VideoAppService(BaseContentAppService):
 
                     scanned_video_files += 1
 
+                    target_dir = ""
+                    target_file = ""
+                    source_restore_path = ""
                     try:
                         stem, ext = os.path.splitext(filename)
                         normalized_ext = ext.lower() if ext else ".mp4"
@@ -464,15 +484,24 @@ class VideoAppService(BaseContentAppService):
                             continue
 
                         video_id = self._generate_local_video_id()
-                        safe_video_id = self._sanitize_video_asset_id(video_id)
-                        target_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
-                        os.makedirs(target_dir, exist_ok=True)
+                        if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
+                            safe_video_id = self._sanitize_video_asset_id(video_id)
+                            target_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
+                            os.makedirs(target_dir, exist_ok=True)
 
-                        target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
-                        shutil.copy2(abs_file_path, target_file)
-                        local_video_path = self._to_media_url(target_file)
-                        if not local_video_path:
-                            raise RuntimeError("failed to map local video path")
+                            target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
+                            source_restore_path = abs_file_path
+                            shutil.move(abs_file_path, target_file)
+
+                            local_video_path = self._to_media_url(target_file)
+                            if not local_video_path:
+                                raise RuntimeError("failed to map local video path")
+                            local_source_path = os.path.abspath(target_file)
+                        else:
+                            local_video_path = self._build_local_stream_url(video_id)
+                            local_source_path = os.path.abspath(abs_file_path)
+                            if not local_video_path:
+                                raise RuntimeError("failed to build local stream path")
 
                         payload = {
                             "id": video_id,
@@ -494,7 +523,7 @@ class VideoAppService(BaseContentAppService):
                             "preview_video_local": "",
                             "cover_path_local": "",
                             "local_video_path": local_video_path,
-                            "local_source_path": abs_file_path,
+                            "local_source_path": local_source_path,
                             "local_metadata_enriched": False,
                         }
 
@@ -509,6 +538,14 @@ class VideoAppService(BaseContentAppService):
                                 }
                             )
                             try:
+                                if (
+                                    normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE
+                                    and source_restore_path
+                                    and target_file
+                                    and os.path.exists(target_file)
+                                ):
+                                    os.makedirs(os.path.dirname(source_restore_path), exist_ok=True)
+                                    shutil.move(target_file, source_restore_path)
                                 if os.path.isdir(target_dir):
                                     shutil.rmtree(target_dir, ignore_errors=True)
                             except Exception:
@@ -518,6 +555,19 @@ class VideoAppService(BaseContentAppService):
                         imported_count += 1
                         imported_ids.append(video_id)
                     except Exception as item_error:
+                        try:
+                            if (
+                                normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE
+                                and source_restore_path
+                                and target_file
+                                and os.path.exists(target_file)
+                            ):
+                                os.makedirs(os.path.dirname(source_restore_path), exist_ok=True)
+                                shutil.move(target_file, source_restore_path)
+                            if target_dir and os.path.isdir(target_dir):
+                                shutil.rmtree(target_dir, ignore_errors=True)
+                        except Exception:
+                            pass
                         failed_count += 1
                         failed_items.append({"file": abs_file_path, "reason": str(item_error)})
 
@@ -528,13 +578,16 @@ class VideoAppService(BaseContentAppService):
                         f"update recent import tags failed after local video import: {recent_result.message}"
                     )
 
+            mode_label = "软连接（保留源文件）" if normalized_mode == self.LOCAL_IMPORT_MODE_SOFTLINK_REF else "硬链接（移动源文件）"
             summary = (
-                f"提示信息"
-                f"提示信息"
+                f"本地视频导入完成（{mode_label}）："
+                f"扫描 {scanned_video_files} 个视频，"
+                f"成功 {imported_count}，跳过 {skipped_count}，失败 {failed_count}"
             )
             return ServiceResult.ok(
                 {
                     "source_path": source_dir,
+                    "import_mode": normalized_mode,
                     "scanned_files": scanned_files,
                     "scanned_video_files": scanned_video_files,
                     "imported_count": imported_count,
@@ -550,6 +603,37 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"import local videos from path failed: {e}")
             return ServiceResult.error("import local videos failed")
+
+    def resolve_local_video_file_path(self, video_id: str) -> Optional[str]:
+        video = self._video_repo.get_by_id(str(video_id or "").strip())
+        if not video:
+            return None
+
+        local_video_url = str(getattr(video, "local_video_path", "") or "").strip()
+        if local_video_url.startswith("/media/"):
+            file_relative = local_video_url[len("/media/"):].lstrip("/")
+            candidate = os.path.abspath(os.path.join(DATA_DIR, file_relative.replace("/", os.sep)))
+            data_root = os.path.abspath(DATA_DIR)
+            try:
+                if os.path.commonpath([data_root, candidate]) == data_root and os.path.isfile(candidate):
+                    return candidate
+            except Exception:
+                pass
+
+        source_path = str(getattr(video, "local_source_path", "") or "").strip()
+        if source_path:
+            expanded_source = os.path.abspath(os.path.expandvars(os.path.expanduser(source_path)))
+            if os.path.isfile(expanded_source):
+                return expanded_source
+
+        safe_video_id = self._sanitize_video_asset_id(video.id)
+        local_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
+        if os.path.isdir(local_dir):
+            for ext in self.VIDEO_FILE_EXTENSIONS:
+                candidate = os.path.join(local_dir, f"{self.LOCAL_VIDEO_FILENAME}{ext}")
+                if os.path.isfile(candidate):
+                    return candidate
+        return None
 
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:

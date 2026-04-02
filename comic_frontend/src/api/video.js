@@ -57,9 +57,11 @@ export const videoApi = {
     return request.post('/v1/video/import/batch', { videos })
   },
 
-  localImportFromPath(sourcePath) {
+  localImportFromPath(sourcePath, options = {}) {
+    const importMode = String(options?.importMode || 'hardlink_move').trim().toLowerCase() || 'hardlink_move'
     return request.post('/v1/video/local-import/from-path', {
-      source_path: sourcePath
+      source_path: sourcePath,
+      import_mode: importMode
     }, {
       timeout: 0
     })

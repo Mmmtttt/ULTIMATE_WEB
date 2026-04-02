@@ -89,11 +89,12 @@
         />
         <div class="import-mode-switch">
           <div class="switch-main">
-            <span class="switch-title">是否移动源文件</span>
+            <span class="switch-side" :class="{ active: pathImportMode === 'hardlink_move' }">硬链接</span>
             <van-switch
               v-model="isSoftlinkMode"
               size="20px"
             />
+            <span class="switch-side" :class="{ active: pathImportMode === 'softlink_ref' }">软链接</span>
           </div>
           <div class="switch-desc">
             {{ pathImportMode === 'softlink_ref' ? '不移动源文件（软连接）' : '移动源文件（硬链接）' }}
@@ -1044,13 +1045,19 @@ onMounted(async () => {
 .switch-main {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
 }
 
-.switch-title {
+.switch-side {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
+  transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.switch-side.active {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .switch-desc {
