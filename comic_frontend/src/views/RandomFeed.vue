@@ -663,7 +663,10 @@ watch(
   async (index, previous) => {
     if (index !== previous && !restoringViewState.value) {
       controlIndex.value = index
-      controlsVisible.value = false
+      const keepVisibleDuringProgrammaticAlign = controlsVisible.value && suppressScrollSync.value
+      if (!keepVisibleDuringProgrammaticAlign) {
+        controlsVisible.value = false
+      }
       resetZoom()
     }
     preloadAround(index)
@@ -716,6 +719,7 @@ watch(
   async () => {
     await nextTick()
     updateScrollerHeight()
+    await nextTick()
     if (restoringViewState.value) return
     const anchorIndex = clampIndex(layoutAnchorIndex.value ?? activeIndex.value)
     suppressScrollSync.value = true
