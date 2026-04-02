@@ -426,7 +426,7 @@ DATA_DIR = _resolve_data_dir()
 META_DIR = os.path.join(DATA_DIR, "meta_data")
 STATIC_DIR = os.path.join(DATA_DIR, "static")
 COVER_DIR = os.path.join(STATIC_DIR, "cover")
-LOGS_DIR = os.path.join(BACKEND_ROOT, "logs")
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
 CACHE_ROOT_DIR = os.path.join(DATA_DIR, "cache")
 RECOMMENDATION_CACHE_DIR = os.path.join(DATA_DIR, "recommendation_cache")
 

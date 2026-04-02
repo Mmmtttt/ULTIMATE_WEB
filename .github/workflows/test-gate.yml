@@ -62,9 +62,12 @@ jobs:
         run: |
           mkdir -p tests/ci-artifacts/backend-runtime-logs
           cp -f tests/.runtime/integration/backend-integration.log tests/ci-artifacts/backend-runtime-logs/backend-integration.log 2>/dev/null || true
-          cp -f comic_backend/logs/app.log tests/ci-artifacts/backend-runtime-logs/app.log 2>/dev/null || true
-          cp -f comic_backend/logs/error.log tests/ci-artifacts/backend-runtime-logs/error.log 2>/dev/null || true
-          cp -f comic_backend/logs/access.log tests/ci-artifacts/backend-runtime-logs/access.log 2>/dev/null || true
+          cp -f tests/.runtime/integration/data/logs/app.log tests/ci-artifacts/backend-runtime-logs/app.log 2>/dev/null || true
+          cp -f tests/.runtime/integration/data/logs/error.log tests/ci-artifacts/backend-runtime-logs/error.log 2>/dev/null || true
+          cp -f tests/.runtime/integration/data/logs/access.log tests/ci-artifacts/backend-runtime-logs/access.log 2>/dev/null || true
+          cp -f comic_backend/logs/app.log tests/ci-artifacts/backend-runtime-logs/app.legacy.log 2>/dev/null || true
+          cp -f comic_backend/logs/error.log tests/ci-artifacts/backend-runtime-logs/error.legacy.log 2>/dev/null || true
+          cp -f comic_backend/logs/access.log tests/ci-artifacts/backend-runtime-logs/access.legacy.log 2>/dev/null || true
 
       - name: Run frontend E2E tests
         id: e2e_tests

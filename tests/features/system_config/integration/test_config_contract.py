@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import requests
 
@@ -30,6 +32,46 @@ def test_config_system_get_returns_config(integration_runtime):
     assert payload["code"] == 200
     data = payload["data"]
     assert "configured_data_dir" in data or "resolved_data_dir" in data
+
+
+@pytest.mark.integration
+def test_config_logs_dir_is_under_runtime_data_dir(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 守护后端日志目录与运行时 data_dir 绑定，日志必须写入 data_dir/logs。
+    - 测试步骤:
+      1. 调用 GET /api/v1/config/system 获取当前运行时 data_dir。
+      2. 调用 GET /health 触发一次常规请求。
+      3. 检查 data_dir/logs 下 app/access/error 日志文件是否存在。
+    - 预期结果:
+      1. HTTP 200，业务 code=200。
+      2. data_dir/logs 目录存在，且包含 app.log/access.log/error.log。
+    - 历史变更:
+      - 2026-04-02: 新增日志目录跟随 data_dir 的契约测试。
+    """
+    base_url = integration_runtime["base_url"]
+    runtime_data_dir: Path = integration_runtime["data_dir"]
+
+    system_resp = requests.get(
+        f"{base_url}/api/v1/config/system",
+        timeout=5,
+    )
+    assert system_resp.status_code == 200
+    system_payload = system_resp.json()
+    assert system_payload["code"] == 200
+
+    # 触发一次请求，确保 handler 已工作。
+    health_resp = requests.get(
+        f"{base_url}/health",
+        timeout=5,
+    )
+    assert health_resp.status_code == 200
+
+    logs_dir = runtime_data_dir / "logs"
+    assert logs_dir.is_dir()
+    assert (logs_dir / "app.log").is_file()
+    assert (logs_dir / "access.log").is_file()
+    assert (logs_dir / "error.log").is_file()
 
 
 @pytest.mark.integration
