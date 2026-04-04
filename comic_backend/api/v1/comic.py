@@ -1577,6 +1577,25 @@ def organize_database():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/local-metadata/refresh', methods=['POST'])
+@require_third_party(error_response)
+def refresh_local_comic_metadata():
+    """Refresh a single LOCAL comic metadata from third-party sources."""
+    try:
+        data = request.json or {}
+        comic_id = str(data.get('comic_id') or '').strip()
+        if not comic_id:
+            return error_response(400, "missing parameter: comic_id")
+
+        result = comic_service.refresh_local_comic_metadata(comic_id)
+        if result.success:
+            return success_response(result.data, result.message or "LOCAL 漫画详情已更新")
+        return error_response(400, result.message or "LOCAL 漫画详情更新失败")
+    except Exception as e:
+        error_logger.error(f"refresh local comic metadata api failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @comic_bp.route('/update/check', methods=['POST'])
 def check_comic_update():
     """Check whether a comic has online updates."""

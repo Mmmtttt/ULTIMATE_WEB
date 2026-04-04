@@ -237,6 +237,12 @@ export const comicApi = {
     return request.post('/v1/comic/organize')
   },
 
+  refreshLocalMetadata: (comicId) => {
+    return request.post('/v1/comic/local-metadata/refresh', {
+      comic_id: comicId
+    })
+  },
+
   /**
    * 检查漫画是否有可下载更新
    * @param {string} comicId - 漫画ID

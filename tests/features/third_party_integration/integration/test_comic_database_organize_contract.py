@@ -189,3 +189,113 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
     finally:
         save_json(comics_path, original_comics)
         save_json(tags_path, original_tags)
+
+
+@pytest.mark.integration
+def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwriting_title(
+    third_party_client,
+    monkeypatch,
+):
+    client = third_party_client["client"]
+    meta_dir: Path = third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("third_party.platform_service")
+
+    comics_path = meta_dir / "comics_database.json"
+    tags_path = meta_dir / "tags_database.json"
+    original_comics = load_json(comics_path)
+    original_tags = load_json(tags_path)
+
+    class FakePlatformService:
+        def search_albums(self, platform, keyword, max_pages=1, fast_mode=False):
+            platform_name = str(getattr(platform, "value", platform))
+            normalized_keyword = str(keyword or "").strip().lower()
+            if platform_name == "JM" and normalized_keyword.replace(" ", "") in {"mylocalcomicchapter1", "mylocalcomic"}:
+                return {"albums": [{"album_id": "jm_1", "title": "Remote changed title"}]}
+            return {"albums": []}
+
+        def get_album_by_id(self, platform, album_id):
+            if str(album_id or "").strip() != "jm_1":
+                return {"albums": []}
+            return {
+                "albums": [
+                    {
+                        "album_id": "jm_1",
+                        "title": "Remote changed title",
+                        "author": "Remote Author",
+                        "tags": ["ManualComicTag", "NewComicTag"],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    try:
+        save_json(
+            comics_path,
+            {
+                "collection_name": "Test Comics",
+                "user": "test-user",
+                "total_comics": 2,
+                "last_updated": "2026-04-01",
+                "comics": [
+                    {
+                        "id": "LOCAL2001",
+                        "title": "My Local Comic Chapter 1",
+                        "author": "",
+                        "tag_ids": ["tag_comic_manual"],
+                        "is_deleted": False,
+                    },
+                    {
+                        "id": "LOCAL2002",
+                        "title": "Another Local Comic",
+                        "author": "",
+                        "tag_ids": [],
+                        "is_deleted": False,
+                    },
+                ],
+            },
+        )
+        save_json(
+            tags_path,
+            {
+                "collection_name": "Test Tags",
+                "user": "test-user",
+                "last_updated": "2026-04-01",
+                "tags": [
+                    {"id": "tag_comic_manual", "name": "ManualComicTag", "content_type": "comic", "create_time": "2026-04-01T00:00:00"},
+                ],
+            },
+        )
+
+        resp = client.post(
+            "/api/v1/comic/local-metadata/refresh",
+            json={"comic_id": "LOCAL2001"},
+        )
+        payload = resp.get_json()
+        assert resp.status_code == 200
+        assert payload["code"] == 200
+
+        data = payload["data"] or {}
+        assert data["id"] == "LOCAL2001"
+        assert data["title"] == "My Local Comic Chapter 1"
+        assert data["author"] == "Remote Author"
+        assert data["metadata_refresh"]["matched_platform"] == "JM"
+        assert data["metadata_refresh"]["bound_tags"] >= 1
+
+        refreshed_comics = load_json(comics_path).get("comics") or []
+        refreshed_tags = load_json(tags_path).get("tags") or []
+        tag_names = {str(tag.get("name") or "") for tag in refreshed_tags}
+
+        local_2001 = find_by_id(refreshed_comics, "LOCAL2001")
+        local_2002 = find_by_id(refreshed_comics, "LOCAL2002")
+        assert local_2001 is not None
+        assert local_2002 is not None
+        assert local_2001["title"] == "My Local Comic Chapter 1"
+        assert local_2001["author"] == "Remote Author"
+        assert local_2001["local_metadata_enriched"] is True
+        assert "tag_comic_manual" in (local_2001.get("tag_ids") or [])
+        assert "NewComicTag" in tag_names
+        assert local_2002["title"] == "Another Local Comic"
+    finally:
+        save_json(comics_path, original_comics)
+        save_json(tags_path, original_tags)

@@ -124,6 +124,25 @@ def refresh_preview_video():
         return error_response(500, "服务端内部错误")
 
 
+@video_bp.route('/local-metadata/refresh', methods=['POST'])
+@require_third_party(error_response)
+def refresh_local_video_metadata():
+    """Refresh a single LOCAL video metadata from third-party sources."""
+    try:
+        data = request.json or {}
+        video_id = str(data.get('video_id') or '').strip()
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+
+        result = video_service.refresh_local_video_metadata(video_id)
+        if result.success:
+            return success_response(result.data, result.message or "LOCAL 视频详情已更新")
+        return error_response(400, result.message or "LOCAL 视频详情更新失败")
+    except Exception as e:
+        error_logger.error(f"refresh local video metadata api failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @video_bp.route('/search', methods=['GET'])
 def video_search():
     try:

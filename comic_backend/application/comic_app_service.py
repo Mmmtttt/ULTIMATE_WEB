@@ -1330,6 +1330,153 @@ class ComicAppService:
             error_logger.error(f"Organize enrich local metadata failed: {e}")
             return ServiceResult.error("Local metadata enrich failed")
 
+    def _normalize_comic_remote_tags(self, raw_tags: Any) -> List[str]:
+        if not isinstance(raw_tags, list):
+            return []
+        normalized: List[str] = []
+        seen = set()
+        for item in raw_tags:
+            if isinstance(item, dict):
+                name = self._normalize_tag_name(item.get("name") or item.get("tag") or "")
+            else:
+                name = self._normalize_tag_name(item)
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(name)
+        return normalized
+
+    def _ensure_comic_tags_for_entity(
+        self,
+        comic: Comic,
+        remote_tags: Any,
+        tag_name_to_id: Dict[str, str],
+    ) -> Tuple[int, int]:
+        remote_tag_names = self._normalize_comic_remote_tags(remote_tags)
+        if not remote_tag_names:
+            return 0, 0
+
+        current_tag_ids = list(comic.tag_ids or [])
+        created_count = 0
+        bound_count = 0
+
+        for tag_name in remote_tag_names:
+            key = tag_name.lower()
+            tag_id = tag_name_to_id.get(key, "")
+            if not tag_id:
+                created_tag = self._tag_repo.create(tag_name, ContentType.COMIC)
+                if created_tag:
+                    tag_id = created_tag.id
+                    tag_name_to_id[key] = tag_id
+                    created_count += 1
+                else:
+                    comic_tags = self._tag_repo.get_all(ContentType.COMIC)
+                    for tag in comic_tags:
+                        if self._normalize_tag_name(tag.name).lower() == key:
+                            tag_id = tag.id
+                            tag_name_to_id[key] = tag_id
+                            break
+
+            if not tag_id:
+                continue
+            if tag_id in current_tag_ids:
+                continue
+            current_tag_ids.append(tag_id)
+            bound_count += 1
+
+        if bound_count > 0:
+            comic.tag_ids = current_tag_ids
+        return created_count, bound_count
+
+    def refresh_local_comic_metadata(self, comic_id: str) -> ServiceResult:
+        try:
+            from core.platform import Platform
+            from core.runtime_profile import is_third_party_enabled
+
+            target_comic_id = str(comic_id or "").strip()
+            if not target_comic_id:
+                return ServiceResult.error("missing parameter: comic_id")
+
+            comic = self._comic_repo.get_by_id(target_comic_id)
+            if not comic:
+                return ServiceResult.error("comic not found")
+            if bool(comic.is_deleted):
+                return ServiceResult.error("comic is deleted")
+            if not self._is_local_import_comic_id(comic.id):
+                return ServiceResult.error("only LOCAL comics support metadata refresh")
+
+            if not is_third_party_enabled():
+                return ServiceResult.error("third-party integration is disabled in current runtime profile")
+
+            clean_title, chapter_key = self._build_dedupe_key(comic.title or "")
+            if not clean_title:
+                return ServiceResult.error("comic title is invalid for metadata matching")
+
+            from third_party.platform_service import get_platform_service
+            platform_service = get_platform_service()
+
+            matched = {}
+            matched_platform = ""
+            try:
+                matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
+                if matched:
+                    matched_platform = Platform.JM.value
+            except Exception as match_error:
+                error_logger.error(f"refresh local comic metadata match on JM failed: comic_id={target_comic_id}, error={match_error}")
+
+            if not matched:
+                try:
+                    matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
+                    if matched:
+                        matched_platform = Platform.PK.value
+                except Exception as match_error:
+                    error_logger.error(f"refresh local comic metadata match on PK failed: comic_id={target_comic_id}, error={match_error}")
+
+            if not matched:
+                return ServiceResult.error("no remote match found for current comic")
+
+            detail = matched.get("detail") if isinstance(matched.get("detail"), dict) else {}
+
+            updated_fields = 0
+            remote_author = str(detail.get("author") or "").strip()
+            if remote_author and remote_author != str(comic.author or "").strip():
+                comic.author = remote_author
+                updated_fields += 1
+
+            comic_tags = self._tag_repo.get_all(ContentType.COMIC)
+            tag_name_to_id = {
+                self._normalize_tag_name(tag.name).lower(): tag.id
+                for tag in comic_tags
+                if self._normalize_tag_name(tag.name)
+            }
+            created_tags, bound_tags = self._ensure_comic_tags_for_entity(comic, detail.get("tags"), tag_name_to_id)
+            if bound_tags > 0:
+                updated_fields += 1
+
+            if not bool(getattr(comic, "local_metadata_enriched", False)):
+                comic.local_metadata_enriched = True
+                updated_fields += 1
+
+            if not self._comic_repo.save(comic):
+                return ServiceResult.error("save comic metadata failed")
+
+            detail_result = self.get_comic_detail(comic.id)
+            detail_payload = detail_result.data if detail_result.success else (comic.to_dict() if hasattr(comic, "to_dict") else {})
+            if isinstance(detail_payload, dict):
+                detail_payload["metadata_refresh"] = {
+                    "matched_platform": matched_platform,
+                    "updated_fields": updated_fields,
+                    "created_tags": created_tags,
+                    "bound_tags": bound_tags,
+                }
+            return ServiceResult.ok(detail_payload, "local comic metadata refreshed")
+        except Exception as e:
+            error_logger.error(f"refresh local comic metadata failed: {comic_id}, {e}")
+            return ServiceResult.error("refresh local comic metadata failed")
+
     def check_comic_update(self, comic_id: str) -> ServiceResult:
         """Check whether remote comic has more pages than local files."""
         try:

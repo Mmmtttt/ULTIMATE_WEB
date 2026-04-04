@@ -172,3 +172,126 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
     finally:
         save_json(videos_path, original_videos)
         save_json(tags_path, original_tags)
+
+
+@pytest.mark.integration
+def test_video_local_metadata_refresh_updates_single_local_record_and_appends_tags(
+    third_party_client,
+    monkeypatch,
+):
+    client = third_party_client["client"]
+    meta_dir: Path = third_party_client["meta_dir"]
+    video_service_module = third_party_client["video_service_module"]
+
+    videos_path = meta_dir / "videos_database.json"
+    tags_path = meta_dir / "tags_database.json"
+    original_videos = load_json(videos_path)
+    original_tags = load_json(tags_path)
+
+    class FakeAdapter:
+        def __init__(self, platform_name: str):
+            self.platform_name = platform_name
+
+        def search_videos(self, keyword, page=1, max_pages=1):
+            code = str(keyword or "").strip().upper()
+            if self.platform_name == "javdb" and code == "ABP-111":
+                return {"videos": [{"video_id": "JAVDB_111", "title": "Remote title"}]}
+            return {"videos": []}
+
+        def get_video_detail(self, video_id, movie_type=None):
+            if str(video_id or "").strip().upper() != "JAVDB_111":
+                return {}
+            return {
+                "video_id": "JAVDB_111",
+                "code": "ABP-111",
+                "title": "Remote Updated Title",
+                "date": "2026-01-01",
+                "series": "Remote Series",
+                "actors": ["Actor Remote"],
+                "tags": ["ManualTag", "NewRemoteTag"],
+                "cover_url": "https://example.com/remote-cover.jpg",
+                "thumbnail_images": ["https://example.com/remote-thumb-1.jpg"],
+                "preview_video": "https://example.com/remote-preview.mp4",
+            }
+
+    monkeypatch.setattr(
+        video_service_module.VideoAppService,
+        "_build_video_metadata_adapters",
+        lambda self: {"javdb": FakeAdapter("javdb"), "javbus": FakeAdapter("javbus")},
+    )
+    monkeypatch.setattr(video_service_module.VideoAppService, "cache_cover_to_static_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(video_service_module.VideoAppService, "cache_thumbnail_images_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(video_service_module.VideoAppService, "cache_preview_video_async", lambda *args, **kwargs: None)
+
+    try:
+        save_json(
+            videos_path,
+            {
+                "collection_name": "Test Videos",
+                "user": "test-user",
+                "total_videos": 2,
+                "last_updated": "2026-04-01",
+                "videos": [
+                    {
+                        "id": "LOCALV_A",
+                        "code": "ABP-111",
+                        "title": "Local Original Title",
+                        "creator": "",
+                        "actors": [],
+                        "tag_ids": ["tag_video_manual"],
+                        "is_deleted": False,
+                    },
+                    {
+                        "id": "LOCALV_B",
+                        "code": "ABP-222",
+                        "title": "Other Local",
+                        "creator": "",
+                        "actors": [],
+                        "tag_ids": [],
+                        "is_deleted": False,
+                    },
+                ],
+            },
+        )
+        save_json(
+            tags_path,
+            {
+                "collection_name": "Test Tags",
+                "user": "test-user",
+                "last_updated": "2026-04-01",
+                "tags": [
+                    {"id": "tag_video_manual", "name": "ManualTag", "content_type": "video", "create_time": "2026-04-01T00:00:00"},
+                ],
+            },
+        )
+
+        resp = client.post(
+            "/api/v1/video/local-metadata/refresh",
+            json={"video_id": "LOCALV_A"},
+        )
+        payload = resp.get_json()
+        assert resp.status_code == 200
+        assert payload["code"] == 200
+
+        data = payload["data"] or {}
+        assert data["id"] == "LOCALV_A"
+        assert data["title"] == "Remote Updated Title"
+        assert data["creator"] == "Actor Remote"
+        assert data["metadata_refresh"]["matched_platform"] == "javdb"
+        assert data["metadata_refresh"]["bound_tags"] >= 1
+
+        refreshed_videos = load_json(videos_path).get("videos") or []
+        refreshed_tags = load_json(tags_path).get("tags") or []
+        tag_names = {str(tag.get("name") or "") for tag in refreshed_tags}
+
+        local_a = find_by_id(refreshed_videos, "LOCALV_A")
+        local_b = find_by_id(refreshed_videos, "LOCALV_B")
+        assert local_a is not None
+        assert local_b is not None
+        assert local_a["local_metadata_enriched"] is True
+        assert "tag_video_manual" in (local_a.get("tag_ids") or [])
+        assert "NewRemoteTag" in tag_names
+        assert local_b["title"] == "Other Local"
+    finally:
+        save_json(videos_path, original_videos)
+        save_json(tags_path, original_tags)

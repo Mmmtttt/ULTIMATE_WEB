@@ -129,6 +129,12 @@ export const videoApi = {
       source
     })
   },
+
+  refreshLocalMetadata(videoId) {
+    return request.post('/v1/video/local-metadata/refresh', {
+      video_id: videoId
+    })
+  },
   
   getTags() {
     return request.get('/v1/video/tags')

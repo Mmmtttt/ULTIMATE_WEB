@@ -1224,6 +1224,88 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"organize enrich local video metadata failed: {e}")
             return ServiceResult.error("local video metadata enrich failed")
 
+    def refresh_local_video_metadata(self, video_id: str) -> ServiceResult:
+        try:
+            from core.runtime_profile import is_third_party_enabled
+
+            target_video_id = str(video_id or "").strip()
+            if not target_video_id:
+                return ServiceResult.error("missing parameter: video_id")
+
+            video = self._video_repo.get_by_id(target_video_id)
+            if not video:
+                return ServiceResult.error("video not found")
+            if bool(video.is_deleted):
+                return ServiceResult.error("video is deleted")
+            if not self._is_local_video_id(video.id):
+                return ServiceResult.error("only LOCAL videos support metadata refresh")
+
+            if not is_third_party_enabled():
+                return ServiceResult.error("third-party integration is disabled in current runtime profile")
+
+            code = str(video.code or "").strip()
+            if not code:
+                return ServiceResult.error("video code is empty")
+
+            adapters = self._build_video_metadata_adapters()
+            javdb_adapter = adapters.get("javdb")
+            javbus_adapter = adapters.get("javbus")
+
+            matched_platform = ""
+            detail: Dict[str, Any] = {}
+            if javdb_adapter:
+                try:
+                    matched = self._search_first_video_detail(javdb_adapter, code)
+                    detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
+                    if detail:
+                        matched_platform = "javdb"
+                except Exception as search_error:
+                    error_logger.error(f"refresh local video metadata search on javdb failed: code={code}, error={search_error}")
+
+            if not detail and javbus_adapter:
+                try:
+                    matched = self._search_first_video_detail(javbus_adapter, code)
+                    detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
+                    if detail:
+                        matched_platform = "javbus"
+                except Exception as search_error:
+                    error_logger.error(f"refresh local video metadata search on javbus failed: code={code}, error={search_error}")
+
+            if not detail:
+                return ServiceResult.error("no remote match found for current video code")
+
+            video_tags = self._tag_repo.get_all(ContentType.VIDEO)
+            tag_name_to_id = {
+                str(tag.name or "").strip().lower(): tag.id
+                for tag in video_tags
+                if str(tag.name or "").strip()
+            }
+            update_stats = self._apply_remote_detail_to_video(video, detail, tag_name_to_id)
+
+            if not self._video_repo.save(video):
+                return ServiceResult.error("save video metadata failed")
+
+            if str(video.cover_path or "").strip():
+                self.cache_cover_to_static_async(video.id, video.cover_path, source="local")
+            if list(video.thumbnail_images or []):
+                self.cache_thumbnail_images_async(video.id, list(video.thumbnail_images or []), source="local", force=True)
+            if str(video.preview_video or "").strip():
+                self.cache_preview_video_async(video.id, video.preview_video, source="local", force=True)
+
+            detail_result = self.get_video_detail(video.id)
+            detail_payload = detail_result.data if detail_result.success else (video.to_dict() if hasattr(video, "to_dict") else {})
+            if isinstance(detail_payload, dict):
+                detail_payload["metadata_refresh"] = {
+                    "matched_platform": matched_platform,
+                    "updated_fields": int(update_stats.get("updated_fields", 0)),
+                    "created_tags": int(update_stats.get("created_tags", 0)),
+                    "bound_tags": int(update_stats.get("bound_tags", 0)),
+                }
+            return ServiceResult.ok(detail_payload, "local video metadata refreshed")
+        except Exception as e:
+            error_logger.error(f"refresh local video metadata failed: {e}")
+            return ServiceResult.error("refresh local video metadata failed")
+
     def _build_preview_asset_prefixes(self, video_id: str) -> tuple:
         safe_video_id = self._sanitize_video_asset_id(video_id)
         preview_root_dir, preview_root_url, _ = self._build_preview_asset_root(video_id, "preview")

@@ -229,6 +229,16 @@
         <van-cell-group title="预览视频">
           <div class="preview-video-actions">
             <van-button
+              v-if="isLocalVideo"
+              size="small"
+              plain
+              type="success"
+              :loading="refreshingLocalMetadata"
+              @click="refreshLocalMetadata"
+            >
+              更新详情信息
+            </van-button>
+            <van-button
               size="small"
               plain
               type="primary"
@@ -449,6 +459,7 @@ const previewVideoPlayer = ref(null)
 const assetRefreshTimer = ref(null)
 const assetRefreshAttempts = ref(0)
 const refreshingPreviewVideo = ref(false)
+const refreshingLocalMetadata = ref(false)
 
 const hls = ref(null)
 const previewHls = ref(null)
@@ -468,6 +479,7 @@ const actions = computed(() => {
   const menuActions = []
   if (isLocalVideo.value) {
     menuActions.push(
+      { name: '更新详情信息', value: 'refresh_local_metadata' },
       { name: '编辑信息', value: 'edit' },
       { name: '绑定标签', value: 'tags' }
     )
@@ -791,6 +803,45 @@ async function refreshPreviewVideo() {
   }
 }
 
+async function refreshLocalMetadata() {
+  if (!videoId.value || refreshingLocalMetadata.value || !isLocalVideo.value) {
+    return
+  }
+
+  refreshingLocalMetadata.value = true
+  showLoadingToast({
+    message: '正在更新详情信息...',
+    forbidClick: true
+  })
+
+  try {
+    const response = await videoApi.refreshLocalMetadata(videoId.value)
+    closeToast()
+
+    if (response?.code !== 200 || !response?.data) {
+      showFailToast(response?.msg || '更新详情信息失败')
+      return
+    }
+
+    video.value = response.data
+    selectedTagIds.value = [...(response.data?.tag_ids || [])]
+    syncEditFormFromVideo(response.data)
+    if (response.data?.score) {
+      scoreValue.value = response.data.score
+    }
+    await fetchAllTags()
+    scheduleLocalAssetRefresh()
+    await mountPreviewVideoSource()
+    showSuccessToast(response?.msg || '详情信息已更新')
+  } catch (error) {
+    closeToast()
+    console.error('更新详情信息失败:', error)
+    showFailToast(error?.message || '更新详情信息失败')
+  } finally {
+    refreshingLocalMetadata.value = false
+  }
+}
+
 function syncEditFormFromVideo(detail) {
   if (!detail) {
     return
@@ -1097,6 +1148,8 @@ async function handleAction(action) {
     selectedTagIds.value = [...(video.value?.tag_ids || [])]
     await fetchAllTags()
     showTagPopup.value = true
+  } else if (action.value === 'refresh_local_metadata') {
+    await refreshLocalMetadata()
   } else if (action.value === 'trash') {
     await handleMoveToTrash()
   } else if (action.value === 'delete') {
@@ -1576,6 +1629,7 @@ onUnmounted(() => {
 .preview-video-actions {
   padding: 12px 12px 0;
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
 }
 

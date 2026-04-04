@@ -322,6 +322,7 @@ const favoriteLoading = ref(false)
 const downloadLoading = ref(false)
 const subscribing = ref(false)
 const isSubscribed = ref(false)
+const refreshingLocalMetadata = ref(false)
 
 const editForm = ref({
   title: '',
@@ -329,13 +330,19 @@ const editForm = ref({
   desc: ''
 })
 
-const actions = [
-  { name: '下载漫画', value: 'download' },
-  { name: '检查更新并下载', value: 'check_update' },
-  { name: '编辑信息', value: 'edit' },
-  { name: '绑定标签', value: 'tags' },
-  { name: '移入回收站', value: 'trash', color: '#ee0a24' }
-]
+const actions = computed(() => {
+  const menuActions = [
+    { name: '下载漫画', value: 'download' },
+    { name: '检查更新并下载', value: 'check_update' },
+    { name: '编辑信息', value: 'edit' },
+    { name: '绑定标签', value: 'tags' }
+  ]
+  if (comic.value?.source !== 'preview') {
+    menuActions.push({ name: '更新详情信息', value: 'refresh_local_metadata' })
+  }
+  menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
+  return menuActions
+})
 const coverUrl = computed(() => {
   return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
 })
@@ -490,10 +497,44 @@ function onActionSelect(action) {
     showEditPopup.value = true
   } else if (action.value === 'tags') {
     showTagPopup.value = true
+  } else if (action.value === 'refresh_local_metadata') {
+    refreshLocalMetadata()
   } else if (action.value === 'trash') {
     handleMoveToTrash()
   }
 }
+
+async function refreshLocalMetadata() {
+  if (!comic.value?.id || comic.value?.source === 'preview' || refreshingLocalMetadata.value) return
+
+  refreshingLocalMetadata.value = true
+  try {
+    const response = await comicApi.refreshLocalMetadata(comic.value.id)
+    if (response?.code !== 200 || !response?.data) {
+      showFailToast(response?.msg || '更新详情信息失败')
+      return
+    }
+
+    comicStore.clearCache('detail', comic.value.id)
+    comicStore.clearCache('list')
+    comic.value = response.data
+    selectedTagIds.value = [...(response.data?.tag_ids || [])]
+    editForm.value = {
+      title: response.data?.title || '',
+      author: response.data?.author || '',
+      desc: response.data?.desc || ''
+    }
+    await fetchAllTags()
+    await checkSubscriptionStatus()
+    showSuccessToast(response?.msg || '详情信息已更新')
+  } catch (error) {
+    console.error('更新详情信息失败:', error)
+    showFailToast(error?.message || '更新详情信息失败')
+  } finally {
+    refreshingLocalMetadata.value = false
+  }
+}
+
 async function handleDownload() {
   if (!comic.value) return
   
