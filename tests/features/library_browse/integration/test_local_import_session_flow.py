@@ -414,6 +414,111 @@ def test_local_import_hardlink_move_alias_matches_move_mode_behavior(integration
 
 
 @pytest.mark.integration
+def test_local_import_hardlink_mode_handles_unicode_digit_directory_name(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_hardlink_unicode_digit"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+
+    title = "稗田⑨代目作品"
+    _write_png(source_dir / "作者Unicode" / title / "001.png")
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(source_dir), "import_mode": "hardlink_move"},
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        assert data.get("effective_mode") == "move_huge"
+
+        node_map = _build_node_map(data["tree"])
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者Unicode"): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["status"] == "completed"
+        assert result["imported_count"] >= 1
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
+def test_local_import_hardlink_mode_supports_archive_source_path(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    runtime_root: Path = integration_runtime["runtime_root"]
+
+    source_dir = runtime_root / "local_import_case_hardlink_archive_source"
+    if source_dir.exists():
+        shutil.rmtree(source_dir, ignore_errors=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    archive_path = source_dir / "硬链顶层压缩包.zip"
+    title = "作品来自压缩包"
+    _write_zip_with_png(
+        archive_path,
+        members=[f"作者压缩/{title}/001.png"],
+    )
+
+    try:
+        parse_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/from-path",
+            json={"source_path": str(archive_path), "import_mode": "hardlink_move"},
+            timeout=60,
+        )
+        assert parse_resp.status_code == 200
+        parse_payload = parse_resp.json()
+        assert parse_payload["code"] == 200
+        data = parse_payload["data"]
+        session_id = data["session_id"]
+        assert data.get("import_mode") == "hardlink_move"
+        assert data.get("effective_mode") == "move_huge"
+
+        # 顶层压缩包会先被原地解压，再进入 move_huge 的常规流程。
+        assert not archive_path.exists()
+        extracted_candidates = [p for p in source_dir.iterdir() if p.is_dir() and p.name.startswith("硬链顶层压缩包")]
+        assert len(extracted_candidates) >= 1
+
+        node_map = _build_node_map(data["tree"])
+        assignments = {
+            _find_parent_id_by_name(node_map, "作者压缩"): "author",
+            _find_parent_id_by_name(node_map, title): "work",
+        }
+
+        commit_resp = requests.post(
+            f"{base_url}/api/v1/comic/batch-upload/session/commit",
+            json={"session_id": session_id, "assignments": assignments},
+            timeout=60,
+        )
+        assert commit_resp.status_code == 200
+        commit_payload = commit_resp.json()
+        assert commit_payload["code"] == 200
+        result = commit_payload["data"]
+        assert result["failed_count"] == 0
+        assert result["status"] == "completed"
+        assert result["imported_count"] >= 1
+    finally:
+        _cleanup_imported_comics(base_url, [title])
+
+
+@pytest.mark.integration
 def test_local_import_copy_mode_supports_single_layer_archive_password(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]

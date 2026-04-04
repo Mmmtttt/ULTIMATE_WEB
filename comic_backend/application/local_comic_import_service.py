@@ -279,19 +279,24 @@ class LocalComicImportService:
     def _natural_sort_key(text: str) -> List[Tuple[int, Any]]:
         parts: List[Tuple[int, Any]] = []
         chunk = ""
+        chunk_is_ascii_digit = False
         for ch in str(text or ""):
-            if ch.isdigit():
-                if chunk and not chunk[-1].isdigit():
-                    parts.append((1, chunk.lower()))
-                    chunk = ""
+            is_ascii_digit = "0" <= ch <= "9"
+            if not chunk:
+                chunk = ch
+                chunk_is_ascii_digit = is_ascii_digit
+                continue
+            if chunk_is_ascii_digit == is_ascii_digit:
                 chunk += ch
+                continue
+            if chunk_is_ascii_digit:
+                parts.append((0, int(chunk)))
             else:
-                if chunk and chunk[-1].isdigit():
-                    parts.append((0, int(chunk)))
-                    chunk = ""
-                chunk += ch
+                parts.append((1, chunk.lower()))
+            chunk = ch
+            chunk_is_ascii_digit = is_ascii_digit
         if chunk:
-            if chunk.isdigit():
+            if chunk_is_ascii_digit:
                 parts.append((0, int(chunk)))
             else:
                 parts.append((1, chunk.lower()))
@@ -1164,6 +1169,38 @@ class LocalComicImportService:
             "warnings": sorted(warning_set),
         }
 
+    def _prepare_single_archive_source_inplace(
+        self,
+        session_id: str,
+        archive_path: Path,
+        archive_password: Optional[str] = None,
+    ) -> Path:
+        if not archive_path.exists() or not archive_path.is_file() or not self._is_archive(archive_path):
+            raise ValueError("超大文件移动导入仅支持文件夹路径或压缩包路径")
+
+        session_base = self._ensure_session_dir(session_id)
+        scratch_root = session_base / "prepare_scratch"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+
+        target_dir = self._make_unique_path(archive_path.parent / self._strip_archive_suffix(archive_path.name))
+        temp_dir = scratch_root / f"extract_{uuid.uuid4().hex}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._extract_archive(archive_path, temp_dir, archive_password=archive_password)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for child in self._sorted_entries(list(temp_dir.iterdir())):
+                destination = self._make_unique_path(target_dir / child.name)
+                shutil.move(str(child), str(destination))
+            self._flatten_archive_directory(target_dir)
+            self._prune_empty_directories(target_dir)
+            archive_path.unlink(missing_ok=True)
+            return target_dir
+        except Exception:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def _count_direct_images(self, path: Path) -> int:
         total = 0
         for child in path.iterdir():
@@ -1532,16 +1569,32 @@ class LocalComicImportService:
                 return response
 
             effective_mode = mode
+            move_source_root = source
             if mode == IMPORT_MODE_MOVE_HUGE:
-                if not source.is_dir():
-                    raise ValueError("超大文件移动导入仅支持文件夹路径")
-
                 local_root = Path(LOCAL_PICTURES_DIR)
                 if not self._is_same_filesystem(source, local_root):
                     effective_mode = IMPORT_MODE_COPY_SAFE
                     warnings.append(
                         "检测到源目录与本地图库目录不在同一磁盘，无法原地移动导入；已自动降级为复制导入。"
                     )
+                else:
+                    if source.is_dir():
+                        move_source_root = source
+                    elif source.is_file() and self._is_archive(source):
+                        move_source_root = self._prepare_single_archive_source_inplace(
+                            session_id,
+                            source,
+                            archive_password=archive_password,
+                        )
+                        self._update_meta(
+                            session_id,
+                            {
+                                "source_origin_path": str(source),
+                                "source_path": str(move_source_root),
+                            },
+                        )
+                    else:
+                        raise ValueError("超大文件移动导入仅支持文件夹路径或压缩包路径")
 
             self._update_meta(
                 session_id,
@@ -1554,18 +1607,19 @@ class LocalComicImportService:
             if effective_mode == IMPORT_MODE_MOVE_HUGE:
                 prepare_result = self._prepare_source_inplace(
                     session_id,
-                    source,
+                    move_source_root,
                     archive_password=archive_password,
                 )
                 warnings.extend(prepare_result.get("warnings", []))
                 response = self._finalize_session(
                     session_id,
-                    source,
+                    move_source_root,
                     warnings,
                     meta_updates={
                         "import_mode": display_mode,
                         "effective_mode": effective_mode,
-                        "source_path": str(source),
+                        "source_origin_path": str(source),
+                        "source_path": str(move_source_root),
                         "prepare_status": prepare_result.get("status", "completed"),
                         "archive_password": archive_password or "",
                     },

@@ -131,19 +131,24 @@ class SoftRefComicReader:
     def _natural_sort_key(text: str) -> List[Tuple[int, Any]]:
         parts: List[Tuple[int, Any]] = []
         chunk = ""
+        chunk_is_ascii_digit = False
         for ch in str(text or ""):
-            if ch.isdigit():
-                if chunk and not chunk[-1].isdigit():
-                    parts.append((1, chunk.lower()))
-                    chunk = ""
+            is_ascii_digit = "0" <= ch <= "9"
+            if not chunk:
+                chunk = ch
+                chunk_is_ascii_digit = is_ascii_digit
+                continue
+            if chunk_is_ascii_digit == is_ascii_digit:
                 chunk += ch
+                continue
+            if chunk_is_ascii_digit:
+                parts.append((0, int(chunk)))
             else:
-                if chunk and chunk[-1].isdigit():
-                    parts.append((0, int(chunk)))
-                    chunk = ""
-                chunk += ch
+                parts.append((1, chunk.lower()))
+            chunk = ch
+            chunk_is_ascii_digit = is_ascii_digit
         if chunk:
-            if chunk.isdigit():
+            if chunk_is_ascii_digit:
                 parts.append((0, int(chunk)))
             else:
                 parts.append((1, chunk.lower()))
