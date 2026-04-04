@@ -67,6 +67,11 @@
             <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
             <span class="stat-item">{{ progressPercent }}%</span>
           </div>
+
+          <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
+            <span class="storage-path-label">Path:</span>
+            <span class="storage-path-value">{{ comicStoragePath }}</span>
+          </div>
           
           <div class="score-section">
             <div class="score-display">
@@ -366,6 +371,11 @@ const customLists = computed(() => listStore.lists || [])
 const isRead = computed(() => {
   if (!comic.value) return false
   return isReadByProgress(comic.value.current_page)
+})
+
+const comicStoragePath = computed(() => {
+  const path = String(comic.value?.storage_path || comic.value?.import_source || '').trim()
+  return path
 })
 
 // 方法
@@ -876,6 +886,27 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+.storage-path-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.storage-path-label {
+  flex-shrink: 0;
+  font-weight: 600;
+  opacity: 0.92;
+}
+
+.storage-path-value {
+  min-width: 0;
+  word-break: break-all;
+  opacity: 0.9;
 }
 
 .score-section {

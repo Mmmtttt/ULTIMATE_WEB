@@ -124,6 +124,11 @@
           <span class="label">系列:</span>
           <span class="value">{{ video.series }}</span>
         </div>
+
+        <div v-if="videoStoragePath" class="info-row">
+          <span class="label">Path:</span>
+          <span class="value path-value" :title="videoStoragePath">{{ videoStoragePath }}</span>
+        </div>
         
         <div class="info-row score-row">
           <span class="label">评分:</span>
@@ -532,6 +537,10 @@ const localVideoPlayerUrl = computed(() => {
 const previewRefreshSource = computed(() => (video.value?.source === 'preview' ? 'preview' : 'local'))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
 const hasLocalVideo = computed(() => Boolean(localVideoPlayerUrl.value))
+const videoStoragePath = computed(() => {
+  const path = String(video.value?.storage_path || video.value?.local_source_path || '').trim()
+  return path
+})
 
 function clearAssetRefreshTimer() {
   if (assetRefreshTimer.value) {
@@ -1530,6 +1539,13 @@ onUnmounted(() => {
 .info-row .value {
   font-size: 14px;
   color: var(--text-strong);
+}
+
+.path-value {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 .actor-tags {

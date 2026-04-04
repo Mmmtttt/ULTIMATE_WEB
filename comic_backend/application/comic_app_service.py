@@ -1,4 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
+import base64
+import json
 import os
 import re
 from domain.comic import Comic, ComicRepository
@@ -108,6 +110,7 @@ class ComicAppService:
             preview_pages = get_preview_pages(comic.total_page)
             
             is_favorited = FAVORITES_LIST_ID in comic.list_ids
+            storage_path, storage_path_kind = self._resolve_comic_storage_path(comic)
             
             detail = {
                 "id": comic.id,
@@ -127,7 +130,12 @@ class ComicAppService:
                 "create_time": comic.create_time,
                 "list_ids": comic.list_ids,
                 "is_favorited": is_favorited,
-                "source": "local"
+                "source": "local",
+                "import_source": comic.import_source,
+                "storage_mode": comic.storage_mode,
+                "soft_ref_locator": comic.soft_ref_locator,
+                "storage_path": storage_path,
+                "storage_path_kind": storage_path_kind,
             }
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")
@@ -460,6 +468,70 @@ class ComicAppService:
     @staticmethod
     def _is_soft_ref_storage_mode(storage_mode: str) -> bool:
         return str(storage_mode or "").strip().lower() == "soft_ref"
+
+    @staticmethod
+    def _decode_softref_locator(locator: str) -> Dict[str, Any]:
+        raw = str(locator or "").strip()
+        if not raw.startswith("softref://"):
+            return {}
+        encoded = raw[len("softref://") :]
+        if not encoded:
+            return {}
+        try:
+            padding = "=" * ((4 - len(encoded) % 4) % 4)
+            decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
+            payload = json.loads(decoded)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _normalize_display_path(raw_path: str) -> str:
+        path = str(raw_path or "").strip()
+        if not path:
+            return ""
+        if path.startswith("softref://"):
+            return ""
+        if path.startswith(("http://", "https://")):
+            return path
+        try:
+            return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+        except Exception:
+            return path
+
+    def _resolve_comic_storage_path(self, comic: Comic) -> Tuple[str, str]:
+        if not comic:
+            return "", ""
+
+        if self._is_soft_ref_storage_mode(getattr(comic, "storage_mode", "")):
+            locator = str(getattr(comic, "soft_ref_locator", "") or getattr(comic, "import_source", "")).strip()
+            payload = self._decode_softref_locator(locator) if locator.startswith("softref://") else {}
+            kind = str(payload.get("kind", "")).strip().lower()
+            if kind == "archive_dir":
+                archive_path = self._normalize_display_path(payload.get("top_archive_path", ""))
+                if archive_path:
+                    return archive_path, "archive"
+            source_path = self._normalize_display_path(getattr(comic, "import_source", ""))
+            if source_path:
+                return source_path, "source"
+            locator_path = self._normalize_display_path(locator)
+            if locator_path:
+                return locator_path, "source"
+            return "", ""
+
+        try:
+            from utils.file_parser import file_parser
+
+            comic_dir = self._normalize_display_path(file_parser._get_comic_dir(comic.id))
+            if comic_dir:
+                return comic_dir, "local_dir"
+        except Exception:
+            pass
+
+        source_path = self._normalize_display_path(getattr(comic, "import_source", ""))
+        if source_path:
+            return source_path, "source"
+        return "", ""
 
     @staticmethod
     def _is_missing_cover_path(cover_path: str) -> bool:

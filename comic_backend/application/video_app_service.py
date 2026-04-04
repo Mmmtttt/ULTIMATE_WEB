@@ -216,6 +216,7 @@ class VideoAppService(BaseContentAppService):
             detail = video.to_dict()
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids]
             detail["source"] = "local"
+            detail["storage_path"] = self._resolve_video_storage_path(video)
             
             app_logger.info(f"获取视频详情成功: {video_id}")
             return ServiceResult.ok(detail)
@@ -223,6 +224,22 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"获取视频详情失败: {e}")
             return ServiceResult.error("获取视频详情失败")
     
+    def _resolve_video_storage_path(self, video: Video) -> str:
+        source_path = str(getattr(video, "local_source_path", "") or "").strip()
+        if source_path:
+            if source_path.startswith(("http://", "https://")):
+                return source_path
+            if source_path.startswith("/media/"):
+                resolved = self.resolve_local_video_file_path(video.id)
+                return str(resolved or "")
+            try:
+                return os.path.abspath(os.path.expandvars(os.path.expanduser(source_path)))
+            except Exception:
+                return source_path
+
+        resolved = self.resolve_local_video_file_path(video.id)
+        return str(resolved or "")
+
     def get_video_by_code(self, code: str) -> ServiceResult:
         try:
             video = self._video_repo.get_by_code(code)
