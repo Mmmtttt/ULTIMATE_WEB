@@ -1215,19 +1215,33 @@ class ComicAppService:
         if not remote_album_id:
             return {}
 
+        platform_value = str(getattr(platform, "value", platform) or "").strip().upper()
         detail = first_album
+        skip_remote_detail = False
+        if platform_value == "JM":
+            # Keep "first search result wins", but avoid JM detail API fan-out in local metadata refresh path.
+            has_author = bool(str(first_album.get("author") or "").strip())
+            first_tags = first_album.get("tags")
+            has_tags = isinstance(first_tags, list) and len(first_tags) > 0
+            skip_remote_detail = has_author or has_tags
+        app_logger.info(
+            f"local metadata first hit: platform={platform_value}, album_id={remote_album_id}, "
+            f"title={str(first_album.get('title') or '')[:80]}, skip_remote_detail={skip_remote_detail}"
+        )
+
         try:
-            detail_result = platform_service.get_album_by_id(platform, remote_album_id) or {}
-            detail_albums = detail_result.get("albums") or []
-            if detail_albums and isinstance(detail_albums[0], dict):
-                detail = detail_albums[0]
+            if not skip_remote_detail:
+                detail_result = platform_service.get_album_by_id(platform, remote_album_id) or {}
+                detail_albums = detail_result.get("albums") or []
+                if detail_albums and isinstance(detail_albums[0], dict):
+                    detail = detail_albums[0]
         except Exception as detail_error:
             error_logger.error(
                 f"Fetch remote detail failed: platform={getattr(platform, 'value', platform)}, album_id={remote_album_id}, error={detail_error}"
             )
 
         return {
-            "platform": getattr(platform, "value", str(platform)),
+            "platform": platform_value or getattr(platform, "value", str(platform)),
             "album_id": remote_album_id,
             "detail": detail,
         }

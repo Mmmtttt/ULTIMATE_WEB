@@ -428,16 +428,30 @@ class JMComicAdapter(BaseAdapter):
         
         for album in albums:
             album_id = album.get('album_id', 0)
+            raw_author = album.get('author', '')
+            if isinstance(raw_author, list):
+                author = ''
+                for item in raw_author:
+                    text = str(item or '').strip()
+                    if text:
+                        author = text
+                        break
+            else:
+                author = str(raw_author or '').strip()
+
+            raw_tags = album.get('tags', [])
+            tags = raw_tags if isinstance(raw_tags, list) else []
+
             converted = {
                 "rank": album.get('rank', 0),
                 "album_id": album_id,
                 "title": album.get('title', ''),
                 "title_jp": '',
-                "author": '',
+                "author": author,
                 "pages": 0,
                 "cover_url": f"https://cdn-msp3.18comic.vip/media/albums/{album_id}.jpg",
                 "album_url": '',
-                "tags": album.get('tags', []),
+                "tags": tags,
                 "category_tags": [],
                 "upload_date": '0',
                 "update_date": '0'

@@ -299,3 +299,101 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
     finally:
         save_json(comics_path, original_comics)
         save_json(tags_path, original_tags)
+
+
+@pytest.mark.integration
+def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detail_fanout(
+    third_party_client,
+    monkeypatch,
+):
+    client = third_party_client["client"]
+    meta_dir: Path = third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("third_party.platform_service")
+
+    comics_path = meta_dir / "comics_database.json"
+    tags_path = meta_dir / "tags_database.json"
+    original_comics = load_json(comics_path)
+    original_tags = load_json(tags_path)
+    calls = {"detail": 0}
+
+    class FakePlatformService:
+        def search_albums(self, platform, keyword, max_pages=1, fast_mode=False):
+            platform_name = str(getattr(platform, "value", platform))
+            if platform_name != "JM":
+                return {"albums": []}
+            return {
+                "albums": [
+                    {
+                        "album_id": "jm_533565",
+                        "title": "Remote Title",
+                        "author": "Search Author",
+                        "tags": ["SearchTagA", "SearchTagB"],
+                    }
+                ]
+            }
+
+        def get_album_by_id(self, platform, album_id):
+            calls["detail"] += 1
+            return {
+                "albums": [
+                    {
+                        "album_id": str(album_id),
+                        "title": "Detail Title",
+                        "author": "Detail Author",
+                        "tags": ["DetailTag"],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    try:
+        save_json(
+            comics_path,
+            {
+                "collection_name": "Test Comics",
+                "user": "test-user",
+                "total_comics": 1,
+                "last_updated": "2026-04-01",
+                "comics": [
+                    {
+                        "id": "LOCAL3001",
+                        "title": "Any Comic Title",
+                        "author": "",
+                        "tag_ids": [],
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+        save_json(
+            tags_path,
+            {
+                "collection_name": "Test Tags",
+                "user": "test-user",
+                "last_updated": "2026-04-01",
+                "tags": [],
+            },
+        )
+
+        resp = client.post(
+            "/api/v1/comic/local-metadata/refresh",
+            json={"comic_id": "LOCAL3001"},
+        )
+        payload = resp.get_json()
+        assert resp.status_code == 200
+        assert payload["code"] == 200
+
+        data = payload["data"] or {}
+        assert data["id"] == "LOCAL3001"
+        assert data["author"] == "Search Author"
+        assert data["metadata_refresh"]["matched_platform"] == "JM"
+        assert calls["detail"] == 0
+
+        refreshed_tags = load_json(tags_path).get("tags") or []
+        tag_names = {str(tag.get("name") or "") for tag in refreshed_tags}
+        assert "SearchTagA" in tag_names
+        assert "SearchTagB" in tag_names
+    finally:
+        save_json(comics_path, original_comics)
+        save_json(tags_path, original_tags)
