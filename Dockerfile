@@ -2,6 +2,10 @@
 
 FROM node:20-bookworm-slim AS frontend-builder
 
+ARG APP_VERSION=0.0.0
+ENV VITE_APP_VERSION=${APP_VERSION} \
+    ULTIMATE_APP_VERSION=${APP_VERSION}
+
 WORKDIR /build/comic_frontend
 
 COPY comic_frontend/package*.json ./
@@ -13,8 +17,11 @@ RUN npm run build
 
 FROM python:3.11-slim-bookworm AS runtime
 
+ARG APP_VERSION=0.0.0
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    ULTIMATE_APP_VERSION=${APP_VERSION} \
     SERVER_CONFIG_PATH=/app/server_config.json \
     RAR_BACKEND_MODE=auto \
     BACKEND_HOST=0.0.0.0 \
@@ -22,6 +29,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     BACKEND_DEBUG=0
 
 WORKDIR /app
+
+LABEL org.opencontainers.image.title="ultimate-web" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -35,7 +45,7 @@ RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY comic_backend/ /app/comic_backend/
-COPY server_config.json /app/server_config.json
+COPY config_templates/ /app/config_templates/
 COPY --from=frontend-builder /build/comic_frontend/dist /app/comic_frontend/dist
 
 EXPOSE 5000

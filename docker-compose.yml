@@ -5,7 +5,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ultimate-web:local
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+    image: ultimate-web:${APP_VERSION:-local}
     container_name: ultimate-web
     restart: unless-stopped
     ports:

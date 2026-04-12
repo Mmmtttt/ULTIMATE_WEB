@@ -1221,8 +1221,12 @@ def test_local_import_move_mode_can_resume_after_move_then_failed_indexing(integ
 
         comic_id = str(failed_record.get("comic_id", "")).strip()
         assert comic_id
-        original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
-        repaired_dir = data_dir / "comic" / "local" / original_id
+        local_asset_dir_name = str(failed_record.get("local_asset_dir_name", "")).strip()
+        if local_asset_dir_name:
+            repaired_dir = data_dir / "comic" / "local" / local_asset_dir_name
+        else:
+            original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
+            repaired_dir = data_dir / "comic" / "local" / original_id
         assert repaired_dir.exists()
         _write_png(repaired_dir / "001.png")
 
