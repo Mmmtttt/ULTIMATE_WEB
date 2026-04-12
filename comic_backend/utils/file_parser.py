@@ -1,6 +1,13 @@
 import os
 import re
-from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, JSON_FILE
+from core.constants import (
+    JM_PICTURES_DIR,
+    PK_PICTURES_DIR,
+    LOCAL_PICTURES_DIR,
+    SUPPORTED_FORMATS,
+    JSON_FILE,
+    RECOMMENDATION_JSON_FILE,
+)
 from core.platform import get_platform_from_id, get_original_id, Platform
 from infrastructure.logger import app_logger, error_logger
 
@@ -8,6 +15,24 @@ from infrastructure.logger import app_logger, error_logger
 class FileParser:
     def __init__(self):
         self.supported_formats = SUPPORTED_FORMATS
+
+    @staticmethod
+    def _find_comic_record(comic_id):
+        try:
+            from infrastructure.persistence.json_storage import JsonStorage
+
+            for json_file, data_key in (
+                (JSON_FILE, "comics"),
+                (RECOMMENDATION_JSON_FILE, "recommendations"),
+            ):
+                storage = JsonStorage(json_file)
+                db_data = storage.read()
+                for item in db_data.get(data_key, []) or []:
+                    if str(item.get("id", "")).strip() == str(comic_id or "").strip():
+                        return item
+        except Exception as e:
+            error_logger.error(f"查找漫画记录失败: {e}")
+        return None
     
     def _get_comic_dir(self, comic_id):
         """
@@ -25,10 +50,18 @@ class FileParser:
 
             # 本地导入漫画（LOCAL...）优先放置在 comic/local 目录。
             if str(original_id or "").upper().startswith("LOCAL"):
+                comic_record = self._find_comic_record(comic_id)
+                stored_dir_name = str((comic_record or {}).get("local_asset_dir_name", "")).strip()
+                if stored_dir_name:
+                    named_local_dir = os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
+                    if os.path.exists(named_local_dir):
+                        return named_local_dir
                 if os.path.exists(local_dir):
                     return local_dir
                 if os.path.exists(jm_dir):
                     return jm_dir
+                if stored_dir_name:
+                    return os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
                 return local_dir
 
             if os.path.exists(jm_dir):
@@ -41,38 +74,13 @@ class FileParser:
             # base_dir = PK_PICTURES_DIR
             # dir_rule = 'comics/{author}/{title}'
             try:
-                from infrastructure.persistence.json_storage import JsonStorage
-                from core.constants import RECOMMENDATION_JSON_FILE
-                
                 author = "unknown"
                 title = "unknown"
-                
-                # 首先从主页数据库查找
-                storage = JsonStorage(JSON_FILE)
-                db_data = storage.read()
-                comics = db_data.get("comics", [])
-                
-                found = False
-                for c in comics:
-                    if c.get("id") == comic_id:
-                        author = c.get("author") or "unknown"
-                        title = c.get("title") or f"漫画_{original_id}"
-                        found = True
-                        break
-                
-                # 如果主页没找到，从推荐页数据库查找
-                if not found:
-                    rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-                    rec_db_data = rec_storage.read()
-                    recommendations = rec_db_data.get("recommendations", [])
-                    
-                    for r in recommendations:
-                        if r.get("id") == comic_id:
-                            author = r.get("author") or "unknown"
-                            title = r.get("title") or f"漫画_{original_id}"
-                            found = True
-                            break
-                
+
+                comic_record = self._find_comic_record(comic_id) or {}
+                author = comic_record.get("author") or comic_record.get("creator") or "unknown"
+                title = comic_record.get("title") or f"漫画_{original_id}"
+
                 # 生成可能的作者和标题变体
                 author_variants = self._generate_name_variants(author)
                 title_variants = self._generate_name_variants(title)

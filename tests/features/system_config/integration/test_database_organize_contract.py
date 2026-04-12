@@ -231,7 +231,13 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
         for item in imported_records:
             local_video_path = str(item.get("local_video_path") or "")
             assert local_video_path.startswith("/media/video/LOCAL/")
-            assert "/source." in local_video_path
+            relative_parts = local_video_path[len("/media/video/LOCAL/"):].split("/")
+            assert len(relative_parts) == 2
+            storage_dir_name, source_filename = relative_parts
+            assert source_filename
+            assert source_filename != f"source{Path(source_filename).suffix}"
+            assert str(item.get("local_asset_dir_name") or "") == storage_dir_name
+            assert str(item.get("local_source_filename") or "") == source_filename
             rel = local_video_path[len("/media/"):].replace("/", os.sep)
             abs_path = data_dir / rel
             assert abs_path.exists(), f"missing imported file: {abs_path}"
@@ -409,8 +415,12 @@ def test_video_local_import_duplicate_non_local_without_source_attaches_source(i
         assert len(refreshed) == 1
         record = find_by_id(refreshed, "JAVDB900001")
         assert record is not None
-        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/JAVDB900001/source.")
-        assert str(record.get("local_source_path") or "").endswith(os.path.join("video", "JAVDB", "JAVDB900001", "source.mp4"))
+        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/abp 123 from_local/abp 123 from_local.")
+        assert str(record.get("local_source_path") or "").endswith(
+            os.path.join("video", "JAVDB", "abp 123 from_local", "abp 123 from_local.mp4")
+        )
+        assert record.get("local_asset_dir_name") == "abp 123 from_local"
+        assert record.get("local_source_filename") == "abp 123 from_local.mp4"
         assert record.get("source_origin") == "local_import"
         assert str(record.get("source_updated_time") or "").strip()
 

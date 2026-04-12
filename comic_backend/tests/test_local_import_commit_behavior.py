@@ -1,4 +1,5 @@
 import importlib
+import json
 from pathlib import Path
 
 from PIL import Image
@@ -28,9 +29,9 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     monkeypatch.setattr(local_import_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "JM_PICTURES_DIR", str(jm_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json := meta_dir / "comics_database.json"))
+    monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(meta_dir / "recommendations_database.json"))
     monkeypatch.setattr(image_handler_module, "JM_COVER_DIR", str(jm_cover_dir))
-
-    comics_json = meta_dir / "comics_database.json"
     tags_json = meta_dir / "tags_database.json"
 
     service = LocalComicImportService()
@@ -42,7 +43,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     _create_image(work_dir / "001.png", (255, 0, 0))
     _create_image(work_dir / "002.png", (0, 0, 255))
 
-    session_payload = service.create_session_from_path(str(source_root))
+    session_payload = service.create_session_from_path(str(work_dir))
     session_id = str(session_payload["session_id"])
 
     result = service.commit_session_import(session_id, {".": "work"})
@@ -57,7 +58,8 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     assert comic_id.startswith("LOCAL")
     original_id = comic_id
 
-    imported_dir = local_pictures_dir / original_id
+    assert comic.get("local_asset_dir_name") == "作品A"
+    imported_dir = local_pictures_dir / "作品A"
     assert imported_dir.exists()
     assert not (jm_pictures_dir / original_id).exists()
 
@@ -84,3 +86,50 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     local_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "本地"), None)
     assert local_tag is not None
     assert local_tag.get("id") == local_tag_id
+
+
+def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_path, monkeypatch):
+    local_pictures_dir = tmp_path / "comic" / "local"
+    jm_pictures_dir = tmp_path / "comic" / "JM"
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+
+    comics_json = meta_dir / "comics_database.json"
+    recommendations_json = meta_dir / "recommendations_database.json"
+    recommendations_json.write_text(json.dumps({"recommendations": []}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "JM_PICTURES_DIR", str(jm_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
+    monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
+
+    legacy_comic_id = "LOCALLEGACY001"
+    legacy_dir = local_pictures_dir / legacy_comic_id
+    _create_image(legacy_dir / "001.png", (0, 255, 0))
+    _create_image(legacy_dir / "002.png", (0, 128, 255))
+
+    comics_json.write_text(
+        json.dumps(
+            {
+                "comics": [
+                    {
+                        "id": legacy_comic_id,
+                        "title": "旧数据作品",
+                        "author": "",
+                        "cover_path": "",
+                        "total_page": 2,
+                        "current_page": 1,
+                        "tag_ids": [],
+                        "list_ids": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    parsed_images = file_parser_module.file_parser.parse_comic_images(legacy_comic_id)
+    assert len(parsed_images) == 2
+    assert Path(parsed_images[0]).name == "001.png"

@@ -23,6 +23,8 @@ class Video(BaseContent):
     preview_video_local: str = ""
     local_video_path: str = ""
     local_source_path: str = ""
+    local_asset_dir_name: str = ""
+    local_source_filename: str = ""
     source_origin: str = ""
     source_updated_time: str = ""
     local_metadata_enriched: bool = False
@@ -66,6 +68,8 @@ class Video(BaseContent):
             preview_video_local=data.get("preview_video_local", ""),
             local_video_path=data.get("local_video_path", ""),
             local_source_path=data.get("local_source_path", ""),
+            local_asset_dir_name=data.get("local_asset_dir_name", ""),
+            local_source_filename=data.get("local_source_filename", ""),
             source_origin=data.get("source_origin", ""),
             source_updated_time=data.get("source_updated_time", ""),
             local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
@@ -86,6 +90,8 @@ class Video(BaseContent):
             "preview_video_local": self.preview_video_local,
             "local_video_path": self.local_video_path,
             "local_source_path": self.local_source_path,
+            "local_asset_dir_name": self.local_asset_dir_name,
+            "local_source_filename": self.local_source_filename,
             "source_origin": self.source_origin,
             "source_updated_time": self.source_updated_time,
             "local_metadata_enriched": bool(self.local_metadata_enriched),

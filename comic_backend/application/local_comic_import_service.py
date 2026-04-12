@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -270,6 +271,40 @@ class LocalComicImportService:
             if not candidate.exists():
                 return candidate
         raise RuntimeError(f"无法为路径生成可用名称: {path}")
+
+    @staticmethod
+    def _sanitize_storage_name(name: str, fallback: str = "未命名作品") -> str:
+        normalized = re.sub(r'[\\/:*?"<>|\x00-\x1F]+', "_", str(name or "").strip())
+        normalized = re.sub(r"\s+", " ", normalized).rstrip(" .")
+        if not normalized:
+            normalized = fallback
+
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        }
+        if normalized.upper() in reserved:
+            normalized = f"{normalized}_"
+        return normalized[:180]
+
+    def _allocate_unique_storage_dir_name(
+        self,
+        desired_name: str,
+        reserved_names: set[str],
+        storage_root: Path,
+    ) -> str:
+        base_name = self._sanitize_storage_name(desired_name)
+        candidate = base_name
+        index = 2
+        while True:
+            normalized_key = os.path.normcase(candidate)
+            candidate_path = storage_root / candidate
+            if normalized_key not in reserved_names and not candidate_path.exists():
+                reserved_names.add(normalized_key)
+                return candidate
+            candidate = f"{base_name}__{index}"
+            index += 1
 
     @staticmethod
     def _sorted_entries(entries: List[Path]) -> List[Path]:
@@ -1989,6 +2024,21 @@ class LocalComicImportService:
         target_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(work_dir), str(target_dir))
 
+    @staticmethod
+    def _collect_target_image_paths(target_dir: Path) -> List[str]:
+        image_paths: List[str] = []
+        if not target_dir.exists() or not target_dir.is_dir():
+            return image_paths
+
+        for root, _, files in os.walk(target_dir):
+            for filename in files:
+                if file_parser.validate_image_format(filename):
+                    image_paths.append(os.path.join(root, filename))
+
+        if not image_paths:
+            return []
+        return file_parser.natural_sort_paths(image_paths, str(target_dir))
+
     def _append_comic_record(self, comic_record: Dict[str, Any]) -> Tuple[bool, bool]:
         status = {"inserted": False, "exists": False}
 
@@ -2215,6 +2265,17 @@ class LocalComicImportService:
             for item in comics
             if str(item.get("import_source", "")).strip()
         }
+        reserved_local_dir_names = {
+            os.path.normcase(path.name)
+            for path in Path(LOCAL_PICTURES_DIR).iterdir()
+            if path.exists() and path.is_dir()
+        } if Path(LOCAL_PICTURES_DIR).exists() else set()
+        for item in comics:
+            if not isinstance(item, dict):
+                continue
+            dir_name = str(item.get("local_asset_dir_name", "")).strip()
+            if dir_name:
+                reserved_local_dir_names.add(os.path.normcase(dir_name))
 
         session_base = self._ensure_session_dir(session_id)
         staging_root = session_base / "commit_staging"
@@ -2287,7 +2348,17 @@ class LocalComicImportService:
                     record["data_moved"] = False
                     self._save_state(session_id, state)
                 else:
-                    target_dir = Path(LOCAL_PICTURES_DIR) / original_id
+                    storage_dir_name = str(record.get("local_asset_dir_name", "")).strip()
+                    if not storage_dir_name:
+                        preferred_name = title or Path(work_path).name or original_id
+                        storage_dir_name = self._allocate_unique_storage_dir_name(
+                            preferred_name,
+                            reserved_local_dir_names,
+                            Path(LOCAL_PICTURES_DIR),
+                        )
+                        record["local_asset_dir_name"] = storage_dir_name
+                        self._save_state(session_id, state)
+                    target_dir = Path(LOCAL_PICTURES_DIR) / storage_dir_name
                     moved_flag = bool(record.get("data_moved", False))
                     work_dir = Path(work_path)
                     if effective_mode == IMPORT_MODE_MOVE_HUGE:
@@ -2316,7 +2387,7 @@ class LocalComicImportService:
                     if not target_dir.exists() or not target_dir.is_dir():
                         raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
 
-                    image_paths = file_parser.parse_comic_images(comic_id)
+                    image_paths = self._collect_target_image_paths(target_dir)
                     if not image_paths:
                         raise RuntimeError("导入后未检测到可读图片")
                     page_count = len(image_paths)
@@ -2345,6 +2416,8 @@ class LocalComicImportService:
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF:
                     comic_record["storage_mode"] = "soft_ref"
                     comic_record["soft_ref_locator"] = work_path
+                else:
+                    comic_record["local_asset_dir_name"] = str(record.get("local_asset_dir_name", "")).strip()
 
                 ok, inserted = self._append_comic_record(comic_record)
                 if not ok:

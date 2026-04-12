@@ -321,7 +321,15 @@ class VideoAppService(BaseContentAppService):
                 except Exception as e:
                     error_logger.error(f"删除视频封面失败: {e}")
         
+        candidate_dirs = []
+        resolved_local_dir = self._resolve_video_local_asset_dir(video)
+        if resolved_local_dir:
+            candidate_dirs.append(resolved_local_dir)
         for video_dir in self._get_video_storage_dirs(video.id):
+            if video_dir not in candidate_dirs:
+                candidate_dirs.append(video_dir)
+
+        for video_dir in candidate_dirs:
             if not os.path.exists(video_dir):
                 continue
             try:
@@ -398,6 +406,149 @@ class VideoAppService(BaseContentAppService):
         relative = os.path.relpath(target_path, data_root).replace("\\", "/").lstrip("/")
         return f"/media/{relative}" if relative else ""
 
+    @staticmethod
+    def _sanitize_local_fs_name(name: str, fallback: str = "video") -> str:
+        normalized = re.sub(r'[\\/:*?"<>|\x00-\x1F]+', "_", str(name or "").strip())
+        normalized = re.sub(r"\s+", " ", normalized).rstrip(" .")
+        if not normalized:
+            normalized = fallback
+
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        }
+        if normalized.upper() in reserved:
+            normalized = f"{normalized}_"
+        return normalized[:180]
+
+    @staticmethod
+    def _make_unique_dir_path(path: str) -> str:
+        candidate = os.path.abspath(str(path or ""))
+        if not os.path.exists(candidate):
+            return candidate
+
+        parent = os.path.dirname(candidate)
+        name = os.path.basename(candidate)
+        for index in range(2, 10_000):
+            next_candidate = os.path.join(parent, f"{name}__{index}")
+            if not os.path.exists(next_candidate):
+                return next_candidate
+        raise RuntimeError(f"failed to allocate storage dir: {candidate}")
+
+    @staticmethod
+    def _media_url_to_abs_path(media_url: str) -> str:
+        url = str(media_url or "").strip()
+        if not url.startswith("/media/"):
+            return ""
+
+        relative = url[len("/media/"):].lstrip("/").replace("/", os.sep)
+        candidate = os.path.abspath(os.path.join(DATA_DIR, relative))
+        data_root = os.path.abspath(DATA_DIR)
+        try:
+            if os.path.commonpath([data_root, candidate]) != data_root:
+                return ""
+        except Exception:
+            return ""
+        return candidate
+
+    @staticmethod
+    def _extract_local_asset_root(abs_path: str) -> str:
+        raw_path = str(abs_path or "").strip()
+        if not raw_path:
+            return ""
+
+        candidate = os.path.abspath(raw_path)
+        video_root = os.path.abspath(VIDEO_DIR)
+        try:
+            if os.path.commonpath([video_root, candidate]) != video_root:
+                return ""
+        except Exception:
+            return ""
+
+        relative = os.path.relpath(candidate, video_root)
+        parts = [part for part in relative.split(os.sep) if part not in {"", "."}]
+        if len(parts) < 2:
+            return ""
+        return os.path.join(video_root, parts[0], parts[1])
+
+    def _resolve_explicit_video_local_asset_dir(self, video: Optional[Video]) -> str:
+        if not isinstance(video, Video):
+            return ""
+
+        candidates = []
+
+        stored_dir_name = str(getattr(video, "local_asset_dir_name", "") or "").strip()
+        if stored_dir_name:
+            candidates.append(stored_dir_name)
+
+        local_video_abs = self._media_url_to_abs_path(getattr(video, "local_video_path", ""))
+        if local_video_abs:
+            candidates.append(self._extract_local_asset_root(local_video_abs))
+
+        source_abs = str(getattr(video, "local_source_path", "") or "").strip()
+        if source_abs:
+            candidates.append(self._extract_local_asset_root(source_abs))
+
+        media_urls = [
+            getattr(video, "cover_path_local", ""),
+            getattr(video, "preview_video_local", ""),
+        ]
+        media_urls.extend(list(getattr(video, "thumbnail_images_local", []) or []))
+        for media_url in media_urls:
+            abs_path = self._media_url_to_abs_path(media_url)
+            if abs_path:
+                candidates.append(self._extract_local_asset_root(abs_path))
+
+        seen = set()
+        for candidate in candidates:
+            normalized = str(candidate or "").strip()
+            if not normalized:
+                continue
+            lowered = os.path.normcase(normalized)
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            if os.path.isabs(normalized):
+                return normalized
+            return normalized
+        return ""
+
+    def _resolve_video_local_asset_dir(self, video: Optional[Video]) -> str:
+        if not isinstance(video, Video):
+            return ""
+
+        explicit_dir = self._resolve_explicit_video_local_asset_dir(video)
+        platform_key = self._get_video_platform_key(video.id)
+
+        if explicit_dir:
+            if os.path.isabs(explicit_dir):
+                return explicit_dir
+            return os.path.join(VIDEO_DIR, platform_key, explicit_dir)
+
+        return os.path.join(VIDEO_DIR, platform_key, self._sanitize_video_asset_id(video.id))
+
+    def _resolve_video_source_filename(self, video: Optional[Video], default_extension: str = "") -> str:
+        if isinstance(video, Video):
+            stored_name = str(getattr(video, "local_source_filename", "") or "").strip()
+            if stored_name:
+                return stored_name
+
+            local_video_abs = self._media_url_to_abs_path(getattr(video, "local_video_path", ""))
+            if local_video_abs:
+                filename = os.path.basename(local_video_abs)
+                if filename:
+                    return filename
+
+            local_source_path = str(getattr(video, "local_source_path", "") or "").strip()
+            if local_source_path:
+                filename = os.path.basename(local_source_path)
+                if filename:
+                    return filename
+
+        normalized_ext = str(default_extension or "").strip().lower() or ".mp4"
+        return f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}"
+
     def _generate_local_video_id(self) -> str:
         return f"{self.LOCAL_VIDEO_ID_PREFIX}_{generate_uuid()[:12]}"
 
@@ -459,14 +610,37 @@ class VideoAppService(BaseContentAppService):
             return extracted
         return raw
 
-    def _build_local_source_file_target(self, video_id: str, extension: str) -> Tuple[str, str]:
-        normalized_ext = str(extension or "").strip().lower() or ".mp4"
-        safe_video_id = self._sanitize_video_asset_id(video_id)
+    def _build_local_source_file_target(
+        self,
+        video_id: str,
+        original_filename: str,
+        preferred_dir_name: str = "",
+    ) -> Tuple[str, str, str, str]:
+        original_name = os.path.basename(str(original_filename or "").strip())
+        stem, ext = os.path.splitext(original_name)
+        normalized_ext = str(ext or "").strip().lower() or ".mp4"
         platform_dir = self._get_video_platform_key(video_id)
-        target_dir = os.path.join(VIDEO_DIR, platform_dir, safe_video_id)
+        safe_video_id = self._sanitize_video_asset_id(video_id)
+        fallback_base = safe_video_id or "video"
+
+        source_filename = self._sanitize_local_fs_name(
+            original_name or f"{fallback_base}{normalized_ext}",
+            fallback=f"{fallback_base}{normalized_ext}",
+        )
+        if not os.path.splitext(source_filename)[1]:
+            source_filename = f"{source_filename}{normalized_ext}"
+
+        if preferred_dir_name:
+            storage_dir_name = self._sanitize_local_fs_name(preferred_dir_name, fallback=fallback_base)
+            target_dir = os.path.join(VIDEO_DIR, platform_dir, storage_dir_name)
+        else:
+            desired_dir_name = self._sanitize_local_fs_name(stem or fallback_base, fallback=fallback_base)
+            target_dir = self._make_unique_dir_path(os.path.join(VIDEO_DIR, platform_dir, desired_dir_name))
+            storage_dir_name = os.path.basename(target_dir)
+
         os.makedirs(target_dir, exist_ok=True)
-        target_file = os.path.join(target_dir, f"{self.LOCAL_VIDEO_FILENAME}{normalized_ext}")
-        return target_dir, target_file
+        target_file = os.path.join(target_dir, source_filename)
+        return target_dir, target_file, storage_dir_name, source_filename
 
     def _has_video_source_file(self, video: Optional[Video]) -> bool:
         if not isinstance(video, Video):
@@ -547,7 +721,23 @@ class VideoAppService(BaseContentAppService):
 
                         video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
                         if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
-                            target_dir, target_file = self._build_local_source_file_target(video_id, normalized_ext)
+                            preferred_dir_name = ""
+                            if bind_existing_video:
+                                preferred_dir_name = str(
+                                    getattr(bind_existing_video, "local_asset_dir_name", "") or ""
+                                ).strip()
+                                if not preferred_dir_name:
+                                    existing_asset_dir = self._resolve_explicit_video_local_asset_dir(bind_existing_video)
+                                    if existing_asset_dir:
+                                        preferred_dir_name = os.path.basename(existing_asset_dir)
+
+                            target_dir, target_file, local_asset_dir_name, local_source_filename = (
+                                self._build_local_source_file_target(
+                                    video_id,
+                                    filename,
+                                    preferred_dir_name=preferred_dir_name,
+                                )
+                            )
                             source_restore_path = abs_file_path
                             shutil.move(abs_file_path, target_file)
 
@@ -558,6 +748,13 @@ class VideoAppService(BaseContentAppService):
                         else:
                             local_video_path = self._build_local_stream_url(video_id)
                             local_source_path = os.path.abspath(abs_file_path)
+                            local_asset_dir_name = str(
+                                getattr(bind_existing_video, "local_asset_dir_name", "") or ""
+                            ).strip() if bind_existing_video else ""
+                            local_source_filename = self._resolve_video_source_filename(
+                                bind_existing_video,
+                                default_extension=normalized_ext,
+                            ) if bind_existing_video else os.path.basename(abs_file_path)
                             if not local_video_path:
                                 raise RuntimeError("failed to build local stream path")
 
@@ -565,6 +762,8 @@ class VideoAppService(BaseContentAppService):
                             existing_video = self._video_repo.get_by_id(video_id) or bind_existing_video
                             existing_video.local_video_path = local_video_path
                             existing_video.local_source_path = local_source_path
+                            existing_video.local_asset_dir_name = local_asset_dir_name
+                            existing_video.local_source_filename = local_source_filename
                             existing_video.source_origin = self.SOURCE_ORIGIN_LOCAL_IMPORT
                             existing_video.source_updated_time = get_current_time()
 
@@ -597,6 +796,8 @@ class VideoAppService(BaseContentAppService):
                             "cover_path_local": "",
                             "local_video_path": local_video_path,
                             "local_source_path": local_source_path,
+                            "local_asset_dir_name": local_asset_dir_name,
+                            "local_source_filename": local_source_filename,
                             "source_origin": self.SOURCE_ORIGIN_LOCAL_IMPORT,
                             "source_updated_time": get_current_time(),
                             "local_metadata_enriched": False,
@@ -702,15 +903,21 @@ class VideoAppService(BaseContentAppService):
             if os.path.isfile(expanded_source):
                 return expanded_source
 
-        safe_video_id = self._sanitize_video_asset_id(video.id)
-        candidate_dirs = list(self._get_video_storage_dirs(video.id))
-        legacy_local_dir = os.path.join(VIDEO_DIR, "LOCAL", safe_video_id)
-        if legacy_local_dir not in candidate_dirs:
-            candidate_dirs.append(legacy_local_dir)
+        candidate_dirs = []
+        resolved_asset_dir = self._resolve_video_local_asset_dir(video)
+        if resolved_asset_dir:
+            candidate_dirs.append(resolved_asset_dir)
+        for legacy_dir in self._get_video_storage_dirs(video.id):
+            if legacy_dir not in candidate_dirs:
+                candidate_dirs.append(legacy_dir)
 
+        preferred_filename = self._resolve_video_source_filename(video)
         for base_dir in candidate_dirs:
             if not os.path.isdir(base_dir):
                 continue
+            preferred_candidate = os.path.join(base_dir, preferred_filename)
+            if preferred_filename and os.path.isfile(preferred_candidate):
+                return preferred_candidate
             for ext in self.VIDEO_FILE_EXTENSIONS:
                 candidate = os.path.join(base_dir, f"{self.LOCAL_VIDEO_FILENAME}{ext}")
                 if os.path.isfile(candidate):
@@ -743,6 +950,8 @@ class VideoAppService(BaseContentAppService):
                 preview_video_local=video_data.get("preview_video_local", ""),
                 local_video_path=video_data.get("local_video_path", ""),
                 local_source_path=video_data.get("local_source_path", ""),
+                local_asset_dir_name=video_data.get("local_asset_dir_name", ""),
+                local_source_filename=video_data.get("local_source_filename", ""),
                 source_origin=video_data.get("source_origin", ""),
                 source_updated_time=video_data.get("source_updated_time", ""),
                 local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
@@ -1324,13 +1533,10 @@ class VideoAppService(BaseContentAppService):
             return ServiceResult.error("refresh local video metadata failed")
 
     def _build_preview_asset_prefixes(self, video_id: str) -> tuple:
-        safe_video_id = self._sanitize_video_asset_id(video_id)
-        preview_root_dir, preview_root_url, _ = self._build_preview_asset_root(video_id, "preview")
-        local_root_dir, local_root_url, _ = self._build_preview_asset_root(video_id, "local")
-        preview_dir = os.path.join(preview_root_dir, safe_video_id)
-        local_dir = os.path.join(local_root_dir, safe_video_id)
-        preview_prefix = f"{preview_root_url}/{safe_video_id}/"
-        local_prefix = f"{local_root_url}/{safe_video_id}/"
+        preview_dir, preview_relative_dir = self._build_preview_asset_dir(video_id, "preview")
+        local_dir, local_relative_dir = self._build_preview_asset_dir(video_id, "local")
+        preview_prefix = f"{preview_relative_dir}/"
+        local_prefix = f"{local_relative_dir}/"
         return preview_dir, local_dir, preview_prefix, local_prefix
 
     def _map_preview_asset_url_to_local(
@@ -1790,9 +1996,8 @@ class VideoAppService(BaseContentAppService):
         return root_dir, root_url, source_key
 
     def _build_preview_asset_prefix(self, video_id: str, source: str) -> str:
-        _, root_url, _ = self._build_preview_asset_root(video_id, source)
-        safe_video_id = self._sanitize_video_asset_id(video_id)
-        return f"{root_url}/{safe_video_id}/"
+        _, relative_dir = self._build_preview_asset_dir(video_id, source)
+        return f"{relative_dir}/"
 
     @classmethod
     def _sanitize_preview_video_url(cls, preview_url: str) -> str:
@@ -2009,14 +2214,19 @@ class VideoAppService(BaseContentAppService):
         )
 
     def _build_preview_asset_dir(self, video_id: str, source: str) -> tuple:
-        source_dir, root_url, _ = self._build_preview_asset_root(video_id, source)
-        safe_video_id = self._sanitize_video_asset_id(video_id)
+        source_dir, root_url, source_key = self._build_preview_asset_root(video_id, source)
 
         os.makedirs(source_dir, exist_ok=True)
-        asset_dir = os.path.join(source_dir, safe_video_id)
+        if source_key == "local":
+            local_video = self._video_repo.get_by_id(str(video_id or "").strip())
+            asset_dir = self._resolve_video_local_asset_dir(local_video)
+            if not asset_dir:
+                asset_dir = os.path.join(source_dir, self._sanitize_video_asset_id(video_id))
+        else:
+            asset_dir = os.path.join(source_dir, self._sanitize_video_asset_id(video_id))
         os.makedirs(asset_dir, exist_ok=True)
 
-        relative_dir = f"{root_url}/{safe_video_id}"
+        relative_dir = self._to_media_url(asset_dir) or f"{root_url}/{self._sanitize_video_asset_id(video_id)}"
         return asset_dir, relative_dir
 
     def _build_preview_cover_save_paths(self, video_id: str, source: str) -> tuple:

@@ -16,6 +16,7 @@ from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR,
 from core.platform import get_platform_from_id, get_original_id, Platform, PLATFORM_PREFIXES
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import app_logger, error_logger
+from utils.file_parser import file_parser
 
 
 def generate_cover(comic_id, first_image_path):
@@ -75,27 +76,7 @@ def generate_cover(comic_id, first_image_path):
 
 def get_comic_image_dir(comic_id):
     """获取漫画图片目录"""
-    platform = get_platform_from_id(comic_id)
-    original_id = get_original_id(comic_id)
-    
-    if platform == Platform.JM:
-        jm_dir = os.path.join(JM_PICTURES_DIR, original_id)
-        local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
-        if str(original_id or "").upper().startswith("LOCAL"):
-            if os.path.exists(local_dir):
-                return local_dir
-            if os.path.exists(jm_dir):
-                return jm_dir
-            return local_dir
-        if os.path.exists(jm_dir):
-            return jm_dir
-        if os.path.exists(local_dir):
-            return local_dir
-        return jm_dir
-    elif platform == Platform.PK:
-        return os.path.join(PK_PICTURES_DIR, original_id)
-    else:
-        raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+    return file_parser._get_comic_dir(comic_id)
 
 
 def process_database(json_file, data_key):
