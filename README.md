@@ -377,6 +377,7 @@ npm install
 | **Windows 内网服务器** | 有电脑，想在家用手机访问 | 设置简单，功能完整 | 电脑要开着 |
 | **Linux 公网服务器** | 有云服务器，想随时访问 | 随时随地，24小时运行 | 需要购买服务器 |
 | **安卓 App** | 主要用手机，没有电脑 | 最简单，离线也能用 | 部分功能需配合服务器 |
+| **Docker 容器** | NAS 用户/有 Docker 环境 | 部署简单，环境隔离 | 需要配置数据持久化 |
 
 ---
 
@@ -421,6 +422,46 @@ npm install
 | 第三方同步 | ✅ | ❌ |
 
 安卓端建议搭配 Windows/Linux 服务器使用：服务器负责同步和搜索，App 负责阅读和同步数据。
+
+---
+
+### 模式四：Docker 容器部署（推荐NAS用户）
+
+使用 Docker 部署，适合 NAS 或支持 Docker 的服务器。
+
+**快速启动**：
+```bash
+# 拉取镜像
+docker pull mmmtttt/ultimate_web:latest
+
+# 运行容器
+docker run -d \
+  --name ultimate_web \
+  -p 5000:5000 \
+  -p 5173:5173 \
+  -v ./data:/app/comic_backend/data \
+  mmmtttt/ultimate_web:latest
+```
+
+**访问地址**：http://localhost:5173
+
+**Docker Hub 镜像地址**：[https://hub.docker.com/repository/docker/mmmtttt/ultimate_web/general](https://hub.docker.com/repository/docker/mmmtttt/ultimate_web/general)
+
+**功能支持**：
+
+| 功能 | 支持情况 |
+|------|----------|
+| 本地库管理 | ✅ |
+| 在线阅读/播放 | ✅ |
+| 标签/清单/订阅 | ✅ |
+| 全网搜索 | ✅ |
+| 第三方同步 | ✅ |
+| 数据持久化 | ✅（需挂载数据目录） |
+
+**数据持久化**：
+- 将宿主机目录映射到容器内 `/app/comic_backend/data`
+- 配置目录映射：`./config:/app/comic_backend/data/config`
+- 媒体目录映射：`./comics:/app/comic_backend/data/comics`
 
 ---
 
