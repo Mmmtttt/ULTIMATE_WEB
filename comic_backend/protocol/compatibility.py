@@ -32,6 +32,14 @@ ADAPTER_PLUGIN_MAP = {
 MISSAV_PLUGIN_ID = "video.missav"
 
 
+def _default_query_status() -> dict:
+    return {
+        "configured": True,
+        "message": "",
+        "missing_fields": [],
+    }
+
+
 def get_plugin_id_for_adapter_name(adapter_name: str) -> Optional[str]:
     return ADAPTER_PLUGIN_MAP.get(str(adapter_name or "").strip().lower())
 
@@ -52,6 +60,34 @@ def get_plugin_id_for_platform(platform: Platform) -> Optional[str]:
 
 def get_plugin_id_for_video_platform(platform_name: str) -> Optional[str]:
     return VIDEO_PLATFORM_PLUGIN_MAP.get(str(platform_name or "").strip().lower())
+
+
+def get_query_status_for_adapter_name(adapter_name: str) -> dict:
+    plugin_id = get_plugin_id_for_adapter_name(adapter_name)
+    if not plugin_id:
+        return _default_query_status()
+    return get_protocol_gateway().get_query_status(plugin_id)
+
+
+def get_query_status_for_platform(platform: Platform) -> dict:
+    plugin_id = get_plugin_id_for_platform(platform)
+    if not plugin_id:
+        return _default_query_status()
+    return get_protocol_gateway().get_query_status(plugin_id)
+
+
+def get_query_status_for_comic_platform(platform: Platform) -> dict:
+    plugin_id = get_plugin_id_for_comic_platform(platform)
+    if not plugin_id:
+        return _default_query_status()
+    return get_protocol_gateway().get_query_status(plugin_id)
+
+
+def get_query_status_for_video_platform(platform_name: str) -> dict:
+    plugin_id = get_plugin_id_for_video_platform(platform_name)
+    if not plugin_id:
+        return _default_query_status()
+    return get_protocol_gateway().get_query_status(plugin_id)
 
 
 def get_legacy_adapter_for_config_key(adapter_name: str, *args, **kwargs):

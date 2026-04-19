@@ -40,6 +40,11 @@ from core.constants import (
 )
 from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
+from protocol.compatibility import (
+    get_legacy_missav_client,
+    get_legacy_video_adapter,
+    get_query_status_for_video_platform,
+)
 
 
 class VideoAppService(BaseContentAppService):
@@ -1290,20 +1295,14 @@ class VideoAppService(BaseContentAppService):
         adapters: Dict[str, Any] = {}
 
         try:
-            from third_party.javdb_api_scraper import JavbusAdapter
-            adapters["javbus"] = JavbusAdapter()
+            adapters["javbus"] = get_legacy_video_adapter("javbus")
         except Exception as e:
             error_logger.error(f"init javbus adapter failed: {e}")
 
         try:
-            from third_party.adapter_factory import AdapterConfig
-            from third_party.credential_guard import get_adapter_credential_status
-
-            javdb_config = AdapterConfig().get_adapter_config("javdb") or {}
-            javdb_status = get_adapter_credential_status("javdb", javdb_config)
+            javdb_status = get_query_status_for_video_platform("javdb")
             if bool(javdb_status.get("configured", False)):
-                from third_party.javdb_api_scraper import JavdbAdapter
-                adapters["javdb"] = JavdbAdapter()
+                adapters["javdb"] = get_legacy_video_adapter("javdb")
             else:
                 app_logger.info(f"skip javdb metadata adapter: {javdb_status.get('message')}")
         except Exception as e:
@@ -2190,9 +2189,7 @@ class VideoAppService(BaseContentAppService):
     ):
         # Prefer Missav client's request stack to reuse curl_cffi impersonation and anti-bot handling.
         try:
-            from third_party.missav import get_client
-
-            client = get_client(proxy_base_path="/api/v1/video")
+            client = get_legacy_missav_client(proxy_base_path="/api/v1/video")
             return client._request(
                 "GET",
                 url,

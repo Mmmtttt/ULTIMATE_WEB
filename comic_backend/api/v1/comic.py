@@ -13,14 +13,13 @@ from utils.file_parser import file_parser
 from utils.image_handler import image_handler
 from core.constants import (
     CACHE_MAX_AGE,
-    JM_PICTURES_DIR,
     JSON_FILE,
     PICTURES_DIR,
-    PK_PICTURES_DIR,
     RECOMMENDATION_JSON_FILE,
     SUPPORTED_FORMATS,
 )
 from core.utils import normalize_total_page
+from protocol.compatibility import get_query_status_for_adapter_name
 from .runtime_guard import require_third_party
 import os
 import time
@@ -100,144 +99,6 @@ def comic_init():
     except Exception as e:
         error_logger.error(f"漫画初始化失败: {e}")
         return error_response(500, "服务器内部错误")
-
-
-def _parse_cookie_string(cookie_string: str) -> dict:
-    cookies = {}
-    raw = str(cookie_string or "").strip()
-    if not raw:
-        return cookies
-
-    for part in raw.split(";"):
-        pair = part.strip()
-        if not pair or "=" not in pair:
-            continue
-        key, value = pair.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if key:
-            cookies[key] = value
-    return cookies
-
-
-def _normalize_javdb_cookie_input(cookie_input: str) -> dict:
-    raw = str(cookie_input or "").strip()
-    if not raw:
-        return {}
-
-    parsed = _parse_cookie_string(raw)
-    if not parsed:
-        parsed = {"_jdb_session": raw}
-
-    session_value = str(parsed.get("_jdb_session", "")).strip()
-    if not session_value:
-        return {}
-
-    normalized = {
-        "_jdb_session": session_value,
-        "list_mode": "h",
-        "theme": "auto",
-        "over18": "1",
-        "locale": "zh",
-    }
-    for key in ("list_mode", "theme", "over18", "locale"):
-        value = str(parsed.get(key, "")).strip()
-        if value:
-            normalized[key] = value
-    return normalized
-
-
-def _build_third_party_schema() -> dict:
-    return {
-        "jmcomic": {
-            "label": "JMComic",
-            "fields": [
-                {"key": "enabled", "label": "启用", "type": "boolean"},
-                {"key": "username", "label": "账号", "type": "text", "placeholder": "JM 用户名"},
-                {"key": "password", "label": "密码", "type": "password", "placeholder": "JM 密码", "secret": True},
-                {"key": "collection_name", "label": "收藏夹名称", "type": "text", "placeholder": "我的最爱"},
-            ],
-        },
-        "picacomic": {
-            "label": "Picacomic",
-            "fields": [
-                {"key": "enabled", "label": "启用", "type": "boolean"},
-                {"key": "account", "label": "账号", "type": "text", "placeholder": "Picacomic 账号"},
-                {"key": "password", "label": "密码", "type": "password", "placeholder": "Picacomic 密码", "secret": True},
-            ],
-        },
-        "javdb": {
-            "label": "JAVDB",
-            "fields": [
-                {"key": "enabled", "label": "启用", "type": "boolean"},
-                {"key": "domain_index", "label": "域名索引", "type": "number", "placeholder": "0"},
-                {
-                    "key": "cookie_string",
-                    "label": "Cookie(_jdb_session)",
-                    "type": "textarea",
-                    "placeholder": "REDACTED_COOKIE",
-                    "secret": True,
-                },
-            ],
-        },
-    }
-
-
-def _build_third_party_config_response(config_manager) -> dict:
-    from third_party.adapter_factory import AdapterFactory
-
-    adapters = {}
-    for adapter_name in AdapterFactory.list_adapters():
-        config = config_manager.get_adapter_config(adapter_name) or {}
-        normalized_config = dict(config)
-
-        if adapter_name == "javdb":
-            cookies = normalized_config.get("cookies", {})
-            if isinstance(cookies, dict) and cookies:
-                normalized_config["cookie_string"] = str(cookies.get("_jdb_session", "")).strip()
-            else:
-                normalized_config["cookie_string"] = ""
-
-        adapters[adapter_name] = normalized_config
-
-    response = {
-        "default_adapter": config_manager.get_default_adapter(),
-        "adapter_order": ["jmcomic", "picacomic", "javdb"],
-        "schema": _build_third_party_schema(),
-        "adapters": adapters,
-        "helper_urls": {
-            "javdb_cookie_guide": "/api/v1/config/javdb-cookie-guide",
-        },
-    }
-
-    # Backward compatibility for old frontend payload shape.
-    response.update(adapters)
-    return response
-
-
-def _normalize_adapter_payload(adapter_name: str, payload: dict) -> dict:
-    adapter_payload = dict(payload or {})
-
-    # Keep old frontend compatibility: /third-party/config POST body may place fields at root.
-    if isinstance(adapter_payload.get("config"), dict):
-        adapter_payload = dict(adapter_payload["config"])
-    else:
-        adapter_payload.pop("adapter", None)
-
-    if adapter_name == "jmcomic":
-        adapter_payload.setdefault("enabled", True)
-        adapter_payload.setdefault("config_path", "JMComic-Crawler-Python/config.json")
-    elif adapter_name == "picacomic":
-        adapter_payload.setdefault("enabled", True)
-    elif adapter_name == "javdb":
-        adapter_payload.setdefault("enabled", True)
-        cookie_string = adapter_payload.pop("cookie_string", None)
-        if cookie_string is not None:
-            adapter_payload["cookies"] = _normalize_javdb_cookie_input(cookie_string)
-        elif isinstance(adapter_payload.get("cookies"), str):
-            adapter_payload["cookies"] = _normalize_javdb_cookie_input(adapter_payload.get("cookies"))
-
-    return adapter_payload
 
 
 @comic_bp.route('/third-party/config', methods=['GET'])
@@ -550,8 +411,6 @@ def search_third_party_comics():
             return error_response(400, "缺少参数: keyword")
         
         from third_party.external_api import search_albums
-        from third_party.adapter_factory import AdapterConfig
-        from third_party.credential_guard import get_adapter_credential_status
         from core.platform import get_comic_platforms, is_comic_platform
         
         platforms_to_search = []
@@ -567,7 +426,6 @@ def search_third_party_comics():
         platform_results = {}
         platform_errors = {}
         all_albums = []
-        config_manager = AdapterConfig()
         platform_to_adapter = {
             'JM': 'jmcomic',
             'PK': 'picacomic',
@@ -581,8 +439,7 @@ def search_third_party_comics():
                     return error_response(400, platform_errors[plat])
                 continue
 
-            adapter_config = config_manager.get_adapter_config(adapter_name) or {}
-            credential_status = get_adapter_credential_status(adapter_name, adapter_config)
+            credential_status = get_query_status_for_adapter_name(adapter_name)
             if not bool(credential_status.get("configured", False)):
                 platform_errors[plat] = str(credential_status.get("message") or f"{plat} 平台未配置查询凭据")
                 if platform != 'all':
@@ -1276,11 +1133,7 @@ def import_online():
         
         # 根据平台选择适配器
         adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
-        from third_party.adapter_factory import AdapterConfig
-        from third_party.credential_guard import get_adapter_credential_status
-
-        adapter_config = AdapterConfig().get_adapter_config(adapter_name) or {}
-        credential_status = get_adapter_credential_status(adapter_name, adapter_config)
+        credential_status = get_query_status_for_adapter_name(adapter_name)
         if not bool(credential_status.get("configured", False)):
             return error_response(400, str(credential_status.get("message") or f"{platform_name} 平台未配置查询凭据"))
         

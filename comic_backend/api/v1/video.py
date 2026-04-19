@@ -19,8 +19,13 @@ import time
 from urllib.parse import parse_qs, urlparse
 import mimetypes
 from .runtime_guard import require_third_party
-from protocol.compatibility import get_legacy_missav_client, get_legacy_video_adapter, get_plugin_id_for_video_platform
-from protocol.gateway import get_protocol_gateway
+from protocol.compatibility import (
+    get_legacy_missav_client,
+    get_legacy_video_adapter,
+    get_plugin_id_for_video_platform,
+    get_query_status_for_video_platform,
+)
+from protocol.runtime_config import get_protocol_config_store
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
@@ -629,15 +634,7 @@ def get_video_adapter(platform_name="javdb", *args, **kwargs):
 
 
 def _get_video_platform_query_status(platform_name: str) -> dict:
-    normalized_platform = str(platform_name or "").strip().lower()
-    plugin_id = get_plugin_id_for_video_platform(normalized_platform)
-    if not plugin_id:
-        return {
-            "configured": True,
-            "message": "",
-            "missing_fields": [],
-        }
-    return get_protocol_gateway().get_query_status(plugin_id)
+    return get_query_status_for_video_platform(platform_name)
 
 
 def get_all_video_adapters(*args, **kwargs):
@@ -1158,12 +1155,8 @@ def _get_javdb_cookie_config_status():
         raise RuntimeError(
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
-    from third_party.adapter_factory import AdapterConfig
-    from third_party.credential_guard import get_adapter_credential_status
-
-    config_manager = AdapterConfig()
-    javdb_config = config_manager.get_adapter_config('javdb') or {}
-    status = get_adapter_credential_status("javdb", javdb_config)
+    javdb_config = get_protocol_config_store().get_plugin_config("javdb", reload=True) or {}
+    status = get_query_status_for_video_platform("javdb")
     cookies = javdb_config.get('cookies') or {}
 
     normalized_cookies = {}

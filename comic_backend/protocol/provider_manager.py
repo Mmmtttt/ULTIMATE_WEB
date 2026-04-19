@@ -5,17 +5,16 @@ import importlib.util
 import os
 from typing import Any, Dict, Optional
 
-from third_party.adapter_factory import AdapterConfig
-
 from .base import PluginManifest, ProtocolProvider
 from .registry import PluginRegistry, get_plugin_registry
+from .runtime_config import ProtocolConfigStore
 
 
 class ProviderManager:
     def __init__(self, registry: Optional[PluginRegistry] = None):
         self.registry = registry or get_plugin_registry()
         self._providers: Dict[str, ProtocolProvider] = {}
-        self._config_manager = AdapterConfig()
+        self._config_store = ProtocolConfigStore()
 
     def _load_provider_class(self, manifest: PluginManifest):
         entrypoint = manifest.entrypoint
@@ -63,11 +62,10 @@ class ProviderManager:
         return provider
 
     def _get_runtime_config(self, manifest: PluginManifest) -> Dict[str, Any]:
-        self._config_manager.reload_config()
         config_key = str(manifest.config_key or "").strip()
         if not config_key:
             return {}
-        return dict(self._config_manager.get_adapter_config(config_key) or {})
+        return self._config_store.get_plugin_config(config_key, reload=True)
 
     def execute(self, plugin_id: str, capability: str, params: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None):
         manifest = self.registry.get_manifest(plugin_id)
@@ -109,4 +107,3 @@ def get_provider_manager() -> ProviderManager:
     if _provider_manager_singleton is None:
         _provider_manager_singleton = ProviderManager()
     return _provider_manager_singleton
-

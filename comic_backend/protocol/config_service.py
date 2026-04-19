@@ -3,15 +3,14 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 from infrastructure.logger import app_logger
-from third_party.adapter_factory import AdapterConfig, AdapterFactory
-from third_party.external_api import reset_config_manager
 
 from .gateway import get_protocol_gateway
+from .runtime_config import ProtocolConfigStore
 
 
 class PluginConfigService:
     def __init__(self):
-        self._config_manager = AdapterConfig()
+        self._config_store = ProtocolConfigStore()
         self._gateway = get_protocol_gateway()
 
     @staticmethod
@@ -31,7 +30,7 @@ class PluginConfigService:
         ]
 
     def build_response(self) -> dict:
-        self._config_manager.reload_config()
+        self._config_store.reload()
         configurable = self._collect_configurable_plugins()
 
         adapter_order: List[str] = []
@@ -50,7 +49,7 @@ class PluginConfigService:
                 "actions": list(manifest.configuration.get("actions") or []),
             }
 
-            raw_config = self._config_manager.get_adapter_config(config_key) or {}
+            raw_config = self._config_store.get_plugin_config(config_key) or {}
             adapters[config_key] = self._gateway.provider_manager.serialize_public_config(manifest.plugin_id, raw_config)
 
             for helper_key, helper_value in (manifest.configuration.get("helper_urls") or {}).items():
@@ -60,7 +59,7 @@ class PluginConfigService:
                     helper_urls[helper_key] = helper_value
 
         response = {
-            "default_adapter": self._config_manager.get_default_adapter(),
+            "default_adapter": self._config_store.get_default_config_key(),
             "adapter_order": adapter_order,
             "schema": schema,
             "adapters": adapters,
@@ -106,12 +105,10 @@ class PluginConfigService:
             manifest = self._gateway.registry.get_manifest(plugin_id)
             config_key = manifest.config_key
             normalized_payload = self._gateway.provider_manager.normalize_config(plugin_id, adapter_payload)
-            self._config_manager.set_adapter_config(config_key, normalized_payload)
-            if config_key in set(AdapterFactory.list_adapters()):
-                AdapterFactory.reset_instance(config_key)
+            self._config_store.set_plugin_config(config_key, normalized_payload)
             updated_keys.append(config_key)
 
-        reset_config_manager()
+        self._config_store.reset_runtime_caches(updated_keys)
         app_logger.info(f"protocol config saved: {updated_keys}")
         return {
             "updated_adapters": updated_keys,
@@ -127,4 +124,3 @@ def get_plugin_config_service() -> PluginConfigService:
     if _config_service_singleton is None:
         _config_service_singleton = PluginConfigService()
     return _config_service_singleton
-

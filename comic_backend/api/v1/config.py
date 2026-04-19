@@ -26,6 +26,7 @@ from core.runtime_profile import is_third_party_enabled, runtime_capabilities
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
+from protocol.config_service import get_plugin_config_service
 
 
 config_bp = Blueprint('config', __name__)
@@ -288,10 +289,8 @@ def _update_third_party_storage_paths(old_data_dir, new_data_dir):
         return
 
     try:
-        from third_party.adapter_factory import AdapterConfig, AdapterFactory
-        from third_party.external_api import reset_config_manager
-
-        config_manager = AdapterConfig()
+        plugin_config_service = get_plugin_config_service()
+        current_config = plugin_config_service.build_response().get("adapters", {})
         data_root = os.path.abspath(DATA_DIR)
         new_data_root = os.path.abspath(new_data_dir)
 
@@ -299,21 +298,22 @@ def _update_third_party_storage_paths(old_data_dir, new_data_dir):
             rel = os.path.relpath(os.path.abspath(path_value), data_root)
             return os.path.abspath(os.path.join(new_data_root, rel))
 
-        jm_config = config_manager.get_adapter_config('jmcomic') or {}
+        updates = {}
+
+        jm_config = current_config.get('jmcomic') or {}
         if _should_rebase_to_new_data_dir(jm_config.get('download_dir'), old_data_dir):
-            config_manager.set_adapter_config('jmcomic', {
+            updates['jmcomic'] = {
                 'download_dir': _rebase_from_runtime_data(JM_PICTURES_DIR)
-            })
+            }
 
-        pk_config = config_manager.get_adapter_config('picacomic') or {}
+        pk_config = current_config.get('picacomic') or {}
         if _should_rebase_to_new_data_dir(pk_config.get('base_dir'), old_data_dir):
-            config_manager.set_adapter_config('picacomic', {
+            updates['picacomic'] = {
                 'base_dir': _rebase_from_runtime_data(PK_PICTURES_DIR)
-            })
+            }
 
-        for adapter_name in AdapterFactory.list_adapters():
-            AdapterFactory.reset_instance(adapter_name)
-        reset_config_manager()
+        if updates:
+            plugin_config_service.save_updates({"adapters": updates})
     except Exception as e:
         error_logger.error(f"更新第三方下载路径失败: {e}")
         raise
