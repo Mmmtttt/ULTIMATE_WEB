@@ -2,13 +2,12 @@
 平台服务 - 统一管理多平台操作
 提供统一的接口来处理不同平台的漫画操作
 """
-import os
 from typing import Dict, List, Any, Optional, Tuple
 from core.platform import Platform
-from .adapter_factory import AdapterFactory, AdapterConfig
 from .base_adapter import BaseAdapter
-from .credential_guard import ensure_adapter_query_ready
-from infrastructure.logger import app_logger, error_logger
+from infrastructure.logger import error_logger
+from protocol.compatibility import get_plugin_id_for_platform
+from protocol.gateway import get_protocol_gateway
 
 
 class PlatformService:
@@ -28,7 +27,7 @@ class PlatformService:
     
     def __init__(self):
         if not hasattr(self, '_initialized'):
-            self._config_manager = AdapterConfig()
+            self._gateway = get_protocol_gateway()
             self._initialized = True
     
     def get_adapter(self, platform: Platform) -> BaseAdapter:
@@ -40,17 +39,10 @@ class PlatformService:
         Returns:
             平台适配器实例
         """
-        adapter_name = self._get_adapter_name(platform)
-        # 每次获取适配器都刷新配置，确保 third_party_config.json 的改动可立即生效
-        self._config_manager.reload_config()
-        config = self._config_manager.get_adapter_config(adapter_name)
-        ensure_adapter_query_ready(adapter_name, config)
-        cached = self._adapters.get(platform)
-        if cached is None or getattr(cached, 'config', {}) != config:
-            AdapterFactory.reset_instance(adapter_name)
-            self._adapters[platform] = AdapterFactory.get_adapter(adapter_name, config)
-        
-        return self._adapters[platform]
+        plugin_id = get_plugin_id_for_platform(platform)
+        if not plugin_id:
+            raise ValueError(f"未知平台: {platform}")
+        return self._gateway.get_legacy_client(plugin_id)
     
     def _get_adapter_name(self, platform: Platform) -> str:
         """根据平台获取适配器名称"""
@@ -82,8 +74,18 @@ class PlatformService:
             (下载详情字典, 是否成功)
         """
         try:
-            adapter = self.get_adapter(platform)
-            return adapter.download_album(album_id, download_dir, show_progress, **kwargs)
+            plugin_id = get_plugin_id_for_platform(platform)
+            result = self._gateway.execute_plugin(
+                plugin_id,
+                "asset.bundle.fetch",
+                params={
+                    "album_id": album_id,
+                    "download_dir": download_dir,
+                    "show_progress": show_progress,
+                    "extra": kwargs,
+                },
+            )
+            return dict(result.get("detail") or {}), bool(result.get("success"))
         except Exception as e:
             error_logger.error(f"下载漫画失败: {platform}, {album_id}, {e}")
             return {}, False
@@ -107,8 +109,17 @@ class PlatformService:
             (下载详情字典, 是否成功)
         """
         try:
-            adapter = self.get_adapter(platform)
-            return adapter.download_cover(album_id, save_path, show_progress)
+            plugin_id = get_plugin_id_for_platform(platform)
+            result = self._gateway.execute_plugin(
+                plugin_id,
+                "asset.cover.fetch",
+                params={
+                    "album_id": album_id,
+                    "save_path": save_path,
+                    "show_progress": show_progress,
+                },
+            )
+            return dict(result.get("detail") or {}), bool(result.get("success"))
         except Exception as e:
             error_logger.error(f"下载封面失败: {platform}, {album_id}, {e}")
             return {}, False
@@ -133,8 +144,17 @@ class PlatformService:
         Returns:
             漫画目录路径
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_comic_dir(album_id, author, title, base_dir)
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "storage.comic_dir.resolve",
+            params={
+                "album_id": album_id,
+                "author": author,
+                "title": title,
+                "base_dir": base_dir,
+            },
+        )
     
     def get_cover_url(self, platform: Platform, album_id: str) -> Optional[str]:
         """获取封面URL
@@ -179,8 +199,15 @@ class PlatformService:
         Returns:
             预览图片URL列表
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_preview_image_urls(album_id, preview_pages)
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "asset.preview.resolve",
+            params={
+                "album_id": album_id,
+                "preview_pages": preview_pages,
+            },
+        )
     
     def get_album_by_id(self, platform: Platform, album_id: str) -> Dict[str, Any]:
         """根据ID获取专辑信息
@@ -192,8 +219,12 @@ class PlatformService:
         Returns:
             元数据JSON格式
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_album_by_id(album_id)
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "catalog.detail",
+            params={"album_id": album_id},
+        )
     
     def search_albums(
         self,
@@ -213,8 +244,17 @@ class PlatformService:
         Returns:
             元数据JSON格式
         """
-        adapter = self.get_adapter(platform)
-        return adapter.search_albums(keyword, page=1, max_pages=max_pages, fast_mode=fast_mode)
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "catalog.search",
+            params={
+                "keyword": keyword,
+                "page": 1,
+                "max_pages": max_pages,
+                "fast_mode": fast_mode,
+            },
+        )
     
     def get_favorites(self, platform: Platform) -> Dict[str, Any]:
         """获取收藏夹中的所有漫画
@@ -225,13 +265,18 @@ class PlatformService:
         Returns:
             元数据JSON格式
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_favorites()
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "collection.favorites",
+            params={},
+        )
 
     def get_favorites_basic(self, platform: Platform) -> Dict[str, Any]:
         """获取收藏夹基础信息（轻量模式）"""
-        adapter = self.get_adapter(platform)
-        return adapter.get_favorites_basic()
+        plugin_id = get_plugin_id_for_platform(platform)
+        capability = "collection.favorites_basic" if platform != Platform.JAVDB else "collection.favorites"
+        return self._gateway.execute_plugin(plugin_id, capability, params={})
     
     def get_user_lists(self, platform: Platform) -> Dict[str, Any]:
         """获取用户的清单列表
@@ -242,8 +287,12 @@ class PlatformService:
         Returns:
             包含清单列表的字典
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_user_lists()
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "collection.list",
+            params={},
+        )
     
     def get_list_detail(self, platform: Platform, list_id: str) -> Dict[str, Any]:
         """获取清单的详细内容
@@ -255,8 +304,12 @@ class PlatformService:
         Returns:
             包含清单详情和内容的字典
         """
-        adapter = self.get_adapter(platform)
-        return adapter.get_list_detail(list_id)
+        plugin_id = get_plugin_id_for_platform(platform)
+        return self._gateway.execute_plugin(
+            plugin_id,
+            "collection.detail",
+            params={"list_id": list_id},
+        )
 
 
 def get_platform_service() -> PlatformService:

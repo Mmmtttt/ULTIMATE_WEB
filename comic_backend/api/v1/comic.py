@@ -244,10 +244,9 @@ def _normalize_adapter_payload(adapter_name: str, payload: dict) -> dict:
 @require_third_party(error_response)
 def get_third_party_config():
     try:
-        from third_party.adapter_factory import AdapterConfig
+        from protocol.config_service import get_plugin_config_service
 
-        config_manager = AdapterConfig()
-        return success_response(_build_third_party_config_response(config_manager))
+        return success_response(get_plugin_config_service().build_response())
     except Exception as e:
         error_logger.error(f"获取第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
@@ -261,39 +260,13 @@ def save_third_party_config():
         if not data:
             return error_response(400, "缺少参数")
 
-        from third_party.adapter_factory import AdapterConfig, AdapterFactory
-        from third_party.external_api import reset_config_manager
+        from protocol.config_service import get_plugin_config_service
 
-        config_manager = AdapterConfig()
-        supported_adapters = set(AdapterFactory.list_adapters())
-
-        updates = {}
-        if isinstance(data.get("adapters"), dict):
-            updates = data.get("adapters", {})
-        else:
-            adapter = str(data.get("adapter", "")).strip()
-            if not adapter:
-                return error_response(400, "缺少参数: adapter")
-            updates = {adapter: data}
-
-        updated_adapter_names = []
-        for adapter_name, adapter_payload in updates.items():
-            adapter_name = str(adapter_name).strip()
-            if adapter_name not in supported_adapters:
-                return error_response(400, f"不支持的适配器: {adapter_name}")
-
-            normalized_payload = _normalize_adapter_payload(adapter_name, adapter_payload)
-            config_manager.set_adapter_config(adapter_name, normalized_payload)
-            AdapterFactory.reset_instance(adapter_name)
-            updated_adapter_names.append(adapter_name)
-
-        reset_config_manager()
-        app_logger.info(f"保存第三方库配置成功: {updated_adapter_names}")
-
-        return success_response({
-            "updated_adapters": updated_adapter_names,
-            "message": "配置保存成功",
-        })
+        result = get_plugin_config_service().save_updates(data)
+        app_logger.info(f"保存第三方库配置成功: {result.get('updated_adapters')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
     except Exception as e:
         error_logger.error(f"保存第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")

@@ -19,6 +19,8 @@ import time
 from urllib.parse import parse_qs, urlparse
 import mimetypes
 from .runtime_guard import require_third_party
+from protocol.compatibility import get_legacy_missav_client, get_legacy_video_adapter, get_plugin_id_for_video_platform
+from protocol.gateway import get_protocol_gateway
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
@@ -51,8 +53,7 @@ def _get_missav_client():
         raise RuntimeError(
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
-    from third_party.missav import get_client
-    return get_client(proxy_base_path='/api/v1/video')
+    return get_legacy_missav_client(proxy_base_path='/api/v1/video')
 
 
 def _build_play_sources(code: str):
@@ -617,33 +618,26 @@ def get_video_adapter(platform_name="javdb", *args, **kwargs):
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
     normalized_platform = str(platform_name or "").strip().lower()
+    plugin_id = get_plugin_id_for_video_platform(normalized_platform)
     if normalized_platform == "javdb":
         status = _get_video_platform_query_status("javdb")
         if not bool(status.get("configured", False)):
             raise RuntimeError(str(status.get("message") or "JAVDB 平台未配置 cookie"))
-        from third_party.javdb_api_scraper import JavdbAdapter
-        return JavdbAdapter(*args, **kwargs)
-    elif normalized_platform == "javbus":
-        from third_party.javdb_api_scraper import JavbusAdapter
-        return JavbusAdapter(*args, **kwargs)
+    if plugin_id:
+        return get_legacy_video_adapter(normalized_platform, *args, **kwargs)
     raise ValueError(f"不支持的视频平台: {platform_name}")
 
 
 def _get_video_platform_query_status(platform_name: str) -> dict:
     normalized_platform = str(platform_name or "").strip().lower()
-    if normalized_platform != "javdb":
+    plugin_id = get_plugin_id_for_video_platform(normalized_platform)
+    if not plugin_id:
         return {
             "configured": True,
             "message": "",
             "missing_fields": [],
         }
-
-    from third_party.adapter_factory import AdapterConfig
-    from third_party.credential_guard import get_adapter_credential_status
-
-    config_manager = AdapterConfig()
-    javdb_config = config_manager.get_adapter_config("javdb") or {}
-    return get_adapter_credential_status("javdb", javdb_config)
+    return get_protocol_gateway().get_query_status(plugin_id)
 
 
 def get_all_video_adapters(*args, **kwargs):

@@ -5,6 +5,8 @@
 from typing import Dict, Any, Optional
 from .adapter_factory import AdapterFactory, AdapterConfig
 from .credential_guard import ensure_adapter_query_ready
+from protocol.compatibility import get_plugin_id_for_adapter_name
+from protocol.gateway import get_protocol_gateway
 
 
 _config_manager = None
@@ -42,8 +44,11 @@ def get_adapter(adapter_name: Optional[str] = None):
     
     config_manager = get_config_manager()
     adapter_config = config_manager.get_adapter_config(adapter_name)
+    plugin_id = get_plugin_id_for_adapter_name(adapter_name)
+    if plugin_id:
+        return get_protocol_gateway().get_legacy_client(plugin_id)
+
     ensure_adapter_query_ready(adapter_name, adapter_config)
-    
     return AdapterFactory.get_adapter(adapter_name, adapter_config)
 
 
@@ -57,6 +62,16 @@ def get_album_by_id(album_id: str, adapter_name: Optional[str] = None) -> Dict[s
     Returns:
         元数据 JSON 格式
     """
+    config_manager = get_config_manager()
+    resolved_adapter = adapter_name or config_manager.get_default_adapter()
+    plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
+    if plugin_id:
+        return get_protocol_gateway().execute_plugin(
+            plugin_id,
+            "catalog.detail",
+            params={"album_id": album_id},
+        )
+
     adapter = get_adapter(adapter_name)
     return adapter.get_album_by_id(album_id)
 
@@ -75,6 +90,21 @@ def search_albums(keyword: str, page: int = 1, max_pages: int = 1,
     Returns:
         元数据 JSON 格式
     """
+    config_manager = get_config_manager()
+    resolved_adapter = adapter_name or config_manager.get_default_adapter()
+    plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
+    if plugin_id:
+        return get_protocol_gateway().execute_plugin(
+            plugin_id,
+            "catalog.search",
+            params={
+                "keyword": keyword,
+                "page": page,
+                "max_pages": max_pages,
+                "fast_mode": fast_mode,
+            },
+        )
+
     adapter = get_adapter(adapter_name)
     return adapter.search_albums(keyword, page, max_pages, fast_mode)
 
@@ -88,6 +118,16 @@ def get_favorites(adapter_name: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         元数据 JSON 格式
     """
+    config_manager = get_config_manager()
+    resolved_adapter = adapter_name or config_manager.get_default_adapter()
+    plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
+    if plugin_id:
+        return get_protocol_gateway().execute_plugin(
+            plugin_id,
+            "collection.favorites",
+            params={},
+        )
+
     adapter = get_adapter(adapter_name)
     return adapter.get_favorites()
 
@@ -98,7 +138,12 @@ def list_available_adapters() -> list:
     Returns:
         适配器名称列表
     """
-    return AdapterFactory.list_adapters()
+    discovered = []
+    for manifest in get_protocol_gateway().list_manifests():
+        config_key = str(manifest.config_key or "").strip()
+        if config_key:
+            discovered.append(config_key)
+    return sorted(set(AdapterFactory.list_adapters()) | set(discovered))
 
 
 def get_adapter_config(adapter_name: str) -> Dict[str, Any]:
