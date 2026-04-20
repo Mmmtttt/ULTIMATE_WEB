@@ -29,14 +29,26 @@ class ProtocolConfigStore:
             self.reload()
         return dict(self._get_manager().get_adapter_config(str(config_key or "").strip()) or {})
 
+    def get_adapter_config(self, adapter_name: str, reload: bool = False) -> Dict:
+        return self.get_plugin_config(adapter_name, reload=reload)
+
     def set_plugin_config(self, config_key: str, payload: Dict):
         self._get_manager().set_adapter_config(str(config_key or "").strip(), dict(payload or {}))
+
+    def set_adapter_config(self, adapter_name: str, payload: Dict):
+        self.set_plugin_config(adapter_name, payload)
 
     def get_default_config_key(self) -> str:
         return str(self._get_manager().get_default_adapter() or "").strip()
 
+    def get_default_adapter(self) -> str:
+        return self.get_default_config_key()
+
     def set_default_config_key(self, config_key: str):
         self._get_manager().set_default_adapter(str(config_key or "").strip())
+
+    def set_default_adapter(self, adapter_name: str):
+        self.set_default_config_key(adapter_name)
 
     @staticmethod
     def list_legacy_config_keys():

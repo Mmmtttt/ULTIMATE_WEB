@@ -1,8 +1,28 @@
 import importlib
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 from PIL import Image
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+utils_root = BACKEND_ROOT / "utils"
+existing_utils = sys.modules.get("utils")
+existing_utils_file = str(getattr(existing_utils, "__file__", "") or "")
+if not existing_utils_file.startswith(str(utils_root)):
+    spec = importlib.util.spec_from_file_location(
+        "utils",
+        utils_root / "__init__.py",
+        submodule_search_locations=[str(utils_root)],
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules["utils"] = module
+    spec.loader.exec_module(module)
 
 import application.local_comic_import_service as local_import_module
 from application.local_comic_import_service import LocalComicImportService

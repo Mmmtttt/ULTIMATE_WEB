@@ -86,6 +86,36 @@ def test_comic_third_party_config_rejects_unknown_adapter(third_party_client):
 
 
 @pytest.mark.integration
+def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_party_client):
+    """
+    用例描述:
+    - 用例目的: 看护第三方配置读取接口已经切换到协议层，并向前端暴露插件元数据，避免后续重构时退回硬编码 schema。
+    - 测试步骤:
+      1. 调用 GET /api/v1/comic/third-party/config。
+      2. 读取 data.plugins / adapter_order / helper_urls。
+      3. 校验 JM/PK/JAVDB 插件元数据和 JAVDB 帮助链接均存在。
+    - 预期结果:
+      1. HTTP 200 且业务 code=200。
+      2. plugins 中至少包含 comic.jmcomic、comic.picacomic、video.javdb。
+      3. adapter_order 与协议 manifest 一致，helper_urls 保持兼容。
+    """
+    client = third_party_client["client"]
+
+    response = client.get("/api/v1/comic/third-party/config")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+
+    data = payload["data"] or {}
+    plugin_ids = {item.get("plugin_id") for item in (data.get("plugins") or [])}
+    assert {"comic.jmcomic", "comic.picacomic", "video.javdb"}.issubset(plugin_ids)
+    assert data.get("adapter_order") == ["jmcomic", "picacomic", "javdb"]
+    helper_urls = data.get("helper_urls") or {}
+    assert helper_urls.get("javdb_cookie_guide") == "/api/v1/config/javdb-cookie-guide"
+
+
+@pytest.mark.integration
 def test_comic_search_third_party_all_forwards_adapter_contract(third_party_client, monkeypatch):
     """
     用例描述:
