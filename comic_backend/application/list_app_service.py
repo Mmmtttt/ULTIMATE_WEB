@@ -14,15 +14,15 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id, generate_uuid, normalize_total_page
 from core.enums import ContentType
-from core.platform import Platform
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
+from protocol.gateway import get_protocol_gateway
+from protocol.presentation import annotate_items
 
 
 class ListAppService:
     DEFAULT_COMIC_LIST_ID = "list_favorites_comic"
     DEFAULT_VIDEO_LIST_ID = "list_favorites_video"
     DEFAULT_IMPORT_MAX_WORKERS = 10
-    DEFAULT_IMPORT_JM_MAX_WORKERS = 3
     THIRD_PARTY_DISABLED_MESSAGE = "third-party integration is disabled in current runtime profile"
     COMIC_RECENT_IMPORT_TAG_ID = "tag_recent_import"
     COMIC_RECENT_IMPORT_TAG_NAME = "最近导入"
@@ -46,8 +46,214 @@ class ListAppService:
             raise RuntimeError(
                 f"{self.THIRD_PARTY_DISABLED_MESSAGE}: {get_runtime_profile()}"
             )
-        from third_party.platform_service import get_platform_service
+        from protocol.platform_service import get_platform_service
         return get_platform_service()
+
+    def _get_protocol_gateway(self):
+        if not is_third_party_enabled():
+            raise RuntimeError(
+                f"{self.THIRD_PARTY_DISABLED_MESSAGE}: {get_runtime_profile()}"
+            )
+        return get_protocol_gateway()
+
+    def _resolve_platform_manifest(
+        self,
+        platform_str: str,
+        media_type: Optional[str] = None,
+        capability: Optional[str] = None,
+    ):
+        platform_key = str(platform_str or "").strip()
+        if not platform_key:
+            return None
+        try:
+            return self._get_protocol_gateway().get_manifest_by_legacy_platform(
+                platform_key,
+                media_type=media_type,
+                capability=capability,
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _canonicalize_platform_name(platform_str: str, manifest=None) -> str:
+        raw = str(platform_str or "").strip()
+        if manifest is not None:
+            identity = dict(getattr(manifest, "identity", {}) or {})
+            platform_label = str(identity.get("platform_label") or "").strip()
+            if platform_label:
+                return platform_label
+            for alias in getattr(manifest, "legacy_platforms", []) or []:
+                normalized_alias = str(alias or "").strip()
+                if normalized_alias:
+                    return normalized_alias.upper()
+        return raw.upper()
+
+    @staticmethod
+    def _resolve_manifest_media_type(manifest) -> str:
+        media_types = {
+            str(item or "").strip().lower()
+            for item in (getattr(manifest, "media_types", []) or [])
+            if str(item or "").strip()
+        }
+        if "video" in media_types:
+            return "video"
+        return "comic"
+
+    def _resolve_platform_content_type(self, platform_str: str, manifest=None) -> ContentType:
+        resolved_manifest = manifest or self._resolve_platform_manifest(platform_str)
+        if resolved_manifest is None:
+            return ContentType.COMIC
+        return ContentType.VIDEO if self._resolve_manifest_media_type(resolved_manifest) == "video" else ContentType.COMIC
+
+    def _resolve_runtime_platform_name(self, platform_str: str, manifest=None) -> str:
+        return self._canonicalize_platform_name(platform_str, manifest)
+
+    def _get_default_remote_platform(self, content_type: Optional[ContentType]) -> str:
+        media_type = "video" if content_type == ContentType.VIDEO else "comic"
+        capability_candidates = ["collection.detail", "collection.list", "catalog.search"]
+
+        try:
+            for capability in capability_candidates:
+                manifests = list(
+                    self._get_protocol_gateway().list_manifests(
+                        media_type=media_type,
+                        capability=capability,
+                    )
+                )
+                if manifests:
+                    return self._canonicalize_platform_name("", manifests[0])
+
+            manifests = list(self._get_protocol_gateway().list_manifests(media_type=media_type))
+            if manifests:
+                return self._canonicalize_platform_name("", manifests[0])
+        except Exception:
+            return ""
+        return ""
+
+    @staticmethod
+    def _get_platform_host_prefix(manifest, fallback_platform: str) -> str:
+        identity = dict(getattr(manifest, "identity", {}) or {})
+        host_prefix = str(identity.get("host_id_prefix") or "").strip()
+        if host_prefix:
+            return host_prefix
+        fallback = str(fallback_platform or "").strip().upper()
+        return fallback
+
+    @staticmethod
+    def _build_prefixed_id(host_prefix: str, original_id: str) -> str:
+        normalized_prefix = str(host_prefix or "").strip()
+        normalized_original = str(original_id or "").strip()
+        if not normalized_prefix or not normalized_original:
+            return normalized_original
+        if normalized_original.startswith(normalized_prefix):
+            return normalized_original
+        return f"{normalized_prefix}{normalized_original}"
+
+    def _execute_platform_capability(self, manifest, capability: str, params: Optional[Dict[str, Any]] = None):
+        if manifest is None:
+            raise ValueError("平台协议未注册")
+        return self._get_protocol_gateway().execute_plugin(
+            manifest.plugin_id,
+            capability,
+            params=params or {},
+        )
+
+    def _list_virtual_platform_lists(self, manifest) -> ListType[dict]:
+        results: ListType[dict] = []
+        for item in (manifest.list_virtual_lists() if manifest is not None else []):
+            list_id = str(item.get("id") or item.get("list_id") or "").strip()
+            if not list_id:
+                continue
+            list_name = str(item.get("name") or item.get("list_name") or list_id).strip()
+            list_desc = str(item.get("description") or item.get("list_desc") or "").strip()
+            total_value = item.get("total", 0)
+            try:
+                total = int(total_value or 0)
+            except Exception:
+                total = 0
+            results.append({
+                "list_id": list_id,
+                "list_name": list_name,
+                "list_desc": list_desc,
+                "total": total,
+                "capability": str(item.get("capability") or "").strip(),
+            })
+        return results
+
+    def _get_virtual_list_definition(self, manifest, list_id: str) -> Optional[dict]:
+        lookup = str(list_id or "").strip()
+        if not lookup or manifest is None:
+            return None
+        for item in self._list_virtual_platform_lists(manifest):
+            if str(item.get("list_id") or "").strip() == lookup:
+                return item
+        return None
+
+    def _normalize_collection_works(self, manifest, payload: Dict[str, Any], capability: str) -> ListType[dict]:
+        media_type = self._resolve_manifest_media_type(manifest)
+
+        if media_type == "comic":
+            albums = payload.get("albums", [])
+            works = []
+            for album in albums:
+                if not isinstance(album, dict):
+                    continue
+                album_id = album.get("album_id", "") or album.get("comic_id", "")
+                if not album_id:
+                    continue
+                works.append({
+                    "album_id": album_id,
+                    "comic_id": album_id,
+                    "title": album.get("title", ""),
+                    "author": album.get("author", ""),
+                    "cover_url": album.get("cover_url", ""),
+                    "tags": album.get("tags", []),
+                })
+            return annotate_items(
+                works,
+                plugin_id=manifest.plugin_id,
+                media_type=media_type,
+                capability=capability,
+            )
+
+        raw_works = payload.get("works")
+        if not isinstance(raw_works, list):
+            raw_works = payload.get("videos")
+        if not isinstance(raw_works, list):
+            raw_works = []
+        return annotate_items(
+            raw_works,
+            plugin_id=manifest.plugin_id,
+            media_type=media_type,
+            capability=capability,
+        )
+
+    def _load_platform_list_payload(self, manifest, list_id: str) -> Dict[str, Any]:
+        virtual_list = self._get_virtual_list_definition(manifest, list_id)
+        if virtual_list is not None:
+            capability = str(virtual_list.get("capability") or "").strip() or "collection.favorites_basic"
+            payload = dict(self._execute_platform_capability(manifest, capability, params={}) or {})
+            works = self._normalize_collection_works(manifest, payload, capability)
+            return {
+                "list_id": str(virtual_list.get("list_id") or list_id).strip(),
+                "list_name": str(virtual_list.get("list_name") or list_id).strip(),
+                "list_desc": str(virtual_list.get("list_desc") or "").strip(),
+                "total": len(works),
+                "works": works,
+            }
+
+        payload = dict(
+            self._execute_platform_capability(
+                manifest,
+                "collection.detail",
+                params={"list_id": str(list_id or "").strip()},
+            ) or {}
+        )
+        works = self._normalize_collection_works(manifest, payload, "collection.detail")
+        payload["works"] = works
+        payload.setdefault("total", len(works))
+        payload.setdefault("list_id", str(list_id or "").strip())
+        return payload
 
     def _ensure_comic_recent_import_tag_id(self) -> Optional[str]:
         from domain.tag import Tag
@@ -134,10 +340,22 @@ class ListAppService:
 
     def _build_tracking_list_name(self, platform_str: str, platform_list_name: str, content_type: ContentType) -> str:
         base_name = (platform_list_name or "").strip() or "未命名清单"
-        # 漫画同时接入 JM/PK，名称携带平台前缀避免冲突（如：JM我的收藏）
-        if content_type == ContentType.COMIC and platform_str in (Platform.JM.value, Platform.PK.value):
+        # 漫画平台列表更容易同名，统一携带平台前缀避免冲突。
+        if content_type == ContentType.COMIC and str(platform_str or "").strip():
             return f"远程跟踪：{platform_str}{base_name}"
         return f"远程跟踪：{base_name}"
+
+    def _infer_legacy_tracking_platform(self, content_type) -> str:
+        media_type = "video" if content_type == ContentType.VIDEO else "comic"
+        manifests = list(
+            self._get_protocol_gateway().list_manifests(
+                media_type=media_type,
+                capability="collection.detail",
+            )
+        )
+        if len(manifests) != 1:
+            return ""
+        return self._canonicalize_platform_name("", manifests[0])
 
     def _get_positive_int_config(self, env_name: str, default_value: int) -> int:
         value = os.getenv(env_name)
@@ -154,7 +372,21 @@ class ListAppService:
         app_logger.warning(f"环境变量 {env_name} 配置无效: {value}，使用默认值 {default_value}")
         return default_value
 
-    def _resolve_import_workers(self, task_count: int, platform: Optional[Platform] = None) -> int:
+    @staticmethod
+    def _get_manifest_detail_import_worker_cap(manifest) -> Optional[int]:
+        policy = dict(getattr(manifest, "resource_policy", {}) or {}) if manifest is not None else {}
+        import_policy = policy.get("import") if isinstance(policy, dict) else None
+        if not isinstance(import_policy, dict):
+            return None
+
+        raw_cap = import_policy.get("detail_max_workers")
+        try:
+            parsed = int(raw_cap or 0)
+        except Exception:
+            return None
+        return parsed if parsed > 0 else None
+
+    def _resolve_import_workers(self, task_count: int, manifest=None) -> int:
         if task_count <= 0:
             return 0
 
@@ -163,12 +395,9 @@ class ListAppService:
             self.DEFAULT_IMPORT_MAX_WORKERS
         )
 
-        if platform == Platform.JM:
-            jm_workers = self._get_positive_int_config(
-                "LIST_IMPORT_JM_MAX_WORKERS",
-                self.DEFAULT_IMPORT_JM_MAX_WORKERS
-            )
-            max_workers = min(max_workers, jm_workers)
+        manifest_cap = self._get_manifest_detail_import_worker_cap(manifest)
+        if manifest_cap:
+            max_workers = min(max_workers, manifest_cap)
 
         return max(1, min(max_workers, task_count))
 
@@ -177,13 +406,14 @@ class ListAppService:
         detail_tasks: ListType[dict],
         fetch_detail: Callable[[dict], Dict[str, Any]],
         handle_detail: Callable[[Dict[str, Any]], None],
-        platform: Optional[Platform] = None
+        manifest=None,
+        platform: Optional[str] = None
     ) -> None:
         if not detail_tasks:
             return
 
-        max_workers = self._resolve_import_workers(len(detail_tasks), platform)
-        platform_name = platform.value if platform else "UNKNOWN"
+        max_workers = self._resolve_import_workers(len(detail_tasks), manifest=manifest)
+        platform_name = str(platform or "").strip().upper() or "UNKNOWN"
         app_logger.info(f"详情导入并发数: {max_workers}, 平台: {platform_name}, 任务数: {len(detail_tasks)}")
 
         if max_workers > 1:
@@ -277,7 +507,10 @@ class ListAppService:
                     import re
                     match = re.search(r'远程清单ID[：:]\s*(\S+)', lst.desc)
                     if match:
-                        lst.platform = "JAVDB"
+                        fallback_platform = self._get_default_remote_platform(lst.content_type)
+                        if not fallback_platform:
+                            continue
+                        lst.platform = fallback_platform
                         lst.platform_list_id = match.group(1)
                         lst.import_source = "local"
                         self._list_repo.save(lst)
@@ -712,26 +945,38 @@ class ListAppService:
         """
         try:
             app_logger.info(f"获取平台用户清单列表: {platform_str}")
-            
-            platform = Platform(platform_str)
-            
-            if platform in [Platform.JM, Platform.PK]:
-                result = {
-                    "lists": [{
-                        "list_id": "favorites",
-                        "list_name": "我的收藏",
-                        "list_desc": "平台收藏夹中的所有漫画",
-                        "total": 0
-                    }]
+
+            manifest = self._resolve_platform_manifest(platform_str)
+            if manifest is None:
+                return ServiceResult.error(f"不支持的平台: {platform_str}")
+
+            virtual_lists = self._list_virtual_platform_lists(manifest)
+            if manifest.collection_list_mode == "virtual_only":
+                app_logger.info(f"获取平台用户清单列表成功: {platform_str}, 返回协议声明的虚拟清单")
+                return ServiceResult.ok({"lists": virtual_lists})
+
+            if manifest.has_capability("collection.list"):
+                result = dict(self._execute_platform_capability(manifest, "collection.list", params={}) or {})
+                declared_ids = {
+                    str(item.get("list_id") or "").strip()
+                    for item in result.get("lists", [])
+                    if isinstance(item, dict)
                 }
-                app_logger.info(f"获取平台用户清单列表成功: {platform_str}, 返回虚拟收藏夹清单")
+                if virtual_lists:
+                    merged_lists = list(result.get("lists", []) or [])
+                    for item in virtual_lists:
+                        list_id = str(item.get("list_id") or "").strip()
+                        if list_id and list_id not in declared_ids:
+                            merged_lists.append(item)
+                    result["lists"] = merged_lists
+                app_logger.info(f"获取平台用户清单列表成功: {len(result.get('lists', []))} 个清单")
                 return ServiceResult.ok(result)
-            
-            platform_service = self._get_platform_service()
-            result = platform_service.get_user_lists(platform)
-            
-            app_logger.info(f"获取平台用户清单列表成功: {len(result.get('lists', []))} 个清单")
-            return ServiceResult.ok(result)
+
+            if virtual_lists:
+                app_logger.info(f"获取平台用户清单列表成功: {platform_str}, 返回协议声明的虚拟清单")
+                return ServiceResult.ok({"lists": virtual_lists})
+
+            return ServiceResult.error("平台未声明用户清单能力")
         except Exception as e:
             error_logger.error(f"获取平台用户清单列表失败: {e}")
             return ServiceResult.error(f"获取平台用户清单列表失败: {e}")
@@ -748,38 +993,12 @@ class ListAppService:
         """
         try:
             app_logger.info(f"获取平台清单详情: {platform_str}, {list_id}")
-            
-            platform = Platform(platform_str)
-            platform_service = self._get_platform_service()
-            
-            if platform in [Platform.JM, Platform.PK] and list_id == "favorites":
-                favorites_result = platform_service.get_favorites_basic(platform)
-                albums = favorites_result.get('albums', [])
-                
-                works = []
-                for album in albums:
-                    album_id = album.get('album_id', '') or album.get('comic_id', '')
-                    works.append({
-                        'album_id': album_id,
-                        'comic_id': album_id,
-                        'title': album.get('title', ''),
-                        'author': album.get('author', ''),
-                        'cover_url': album.get('cover_url', ''),
-                        'tags': album.get('tags', [])
-                    })
-                
-                result = {
-                    "list_id": "favorites",
-                    "list_name": "我的收藏",
-                    "list_desc": "平台收藏夹中的所有漫画",
-                    "total": len(works),
-                    "works": works
-                }
-                app_logger.info(f"获取平台收藏夹详情成功: {platform_str}, {len(works)} 个漫画")
-                return ServiceResult.ok(result)
-            
-            result = platform_service.get_list_detail(platform, list_id)
-            
+
+            manifest = self._resolve_platform_manifest(platform_str)
+            if manifest is None:
+                return ServiceResult.error(f"不支持的平台: {platform_str}")
+
+            result = self._load_platform_list_payload(manifest, list_id)
             app_logger.info(f"获取平台清单详情成功: {list_id}, {len(result.get('works', []))} 个作品")
             return ServiceResult.ok(result)
         except Exception as e:
@@ -806,15 +1025,16 @@ class ListAppService:
         """
         try:
             app_logger.info(f"开始导入平台清单: {platform_str}, {platform_list_id} ({platform_list_name}), source={source}")
-            
-            platform = Platform(platform_str)
-            platform_service = self._get_platform_service()
-            
-            from core.enums import ContentType
-            content_type = ContentType.VIDEO if platform == Platform.JAVDB else ContentType.COMIC
+
+            manifest = self._resolve_platform_manifest(platform_str)
+            if manifest is None:
+                return ServiceResult.error(f"不支持的平台: {platform_str}")
+
+            platform_key = self._canonicalize_platform_name(platform_str, manifest)
+            content_type = self._resolve_platform_content_type(platform_key, manifest)
 
             tracking_list_result = self._get_or_create_tracking_list(
-                platform_str=platform_str,
+                platform_str=platform_key,
                 platform_list_id=platform_list_id,
                 platform_list_name=platform_list_name,
                 content_type=content_type,
@@ -825,31 +1045,22 @@ class ListAppService:
 
             target_list = tracking_list_result.data
 
-            if platform in [Platform.JM, Platform.PK] and platform_list_id == "favorites":
-                favorites_result = platform_service.get_favorites_basic(platform)
-                albums = favorites_result.get('albums', [])
-                works = []
-                for album in albums:
-                    album_id = album.get('album_id', '') or album.get('comic_id', '')
-                    works.append({
-                        'album_id': album_id,
-                        'comic_id': album_id,
-                        'title': album.get('title', ''),
-                        'author': album.get('author', ''),
-                        'cover_url': album.get('cover_url', ''),
-                        'tags': album.get('tags', [])
-                    })
-            else:
-                list_detail = platform_service.get_list_detail(platform, platform_list_id)
-                works = list_detail.get('works', [])
+            list_detail = self._load_platform_list_payload(manifest, platform_list_id)
+            works = list_detail.get('works', [])
 
             if not works:
                 return ServiceResult.error("清单中没有内容")
 
-            if platform == Platform.JAVDB:
-                result = self._import_javdb_videos(works, target_list.id, source)
+            if content_type == ContentType.VIDEO:
+                result = self._import_platform_videos(works, target_list.id, source, platform_key)
             else:
-                result = self._import_comics(works, target_list.id, source, platform)
+                result = self._import_comics(
+                    works,
+                    target_list.id,
+                    source,
+                    platform=self._resolve_runtime_platform_name(platform_key, manifest),
+                    platform_str=platform_key,
+                )
 
             if result.success:
                 target_list.last_sync_time = get_current_time()
@@ -883,22 +1094,30 @@ class ListAppService:
                 import re
                 match = re.search(r'远程清单ID[：:]\s*(\S+)', lst.desc)
                 if match:
-                    lst.platform = "JAVDB"
+                    inferred_platform = self._infer_legacy_tracking_platform(lst.content_type)
+                    if not inferred_platform:
+                        return ServiceResult.error("该清单缺少平台信息，且无法根据协议自动识别平台")
+                    lst.platform = inferred_platform
                     lst.platform_list_id = match.group(1)
                     lst.import_source = "local"
                     self._list_repo.save(lst)
                     app_logger.info(f"从描述中解析出清单信息: {lst.platform}, {lst.platform_list_id}")
                 else:
                     return ServiceResult.error("该清单不是网络清单，无法同步")
-            
-            platform = Platform(lst.platform)
-            platform_service = self._get_platform_service()
+
+            manifest = self._resolve_platform_manifest(lst.platform)
+            if manifest is None:
+                return ServiceResult.error(f"不支持的平台: {lst.platform}")
+
+            platform_key = self._canonicalize_platform_name(lst.platform, manifest)
+            content_type = self._resolve_platform_content_type(platform_key, manifest)
+            runtime_platform = self._resolve_runtime_platform_name(platform_key, manifest)
             source = lst.import_source or "local"
             
             app_logger.info(f"从平台 {lst.platform} 同步清单 {lst.platform_list_id}")
 
-            if platform == Platform.JAVDB:
-                list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
+            if content_type == ContentType.VIDEO:
+                list_detail = self._load_platform_list_payload(manifest, lst.platform_list_id)
                 works = list_detail.get('works', [])
                 if not works:
                     return ServiceResult.error("清单中没有内容")
@@ -922,30 +1141,19 @@ class ListAppService:
 
                 app_logger.info(f"需要导入 {len(new_works)} 个新视频")
                 total_count = len(works)
-                import_action = self._import_javdb_videos
+                import_action = lambda items, target_list_id, import_source: self._import_platform_videos(
+                    items,
+                    target_list_id,
+                    import_source,
+                    platform_key,
+                )
             else:
-                if lst.platform_list_id == "favorites":
-                    favorites_result = platform_service.get_favorites_basic(platform)
-                    albums = favorites_result.get('albums', [])
-                    works = []
-                    for album in albums:
-                        album_id = album.get('album_id', '') or album.get('comic_id', '')
-                        works.append({
-                            'album_id': album_id,
-                            'comic_id': album_id,
-                            'title': album.get('title', ''),
-                            'author': album.get('author', ''),
-                            'cover_url': album.get('cover_url', ''),
-                            'tags': album.get('tags', [])
-                        })
-                else:
-                    list_detail = platform_service.get_list_detail(platform, lst.platform_list_id)
-                    works = list_detail.get('works', [])
+                list_detail = self._load_platform_list_payload(manifest, lst.platform_list_id)
+                works = list_detail.get('works', [])
 
                 if not works:
                     return ServiceResult.error("清单中没有内容")
 
-                from core.platform import add_platform_prefix
                 repo = self._comic_repo if source == "local" else self._rec_repo
                 existing_comic_ids = set()
                 for comic in repo.get_all():
@@ -959,14 +1167,23 @@ class ListAppService:
                     album_id = work.get('album_id', '') or work.get('comic_id', '')
                     if not album_id:
                         continue
-                    prefixed_id = add_platform_prefix(platform, str(album_id))
+                    prefixed_id = self._build_prefixed_id(
+                        self._get_platform_host_prefix(manifest, platform_key),
+                        str(album_id),
+                    )
                     if prefixed_id not in existing_comic_ids:
                         new_works.append(work)
                         app_logger.info(f"发现新漫画: {prefixed_id}")
 
                 app_logger.info(f"需要导入 {len(new_works)} 个新漫画")
                 total_count = len(works)
-                import_action = lambda items, target_list_id, import_source: self._import_comics(items, target_list_id, import_source, platform)
+                import_action = lambda items, target_list_id, import_source: self._import_comics(
+                    items,
+                    target_list_id,
+                    import_source,
+                    platform=runtime_platform,
+                    platform_str=platform_key,
+                )
 
             if not new_works:
                 lst.last_sync_time = get_current_time()
@@ -994,33 +1211,33 @@ class ListAppService:
             error_logger.error(traceback.format_exc())
             return ServiceResult.error(f"同步清单失败: {e}")
     
-    def _import_javdb_videos(
+    def _import_platform_videos(
         self, 
         works: ListType[dict], 
         target_list_id: str, 
-        source: str = "local"
+        source: str = "local",
+        platform_str: str = "",
     ) -> ServiceResult:
-        """导入JAVDB视频
+        """导入第三方视频
         
         Args:
-            works: JAVDB视频列表
+            works: 第三方视频列表
             target_list_id: 目标清单ID
             source: 导入来源
+            platform_str: 平台标识
             
         Returns:
             导入结果
         """
         try:
-            from core.platform import add_platform_prefix
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
             from application.video_app_service import VideoAppService
-            from api.v1.video import (
-                get_video_adapter,
+            from application.video_runtime_support import (
+                platform_allows_preview_video_download,
+                sanitize_preview_video_value,
+                schedule_video_asset_cache,
                 to_proxy_image_url,
-                _sanitize_preview_video_value,
-                _schedule_video_asset_cache,
-                _is_javbus_platform,
             )
             import re
             
@@ -1037,7 +1254,12 @@ class ListAppService:
             imported_count = 0
             skipped_count = 0
             imported_video_ids: ListType[str] = []
-            detail_adapter = get_video_adapter("javdb", existing_tags)
+            manifest = self._resolve_platform_manifest(platform_str, media_type="video")
+            if manifest is None:
+                return ServiceResult.error(f"未找到视频平台协议: {platform_str}")
+            platform_key = self._canonicalize_platform_name(platform_str, manifest)
+            platform_name = str(platform_key or platform_str or "").strip().lower()
+            host_prefix = self._get_platform_host_prefix(manifest, platform_key)
             detail_tasks: ListType[dict] = []
 
             def find_existing_video_by_code(code: str):
@@ -1068,7 +1290,7 @@ class ListAppService:
                             skipped_count += 1
                         continue
 
-                    prefixed_id = add_platform_prefix(Platform.JAVDB, video_id)
+                    prefixed_id = self._build_prefixed_id(host_prefix, video_id)
                     
                     detail_tasks.append({
                         "work": work,
@@ -1085,11 +1307,25 @@ class ListAppService:
                 video_id = task.get("video_id", "")
                 work = task.get("work", {})
                 app_logger.info(f"获取视频详情: {video_id}")
-                detail = detail_adapter.get_video_detail(video_id)
-                if not detail and hasattr(detail_adapter, "get_video_by_code"):
+                detail = self._execute_platform_capability(
+                    manifest,
+                    "catalog.detail",
+                    params={
+                        "video_id": video_id,
+                        "existing_tags": existing_tags,
+                    },
+                )
+                if not detail and manifest.has_capability("catalog.by_code"):
                     fallback_code = str((work or {}).get("code", "") or "").strip()
                     if fallback_code:
-                        detail = detail_adapter.get_video_by_code(fallback_code)
+                        detail = self._execute_platform_capability(
+                            manifest,
+                            "catalog.by_code",
+                            params={
+                                "code": fallback_code,
+                                "existing_tags": existing_tags,
+                            },
+                        )
                 return {
                     "task": task,
                     "detail": detail
@@ -1151,8 +1387,14 @@ class ListAppService:
                     "actors": video_detail.get("actors", []),
                     "magnets": video_detail.get("magnets", []),
                     "thumbnail_images": video_detail.get("thumbnail_images", []),
-                    "preview_video": _sanitize_preview_video_value(video_detail.get("preview_video", "")),
-                    "cover_path": to_proxy_image_url(video_detail.get("cover_url", "")),
+                    "preview_video": sanitize_preview_video_value(video_detail.get("preview_video", "")),
+                    "cover_path": to_proxy_image_url(
+                        video_detail.get("cover_url", ""),
+                        asset_kind="cover",
+                        video_id=prefixed_id,
+                        platform_name=platform_name,
+                        content_id=video_id,
+                    ),
                     "thumbnail_images_local": [],
                     "preview_video_local": "",
                     "cover_path_local": "",
@@ -1179,14 +1421,18 @@ class ListAppService:
                         imported_count += 1
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
-                        _schedule_video_asset_cache(
+                        schedule_video_asset_cache(
                             video_id=prefixed_id,
                             source="local",
                             cover_url=cover_url,
                             preview_video=video_data.get("preview_video", ""),
                             thumbnail_images=video_data.get("thumbnail_images", []),
                             allow_cover=True,
-                            allow_preview_video=not _is_javbus_platform(platform="javdb", video_id=prefixed_id),
+                            allow_preview_video=platform_allows_preview_video_download(
+                                platform=platform_name,
+                                video_id=prefixed_id,
+                            ),
+                            video_service=video_service,
                         )
                     else:
                         skipped_count += 1
@@ -1194,7 +1440,13 @@ class ListAppService:
                     from infrastructure.persistence.json_storage import JsonStorage
                     from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
                     
-                    video_data["cover_path"] = to_proxy_image_url(video_detail.get("cover_url", ""))
+                    video_data["cover_path"] = to_proxy_image_url(
+                        video_detail.get("cover_url", ""),
+                        asset_kind="cover",
+                        video_id=prefixed_id,
+                        platform_name=platform_name,
+                        content_id=video_id,
+                    )
                     
                     db_file = VIDEO_RECOMMENDATION_JSON_FILE
                     storage = JsonStorage(db_file)
@@ -1217,14 +1469,18 @@ class ListAppService:
                         imported_count += 1
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
-                        _schedule_video_asset_cache(
+                        schedule_video_asset_cache(
                             video_id=prefixed_id,
                             source="preview",
                             cover_url=cover_url,
                             preview_video=video_data.get("preview_video", ""),
                             thumbnail_images=video_data.get("thumbnail_images", []),
                             allow_cover=True,
-                            allow_preview_video=not _is_javbus_platform(platform="javdb", video_id=prefixed_id),
+                            allow_preview_video=platform_allows_preview_video_download(
+                                platform=platform_name,
+                                video_id=prefixed_id,
+                            ),
+                            video_service=video_service,
                         )
                     else:
                         skipped_count += 1
@@ -1234,7 +1490,8 @@ class ListAppService:
                     detail_tasks=detail_tasks,
                     fetch_detail=fetch_video_detail,
                     handle_detail=handle_video_detail,
-                    platform=Platform.JAVDB
+                    manifest=manifest,
+                    platform=self._resolve_runtime_platform_name(platform_key, manifest),
                 )
 
             if imported_video_ids:
@@ -1253,17 +1510,18 @@ class ListAppService:
             }, f"成功导入 {imported_count} 个视频，跳过 {skipped_count} 个")
             
         except Exception as e:
-            error_logger.error(f"导入JAVDB视频失败: {e}")
+            error_logger.error(f"导入第三方视频失败: {e}")
             import traceback
             error_logger.error(traceback.format_exc())
-            return ServiceResult.error(f"导入JAVDB视频失败: {e}")
-    
+            return ServiceResult.error(f"导入第三方视频失败: {e}")
+
     def _import_comics(
         self, 
         works: ListType[dict], 
         target_list_id: str, 
         source: str = "local",
-        platform: Platform = None
+        platform: Optional[str] = None,
+        platform_str: str = "",
     ) -> ServiceResult:
         """导入漫画
         
@@ -1272,16 +1530,16 @@ class ListAppService:
             target_list_id: 目标清单ID
             source: 导入来源 - "local" 本地库, "preview" 预览库
             platform: 平台
+            platform_str: 平台标识
             
         Returns:
             导入结果
         """
         try:
-            from core.platform import add_platform_prefix
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
             from domain.comic import Comic
-            from core.constants import JM_COVER_DIR, PK_COVER_DIR
+            from core.constants import COVER_DIR
             
             repo = self._comic_repo if source == "local" else self._rec_repo
             
@@ -1295,11 +1553,15 @@ class ListAppService:
             imported_count = 0
             skipped_count = 0
             imported_comic_ids: ListType[str] = []
-            
-            platform_service = self._get_platform_service()
-            
-            cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
-            platform_prefix = "JM" if platform == Platform.JM else "PK"
+
+            runtime_platform = str(platform or "").strip()
+            manifest = self._resolve_platform_manifest(platform_str or runtime_platform, media_type="comic")
+            if manifest is None:
+                return ServiceResult.error(f"未找到漫画平台协议: {platform_str or runtime_platform}")
+
+            platform_key = self._canonicalize_platform_name(platform_str or runtime_platform, manifest)
+            host_prefix = self._get_platform_host_prefix(manifest, platform_key)
+            cover_dir = os.path.join(COVER_DIR, host_prefix)
             os.makedirs(cover_dir, exist_ok=True)
             detail_tasks: ListType[dict] = []
             
@@ -1310,8 +1572,8 @@ class ListAppService:
                         skipped_count += 1
                         continue
                     
-                    prefixed_id = add_platform_prefix(platform, str(album_id))
-                    static_cover_path = f"/static/cover/{platform_prefix}/{album_id}.jpg"
+                    prefixed_id = self._build_prefixed_id(host_prefix, str(album_id))
+                    static_cover_path = f"/static/cover/{host_prefix}/{album_id}.jpg"
                     local_cover_file = os.path.join(cover_dir, f"{album_id}.jpg")
                     cover_url_from_work = work.get("cover_url", "")
                     
@@ -1323,9 +1585,19 @@ class ListAppService:
                         resolved_cover_path = existing_comic.cover_path or ""
                         if os.path.exists(local_cover_file):
                             resolved_cover_path = static_cover_path
-                        elif cover_url_from_work:
+                        elif cover_url_from_work and not manifest.has_capability("asset.cover.fetch") and source != "local":
+                            resolved_cover_path = cover_url_from_work
+                        elif cover_url_from_work and manifest.has_capability("asset.cover.fetch"):
                             try:
-                                platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
+                                self._execute_platform_capability(
+                                    manifest,
+                                    "asset.cover.fetch",
+                                    params={
+                                        "album_id": str(album_id),
+                                        "save_path": local_cover_file,
+                                        "show_progress": False,
+                                    },
+                                )
                                 if os.path.exists(local_cover_file):
                                     resolved_cover_path = static_cover_path
                                 elif source != "local":
@@ -1368,7 +1640,11 @@ class ListAppService:
             def fetch_comic_detail(task: dict) -> dict:
                 album_id = task.get("album_id", "")
                 app_logger.info(f"获取漫画详情: {album_id}")
-                detail_result = platform_service.get_album_by_id(platform, str(album_id))
+                detail_result = self._execute_platform_capability(
+                    manifest,
+                    "catalog.detail",
+                    params={"album_id": str(album_id)},
+                )
                 return {
                     "task": task,
                     "detail_result": detail_result
@@ -1447,12 +1723,20 @@ class ListAppService:
                         imported_comic_ids.append(prefixed_id)
                         
                         cover_url = comic_detail.get("cover_url", "")
-                        if cover_url:
+                        if cover_url and manifest.has_capability("asset.cover.fetch"):
                             app_logger.info(f"开始下载封面: {prefixed_id}")
                             try:
                                 save_path = os.path.join(cover_dir, f"{album_id}.jpg")
                                 os.makedirs(cover_dir, exist_ok=True)
-                                platform_service.download_cover(platform, str(album_id), save_path, show_progress=False)
+                                self._execute_platform_capability(
+                                    manifest,
+                                    "asset.cover.fetch",
+                                    params={
+                                        "album_id": str(album_id),
+                                        "save_path": save_path,
+                                        "show_progress": False,
+                                    },
+                                )
                             except Exception as e:
                                 app_logger.warning(f"下载封面失败: {prefixed_id}, {e}")
                     else:
@@ -1465,9 +1749,17 @@ class ListAppService:
                     cover_url = comic_detail.get("cover_url", "")
                     if os.path.exists(local_cover_file):
                         comic_data["cover_path"] = cover_path
-                    elif cover_url:
+                    elif cover_url and manifest.has_capability("asset.cover.fetch"):
                         try:
-                            platform_service.download_cover(platform, str(album_id), local_cover_file, show_progress=False)
+                            self._execute_platform_capability(
+                                manifest,
+                                "asset.cover.fetch",
+                                params={
+                                    "album_id": str(album_id),
+                                    "save_path": local_cover_file,
+                                    "show_progress": False,
+                                },
+                            )
                             if os.path.exists(local_cover_file):
                                 comic_data["cover_path"] = cover_path
                             else:
@@ -1475,17 +1767,24 @@ class ListAppService:
                         except Exception as e:
                             app_logger.warning(f"下载推荐封面失败: {prefixed_id}, {e}")
                             comic_data["cover_path"] = cover_url
+                    elif cover_url:
+                        comic_data["cover_path"] = cover_url
                     else:
                         comic_data["cover_path"] = cover_path
                     
                     try:
                         total_page = normalize_total_page(comic_detail.get("pages", 0))
                         preview_pages = get_preview_pages(total_page)
-                        preview_urls = platform_service.get_preview_image_urls(
-                            platform,
-                            str(album_id),
-                            preview_pages
-                        )
+                        preview_urls = []
+                        if manifest.has_capability("asset.preview.resolve"):
+                            preview_urls = self._execute_platform_capability(
+                                manifest,
+                                "asset.preview.resolve",
+                                params={
+                                    "album_id": str(album_id),
+                                    "preview_pages": preview_pages,
+                                },
+                            ) or []
                         
                         comic_data["preview_image_urls"] = preview_urls
                         comic_data["preview_pages"] = preview_pages
@@ -1516,6 +1815,7 @@ class ListAppService:
                     detail_tasks=detail_tasks,
                     fetch_detail=fetch_comic_detail,
                     handle_detail=handle_comic_detail,
+                    manifest=manifest,
                     platform=platform
                 )
 

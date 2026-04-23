@@ -184,7 +184,7 @@ tests/
 
 - Integration 看护点：
   - 漫画：`/comic/third-party/config`、`/comic/search-third-party`、`/comic/import/online`
-  - 视频：`/video/third-party/search`、`/video/third-party/javdb/cookie-status`、`/video/third-party/javdb/search-by-tags`、`/video/third-party/detail`、`/video/third-party/actor/search`、`/video/third-party/actor/works`、`/video/third-party/import`、`/video/preview-video/refresh`、`/video/actor/search-works`、`/video/actor/works/<actor_id>`、`/video/actor/works-cache/clear`
+  - 视频：`/video/third-party/search`、`/video/third-party/<platform>/health-status`、`/video/third-party/<platform>/search-by-tags`、`/video/third-party/detail`、`/video/third-party/actor/search`、`/video/third-party/actor/works`、`/video/third-party/import`、`/video/preview-video/refresh`、`/video/actor/search-works`、`/video/actor/works/<actor_id>`、`/video/actor/works-cache/clear`
   - 清单：`/list/platform/lists`、`/list/platform/list/detail`、`/list/import`、`/list/sync`、`/list/import/favorites`、`/list/sync/favorites`
   - 作者/演员：`/author/search-works`、`/author/check-updates`、`/author/new-works`、`/author/works`、`/actor/search-works`、`/actor/check-updates`、`/actor/new-works`、`/actor/works`、`/actor/videos`
   - 推荐与系统配置：`/recommendation/cache/download`、`/config/system`（third-party 路径更新回调）

@@ -48,10 +48,10 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     monkeypatch.setattr(local_import_module, "LOCAL_IMPORT_WORKSPACE_DIR", workspace_dir)
     monkeypatch.setattr(local_import_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
-    monkeypatch.setattr(file_parser_module, "JM_PICTURES_DIR", str(jm_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json := meta_dir / "comics_database.json"))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(meta_dir / "recommendations_database.json"))
-    monkeypatch.setattr(image_handler_module, "JM_COVER_DIR", str(jm_cover_dir))
+    monkeypatch.setattr(image_handler_module, "COVER_DIR", str(tmp_path / "static" / "cover"))
     tags_json = meta_dir / "tags_database.json"
 
     service = LocalComicImportService()
@@ -119,7 +119,7 @@ def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_pa
     recommendations_json.write_text(json.dumps({"recommendations": []}, ensure_ascii=False), encoding="utf-8")
 
     monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
-    monkeypatch.setattr(file_parser_module, "JM_PICTURES_DIR", str(jm_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
 

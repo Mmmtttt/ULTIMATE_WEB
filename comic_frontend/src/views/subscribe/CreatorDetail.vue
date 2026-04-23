@@ -55,20 +55,14 @@
             :class="{ selected: isSelected(item) }"
             @click="toggleSelection(item)"
           >
-            <div
-              class="card-cover"
-              :class="{
-                'video-cover-landscape': isVideoMode && !isJavbusPlatform(item),
-                'video-cover-portrait': isVideoMode && isJavbusPlatform(item)
-              }"
-            >
+            <div class="card-cover" :style="getCoverStyle(item)">
               <van-image
                 :src="getCoverUrl(item)"
                 :fit="getCoverFit(item)"
                 class="cover-image"
                 lazy-load
               />
-              <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
+              <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
               <div v-if="isSelected(item)" class="select-overlay">
                 <van-icon name="success" class="select-icon" />
               </div>
@@ -113,7 +107,16 @@ import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast } from 'vant'
 import { usePersistentPage } from '@/composables/useClientPagination'
-import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
+import {
+  buildDisplayCoverStyle,
+  getCoverUrl,
+  isAllSelected,
+  resolveDisplayCoverFit,
+  resolveImportPlatform,
+  resolvePlatformBadgeLabel,
+  shouldShowPlatformBadge,
+  toggleSelectAll,
+} from '@/utils'
 
 const route = useRoute()
 const modeStore = useModeStore()
@@ -165,80 +168,9 @@ async function resolveSubscription() {
 
 function applyWorksPage(res) {
   const newWorks = res?.data?.works || []
-  let incomingWorks = normalizeVideoWorkPlatforms(newWorks)
-  if (isVideoMode.value) {
-    incomingWorks = sortVideoWorksByPlatform(incomingWorks)
-  }
-
-  works.value = incomingWorks
+  works.value = Array.isArray(newWorks) ? newWorks : []
   totalWorks.value = res?.data?.total || works.value.length
   ensureWithinRange(totalPages.value)
-}
-
-function normalizeVideoWorkPlatforms(items) {
-  if (!isVideoMode.value) {
-    return items || []
-  }
-
-  return (items || []).map(item => {
-    const normalizedPlatform = detectVideoPlatform(item)
-    if (!normalizedPlatform) {
-      return item
-    }
-    return {
-      ...item,
-      platform: normalizedPlatform.toUpperCase()
-    }
-  })
-}
-
-function sortVideoWorksByPlatform(items) {
-  const javdb = []
-  const javbus = []
-  const other = []
-
-  ;(items || []).forEach(item => {
-    const platform = detectVideoPlatform(item)
-    if (platform === 'javdb') {
-      javdb.push(item)
-      return
-    }
-    if (platform === 'javbus') {
-      javbus.push(item)
-      return
-    }
-    other.push(item)
-  })
-
-  return [...javdb, ...javbus, ...other]
-}
-
-function detectVideoPlatform(item) {
-  const platformText = String(item?.platform || item?.source || '').trim().toLowerCase()
-  if (platformText.includes('javbus')) {
-    return 'javbus'
-  }
-  if (platformText.includes('javdb')) {
-    return 'javdb'
-  }
-
-  const idText = String(item?.id || item?.video_id || '').trim().toLowerCase()
-  if (idText.startsWith('javbus_')) {
-    return 'javbus'
-  }
-  if (idText.startsWith('javdb_')) {
-    return 'javdb'
-  }
-
-  const coverText = String(item?.cover_url || item?.cover_path || '').trim().toLowerCase()
-  if (coverText.includes('javbus.com')) {
-    return 'javbus'
-  }
-  if (coverText.includes('javdb.com')) {
-    return 'javdb'
-  }
-
-  return ''
 }
 
 async function loadData(page = 1, options = {}) {
@@ -374,15 +306,20 @@ function getItemCreator(item) {
   return item.author || item.actor || ''
 }
 
-function isJavbusPlatform(item) {
-  return detectVideoPlatform(item) === 'javbus'
+function getCoverFit(item) {
+  return resolveDisplayCoverFit(item) || 'cover'
 }
 
-function getCoverFit(item) {
-  if (isVideoMode.value && isJavbusPlatform(item)) {
-    return 'contain'
-  }
-  return 'cover'
+function getCoverStyle(item) {
+  return buildDisplayCoverStyle(item)
+}
+
+function shouldRenderPlatformBadge(item) {
+  return shouldShowPlatformBadge(item)
+}
+
+function getPlatformBadgeLabel(item) {
+  return resolvePlatformBadgeLabel(item)
 }
 
 function isSelected(item) {
@@ -403,7 +340,10 @@ async function confirmImport(target) {
   try {
     const itemsByPlatform = {}
     selectedItems.forEach(item => {
-      const platform = item.platform || (isVideoMode.value ? 'JAVDB' : 'JM')
+      const platform = resolveImportPlatform(item)
+      if (!platform) {
+        return
+      }
       if (!itemsByPlatform[platform]) {
         itemsByPlatform[platform] = []
       }
@@ -426,7 +366,7 @@ async function confirmImport(target) {
     }
 
     if (taskCount === 0) {
-      throw new Error('创建导入任务失败')
+      throw new Error('未找到可导入的平台标识')
     }
     showToast(`已创建 ${taskCount} 个导入任务`)
     selectedIds.value = []
@@ -582,16 +522,8 @@ onMounted(async () => {
 
 .card-cover {
   position: relative;
-  aspect-ratio: 2/3;
+  aspect-ratio: var(--media-cover-aspect-ratio, 2 / 3);
   background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
-}
-
-.remote-results-grid.video-mode .card-cover.video-cover-landscape {
-  aspect-ratio: 16 / 9;
-}
-
-.remote-results-grid.video-mode .card-cover.video-cover-portrait {
-  aspect-ratio: 2 / 3;
 }
 
 .cover-image {
@@ -666,8 +598,8 @@ onMounted(async () => {
 }
 
 @media (max-width: 767px) {
-  .remote-results-grid.video-mode .card-cover.video-cover-landscape {
-    aspect-ratio: 3 / 2;
+  .card-cover {
+    aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
   }
 
   .remote-results-grid.video-mode .card-title {

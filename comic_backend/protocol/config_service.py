@@ -29,8 +29,15 @@ class PluginConfigService:
             if manifest.config_key and manifest.list_configuration_fields()
         ]
 
+    @staticmethod
+    def _build_helper_url(config_key: str, helper_key: str) -> str:
+        normalized_config_key = str(config_key or "").strip().lower()
+        normalized_helper_key = str(helper_key or "").strip()
+        return f"/api/v1/config/plugin-helpers/{normalized_config_key}/{normalized_helper_key}/"
+
     def build_response(self) -> dict:
         self._config_store.reload()
+        manifests = self._gateway.list_manifests()
         configurable = self._collect_configurable_plugins()
 
         adapter_order: List[str] = []
@@ -43,19 +50,48 @@ class PluginConfigService:
             adapter_order.append(config_key)
 
             fields = manifest.list_configuration_fields()
+            helper_definitions = manifest.list_helpers()
+            actions = []
+            for action in manifest.list_configuration_actions():
+                normalized_action = dict(action or {})
+                helper_key = str(
+                    normalized_action.get("helper_key")
+                    or normalized_action.get("legacy_helper_key")
+                    or ""
+                ).strip()
+                action_kind = str(normalized_action.get("kind") or "").strip().lower()
+                if (
+                    helper_key
+                    and helper_key in helper_definitions
+                    and action_kind == "open_url"
+                    and not str(normalized_action.get("url") or "").strip()
+                ):
+                    normalized_action["url"] = self._build_helper_url(config_key, helper_key)
+                actions.append(normalized_action)
+
             schema[config_key] = {
                 "label": manifest.configuration.get("label") or manifest.name,
                 "fields": fields,
-                "actions": list(manifest.configuration.get("actions") or []),
+                "actions": actions,
             }
 
             raw_config = self._config_store.get_plugin_config(config_key) or {}
             adapters[config_key] = self._gateway.provider_manager.serialize_public_config(manifest.plugin_id, raw_config)
 
+            for helper_key in helper_definitions:
+                helper_urls[helper_key] = self._build_helper_url(config_key, helper_key)
+
             for helper_key, helper_value in (manifest.configuration.get("helper_urls") or {}).items():
                 helper_key = str(helper_key or "").strip()
                 helper_value = str(helper_value or "").strip()
                 if helper_key and helper_value:
+                    helper_urls[helper_key] = helper_value
+
+            for action in actions:
+                helper_key = str(action.get("helper_key") or action.get("legacy_helper_key") or "").strip()
+                helper_value = str(action.get("url") or "").strip()
+                action_kind = str(action.get("kind") or "").strip().lower()
+                if helper_key and helper_value and action_kind == "open_url":
                     helper_urls[helper_key] = helper_value
 
         response = {
@@ -64,16 +100,8 @@ class PluginConfigService:
             "schema": schema,
             "adapters": adapters,
             "helper_urls": helper_urls,
-            "plugins": [
-                {
-                    "plugin_id": manifest.plugin_id,
-                    "config_key": manifest.config_key,
-                    "name": manifest.name,
-                    "media_types": manifest.media_types,
-                    "capabilities": manifest.capability_keys,
-                }
-                for manifest in configurable
-            ],
+            "plugins": [manifest.to_public_descriptor() for manifest in manifests],
+            "configurable_plugins": [manifest.to_public_descriptor() for manifest in configurable],
         }
         response.update(adapters)
         return response

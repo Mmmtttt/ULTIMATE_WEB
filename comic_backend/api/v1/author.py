@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.author_app_service import AuthorAppService
 from infrastructure.logger import app_logger, error_logger
+from protocol.presentation import annotate_items
 from .runtime_guard import require_third_party, third_party_unavailable_response
 
 author_bp = Blueprint('author', __name__)
@@ -21,6 +22,21 @@ def error_response(code, msg):
         "msg": msg,
         "data": None
     })
+
+
+def _annotate_author_works(items, capability="catalog.search"):
+    annotated = []
+    for item in items or []:
+        platform_name = str((item or {}).get("platform") or "").strip()
+        annotated.extend(
+            annotate_items(
+                [item],
+                platform_name=platform_name,
+                media_type="comic",
+                capability=capability,
+            )
+        )
+    return annotated
 
 
 @author_bp.route('/list', methods=['GET'])
@@ -67,7 +83,9 @@ def search_author_works():
         result = author_service.search_author_works_by_name(author_name, offset, limit)
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["works"] = _annotate_author_works(payload.get("works", []), capability="catalog.search")
+            return success_response(payload)
         else:
             return error_response(500, result.message)
     except Exception as e:
@@ -140,7 +158,9 @@ def get_new_works(author_id):
         result = author_service.get_author_new_works(author_id)
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["new_works"] = _annotate_author_works(payload.get("new_works", []), capability="catalog.search")
+            return success_response(payload)
         else:
             return error_response(400, result.message)
     except Exception as e:
@@ -186,7 +206,9 @@ def get_author_works(author_id):
         )
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["works"] = _annotate_author_works(payload.get("works", []), capability="catalog.search")
+            return success_response(payload)
         else:
             return error_response(400, result.message)
     except Exception as e:

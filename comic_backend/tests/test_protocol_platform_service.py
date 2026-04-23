@@ -6,7 +6,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from core.platform import Platform
 from protocol.platform_service import PlatformService
 
 
@@ -46,7 +45,7 @@ def test_platform_service_routes_download_album_to_protocol_capability():
     service._initialized = True
 
     detail, success = service.download_album(
-        Platform.JM,
+        "JM",
         "1001",
         "D:/tmp/download",
         show_progress=False,
@@ -70,17 +69,17 @@ def test_platform_service_routes_download_album_to_protocol_capability():
     ]
 
 
-def test_platform_service_uses_javdb_favorites_capability_for_basic_mode():
+def test_platform_service_defaults_to_generic_favorites_basic_capability_without_manifest_metadata():
     service = PlatformService.__new__(PlatformService)
     service._gateway = _FakeGateway()
     service._initialized = True
 
-    service.get_favorites_basic(Platform.JAVDB)
+    service.get_favorites_basic("JAVDB")
 
     assert service._gateway.executed == [
         {
             "plugin_id": "video.javdb",
-            "capability": "collection.favorites",
+            "capability": "collection.favorites_basic",
             "params": {},
             "context": {},
         }

@@ -129,8 +129,9 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         assert first_payload["code"] == 200
 
         first_data = first_payload["data"] or {}
-        assert first_data["matched_on_jm"] == 2
-        assert first_data["matched_on_pk"] == 2
+        assert first_data["matched_by_platform"]["JM"] == 2
+        assert first_data["matched_by_platform"]["PK"] == 2
+        assert first_data["search_platform_order"][:2] == ["JM", "PK"]
         assert first_data["updated_records"] == 4
         assert first_data["updated_authors"] == 4
         assert first_data["created_tags"] == 3

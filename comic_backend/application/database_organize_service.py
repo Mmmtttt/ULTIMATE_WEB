@@ -41,7 +41,7 @@ class DatabaseOrganizeService:
                 {
                     "action": "enrich_local_metadata",
                     "name": "LOCAL补全信息",
-                    "description": "为 LOCAL 漫画补全作者与标签（JM优先，JM不命中再尝试PK）。",
+                    "description": "为 LOCAL 漫画按协议声明的搜索平台顺序补全作者与标签。",
                     "confirm_message": "将联网补全 LOCAL 漫画信息，是否继续？",
                     "implemented": True,
                 },
@@ -58,7 +58,7 @@ class DatabaseOrganizeService:
                 {
                     "action": "enrich_local_metadata",
                     "name": "LOCAL补全信息",
-                    "description": "为 LOCAL 视频补全标题、作者、标签与预览资源（JAVDB优先，失败回退JAVBUS）。",
+                    "description": "为 LOCAL 视频按协议声明的搜索平台顺序补全标题、作者、标签与预览资源。",
                     "confirm_message": "将联网补全 LOCAL 视频信息，是否继续？",
                     "implemented": True,
                 },

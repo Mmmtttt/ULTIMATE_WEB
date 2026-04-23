@@ -19,7 +19,7 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     Case Description:
     - Purpose: Guard actor service third-party contract in `_search_works`: adapter selection, call parameters, and cross-platform merge order.
     - Steps:
-      1. Mock `api.v1.video.get_video_adapter` for `javdb/javbus`.
+      1. Mock actor service protocol adapter loader for `javdb/javbus`.
       2. Call `actor_service._search_works("Mina", page=2, max_pages=4)`.
       3. Verify adapter calls and merged result order.
     - Expected:
@@ -30,7 +30,6 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
       - 2026-03-23: Added actor service third-party merge contract coverage.
     """
     actor_api = third_party_client["actor_api"]
-    video_api = third_party_client["video_api"]
     service = actor_api.actor_service
     calls = []
 
@@ -66,7 +65,7 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
                 "has_next": False,
             }
 
-    monkeypatch.setattr(video_api, "get_video_adapter", lambda platform, *args, **kwargs: FakeAdapter(platform))
+    monkeypatch.setattr(service, "_get_video_adapter", lambda platform: FakeAdapter(platform))
 
     result = service._search_works("Mina", page=2, max_pages=4)
     works = result.get("works", [])
@@ -95,7 +94,6 @@ def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_p
       2. Output keeps grouped platform order: javdb first, then javbus.
     """
     actor_api = third_party_client["actor_api"]
-    video_api = third_party_client["video_api"]
     service = actor_api.actor_service
     captured = {"javdb_get_actor_works": 0, "javdb_search_videos": 0}
 
@@ -132,12 +130,12 @@ def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_p
                 "has_next": False,
             }
 
-    def fake_get_video_adapter(platform, *args, **kwargs):
+    def fake_get_video_adapter(platform):
         if platform == "javdb":
             return FakeJavdbAdapter()
         return FakeJavbusAdapter()
 
-    monkeypatch.setattr(video_api, "get_video_adapter", fake_get_video_adapter)
+    monkeypatch.setattr(service, "_get_video_adapter", fake_get_video_adapter)
 
     result = service._search_works("Mina", page=1, max_pages=2)
     works = result.get("works", [])
@@ -203,7 +201,7 @@ def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(
     - Purpose: Guard actor videos route contract for two key behaviors:
       1) grouped output order (`javdb` before `javbus`), 2) javbus anti-hotlink cover proxy mapping.
     - Steps:
-      1. Mock `api.v1.video.get_video_adapter` for `javdb/javbus`.
+      1. Mock actor service protocol adapter loader for `javdb/javbus`.
       2. Call `GET /api/v1/actor/videos?actor_name=Mina`.
       3. Assert order and javbus proxy cover url.
     - Expected:
@@ -212,7 +210,8 @@ def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(
       3. Javbus cover url is transformed to `/api/v1/video/proxy2?url=...`.
     """
     client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+    actor_api = third_party_client["actor_api"]
+    service = actor_api.actor_service
 
     class FakeAdapter:
         def __init__(self, platform):
@@ -237,7 +236,7 @@ def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(
                 "has_next": False,
             }
 
-    monkeypatch.setattr(video_api, "get_video_adapter", lambda platform, *args, **kwargs: FakeAdapter(platform))
+    monkeypatch.setattr(service, "_get_video_adapter", lambda platform: FakeAdapter(platform))
 
     response = client.get("/api/v1/actor/videos", query_string={"actor_name": "Mina"})
     payload = response.get_json()
@@ -340,6 +339,8 @@ def test_actor_videos_route_forwards_actor_name_to_service(third_party_client, m
     assert payload["code"] == 200
     assert captured == {"actor_name": "Yui"}
     assert payload["data"][0]["id"] == "JAVDB-ACT-100"
+    assert payload["data"][0]["plugin_id"] == "video.javdb"
+    assert payload["data"][0]["display"]["badge"]["label"] == "JAVDB"
 
 
 @pytest.mark.integration
@@ -527,6 +528,8 @@ def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["works"][0]["id"] == "AV-7701"
+    assert payload["data"]["works"][0]["plugin_id"] == "video.javdb"
+    assert payload["data"]["works"][1]["plugin_id"] == "video.javbus"
 
     actors = load_json(meta_dir / "actors_database.json").get("actors", [])
     saved = find_by_id(actors, actor_id)

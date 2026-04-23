@@ -13,8 +13,6 @@ from core.constants import (
     CACHE_ROOT_DIR,
     COMIC_RECOMMENDATION_CACHE_DIR,
     DATA_DIR,
-    JM_PICTURES_DIR,
-    PK_PICTURES_DIR,
     PROJECT_ROOT,
     SERVER_CONFIG_PATH,
     VIDEO_RECOMMENDATION_CACHE_DIR,
@@ -27,6 +25,7 @@ from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from protocol.config_service import get_plugin_config_service
+from protocol.gateway import get_protocol_gateway
 
 
 config_bp = Blueprint('config', __name__)
@@ -34,37 +33,6 @@ config_service = ConfigAppService()
 
 _PROJECT_ROOT = PROJECT_ROOT
 _BACKEND_ROOT = BACKEND_ROOT
-
-
-def _pick_existing_dir(*candidates):
-    for path in candidates:
-        if path and os.path.isdir(path):
-            return os.path.abspath(path)
-    if candidates:
-        return os.path.abspath(candidates[0])
-    return ""
-
-
-_STATIC_PAGE_DIR = _pick_existing_dir(
-    os.path.join(_BACKEND_ROOT, 'static_pages'),
-    os.path.join(_PROJECT_ROOT, 'backend_source', 'static_pages'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'static_pages'),
-)
-_JAVDB_PLAYER_DIR = _pick_existing_dir(
-    os.path.join(_BACKEND_ROOT, 'third_party', 'javdb-api-scraper', 'player'),
-    os.path.join(_PROJECT_ROOT, 'backend_source', 'third_party', 'javdb-api-scraper', 'player'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'player'),
-)
-_JAVDB_STATIC_SCREENSHOTS_DIR = _pick_existing_dir(
-    os.path.join(_STATIC_PAGE_DIR, 'screenshots'),
-    os.path.join(_BACKEND_ROOT, 'static_pages', 'screenshots'),
-    os.path.join(_PROJECT_ROOT, 'backend_source', 'static_pages', 'screenshots'),
-)
-_JAVDB_LIB_SCREENSHOTS_DIR = _pick_existing_dir(
-    os.path.join(_BACKEND_ROOT, 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
-    os.path.join(_PROJECT_ROOT, 'backend_source', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'third_party', 'javdb-api-scraper', 'lib', 'screenshots'),
-)
 _VIDEO_PREVIEW_CACHE_DIR = VIDEO_RECOMMENDATION_CACHE_DIR
 _VIDEO_LOCAL_ASSET_FIELDS = ("cover_path_local", "thumbnail_images_local", "preview_video_local")
 
@@ -204,6 +172,67 @@ def _clear_preview_video_local_fields():
     }
 
 
+def _resolve_plugin_helper(config_key: str, helper_key: str):
+    manifest = get_protocol_gateway().get_manifest_by_config_key(str(config_key or "").strip())
+    if manifest is None:
+        return None
+
+    helper = manifest.get_helper(helper_key)
+    if not helper:
+        return None
+
+    plugin_root = os.path.dirname(manifest.path)
+    helper_file = str(helper.get("file") or "").strip()
+    helper_root_dir = str(helper.get("root_dir") or "").strip()
+    helper_kind = str(helper.get("kind") or "").strip().lower()
+
+    if not helper_file or helper_kind != "static_page":
+        return None
+
+    index_path = os.path.abspath(os.path.join(plugin_root, helper_file))
+    asset_root = os.path.abspath(
+        os.path.join(plugin_root, helper_root_dir or os.path.dirname(helper_file))
+    )
+
+    if not os.path.isfile(index_path):
+        return None
+    if not os.path.isdir(asset_root):
+        return None
+    if not _is_sub_path(plugin_root, index_path):
+        return None
+    if not _is_sub_path(plugin_root, asset_root):
+        return None
+
+    return {
+        "kind": helper_kind,
+        "manifest": manifest,
+        "index_dir": os.path.dirname(index_path),
+        "index_name": os.path.basename(index_path),
+        "asset_root": asset_root,
+    }
+
+
+def _serve_plugin_helper(config_key: str, helper_key: str, filename: str = ""):
+    try:
+        resolved = _resolve_plugin_helper(config_key, helper_key)
+        if resolved is None:
+            return error_response(404, "未找到插件帮助页")
+
+        relative_filename = str(filename or "").strip().lstrip("/\\")
+        if relative_filename:
+            file_path = os.path.join(resolved["asset_root"], relative_filename)
+            if not os.path.isfile(file_path):
+                return error_response(404, "插件帮助页资源不存在")
+            return send_from_directory(resolved["asset_root"], relative_filename)
+
+        return send_from_directory(resolved["index_dir"], resolved["index_name"])
+    except Exception as e:
+        error_logger.error(
+            f"打开插件帮助页失败: config_key={config_key}, helper_key={helper_key}, error={e}"
+        )
+        return error_response(500, "服务器内部错误")
+
+
 def _build_storage_info(dir_path, label, description=""):
     exists = os.path.exists(dir_path)
     file_count, size_bytes = _get_directory_file_count_and_size(dir_path)
@@ -283,6 +312,33 @@ def _should_rebase_to_new_data_dir(path_value, old_data_dir):
     return True
 
 
+def _resolve_data_dir_binding_path(new_data_root, manifest, binding):
+    field_name = str(
+        binding.get("config_field")
+        or binding.get("field")
+        or ""
+    ).strip()
+    relative_dir = str(binding.get("relative_dir") or "").strip().replace("\\", "/").strip("/")
+    identity = dict(getattr(manifest, "identity", {}) or {})
+    host_prefix = str(
+        binding.get("host_prefix")
+        or identity.get("host_id_prefix")
+        or identity.get("platform_label")
+        or getattr(manifest, "config_key", "")
+        or ""
+    ).strip()
+
+    if not field_name or not relative_dir:
+        return "", ""
+
+    resolved_relative = relative_dir.format(
+        host_prefix=host_prefix,
+        config_key=str(getattr(manifest, "config_key", "") or "").strip(),
+        plugin_id=str(getattr(manifest, "plugin_id", "") or "").strip(),
+    ).replace("/", os.sep)
+    return field_name, os.path.abspath(os.path.join(new_data_root, resolved_relative))
+
+
 def _update_third_party_storage_paths(old_data_dir, new_data_dir):
     if not is_third_party_enabled():
         app_logger.info("skip third-party storage path update: third-party integration disabled")
@@ -290,27 +346,32 @@ def _update_third_party_storage_paths(old_data_dir, new_data_dir):
 
     try:
         plugin_config_service = get_plugin_config_service()
+        gateway = get_protocol_gateway()
         current_config = plugin_config_service.build_response().get("adapters", {})
-        data_root = os.path.abspath(DATA_DIR)
         new_data_root = os.path.abspath(new_data_dir)
 
-        def _rebase_from_runtime_data(path_value):
-            rel = os.path.relpath(os.path.abspath(path_value), data_root)
-            return os.path.abspath(os.path.join(new_data_root, rel))
-
         updates = {}
+        for manifest in gateway.list_manifests():
+            config_key = str(getattr(manifest, "config_key", "") or "").strip()
+            if not config_key:
+                continue
 
-        jm_config = current_config.get('jmcomic') or {}
-        if _should_rebase_to_new_data_dir(jm_config.get('download_dir'), old_data_dir):
-            updates['jmcomic'] = {
-                'download_dir': _rebase_from_runtime_data(JM_PICTURES_DIR)
-            }
+            plugin_config = current_config.get(config_key) or {}
+            plugin_updates = {}
+            for binding in manifest.list_data_dir_bindings():
+                field_name, rebound_path = _resolve_data_dir_binding_path(
+                    new_data_root,
+                    manifest,
+                    binding,
+                )
+                if not field_name or not rebound_path:
+                    continue
+                if not _should_rebase_to_new_data_dir(plugin_config.get(field_name), old_data_dir):
+                    continue
+                plugin_updates[field_name] = rebound_path
 
-        pk_config = current_config.get('picacomic') or {}
-        if _should_rebase_to_new_data_dir(pk_config.get('base_dir'), old_data_dir):
-            updates['picacomic'] = {
-                'base_dir': _rebase_from_runtime_data(PK_PICTURES_DIR)
-            }
+            if plugin_updates:
+                updates[config_key] = plugin_updates
 
         if updates:
             plugin_config_service.save_updates({"adapters": updates})
@@ -518,26 +579,15 @@ def update_system_config_dir():
         return error_response(500, "服务器内部错误")
 
 
-@config_bp.route('/javdb-cookie-guide', methods=['GET'])
-def javdb_cookie_guide():
-    try:
-        guide_file = 'javdb_cookie_guide.html'
-        if os.path.isfile(os.path.join(_STATIC_PAGE_DIR, guide_file)):
-            return send_from_directory(_STATIC_PAGE_DIR, guide_file)
-
-        return error_response(404, '未找到 JAVDB Cookie 教学页面')
-    except Exception as e:
-        error_logger.error(f"打开 JAVDB Cookie 教学页面失败: {e}")
-        return error_response(500, "服务器内部错误")
+@config_bp.route('/plugin-helpers/<config_key>/<helper_key>', methods=['GET'])
+@config_bp.route('/plugin-helpers/<config_key>/<helper_key>/', methods=['GET'])
+def get_plugin_helper(config_key, helper_key):
+    return _serve_plugin_helper(config_key, helper_key)
 
 
-@config_bp.route('/javdb-cookie-guide/screenshots/<path:filename>', methods=['GET'])
-def javdb_cookie_guide_screenshot(filename):
-    for base_dir in (_JAVDB_STATIC_SCREENSHOTS_DIR, _JAVDB_LIB_SCREENSHOTS_DIR):
-        file_path = os.path.join(base_dir, filename)
-        if os.path.isfile(file_path):
-            return send_from_directory(base_dir, filename)
-    return error_response(404, 'JAVDB teaching screenshot not found')
+@config_bp.route('/plugin-helpers/<config_key>/<helper_key>/<path:filename>', methods=['GET'])
+def get_plugin_helper_asset(config_key, helper_key, filename):
+    return _serve_plugin_helper(config_key, helper_key, filename=filename)
 
 
 @config_bp.route('/cache/stats', methods=['GET'])

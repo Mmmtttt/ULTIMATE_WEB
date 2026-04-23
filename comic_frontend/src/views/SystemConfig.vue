@@ -192,11 +192,17 @@
                   </template>
                 </van-cell-group>
 
-                <div v-if="adapterName === 'javdb'" class="cookie-guide">
-                  <div class="cookie-guide-text">JAVDB 先登录后获取 <code>_jdb_session</code> 的值，粘贴到上面的输入框即可，保存时会自动补全其余固定字段。</div>
-                  <van-button plain type="primary" block @click="openJavdbCookieGuide">
-                    打开 Cookie 获取教程页
-                  </van-button>
+                <div v-if="adapterActions(adapterName).length > 0" class="adapter-actions">
+                  <div
+                    v-for="action in adapterActions(adapterName)"
+                    :key="`${adapterName}-${action.key || action.label}`"
+                    class="adapter-action-card"
+                  >
+                    <div v-if="action.description" class="adapter-action-text">{{ action.description }}</div>
+                    <van-button plain type="primary" block @click="runAdapterAction(action)">
+                      {{ action.label || action.key || '执行动作' }}
+                    </van-button>
+                  </div>
                 </div>
 
                 <div class="popup-actions">
@@ -235,6 +241,7 @@ import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
 import { useDevice } from '@/composables/useDevice'
 import { openExternalUrl, reloadPage } from '@/runtime/browser'
+import { resolveBackendApiUrl } from '@/runtime/endpoint'
 import { useConfigStore, useModeStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
@@ -339,6 +346,10 @@ function adapterFields(adapterName) {
   return thirdPartySchema.value?.[adapterName]?.fields || []
 }
 
+function adapterActions(adapterName) {
+  return thirdPartySchema.value?.[adapterName]?.actions || []
+}
+
 function ensureAdapterFormShape() {
   const forms = {}
   const adapters = thirdPartyAdapters.value || {}
@@ -378,11 +389,7 @@ async function loadThirdPartyConfig() {
     thirdPartySchema.value = data.schema || {}
     thirdPartyAdapterOrder.value = data.adapter_order || []
 
-    const adapters = data.adapters || {
-      jmcomic: data.jmcomic || {},
-      picacomic: data.picacomic || {},
-      javdb: data.javdb || {},
-    }
+    const adapters = data.adapters || {}
 
     thirdPartyAdapters.value = adapters
     ensureAdapterFormShape()
@@ -632,8 +639,15 @@ async function saveConfigDir() {
   }
 }
 
-function openJavdbCookieGuide() {
-  const url = configApi.getJavdbCookieGuideUrl()
+function runAdapterAction(action) {
+  const kind = String(action?.kind || '').trim().toLowerCase()
+  const rawUrl = String(action?.url || '').trim()
+  if (kind !== 'open_url' || !rawUrl) {
+    showFailToast('当前动作暂不支持')
+    return
+  }
+
+  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : resolveBackendApiUrl(rawUrl)
   const win = openExternalUrl(url, '_blank')
   if (!win) {
     showFailToast('浏览器拦截了弹窗，请允许后重试')
@@ -728,8 +742,13 @@ onMounted(async () => {
   padding-top: 10px;
 }
 
-.cookie-guide {
+.adapter-actions {
   margin: 12px 16px 0;
+  display: grid;
+  gap: 10px;
+}
+
+.adapter-action-card {
   padding: 14px;
   border-radius: 12px;
   background: var(--surface-2);
@@ -737,7 +756,7 @@ onMounted(async () => {
   box-shadow: var(--shadow-xs);
 }
 
-.cookie-guide-text {
+.adapter-action-text {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.6;

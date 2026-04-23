@@ -59,8 +59,36 @@ class PluginManifest:
         return dict(self.raw.get("configuration") or {})
 
     @property
+    def helpers(self) -> Dict[str, Any]:
+        return dict(self.raw.get("helpers") or {})
+
+    @property
+    def storage(self) -> Dict[str, Any]:
+        return dict(self.raw.get("storage") or {})
+
+    @property
     def compatibility(self) -> Dict[str, Any]:
         return dict(self.raw.get("compatibility") or {})
+
+    @property
+    def identity(self) -> Dict[str, Any]:
+        return dict(self.raw.get("identity") or {})
+
+    @property
+    def presentation(self) -> Dict[str, Any]:
+        return dict(self.raw.get("presentation") or {})
+
+    @property
+    def actions(self) -> List[Dict[str, Any]]:
+        return [dict(item or {}) for item in (self.raw.get("actions") or []) if isinstance(item, dict)]
+
+    @property
+    def resource_policy(self) -> Dict[str, Any]:
+        return dict(self.raw.get("resource_policy") or {})
+
+    @property
+    def collections(self) -> Dict[str, Any]:
+        return dict(self.raw.get("collections") or {})
 
     @property
     def legacy_platforms(self) -> List[str]:
@@ -71,14 +99,32 @@ class PluginManifest:
         ]
 
     @property
+    def legacy_adapter_name(self) -> str:
+        return str(self.compatibility.get("legacy_adapter_name") or "").strip()
+
+    @property
     def order(self) -> int:
         try:
             return int(self.configuration.get("order", 100))
         except Exception:
             return 100
 
+    @property
+    def collection_list_mode(self) -> str:
+        return str(self.collections.get("list_mode") or "").strip().lower()
+
     def has_capability(self, capability: str) -> bool:
         return str(capability or "").strip() in set(self.capability_keys)
+
+    def get_capability_entry(self, capability: str) -> Dict[str, Any]:
+        lookup = str(capability or "").strip()
+        if not lookup:
+            return {}
+        for item in self.capability_entries:
+            key = str(item.get("key") or "").strip()
+            if key == lookup:
+                return dict(item)
+        return {}
 
     def list_configuration_fields(self) -> List[Dict[str, Any]]:
         fields: List[Dict[str, Any]] = []
@@ -90,6 +136,70 @@ class PluginManifest:
                 if isinstance(field, dict):
                     fields.append(dict(field))
         return fields
+
+    def list_configuration_actions(self) -> List[Dict[str, Any]]:
+        actions: List[Dict[str, Any]] = []
+
+        for action in self.actions:
+            scope = str(action.get("scope") or "").strip().lower()
+            if scope in {"config", "configuration", "settings"}:
+                actions.append(dict(action))
+
+        for action in (self.configuration.get("actions") or []):
+            if not isinstance(action, dict):
+                continue
+            normalized = dict(action)
+            normalized.setdefault("scope", "configuration")
+            actions.append(normalized)
+
+        return actions
+
+    def list_helpers(self) -> Dict[str, Dict[str, Any]]:
+        helpers: Dict[str, Dict[str, Any]] = {}
+        for helper_key, helper_value in (self.helpers or {}).items():
+            normalized_key = str(helper_key or "").strip()
+            if not normalized_key or not isinstance(helper_value, dict):
+                continue
+            helpers[normalized_key] = dict(helper_value)
+        return helpers
+
+    def get_helper(self, helper_key: str) -> Dict[str, Any]:
+        lookup = str(helper_key or "").strip()
+        if not lookup:
+            return {}
+        return dict(self.list_helpers().get(lookup) or {})
+
+    def list_data_dir_bindings(self) -> List[Dict[str, Any]]:
+        bindings: List[Dict[str, Any]] = []
+        for item in (self.storage.get("data_dir_bindings") or []):
+            if isinstance(item, dict):
+                bindings.append(dict(item))
+        return bindings
+
+    def list_virtual_lists(self) -> List[Dict[str, Any]]:
+        virtual_lists: List[Dict[str, Any]] = []
+        for item in (self.collections.get("virtual_lists") or []):
+            if isinstance(item, dict):
+                virtual_lists.append(dict(item))
+        return virtual_lists
+
+    def to_public_descriptor(self) -> Dict[str, Any]:
+        return {
+            "plugin_id": self.plugin_id,
+            "config_key": self.config_key,
+            "name": self.name,
+            "version": self.version,
+            "media_types": self.media_types,
+            "capabilities": self.capability_keys,
+            "legacy_platforms": self.legacy_platforms,
+            "legacy_adapter_name": self.legacy_adapter_name,
+            "identity": self.identity,
+            "presentation": self.presentation,
+            "actions": self.actions,
+            "collections": self.collections,
+            "resource_policy": self.resource_policy,
+            "order": self.order,
+        }
 
 
 class ProtocolProvider:
@@ -115,4 +225,3 @@ class ProtocolProvider:
 
     def execute(self, capability: str, params: Dict[str, Any], context: Dict[str, Any], config: Dict[str, Any]):
         raise NotImplementedError
-

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -16,13 +18,13 @@ def _error_result(message="error"):
 
 
 @pytest.mark.integration
-def test_video_javdb_cookie_status_reads_isolated_config(third_party_client):
+def test_video_platform_health_status_reads_isolated_config(third_party_client):
     """
     用例描述:
     - 用例目的: 看护视频端对 JAVDB cookie 配置读取契约，确保运行时路径切换后仍能读取到隔离配置。
     - 测试步骤:
       1. 修改 tests/.runtime/integration_third_party/third_party_config.json 的 javdb.cookies。
-      2. 调用 GET /api/v1/video/third-party/javdb/cookie-status。
+      2. 调用 GET /api/v1/video/third-party/javdb/health-status。
       3. 校验 configured 与 cookie_keys 返回值。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -41,7 +43,7 @@ def test_video_javdb_cookie_status_reads_isolated_config(third_party_client):
     }
     save_json(config_path, config)
 
-    response = client.get("/api/v1/video/third-party/javdb/cookie-status")
+    response = client.get("/api/v1/video/third-party/javdb/health-status")
     payload = response.get_json()
     assert response.status_code == 200
     assert payload["code"] == 200
@@ -51,13 +53,34 @@ def test_video_javdb_cookie_status_reads_isolated_config(third_party_client):
 
 
 @pytest.mark.integration
-def test_video_javdb_cookie_status_without_session_returns_not_configured(third_party_client):
+def test_video_platform_health_status_generic_route_reads_manifest_bound_config(third_party_client):
+    client = third_party_client["client"]
+    config_path = third_party_client["third_party_config_path"]
+
+    config = load_json(config_path)
+    config.setdefault("adapters", {}).setdefault("javdb", {})["cookies"] = {
+        "_jdb_session": "sess-generic",
+        "over18": "1",
+    }
+    save_json(config_path, config)
+
+    response = client.get("/api/v1/video/third-party/javdb/health-status")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["configured"] is True
+    assert payload["data"]["has_session_cookie"] is True
+
+
+@pytest.mark.integration
+def test_video_platform_health_status_without_session_returns_not_configured(third_party_client):
     """
     用例描述:
     - 用例目的: 看护 JAVDB cookie 状态判定规则，确保缺少 _jdb_session 时会返回未配置状态。
     - 测试步骤:
       1. 将隔离配置写为仅含 over18 的 cookies（不含 _jdb_session）。
-      2. 调用 GET /api/v1/video/third-party/javdb/cookie-status。
+      2. 调用 GET /api/v1/video/third-party/javdb/health-status。
       3. 校验 configured/has_session_cookie 为 false。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -72,7 +95,7 @@ def test_video_javdb_cookie_status_without_session_returns_not_configured(third_
     config.setdefault("adapters", {}).setdefault("javdb", {})["cookies"] = {"over18": "1"}
     save_json(config_path, config)
 
-    response = client.get("/api/v1/video/third-party/javdb/cookie-status")
+    response = client.get("/api/v1/video/third-party/javdb/health-status")
     payload = response.get_json()
     assert response.status_code == 200
     assert payload["code"] == 200
@@ -143,6 +166,10 @@ def test_video_third_party_search_all_forwards_adapter_calls(third_party_client,
     data = payload["data"]
     assert len(data["videos"]) == 2
     assert data["has_next"] is True
+    assert {item.get("plugin_id") for item in data["videos"]} == {"video.javdb", "video.javbus"}
+    display_by_platform = {item.get("platform"): (((item.get("display") or {}).get("cover") or {})) for item in data["videos"]}
+    assert display_by_platform["javdb"].get("aspect_ratio") == "16 / 9"
+    assert display_by_platform["javbus"].get("fit") == "contain"
 
     by_platform = {item["platform"]: item for item in calls}
     assert set(by_platform.keys()) == {"javdb", "javbus"}
@@ -245,23 +272,28 @@ def test_video_javdb_search_by_tags_builds_expected_query(third_party_client, mo
     """
     client = third_party_client["client"]
     video_api = third_party_client["video_api"]
-    requested_paths = []
 
-    class FakeJavdbApi:
-        def get(self, path):
-            requested_paths.append(path)
-            html = '<html><body><div class="item"><a href="/v/1"></a></div></body></html>'
-            return SimpleNamespace(text=html)
+    def fake_execute(platform_name, capability, params=None):
+        assert platform_name == "javdb"
+        assert capability == "taxonomy.tag_search"
+        assert params == {"page": 2, "tag_ids": ["c4=22,19", "c1=23"]}
+        return (
+            "javdb",
+            SimpleNamespace(plugin_id="video.javdb"),
+            {
+                "platform": "javdb",
+                "page": 2,
+                "has_next": False,
+                "query": "c1=23&c4=22,19",
+                "requested_tag_ids": ["c4=22,19", "c1=23"],
+                "effective_tag_ids": ["c1=23", "c4=22", "c4=19"],
+                "invalid_tag_ids": [],
+                "overridden_tag_ids": [],
+                "videos": [{"video_id": "J1", "title": "JAVDB-Work"}],
+            },
+        )
 
-        def _parse_work_item(self, _item):
-            return {"video_id": "J1", "title": "JAVDB-Work"}
-
-    class FakeAdapter:
-        def __init__(self):
-            self.api = FakeJavdbApi()
-
-    monkeypatch.setattr(video_api, "get_video_adapter", lambda *args, **kwargs: FakeAdapter())
-    monkeypatch.setattr(video_api, "_is_javdb_tag_search_available", lambda adapter: True)
+    monkeypatch.setattr(video_api, "_execute_video_plugin_capability", fake_execute)
 
     response = client.get(
         "/api/v1/video/third-party/javdb/search-by-tags",
@@ -272,7 +304,50 @@ def test_video_javdb_search_by_tags_builds_expected_query(third_party_client, mo
     assert payload["code"] == 200
     assert payload["data"]["effective_tag_ids"] == ["c1=23", "c4=22", "c4=19"]
     assert payload["data"]["invalid_tag_ids"] == []
-    assert requested_paths[-1] == "/tags?c1=23&c4=22,19&page=2"
+    assert payload["data"]["query"] == "c1=23&c4=22,19"
+    assert payload["data"]["videos"][0]["plugin_id"] == "video.javdb"
+    assert ((((payload["data"]["videos"][0].get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
+
+
+@pytest.mark.integration
+def test_video_platform_search_by_tags_generic_route_dispatches_by_path_platform(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+
+    def fake_execute(platform_name, capability, params=None):
+        assert platform_name == "javdb"
+        assert capability == "taxonomy.tag_search"
+        assert params == {"page": 3, "tag_ids": ["c1=23"]}
+        return (
+            "javdb",
+            SimpleNamespace(plugin_id="video.javdb"),
+            {
+                "platform": "javdb",
+                "page": 3,
+                "has_next": True,
+                "total_pages": 5,
+                "requested_tag_ids": ["c1=23"],
+                "effective_tag_ids": ["c1=23"],
+                "invalid_tag_ids": [],
+                "overridden_tag_ids": [],
+                "videos": [{"video_id": "GEN-1", "title": "Generic Route"}],
+            },
+        )
+
+    monkeypatch.setattr(video_api, "_execute_video_plugin_capability", fake_execute)
+
+    response = client.get(
+        "/api/v1/video/third-party/javdb/search-by-tags",
+        query_string={"tag_ids": "c1=23", "page": 3},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["platform"] == "javdb"
+    assert payload["data"]["page"] == 3
+    assert payload["data"]["has_next"] is True
+    assert payload["data"]["videos"][0]["plugin_id"] == "video.javdb"
 
 
 @pytest.mark.integration
@@ -318,11 +393,10 @@ def test_video_javdb_search_by_tags_requires_login_cookie(third_party_client, mo
     client = third_party_client["client"]
     video_api = third_party_client["video_api"]
 
-    class FakeAdapter:
-        api = SimpleNamespace()
+    def raise_permission(*_args, **_kwargs):
+        raise PermissionError("JAVDB 标签搜索需要登录，请更新 cookies 后重试")
 
-    monkeypatch.setattr(video_api, "get_video_adapter", lambda *args, **kwargs: FakeAdapter())
-    monkeypatch.setattr(video_api, "_is_javdb_tag_search_available", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(video_api, "_execute_video_plugin_capability", raise_permission)
 
     response = client.get(
         "/api/v1/video/third-party/javdb/search-by-tags",
@@ -374,6 +448,7 @@ def test_video_third_party_detail_actor_search_and_works_contract(third_party_cl
     assert detail_resp.status_code == 200
     assert detail_payload["code"] == 200
     assert detail_payload["data"]["video_id"] == "X-001"
+    assert detail_payload["data"]["plugin_id"] == "video.javdb"
 
     actor_search_resp = client.get(
         "/api/v1/video/third-party/actor/search",
@@ -392,6 +467,7 @@ def test_video_third_party_detail_actor_search_and_works_contract(third_party_cl
     assert actor_works_resp.status_code == 200
     assert actor_works_payload["code"] == 200
     assert actor_works_payload["data"]["page"] == 3
+    assert actor_works_payload["data"]["works"][0]["plugin_id"] == "video.javdb"
 
     assert calls["detail"] == ["X-001"]
     assert calls["actor_search"] == ["Mina"]
@@ -786,3 +862,76 @@ def test_video_preview_headers_for_non_javdb_host_do_not_attach_cookie(third_par
     headers = service._build_preview_video_headers("https://cdn.example.com/video/preview.m3u8")
     assert headers["Referer"] == "https://cdn.example.com/"
     assert "Cookie" not in headers
+
+
+@pytest.mark.integration
+def test_preview_video_refresh_hint_is_driven_by_manifest(third_party_client):
+    video_api = third_party_client["video_api"]
+    expiring_soon = int(time.time()) + 30
+    expires_later = int(time.time()) + 600
+
+    assert (
+        video_api._should_refresh_preview_video_url(
+            f"https://javdb.com/movies/ttm3u8/preview/123/0/720p.m3u8?t={expiring_soon}"
+        )
+        is True
+    )
+    assert (
+        video_api._should_refresh_preview_video_url(
+            f"https://javdb.com/movies/ttm3u8/preview/123/0/720p.m3u8?t={expires_later}"
+    )
+    is False
+    )
+    assert video_api._should_refresh_preview_video_url("https://cdn.example.com/video/preview.m3u8?t=1") is False
+
+
+@pytest.mark.integration
+def test_video_recommendation_migrate_to_local_task_uses_protocol_resolved_platform(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    captured = {}
+
+    def fake_create_task(
+        platform,
+        import_type,
+        target,
+        comic_id=None,
+        keyword=None,
+        comic_ids=None,
+        content_type="comic",
+        extra_data=None,
+    ):
+        captured.update(
+            {
+                "platform": platform,
+                "import_type": import_type,
+                "target": target,
+                "comic_id": comic_id,
+                "keyword": keyword,
+                "comic_ids": comic_ids,
+                "content_type": content_type,
+                "extra_data": extra_data,
+            }
+        )
+        return "task-video-migrate-001"
+
+    monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
+
+    response = client.post(
+        "/api/v1/video/recommendation/migrate-to-local",
+        json={"video_ids": ["MISSAVABP123", "JAVBUS_XYZ777"]},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["data"]["task_id"] == "task-video-migrate-001"
+    assert captured["platform"] == "MISSAV"
+    assert captured["import_type"] == "migrate_to_local"
+    assert captured["target"] == "home"
+    assert captured["comic_ids"] == ["MISSAVABP123", "JAVBUS_XYZ777"]
+    assert captured["content_type"] == "video"
+    assert captured["extra_data"] == {
+        "source": "preview",
+        "entry": "video_recommendation_migrate_to_local",
+    }

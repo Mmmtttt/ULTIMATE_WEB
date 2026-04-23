@@ -58,6 +58,8 @@ def test_author_search_works_route_forwards_offset_limit_and_author_name(third_p
     assert payload["code"] == 200
     assert captured == {"author_name": "Alice", "offset": 2, "limit": 3}
     assert payload["data"]["works"][0]["id"] == "W1"
+    assert payload["data"]["works"][0]["plugin_id"] == "comic.jmcomic"
+    assert payload["data"]["works"][0]["display"]["badge"]["label"] == "JM"
     assert payload["data"]["offset"] == 2
     assert payload["data"]["limit"] == 3
 

@@ -97,7 +97,7 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     - 预期结果:
       1. HTTP 200 且业务 code=200。
       2. plugins 中至少包含 comic.jmcomic、comic.picacomic、video.javdb。
-      3. adapter_order 与协议 manifest 一致，helper_urls 保持兼容。
+      3. adapter_order 与协议 manifest 一致，helper_urls 由协议自动生成。
     """
     client = third_party_client["client"]
 
@@ -108,11 +108,21 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     assert payload["code"] == 200
 
     data = payload["data"] or {}
-    plugin_ids = {item.get("plugin_id") for item in (data.get("plugins") or [])}
+    plugin_map = {item.get("plugin_id"): item for item in (data.get("plugins") or [])}
+    plugin_ids = set(plugin_map.keys())
     assert {"comic.jmcomic", "comic.picacomic", "video.javdb"}.issubset(plugin_ids)
     assert data.get("adapter_order") == ["jmcomic", "picacomic", "javdb"]
     helper_urls = data.get("helper_urls") or {}
-    assert helper_urls.get("javdb_cookie_guide") == "/api/v1/config/javdb-cookie-guide"
+    helper_url = helper_urls.get("javdb_cookie_guide")
+    assert helper_url == "/api/v1/config/plugin-helpers/javdb/javdb_cookie_guide/"
+    assert (((plugin_map["video.javdb"].get("presentation") or {}).get("media_card") or {}).get("cover") or {}).get("aspect_ratio") == "16 / 9"
+    javdb_actions = (((data.get("schema") or {}).get("javdb") or {}).get("actions") or [])
+    cookie_guide_action = next(action for action in javdb_actions if action.get("key") == "auth.open_cookie_guide")
+    assert cookie_guide_action.get("url") == helper_url
+
+    helper_response = client.get(helper_url)
+    assert helper_response.status_code == 200
+    assert "text/html" in str(helper_response.content_type or "").lower()
 
 
 @pytest.mark.integration
@@ -163,6 +173,8 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     assert payload["code"] == 200
     data = payload["data"]
     assert len(data["results"]) == 2
+    assert {item.get("plugin_id") for item in data["results"]} == {"comic.jmcomic", "comic.picacomic"}
+    assert all((((item.get("display") or {}).get("cover") or {}).get("aspect_ratio") == "2 / 3") for item in data["results"])
 
     called_adapters = {item["adapter_name"] for item in calls}
     assert called_adapters == {"jmcomic", "picacomic"}
@@ -946,3 +958,24 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
         ("platform_list", "JAVBUS", "by_platform_list"),
         ("migrate_to_local", "JAVDB", "migrate_to_local"),
     ]
+
+
+@pytest.mark.integration
+def test_task_manager_normalize_video_lookup_uses_protocol_resolution(third_party_client):
+    """
+    Case Description:
+    - Purpose: Guard task-manager video lookup normalization so host-side async import
+      reuses the protocol-driven prefix/platform resolver instead of hardcoded branches.
+    - Steps:
+      1. Import `infrastructure.task_manager`.
+      2. Normalize `JAVBUS_ABP123` with mismatched default platform.
+      3. Normalize prefixed host id `JAVDBABP123`.
+    - Expected:
+      1. Underscore form resolves to `("javbus", "ABP123")`.
+      2. Host-id form resolves to `("javdb", "ABP123")`.
+    """
+    task_manager_module = importlib.import_module("infrastructure.task_manager")
+    manager = task_manager_module.task_manager
+
+    assert manager._normalize_video_lookup("JAVBUS_ABP123", "javdb") == ("javbus", "ABP123")
+    assert manager._normalize_video_lookup("JAVDBABP123", "javbus") == ("javdb", "ABP123")

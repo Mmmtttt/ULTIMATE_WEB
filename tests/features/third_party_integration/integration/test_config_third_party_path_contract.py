@@ -67,3 +67,53 @@ def test_system_config_update_invokes_third_party_storage_path_rebase_hook(third
     assert put_payload["data"]["requires_restart"] is True
     assert captured["restart"] == 0
     assert captured["path_hook"] == [(old_runtime_dir, str(new_data_dir))]
+
+
+@pytest.mark.integration
+def test_third_party_storage_path_rebase_uses_manifest_bindings(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    config_api = importlib.import_module("api.v1.config")
+
+    get_resp = client.get("/api/v1/config/system")
+    get_payload = get_resp.get_json()
+    assert get_resp.status_code == 200
+    assert get_payload["code"] == 200
+
+    old_runtime_dir = str(get_payload["data"]["current_runtime_data_dir"])
+    runtime_root = Path(third_party_client["runtime_root"])
+    new_data_dir = str((runtime_root / "data_manifest_bound").resolve())
+    captured = []
+
+    class FakePluginConfigService:
+        def build_response(self):
+            return {
+                "adapters": {
+                    "jmcomic": {
+                        "download_dir": str(Path(old_runtime_dir) / "comic" / "JM"),
+                    },
+                    "picacomic": {
+                        "base_dir": "",
+                    },
+                }
+            }
+
+        def save_updates(self, payload):
+            captured.append(payload)
+            return {"updated_adapters": sorted((payload.get("adapters") or {}).keys())}
+
+    monkeypatch.setattr(config_api, "get_plugin_config_service", lambda: FakePluginConfigService())
+
+    config_api._update_third_party_storage_paths(old_runtime_dir, new_data_dir)
+
+    assert captured == [
+        {
+            "adapters": {
+                "jmcomic": {
+                    "download_dir": str(Path(new_data_dir) / "comic" / "JM"),
+                },
+                "picacomic": {
+                    "base_dir": str(Path(new_data_dir) / "comic" / "PK"),
+                },
+            }
+        }
+    ]

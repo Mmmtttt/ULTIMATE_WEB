@@ -6,13 +6,14 @@ from typing import Optional
 from infrastructure.persistence.repositories.base_repository_impl import BaseCreatorJsonRepository
 from infrastructure.persistence.json_storage import JsonStorage
 from domain.actor.entity import ActorSubscription
-from core.constants import ACTOR_JSON_FILE
 
 
 class ActorJsonRepository(BaseCreatorJsonRepository[ActorSubscription]):
     
     def __init__(self):
-        self._storage = JsonStorage(ACTOR_JSON_FILE)
+        from core.constants import ACTOR_JSON_FILE as ACTIVE_ACTOR_JSON_FILE
+
+        self._storage = JsonStorage(ACTIVE_ACTOR_JSON_FILE)
         self._data_key = "actors"
     
     def _get_entity_class(self):

@@ -4,12 +4,16 @@ from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import error_logger
 from core.utils import get_current_time
 from core.enums import ContentType
-from core.constants import TAGS_JSON_FILE
 
 
 class TagJsonRepository(TagRepository):
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage(TAGS_JSON_FILE)
+        if storage is not None:
+            self._storage = storage
+        else:
+            from core.constants import TAGS_JSON_FILE as ACTIVE_TAGS_JSON_FILE
+
+            self._storage = JsonStorage(ACTIVE_TAGS_JSON_FILE)
 
     @staticmethod
     def _normalize_content_type(value) -> str:

@@ -51,20 +51,14 @@
               :class="{ selected: isSelected(item) }"
               @click="toggleSelection(item)"
             >
-              <div
-                class="card-cover"
-                :class="{
-                  'video-cover-landscape': isVideoMode && !isJavbusPlatform(item),
-                  'video-cover-portrait': isVideoMode && isJavbusPlatform(item)
-                }"
-              >
+              <div class="card-cover" :style="getRemoteCoverStyle(item)">
                 <van-image 
                   :src="getCoverUrl(item)" 
                   :fit="getCoverFit(item)"
                   class="cover-image"
                   lazy-load
                 />
-                <div v-if="item.platform" class="platform-badge">{{ item.platform }}</div>
+                <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
                 <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
                 <div v-if="isSelected(item)" class="select-overlay">
                   <van-icon name="success" class="select-icon" />
@@ -134,7 +128,17 @@ import { videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
-import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
+import {
+  buildDisplayCoverStyle,
+  fetchProtocolPlatformOptions,
+  getCoverUrl,
+  isAllSelected,
+  resolveDisplayCoverFit,
+  resolveImportPlatform,
+  resolvePlatformBadgeLabel,
+  shouldShowPlatformBadge,
+  toggleSelectAll,
+} from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -180,14 +184,6 @@ const normalizedResults = computed(() => {
       normalized.id = normalized.video_id || normalized.album_id || normalized.comic_id
     }
     
-    if (activeTab.value === 'remote') {
-      if (isVideoMode.value) {
-        normalized.platform = normalized.platform || 'JAVDB'
-      } else {
-        normalized.platform = normalized.platform || 'JM'
-      }
-    }
-    
     return normalized
   })
 })
@@ -200,16 +196,20 @@ function getItemId(item) {
   return item.id || item.video_id || item.album_id || item.comic_id
 }
 
-function isJavbusPlatform(item) {
-  const platform = String(item?.platform || '').trim().toLowerCase()
-  return platform === 'javbus'
+function getCoverFit(item) {
+  return resolveDisplayCoverFit(item) || 'cover'
 }
 
-function getCoverFit(item) {
-  if (isVideoMode.value && isJavbusPlatform(item)) {
-    return 'contain'
-  }
-  return 'cover'
+function getRemoteCoverStyle(item) {
+  return buildDisplayCoverStyle(item)
+}
+
+function shouldRenderPlatformBadge(item) {
+  return shouldShowPlatformBadge(item)
+}
+
+function getPlatformBadgeLabel(item) {
+  return resolvePlatformBadgeLabel(item)
 }
 
 function formatScore(score) {
@@ -240,23 +240,35 @@ function toggleSelectAllRemote() {
 
 async function goToVideoTagSearch() {
   try {
-    const res = await videoApi.thirdPartyJavdbCookieStatus()
+    const platformOptions = await fetchProtocolPlatformOptions({
+      mediaType: 'video',
+      capability: 'taxonomy.tag_search'
+    })
+    const targetPlatform = platformOptions[0] || null
+    if (!targetPlatform) {
+      throw new Error('当前没有声明标签搜索能力的视频平台')
+    }
+
+    const res = await videoApi.thirdPartyPlatformHealthStatus(targetPlatform.platform)
     const configured = Boolean(res?.code === 200 && res?.data?.configured)
     if (configured) {
-      router.push('/video-tag-search')
+      router.push({
+        path: '/video-tag-search',
+        query: { platform: targetPlatform.platform }
+      })
       return
     }
 
     await showConfirmDialog({
       title: '提示',
-      message: '未配置cookie，请先在系统配置中填写JAVDB cookie',
+      message: `未完成 ${targetPlatform.label} 所需配置，请先在系统设置中完成配置`,
       showCancelButton: false,
       confirmButtonText: '知道了'
     })
   } catch (e) {
     await showConfirmDialog({
       title: '提示',
-      message: e?.message || '未配置cookie，请先在系统配置中填写JAVDB cookie',
+      message: e?.message || '当前没有可用的标签搜索平台',
       showCancelButton: false,
       confirmButtonText: '知道了'
     })
@@ -276,7 +288,10 @@ async function confirmImport(target) {
   try {
     const itemsByPlatform = {}
     selectedItems.forEach(item => {
-      const platform = item.platform || (isVideoMode.value ? 'JAVDB' : 'JM')
+      const platform = resolveImportPlatform(item)
+      if (!platform) {
+        return
+      }
       if (!itemsByPlatform[platform]) {
         itemsByPlatform[platform] = []
       }
@@ -298,7 +313,7 @@ async function confirmImport(target) {
       }
     }
     if (taskCount === 0) {
-      throw new Error('创建导入任务失败')
+      throw new Error('未找到可导入的平台标识')
     }
     showToast(`已创建 ${taskCount} 个导入任务`)
     selectedIds.value = []
@@ -637,16 +652,8 @@ onMounted(() => {
 
 .card-cover {
   position: relative;
-  aspect-ratio: 2 / 3;
+  aspect-ratio: var(--media-cover-aspect-ratio, 2 / 3);
   background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
-}
-
-.remote-results-grid.video-mode .card-cover.video-cover-landscape {
-  aspect-ratio: 16 / 9;
-}
-
-.remote-results-grid.video-mode .card-cover.video-cover-portrait {
-  aspect-ratio: 2 / 3;
 }
 
 .cover-image {
@@ -751,8 +758,8 @@ onMounted(() => {
     padding: 10px;
   }
 
-  .remote-results-grid.video-mode .card-cover.video-cover-landscape {
-    aspect-ratio: 3 / 2;
+  .card-cover {
+    aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
   }
 
   .remote-results-grid.video-mode .card-title {

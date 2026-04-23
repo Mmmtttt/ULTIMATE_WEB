@@ -57,9 +57,21 @@ class ProviderManager:
         provider_cls = self._load_provider_class(manifest)
         provider = provider_cls(manifest=manifest.raw, manifest_path=manifest.path)
         if not isinstance(provider, ProtocolProvider):
-            raise TypeError(f"{plugin_key} provider must inherit ProtocolProvider")
+            # Some test/runtime entrypoints may import the same provider base through
+            # different module roots, so prefer capability-based validation here.
+            required_methods = ("get_legacy_client", "execute", "normalize_config", "serialize_public_config")
+            if not all(callable(getattr(provider, method_name, None)) for method_name in required_methods):
+                raise TypeError(f"{plugin_key} provider must inherit ProtocolProvider")
         self._providers[plugin_key] = provider
         return provider
+
+    def reset_provider(self, plugin_id: str) -> None:
+        plugin_key = str(plugin_id or "").strip()
+        if plugin_key:
+            self._providers.pop(plugin_key, None)
+
+    def reset_all_providers(self) -> None:
+        self._providers.clear()
 
     def _get_runtime_config(self, manifest: PluginManifest) -> Dict[str, Any]:
         config_key = str(manifest.config_key or "").strip()

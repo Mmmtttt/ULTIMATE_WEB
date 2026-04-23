@@ -9,15 +9,14 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
-from core.platform import get_platform_from_id, get_original_id, Platform, get_platform_image_url
-from core.constants import (
-    JM_PICTURES_DIR,
-    PK_PICTURES_DIR,
-    JM_RECOMMENDATION_CACHE_DIR,
-    PK_RECOMMENDATION_CACHE_DIR,
-)
+from core.constants import COMIC_DIR, COMIC_RECOMMENDATION_CACHE_DIR
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from utils.file_parser import file_parser
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    get_capability_default_params,
+    split_prefixed_id,
+)
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
@@ -46,7 +45,7 @@ class RecommendationAppService:
                 f"{self.THIRD_PARTY_DISABLED_MESSAGE}: {get_runtime_profile()}"
             )
 
-        from third_party.platform_service import get_platform_service
+        from protocol.platform_service import get_platform_service
         self._platform_service = get_platform_service()
         return self._platform_service
     
@@ -138,8 +137,7 @@ class RecommendationAppService:
             cache_status = recommendation_cache_manager.get_cache_status(recommendation_id)
             is_cached = cache_status.get("is_cached", False)
 
-            platform = get_platform_from_id(recommendation_id)
-            original_id = get_original_id(recommendation_id)
+            platform_key, original_id, manifest = split_prefixed_id(recommendation_id, media_type="comic")
 
             preview_image_urls = []
             if is_cached:
@@ -147,33 +145,23 @@ class RecommendationAppService:
                     image_url = f"/api/v1/recommendation/cache/image?recommendation_id={recommendation_id}&page_num={page}"
                     preview_image_urls.append(image_url)
             else:
-                if platform == Platform.PK:
-                    # 对于 PK 平台，优先使用预存预览图，缺失时动态补取。
-                    preview_image_urls = recommendation.preview_image_urls or []
-                    preview_pages = recommendation.preview_pages or preview_pages
+                preview_image_urls = recommendation.preview_image_urls or []
+                preview_pages = recommendation.preview_pages or preview_pages
 
-                    if not preview_image_urls and preview_pages:
-                        try:
-                            platform_service = self._get_platform_service()
-                            preview_image_urls = platform_service.get_preview_image_urls(
-                                platform,
-                                original_id,
-                                preview_pages
-                            )
-                            if preview_image_urls:
-                                recommendation.preview_image_urls = preview_image_urls
-                                recommendation.preview_pages = preview_pages
-                                self._recommendation_repo.save(recommendation)
-                        except Exception as e:
-                            error_logger.warning(f"获取 PK 预览图片失败: {recommendation_id}, {e}")
-                else:
-                    # 对于 JM 平台，使用原有逻辑
-                    for page in preview_pages:
-                        image_url = get_platform_image_url(platform, original_id, page)
-                        if not image_url:
-                            image_url = f"https://cdn-msp.jmapinodeudzn.net/media/photos/{original_id}/{page:05d}.webp"
-                        if image_url:
-                            preview_image_urls.append(image_url)
+                if not preview_image_urls and preview_pages and platform_key:
+                    try:
+                        platform_service = self._get_platform_service()
+                        preview_image_urls = platform_service.get_preview_image_urls(
+                            platform_key,
+                            original_id,
+                            preview_pages
+                        )
+                        if preview_image_urls:
+                            recommendation.preview_image_urls = preview_image_urls
+                            recommendation.preview_pages = preview_pages
+                            self._recommendation_repo.save(recommendation)
+                    except Exception as e:
+                        error_logger.warning(f"获取协议预览图片失败: {recommendation_id}, {e}")
 
             detail = {
                 "id": recommendation.id,
@@ -197,7 +185,7 @@ class RecommendationAppService:
                 "source": "preview"
             }
 
-            app_logger.info(f"获取推荐详情成功: {recommendation_id}, 平台: {platform}, 缓存状态: {is_cached}")
+            app_logger.info(f"获取推荐详情成功: {recommendation_id}, 平台: {platform_key}, 缓存状态: {is_cached}")
             return ServiceResult.ok(detail)
         except Exception as e:
             error_logger.error(f"获取推荐详情失败: {e}")
@@ -256,19 +244,18 @@ class RecommendationAppService:
             return ServiceResult.error("更新推荐总页数失败")
 
     def _get_local_comic_dir(self, recommendation: Recommendation) -> Optional[str]:
-        platform = get_platform_from_id(recommendation.id)
-        if platform not in (Platform.JM, Platform.PK):
+        platform_key, original_id, manifest = split_prefixed_id(recommendation.id, media_type="comic")
+        if not platform_key or not original_id:
             return None
 
-        base_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
-        original_id = get_original_id(recommendation.id)
+        base_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key)
         try:
             platform_service = self._get_platform_service()
         except RuntimeError:
             return None
 
         return platform_service.get_comic_dir(
-            platform,
+            platform_key,
             original_id,
             recommendation.author or None,
             recommendation.title or None,
@@ -284,15 +271,25 @@ class RecommendationAppService:
         if not cache_dir:
             return {"success": False, "reason": "cache_not_found"}
 
-        platform = get_platform_from_id(recommendation.id)
+        platform_key, _original_id, manifest = split_prefixed_id(recommendation.id, media_type="comic")
+        if not platform_key:
+            return {"success": False, "reason": "unsupported_platform"}
+
         local_dir = None
         try:
-            if platform == Platform.JM:
-                relative_path = os.path.relpath(cache_dir, JM_RECOMMENDATION_CACHE_DIR)
-                local_dir = os.path.join(JM_PICTURES_DIR, relative_path)
-            elif platform == Platform.PK:
-                relative_path = os.path.relpath(cache_dir, PK_RECOMMENDATION_CACHE_DIR)
-                local_dir = os.path.join(PK_PICTURES_DIR, relative_path)
+            cache_root_dir = build_platform_root_dir(
+                COMIC_RECOMMENDATION_CACHE_DIR,
+                manifest=manifest,
+                platform_name=platform_key,
+            )
+            local_root_dir = build_platform_root_dir(
+                COMIC_DIR,
+                manifest=manifest,
+                platform_name=platform_key,
+            )
+            relative_path = os.path.relpath(cache_dir, cache_root_dir)
+            if not str(relative_path or "").startswith(".."):
+                local_dir = os.path.join(local_root_dir, relative_path)
         except Exception:
             local_dir = None
 
@@ -315,13 +312,12 @@ class RecommendationAppService:
         }
 
     def _download_content_to_local(self, recommendation: Recommendation) -> dict:
-        platform = get_platform_from_id(recommendation.id)
-        if platform not in (Platform.JM, Platform.PK):
+        platform_key, original_id, manifest = split_prefixed_id(recommendation.id, media_type="comic")
+        if not platform_key or not original_id:
             return {"success": False, "reason": "unsupported_platform"}
 
-        original_id = get_original_id(recommendation.id)
-        download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
-        download_kwargs = {"decode_images": True} if platform == Platform.JM else {}
+        download_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key)
+        download_kwargs = get_capability_default_params(manifest, "asset.bundle.fetch")
 
         try:
             platform_service = self._get_platform_service()
@@ -329,7 +325,7 @@ class RecommendationAppService:
             return {"success": False, "reason": "third_party_disabled"}
 
         detail, success = platform_service.download_album(
-            platform,
+            platform_key,
             original_id,
             download_dir=download_dir,
             show_progress=False,
@@ -835,16 +831,8 @@ class RecommendationAppService:
     def _cleanup_recommendation_files(self, recommendation):
         """清理推荐漫画相关的缓存文件"""
         import shutil
-        from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
-        
-        platform = get_platform_from_id(recommendation.id)
-        original_id = get_original_id(recommendation.id)
-        
-        cache_dir = None
-        if platform == Platform.JM:
-            cache_dir = os.path.join(JM_RECOMMENDATION_CACHE_DIR, original_id)
-        elif platform == Platform.PK:
-            cache_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
+
+        cache_dir = recommendation_cache_manager.get_cache_dir(recommendation.id)
         
         if cache_dir and os.path.exists(cache_dir):
             try:

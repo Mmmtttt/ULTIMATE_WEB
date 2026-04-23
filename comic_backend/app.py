@@ -183,7 +183,9 @@ def serve_cover(filename):
 @app.route('/static/cover/<platform>/author_cache/<filename>')
 def serve_author_cover(platform, filename):
     """提供作者更新作品的封面图片"""
-    platform_key = str(platform or "").strip().upper() or "JM"
+    platform_key = str(platform or "").strip().upper()
+    if not platform_key:
+        return make_response("Not Found", 404)
     new_cache_dir = os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
     response = make_response(send_from_directory(new_cache_dir, filename))
     if filename.endswith('.jpg') or filename.endswith('.jpeg'):

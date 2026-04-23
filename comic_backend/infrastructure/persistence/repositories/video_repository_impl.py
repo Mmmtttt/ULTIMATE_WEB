@@ -6,13 +6,14 @@ from typing import List, Optional
 from infrastructure.persistence.repositories.base_repository_impl import BaseContentJsonRepository
 from infrastructure.persistence.json_storage import JsonStorage
 from domain.video.entity import Video
-from core.constants import VIDEO_JSON_FILE
 
 
 class VideoJsonRepository(BaseContentJsonRepository[Video]):
     
     def __init__(self):
-        self._storage = JsonStorage(VIDEO_JSON_FILE)
+        from core.constants import VIDEO_JSON_FILE as ACTIVE_VIDEO_JSON_FILE
+
+        self._storage = JsonStorage(ACTIVE_VIDEO_JSON_FILE)
         self._data_key = "videos"
     
     def _get_entity_class(self):

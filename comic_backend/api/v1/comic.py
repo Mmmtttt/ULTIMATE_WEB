@@ -13,6 +13,8 @@ from utils.file_parser import file_parser
 from utils.image_handler import image_handler
 from core.constants import (
     CACHE_MAX_AGE,
+    COMIC_DIR,
+    COVER_DIR,
     JSON_FILE,
     PICTURES_DIR,
     RECOMMENDATION_JSON_FILE,
@@ -20,6 +22,8 @@ from core.constants import (
 )
 from core.utils import normalize_total_page
 from protocol.compatibility import get_query_status_for_adapter_name
+from protocol.gateway import get_protocol_gateway
+from protocol.presentation import annotate_items
 from .runtime_guard import require_third_party
 import os
 import time
@@ -44,6 +48,103 @@ def error_response(code, msg):
         "msg": msg,
         "data": None
     })
+
+
+def _resolve_platform_manifest(platform_name: str, media_type: str = ""):
+    gateway = get_protocol_gateway()
+    normalized_name = str(platform_name or "").strip()
+    normalized_media_type = str(media_type or "").strip().lower()
+    if not normalized_name:
+        return None
+
+    manifest = gateway.get_manifest_by_legacy_platform(
+        normalized_name,
+        media_type=normalized_media_type or None,
+    )
+    if manifest is not None:
+        return manifest
+
+    manifest = gateway.get_manifest_by_config_key(normalized_name)
+    if manifest is None:
+        return None
+
+    if normalized_media_type:
+        manifest_media_types = {str(item or "").strip().lower() for item in (manifest.media_types or [])}
+        if normalized_media_type not in manifest_media_types:
+            return None
+    return manifest
+
+
+def _resolve_manifest_platform_label(manifest) -> str:
+    identity = manifest.identity if manifest is not None else {}
+    for candidate in (
+        identity.get("platform_label"),
+        *(manifest.legacy_platforms if manifest is not None else []),
+        identity.get("host_id_prefix"),
+        manifest.config_key if manifest is not None else "",
+        manifest.name if manifest is not None else "",
+    ):
+        normalized = str(candidate or "").strip()
+        if normalized:
+            return normalized.upper()
+    return ""
+
+
+def _resolve_manifest_host_prefix(manifest) -> str:
+    identity = manifest.identity if manifest is not None else {}
+    host_prefix = str(identity.get("host_id_prefix") or "").strip().upper()
+    if host_prefix:
+        return host_prefix
+    return _resolve_manifest_platform_label(manifest)
+
+
+def _resolve_manifest_content_type(manifest) -> str:
+    media_types = [str(item or "").strip().lower() for item in (manifest.media_types if manifest else [])]
+    if "video" in media_types:
+        return "video"
+    return "comic"
+
+
+def _resolve_cover_path_mode(manifest) -> str:
+    try:
+        cover = (((manifest.presentation or {}).get("media_card") or {}).get("cover") or {})
+        return str(cover.get("path_mode") or "").strip().lower() or "local_static"
+    except Exception:
+        return "local_static"
+
+
+def _build_prefixed_id(host_prefix: str, original_id: str) -> str:
+    normalized_prefix = str(host_prefix or "").strip().upper()
+    normalized_original_id = str(original_id or "").strip()
+    if not normalized_original_id:
+        return normalized_original_id
+    if not normalized_prefix:
+        return normalized_original_id
+    if normalized_original_id.upper().startswith(normalized_prefix):
+        return normalized_original_id
+    return f"{normalized_prefix}{normalized_original_id}"
+
+
+def _list_supported_platform_labels(media_type: str = "") -> list:
+    gateway = get_protocol_gateway()
+    manifests = gateway.list_manifests(media_type=str(media_type or "").strip().lower() or None)
+    labels = []
+    for manifest in manifests:
+        label = _resolve_manifest_platform_label(manifest)
+        if label:
+            labels.append(label)
+    return sorted(set(labels))
+
+
+def _get_default_platform_name(media_type: str = "comic") -> str:
+    manifests = list(
+        get_protocol_gateway().list_manifests(
+            media_type=str(media_type or "").strip().lower() or None
+        )
+    )
+    if not manifests:
+        return ""
+    return _resolve_manifest_platform_label(manifests[0])
 
 
 @comic_bp.route('/init', methods=['POST'])
@@ -410,34 +511,46 @@ def search_third_party_comics():
         if not keyword:
             return error_response(400, "缺少参数: keyword")
         
-        from third_party.external_api import search_albums
-        from core.platform import get_comic_platforms, is_comic_platform
+        from protocol.adapter_api import search_albums
         
-        platforms_to_search = []
+        available_plugins = []
+        platform_lookup = {}
+        for manifest in get_protocol_gateway().list_manifests(media_type="comic", capability="catalog.search"):
+            config_key = str(manifest.config_key or "").strip()
+            if not config_key:
+                continue
+
+            platform_label = str((manifest.identity or {}).get("platform_label") or "").strip()
+            if not platform_label:
+                platform_label = str((manifest.legacy_platforms or [manifest.name])[0] or "").strip()
+            if not platform_label:
+                continue
+
+            descriptor = {
+                "manifest": manifest,
+                "adapter_name": config_key,
+                "platform_label": platform_label.upper(),
+            }
+            available_plugins.append(descriptor)
+            platform_lookup[descriptor["platform_label"]] = descriptor
+
+        supported_platforms = sorted(platform_lookup.keys())
         if platform == 'all':
-            platforms_to_search = get_comic_platforms()
+            platforms_to_search = available_plugins
         else:
-            platform_name = platform.upper()
-            if is_comic_platform(platform_name):
-                platforms_to_search = [platform_name]
-            else:
-                return error_response(400, f"不支持的漫画平台: {platform}，支持的平台: {get_comic_platforms()}")
+            descriptor = platform_lookup.get(str(platform or "").strip().upper())
+            if descriptor is None:
+                return error_response(400, f"不支持的漫画平台: {platform}，支持的平台: {supported_platforms}")
+            platforms_to_search = [descriptor]
         
         platform_results = {}
         platform_errors = {}
         all_albums = []
-        platform_to_adapter = {
-            'JM': 'jmcomic',
-            'PK': 'picacomic',
-        }
         
-        for plat in platforms_to_search:
-            adapter_name = platform_to_adapter.get(plat)
-            if not adapter_name:
-                platform_errors[plat] = f"未找到平台 {plat} 对应的适配器"
-                if platform != 'all':
-                    return error_response(400, platform_errors[plat])
-                continue
+        for descriptor in platforms_to_search:
+            manifest = descriptor["manifest"]
+            plat = descriptor["platform_label"]
+            adapter_name = descriptor["adapter_name"]
 
             credential_status = get_query_status_for_adapter_name(adapter_name)
             if not bool(credential_status.get("configured", False)):
@@ -457,7 +570,12 @@ def search_third_party_comics():
                 
                 if result and result.get('albums'):
                     albums_with_platform = []
-                    for album in result.get('albums', []):
+                    for album in annotate_items(
+                        result.get('albums', []),
+                        plugin_id=manifest.plugin_id,
+                        media_type="comic",
+                        capability="catalog.search",
+                    ):
                         album_with_platform = album.copy()
                         album_with_platform['platform'] = plat
                         album_with_platform['platform_page'] = result.get('page', 1)
@@ -1093,28 +1211,34 @@ def import_online():
         
         import_type = data.get('import_type')
         target = data.get('target', 'home')
-        platform_name = data.get('platform', 'JM').upper()
+        requested_platform = str(data.get('platform', '') or '').strip() or _get_default_platform_name("comic")
         
         if import_type not in ['by_id', 'by_search', 'by_favorite']:
             return error_response(400, "无效的导入方式")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
-        
-        from core.platform import Platform, is_platform_supported, get_supported_platforms
-        if not is_platform_supported(platform_name):
-            return error_response(400, f"不支持的平台: {platform_name}，支持的平台: {get_supported_platforms()}")
-        
-        platform = Platform(platform_name)
+
+        manifest = _resolve_platform_manifest(requested_platform, media_type="comic")
+        if manifest is None:
+            return error_response(
+                400,
+                f"不支持的平台: {requested_platform}，支持的平台: {_list_supported_platform_labels('comic')}",
+            )
+
+        platform_name = _resolve_manifest_platform_label(manifest)
+        host_prefix = _resolve_manifest_host_prefix(manifest)
+        config_key = str(manifest.config_key or "").strip()
+        cover_path_mode = _resolve_cover_path_mode(manifest)
         
         is_recommendation = (target == 'recommendation')
         
-        from third_party.adapter import MetaDataAdapter, DuplicateChecker
-        from third_party.external_api import get_album_by_id, search_albums, get_favorites
+        from protocol.adapter_api import get_album_by_id, search_albums, get_favorites
+        from protocol.metadata_adapter import MetaDataAdapter, DuplicateChecker
         from infrastructure.persistence.json_storage import JsonStorage
-        from core.constants import TAGS_JSON_FILE
+        from core.constants import JSON_FILE as ACTIVE_JSON_FILE, RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE
         
-        storage = JsonStorage() if not is_recommendation else JsonStorage(RECOMMENDATION_JSON_FILE)
+        storage = JsonStorage(ACTIVE_JSON_FILE if not is_recommendation else ACTIVE_RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
         
         comics_key = 'recommendations' if is_recommendation else 'comics'
@@ -1127,12 +1251,20 @@ def import_online():
         tag_storage = JsonStorage(TAGS_JSON_FILE)
         tag_db_data = tag_storage.read()
         existing_tags = tag_db_data.get('tags', [])
-        adapter = MetaDataAdapter(is_recommendation, existing_tags, platform)
+        adapter = MetaDataAdapter(
+            is_recommendation=is_recommendation,
+            existing_tags=existing_tags,
+            platform=None,
+            platform_prefix=host_prefix,
+            cover_path_prefix=host_prefix,
+            prefer_remote_cover=(cover_path_mode == "remote_first"),
+        )
         
         meta_json = None
         
-        # 根据平台选择适配器
-        adapter_name = 'jmcomic' if platform == Platform.JM else 'picacomic'
+        adapter_name = config_key
+        if not adapter_name:
+            return error_response(400, f"平台未声明配置键: {platform_name}")
         credential_status = get_query_status_for_adapter_name(adapter_name)
         if not bool(credential_status.get("configured", False)):
             return error_response(400, str(credential_status.get("message") or f"{platform_name} 平台未配置查询凭据"))
@@ -1141,9 +1273,8 @@ def import_online():
             comic_id = data.get('comic_id')
             if not comic_id:
                 return error_response(400, "缺少漫画ID")
-            
-            from core.platform import add_platform_prefix
-            full_comic_id = add_platform_prefix(platform, comic_id)
+
+            full_comic_id = _build_prefixed_id(host_prefix, comic_id)
             
             if checker.is_duplicate(full_comic_id):
                 return error_response(400, f"漫画 {full_comic_id} 已存在")
@@ -1177,18 +1308,21 @@ def import_online():
         
         if not is_recommendation:
             try:
-                from third_party.platform_service import get_platform_service
-                from core.platform import get_original_id
-                from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
+                from protocol.platform_service import get_platform_service
+                from protocol.platform_meta import split_prefixed_id
                 
                 platform_service = get_platform_service()
-                download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
+                download_dir = os.path.join(COMIC_DIR, host_prefix)
+                os.makedirs(download_dir, exist_ok=True)
                 
                 for comic in new_comics:
                     try:
-                        original_id = get_original_id(comic['id'])
+                        _platform_key, original_id, _manifest = split_prefixed_id(
+                            comic['id'],
+                            media_type="comic",
+                        )
                         detail, success = platform_service.download_album(
-                            platform,
+                            platform_name,
                             original_id,
                             download_dir=download_dir,
                             show_progress=False
@@ -1256,20 +1390,22 @@ def import_online():
         
         if is_recommendation:
             try:
-                from third_party.platform_service import get_platform_service
-                from core.platform import get_original_id
-                from core.constants import JM_COVER_DIR, PK_COVER_DIR
+                from protocol.platform_service import get_platform_service
                 from core.utils import get_preview_pages
+                from protocol.platform_meta import split_prefixed_id
                 
                 platform_service = get_platform_service()
-                cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
-                cover_url_prefix = "JM" if platform == Platform.JM else "PK"
+                cover_dir = os.path.join(COVER_DIR, host_prefix)
+                cover_url_prefix = host_prefix
                 
                 os.makedirs(cover_dir, exist_ok=True)
                 
                 for comic in new_comics:
                     comic_id = comic['id']
-                    original_id = get_original_id(comic_id)
+                    _platform_key, original_id, _manifest = split_prefixed_id(
+                        comic_id,
+                        media_type="comic",
+                    )
                     cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
                     
                     # 已有本地封面则跳过
@@ -1279,7 +1415,7 @@ def import_online():
                         try:
                             # 通过 PlatformService 下载封面
                             detail, success = platform_service.download_cover(
-                                platform,
+                                platform_name,
                                 original_id,
                                 cover_path,
                                 show_progress=False
@@ -1298,7 +1434,7 @@ def import_online():
                         preview_pages = get_preview_pages(total_page)
                         
                         preview_urls = platform_service.get_preview_image_urls(
-                            platform,
+                            platform_name,
                             original_id,
                             preview_pages
                         )
@@ -1563,12 +1699,21 @@ def import_async():
         
         import_type = data.get('import_type')
         target = data.get('target', 'home')
-        platform_name = data.get('platform', 'JM').upper()
         raw_content_type = str(data.get('content_type', '') or '').strip().lower()
+        default_media_type = raw_content_type if raw_content_type in ['comic', 'video'] else 'comic'
+        requested_platform = str(data.get('platform', '') or '').strip() or _get_default_platform_name(default_media_type)
+        manifest = _resolve_platform_manifest(requested_platform)
+        if manifest is None:
+            return error_response(
+                400,
+                f"不支持的平台: {requested_platform}，支持的平台: {_list_supported_platform_labels()}",
+            )
+        platform_name = _resolve_manifest_platform_label(manifest)
+        host_prefix = _resolve_manifest_host_prefix(manifest)
         if raw_content_type in ['comic', 'video']:
             content_type = raw_content_type
         else:
-            content_type = 'video' if platform_name in ['JAVDB', 'JAVBUS'] else 'comic'
+            content_type = _resolve_manifest_content_type(manifest)
         comic_id = data.get('comic_id')
         keyword = data.get('keyword')
         comic_ids = data.get('comic_ids')
@@ -1582,13 +1727,8 @@ def import_async():
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
         
-        from core.platform import Platform, is_platform_supported, get_supported_platforms
-        if not is_platform_supported(platform_name):
-            return error_response(400, f"不支持的平台: {platform_name}，支持的平台: {get_supported_platforms()}")
-        
         if content_type == 'comic' and import_type == 'by_id' and comic_id:
-            from core.platform import add_platform_prefix
-            full_comic_id = add_platform_prefix(Platform(platform_name), comic_id)
+            full_comic_id = _build_prefixed_id(host_prefix, comic_id)
             
             from infrastructure.persistence.json_storage import JsonStorage
             db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE

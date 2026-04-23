@@ -1,4 +1,4 @@
-﻿import { toBackendApiUrl, toBackendUrl } from './url'
+import { toBackendUrl } from './url'
 import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
 
 export function toggleSelection(selectedIds, id) {
@@ -45,55 +45,86 @@ export function getCoverUrl(coverInput) {
 
   const normalizedCoverPath = String(coverPath || '').trim()
   if (!normalizedCoverPath) return ''
-  const javbusProxy = toJavbusProxyCover(normalizedCoverPath)
-  if (javbusProxy) return javbusProxy
   return toBackendUrl(normalizedCoverPath)
 }
 
-function toJavbusProxyCover(rawUrl) {
-  const normalized = String(rawUrl || '').trim()
-  if (!normalized) return ''
-
-  const lower = normalized.toLowerCase()
-  const looksLikeJavbusPic =
-    lower.includes('javbus.com/pics/') ||
-    lower.includes('javbus.org/pics/') ||
-    lower.startsWith('/pics/')
-
-  if (!looksLikeJavbusPic) {
-    return ''
+export function getDisplayConfig(item) {
+  if (!item || typeof item !== 'object' || !item.display || typeof item.display !== 'object') {
+    return {}
   }
-
-  let absolute = normalized
-  if (normalized.startsWith('//')) {
-    absolute = `https:${normalized}`
-  } else if (normalized.startsWith('/pics/')) {
-    absolute = `https://www.javbus.com${normalized}`
-  }
-
-  const encoded = encodeBase64(absolute)
-  if (!encoded) {
-    return ''
-  }
-  return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(encoded)}`)
+  return item.display
 }
 
-function encodeBase64(value) {
-  try {
-    if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
-      return window.btoa(value)
-    }
-    if (typeof btoa === 'function') {
-      return btoa(value)
-    }
-    if (typeof Buffer !== 'undefined') {
-      return Buffer.from(value, 'utf-8').toString('base64')
-    }
-  } catch (_) {
+export function normalizeAspectRatio(value) {
+  const raw = String(value || '').trim()
+  if (!raw) {
     return ''
   }
-  return ''
+
+  const compact = raw.replace(/\s+/g, '')
+  if (!/^\d+(\.\d+)?\/\d+(\.\d+)?$/.test(compact)) {
+    return raw
+  }
+
+  const [width, height] = compact.split('/')
+  return `${width} / ${height}`
 }
+
+export function resolveDisplayCoverAspectRatio(item) {
+  return normalizeAspectRatio(getDisplayConfig(item).cover?.aspect_ratio)
+}
+
+export function resolveDisplayMobileCoverAspectRatio(item) {
+  return normalizeAspectRatio(getDisplayConfig(item).cover?.mobile_aspect_ratio)
+}
+
+export function resolveDisplayCoverFit(item) {
+  const fit = String(getDisplayConfig(item).cover?.fit || '').trim().toLowerCase()
+  return fit === 'contain' || fit === 'cover' ? fit : ''
+}
+
+export function resolvePlatformBadgeLabel(item) {
+  const badgeLabel = String(getDisplayConfig(item).badge?.label || '').trim()
+  if (badgeLabel) {
+    return badgeLabel
+  }
+  return String(item?.platform || item?.plugin_name || '').trim()
+}
+
+export function shouldShowPlatformBadge(item) {
+  const badgeConfig = getDisplayConfig(item).badge
+  if (typeof badgeConfig?.show_platform_label === 'boolean') {
+    return badgeConfig.show_platform_label && Boolean(resolvePlatformBadgeLabel(item))
+  }
+  return Boolean(resolvePlatformBadgeLabel(item))
+}
+
+export function resolveImportPlatform(item) {
+  return String(
+    item?.platform ||
+    item?.display?.badge?.label ||
+    item?.plugin_name ||
+    ''
+  ).trim()
+}
+
+export function buildDisplayCoverStyle(item, fallbackAspectRatio = '', fallbackMobileAspectRatio = '') {
+  const aspectRatio = resolveDisplayCoverAspectRatio(item) || normalizeAspectRatio(fallbackAspectRatio)
+  const mobileAspectRatio =
+    resolveDisplayMobileCoverAspectRatio(item) ||
+    normalizeAspectRatio(fallbackMobileAspectRatio) ||
+    aspectRatio
+
+  const style = {}
+  if (aspectRatio) {
+    style['--media-cover-aspect-ratio'] = aspectRatio
+  }
+  if (mobileAspectRatio) {
+    style['--media-cover-aspect-ratio-mobile'] = mobileAspectRatio
+  }
+  return style
+}
+
 export function extractAuthors(items) {
   const authors = new Set()
   items.forEach(item => {
@@ -287,5 +318,6 @@ export function buildListChangeMessage(addCount, removeCount) {
   }
   return message.trim() || 'No list changes'
 }
+
 
 

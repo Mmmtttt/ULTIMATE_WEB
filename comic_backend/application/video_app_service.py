@@ -9,7 +9,6 @@ import os
 import re
 import shutil
 import threading
-import json
 import requests
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, unquote
@@ -30,21 +29,97 @@ from core.utils import get_current_time, generate_id, generate_uuid
 from core.constants import (
     DATA_DIR,
     STATIC_DIR,
-    THIRD_PARTY_CONFIG_PATH,
-    JAVDB_COVER_DIR,
-    JAVBUS_COVER_DIR,
-    LOCAL_VIDEO_COVER_DIR,
     VIDEO_CACHE_DIR,
     VIDEO_DIR,
     VIDEO_RECOMMENDATION_CACHE_DIR,
 )
 from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
-from protocol.compatibility import (
-    get_legacy_missav_client,
-    get_legacy_video_adapter,
-    get_query_status_for_video_platform,
+from application.video_runtime_support import get_preview_request_client
+from protocol.gateway import get_protocol_gateway
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    resolve_manifest_host_prefix,
+    resolve_manifest_platform_label,
+    resolve_platform_manifest,
+    split_prefixed_id,
 )
+from protocol.runtime_config import get_protocol_config_store
+
+
+class _ProtocolVideoMetadataAdapter:
+    def __init__(self, gateway, manifest):
+        self._gateway = gateway
+        self._manifest = manifest
+        self.platform_name = str(
+            resolve_manifest_platform_label(
+                manifest,
+                fallback=getattr(manifest, "config_key", "") or getattr(manifest, "plugin_id", ""),
+            )
+            or ""
+        ).strip().lower()
+
+    @staticmethod
+    def _payload_field_has_value(payload: Dict[str, Any], field_name: str) -> bool:
+        value = payload.get(field_name)
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value) > 0
+        return value is not None
+
+    def _execute(self, capability: str, params: Dict[str, Any]) -> Any:
+        return self._gateway.execute_plugin(
+            self._manifest.plugin_id,
+            capability,
+            params=params,
+        )
+
+    def search_videos(self, keyword: str, page: int = 1, max_pages: int = 1) -> Dict[str, Any]:
+        return self._execute(
+            "catalog.search",
+            {
+                "keyword": keyword,
+                "page": page,
+                "max_pages": max_pages,
+            },
+        ) or {}
+
+    def get_video_detail(self, video_id: str, movie_type=None) -> Optional[Dict[str, Any]]:
+        if not self._manifest.has_capability("catalog.detail"):
+            return None
+        return self._execute(
+            "catalog.detail",
+            {
+                "video_id": video_id,
+                "movie_type": movie_type,
+            },
+        ) or {}
+
+    def get_video_by_code(self, code: str) -> Optional[Dict[str, Any]]:
+        if not self._manifest.has_capability("catalog.by_code"):
+            return None
+        return self._execute("catalog.by_code", {"code": code}) or {}
+
+    def should_skip_remote_detail(self, first_result: Dict[str, Any]) -> bool:
+        search_entry = dict(self._manifest.get_capability_entry("catalog.search") or {})
+        detail_policy = dict(search_entry.get("result_detail_policy") or {})
+        mode = str(detail_policy.get("mode") or "").strip().lower()
+        fields = [
+            str(item or "").strip()
+            for item in (detail_policy.get("fields") or [])
+            if str(item or "").strip()
+        ]
+
+        if mode in {"search_payload", "search_payload_only", "prefer_search_payload"}:
+            return True
+
+        if mode == "search_payload_if_fields_present":
+            if not fields:
+                return False
+            return all(self._payload_field_has_value(first_result, field_name) for field_name in fields)
+
+        return False
 
 
 class VideoAppService(BaseContentAppService):
@@ -525,13 +600,15 @@ class VideoAppService(BaseContentAppService):
 
         explicit_dir = self._resolve_explicit_video_local_asset_dir(video)
         platform_key = self._get_video_platform_key(video.id)
+        platform_manifest = self._resolve_video_protocol_context(video_id=video.id).get("manifest")
+        platform_root = build_platform_root_dir(VIDEO_DIR, manifest=platform_manifest, platform_name=platform_key)
 
         if explicit_dir:
             if os.path.isabs(explicit_dir):
                 return explicit_dir
-            return os.path.join(VIDEO_DIR, platform_key, explicit_dir)
+            return os.path.join(platform_root, explicit_dir)
 
-        return os.path.join(VIDEO_DIR, platform_key, self._sanitize_video_asset_id(video.id))
+        return os.path.join(platform_root, self._sanitize_video_asset_id(video.id))
 
     def _resolve_video_source_filename(self, video: Optional[Video], default_extension: str = "") -> str:
         if isinstance(video, Video):
@@ -625,6 +702,8 @@ class VideoAppService(BaseContentAppService):
         stem, ext = os.path.splitext(original_name)
         normalized_ext = str(ext or "").strip().lower() or ".mp4"
         platform_dir = self._get_video_platform_key(video_id)
+        platform_manifest = self._resolve_video_protocol_context(video_id=video_id).get("manifest")
+        platform_root = build_platform_root_dir(VIDEO_DIR, manifest=platform_manifest, platform_name=platform_dir)
         safe_video_id = self._sanitize_video_asset_id(video_id)
         fallback_base = safe_video_id or "video"
 
@@ -637,10 +716,10 @@ class VideoAppService(BaseContentAppService):
 
         if preferred_dir_name:
             storage_dir_name = self._sanitize_local_fs_name(preferred_dir_name, fallback=fallback_base)
-            target_dir = os.path.join(VIDEO_DIR, platform_dir, storage_dir_name)
+            target_dir = os.path.join(platform_root, storage_dir_name)
         else:
             desired_dir_name = self._sanitize_local_fs_name(stem or fallback_base, fallback=fallback_base)
-            target_dir = self._make_unique_dir_path(os.path.join(VIDEO_DIR, platform_dir, desired_dir_name))
+            target_dir = self._make_unique_dir_path(os.path.join(platform_root, desired_dir_name))
             storage_dir_name = os.path.basename(target_dir)
 
         os.makedirs(target_dir, exist_ok=True)
@@ -1174,7 +1253,18 @@ class VideoAppService(BaseContentAppService):
 
         video_id = str(first_result.get("video_id") or first_result.get("id") or "").strip()
         detail = {}
-        if video_id and hasattr(adapter, "get_video_detail"):
+        should_skip_detail = False
+        if hasattr(adapter, "should_skip_remote_detail"):
+            try:
+                should_skip_detail = bool(adapter.should_skip_remote_detail(first_result))
+            except Exception as detail_policy_error:
+                error_logger.error(
+                    f"resolve video detail policy failed: code={code}, error={detail_policy_error}"
+                )
+
+        if should_skip_detail:
+            detail = first_result if isinstance(first_result, dict) else {}
+        elif video_id and hasattr(adapter, "get_video_detail"):
             try:
                 detail = adapter.get_video_detail(video_id) or {}
             except Exception as detail_error:
@@ -1293,20 +1383,35 @@ class VideoAppService(BaseContentAppService):
 
     def _build_video_metadata_adapters(self) -> Dict[str, Any]:
         adapters: Dict[str, Any] = {}
+        gateway = get_protocol_gateway()
+        manifests = gateway.list_manifests(media_type="video", capability="catalog.search")
 
-        try:
-            adapters["javbus"] = get_legacy_video_adapter("javbus")
-        except Exception as e:
-            error_logger.error(f"init javbus adapter failed: {e}")
+        for manifest in manifests:
+            platform_name = str(
+                resolve_manifest_platform_label(
+                    manifest,
+                    fallback=getattr(manifest, "config_key", "") or getattr(manifest, "plugin_id", ""),
+                )
+                or ""
+            ).strip().lower()
+            if not platform_name:
+                continue
 
-        try:
-            javdb_status = get_query_status_for_video_platform("javdb")
-            if bool(javdb_status.get("configured", False)):
-                adapters["javdb"] = get_legacy_video_adapter("javdb")
-            else:
-                app_logger.info(f"skip javdb metadata adapter: {javdb_status.get('message')}")
-        except Exception as e:
-            error_logger.error(f"init javdb adapter failed: {e}")
+            try:
+                configured = True
+                status_message = ""
+                if manifest.has_capability("health.query.status"):
+                    status = gateway.get_query_status(manifest.plugin_id) or {}
+                    configured = bool(status.get("configured", False))
+                    status_message = str(status.get("message") or "").strip()
+
+                if not configured:
+                    app_logger.info(f"skip {platform_name} metadata adapter: {status_message}")
+                    continue
+
+                adapters[platform_name] = _ProtocolVideoMetadataAdapter(gateway, manifest)
+            except Exception as e:
+                error_logger.error(f"init {platform_name or manifest.plugin_id} protocol adapter failed: {e}")
 
         return adapters
 
@@ -1323,8 +1428,8 @@ class VideoAppService(BaseContentAppService):
                 "skipped_already_enriched": 0,
                 "skipped_no_match": 0,
                 "skipped_third_party_disabled": 0,
-                "matched_on_javdb": 0,
-                "matched_on_javbus": 0,
+                "search_platform_order": [],
+                "matched_by_platform": {},
                 "updated_records": 0,
                 "updated_titles": 0,
                 "updated_creators": 0,
@@ -1352,8 +1457,9 @@ class VideoAppService(BaseContentAppService):
                 return ServiceResult.ok(stats, "local video metadata enrich skipped")
 
             adapters = self._build_video_metadata_adapters()
-            javdb_adapter = adapters.get("javdb")
-            javbus_adapter = adapters.get("javbus")
+            platform_order = list(adapters.keys())
+            stats["search_platform_order"] = platform_order
+            stats["matched_by_platform"] = {platform: 0 for platform in platform_order}
 
             video_tags = self._tag_repo.get_all(ContentType.VIDEO)
             tag_name_to_id = {
@@ -1388,33 +1494,28 @@ class VideoAppService(BaseContentAppService):
                 matched_platform = ""
                 detail = {}
 
-                try:
-                    if javdb_adapter:
-                        matched = self._search_first_video_detail(javdb_adapter, code)
-                        detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
-                        if detail:
-                            matched_platform = "javdb"
-                except Exception as search_error:
-                    error_logger.error(f"search on javdb failed: code={code}, error={search_error}")
-
-                if not detail and javbus_adapter:
+                for platform_name, adapter in adapters.items():
+                    if detail:
+                        break
                     try:
-                        matched = self._search_first_video_detail(javbus_adapter, code)
+                        matched = self._search_first_video_detail(adapter, code)
                         detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
                         if detail:
-                            matched_platform = "javbus"
+                            matched_platform = platform_name
                     except Exception as search_error:
-                        error_logger.error(f"search on javbus failed: code={code}, error={search_error}")
+                        error_logger.error(
+                            f"search on {platform_name} failed: code={code}, error={search_error}"
+                        )
 
                 if not detail:
                     stats["skipped_no_match"] += 1
                     continue
 
                 update_stats = self._apply_remote_detail_to_video(video, detail, tag_name_to_id)
-                if matched_platform == "javdb":
-                    stats["matched_on_javdb"] += 1
-                elif matched_platform == "javbus":
-                    stats["matched_on_javbus"] += 1
+                if matched_platform:
+                    matched_by_platform = stats.get("matched_by_platform")
+                    if isinstance(matched_by_platform, dict):
+                        matched_by_platform[matched_platform] = int(matched_by_platform.get(matched_platform, 0)) + 1
 
                 if update_stats.get("updated_fields", 0) > 0:
                     stats["updated_records"] += 1
@@ -1439,9 +1540,16 @@ class VideoAppService(BaseContentAppService):
                 if str(video.preview_video or "").strip():
                     self.cache_preview_video_async(video.id, video.preview_video, source="local", force=True)
 
+            matched_by_platform = stats.get("matched_by_platform") if isinstance(stats.get("matched_by_platform"), dict) else {}
+            platform_summary_parts = []
+            for platform_name in stats.get("search_platform_order", []):
+                platform_summary_parts.append(
+                    f"{str(platform_name or '').upper()} 命中 {int(matched_by_platform.get(platform_name, 0))}"
+                )
+            platform_summary = f"{'，'.join(platform_summary_parts)}，" if platform_summary_parts else ""
             stats["summary"] = (
                 f"视频 LOCAL 补全完成：成功 {stats['updated_records']}，"
-                f"JAVDB 命中 {stats['matched_on_javdb']}，JAVBUS 命中 {stats['matched_on_javbus']}，"
+                f"{platform_summary}"
                 f"无匹配 {stats['skipped_no_match']}"
             )
             return ServiceResult.ok(stats, "local video metadata enrich completed")
@@ -1473,28 +1581,22 @@ class VideoAppService(BaseContentAppService):
                 return ServiceResult.error("video code is empty")
 
             adapters = self._build_video_metadata_adapters()
-            javdb_adapter = adapters.get("javdb")
-            javbus_adapter = adapters.get("javbus")
+            platform_order = list(adapters.keys())
 
             matched_platform = ""
             detail: Dict[str, Any] = {}
-            if javdb_adapter:
+            for platform_name, adapter in adapters.items():
+                if detail:
+                    break
                 try:
-                    matched = self._search_first_video_detail(javdb_adapter, code)
+                    matched = self._search_first_video_detail(adapter, code)
                     detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
                     if detail:
-                        matched_platform = "javdb"
+                        matched_platform = platform_name
                 except Exception as search_error:
-                    error_logger.error(f"refresh local video metadata search on javdb failed: code={code}, error={search_error}")
-
-            if not detail and javbus_adapter:
-                try:
-                    matched = self._search_first_video_detail(javbus_adapter, code)
-                    detail = matched.get("detail", {}) if isinstance(matched, dict) else {}
-                    if detail:
-                        matched_platform = "javbus"
-                except Exception as search_error:
-                    error_logger.error(f"refresh local video metadata search on javbus failed: code={code}, error={search_error}")
+                    error_logger.error(
+                        f"refresh local video metadata search on {platform_name} failed: code={code}, error={search_error}"
+                    )
 
             if not detail:
                 return ServiceResult.error("no remote match found for current video code")
@@ -1522,6 +1624,7 @@ class VideoAppService(BaseContentAppService):
             if isinstance(detail_payload, dict):
                 detail_payload["metadata_refresh"] = {
                     "matched_platform": matched_platform,
+                    "search_platform_order": platform_order,
                     "updated_fields": int(update_stats.get("updated_fields", 0)),
                     "created_tags": int(update_stats.get("created_tags", 0)),
                     "bound_tags": int(update_stats.get("bound_tags", 0)),
@@ -1705,7 +1808,7 @@ class VideoAppService(BaseContentAppService):
                     if (
                         local_video.preview_video and
                         not local_video.preview_video_local and
-                        not str(local_video.id or "").upper().startswith("JAVBUS")
+                        self._video_platform_allows_preview_download(video_id=local_video.id)
                     ):
                         self.cache_preview_video_async(
                             local_video.id,
@@ -1962,32 +2065,271 @@ class VideoAppService(BaseContentAppService):
     def _sanitize_video_asset_id(video_id: str) -> str:
         return re.sub(r"[^0-9A-Za-z._-]+", "_", str(video_id or "").strip()) or "video"
 
+    @classmethod
+    def _get_default_video_manifest(cls):
+        manifests = list(get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"))
+        return manifests[0] if manifests else None
+
+    @classmethod
+    def _resolve_video_protocol_context(cls, video_id: str = "", platform_name: str = "") -> Dict[str, Any]:
+        normalized_id = str(video_id or "").strip()
+        normalized_platform = str(platform_name or "").strip()
+        if normalized_id.upper().startswith("LOCAL"):
+            return {
+                "platform_key": "LOCAL",
+                "platform_name": "local",
+                "original_id": normalized_id,
+                "manifest": None,
+            }
+
+        manifest = None
+        original_id = normalized_id
+
+        if normalized_id:
+            parsed_platform, parsed_original_id, parsed_manifest = split_prefixed_id(
+                normalized_id,
+                media_type="video",
+            )
+            if parsed_manifest is not None:
+                manifest = parsed_manifest
+                normalized_platform = str(parsed_platform or "").strip() or normalized_platform
+                original_id = str(parsed_original_id or "").strip() or normalized_id
+
+        if manifest is None and normalized_platform:
+            manifest = resolve_platform_manifest(normalized_platform, media_type="video")
+
+        if manifest is None:
+            manifest = cls._get_default_video_manifest()
+
+        platform_key = str(normalized_platform or "").strip().upper()
+        platform_label = str(normalized_platform or "").strip().lower()
+        if manifest is not None:
+            platform_key = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+            platform_label = str(
+                resolve_manifest_platform_label(
+                    manifest,
+                    fallback=platform_key,
+                )
+                or ""
+            ).strip().lower()
+
+        return {
+            "platform_key": platform_key or "LOCAL",
+            "platform_name": platform_label or "local",
+            "original_id": str(original_id or normalized_id or "").strip(),
+            "manifest": manifest,
+        }
+
+    @classmethod
+    def _get_video_platform_key(cls, video_id: str, platform_name: str = "") -> str:
+        return str(cls._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name).get("platform_key") or "LOCAL")
+
+    @classmethod
+    def _get_video_original_id(cls, video_id: str, platform_name: str = "") -> str:
+        context = cls._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name)
+        original_id = str(context.get("original_id") or "").strip()
+        return original_id or str(video_id or "").strip()
+
     @staticmethod
-    def _get_video_platform_key(video_id: str) -> str:
-        normalized_id = str(video_id or "").strip().upper()
-        if normalized_id.startswith("LOCAL"):
-            return "LOCAL"
+    def _get_manifest_asset_policy(manifest, asset_kind: str) -> Dict[str, Any]:
+        resource_policy = dict(getattr(manifest, "resource_policy", {}) or {}) if manifest is not None else {}
+        assets = resource_policy.get("assets") if isinstance(resource_policy, dict) else {}
+        if not isinstance(assets, dict):
+            return {}
+        policy = assets.get(str(asset_kind or "").strip()) or {}
+        return dict(policy) if isinstance(policy, dict) else {}
 
-        try:
-            from core.platform import Platform, remove_platform_prefix
+    @classmethod
+    def _iter_video_asset_manifests(cls, video_id: str = "", platform_name: str = ""):
+        yielded = set()
+        primary_manifest = cls._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name).get("manifest")
+        if primary_manifest is not None:
+            yielded.add(primary_manifest.plugin_id)
+            yield primary_manifest
 
-            platform, _ = remove_platform_prefix(str(video_id or "").strip())
-            if platform == Platform.JAVBUS:
-                return "JAVBUS"
-            if platform == Platform.JAVDB:
-                return "JAVDB"
-        except Exception:
-            pass
-        return "JAVDB"
+        for manifest in get_protocol_gateway().list_manifests(media_type="video"):
+            if manifest.plugin_id in yielded:
+                continue
+            yielded.add(manifest.plugin_id)
+            yield manifest
+
+    @staticmethod
+    def _request_profile_matches(url: str, profile: Dict[str, Any]) -> bool:
+        parsed = urlparse(str(url or "").strip())
+        host = str(parsed.netloc or "").strip().lower()
+        lowered_url = str(url or "").strip().lower()
+
+        match_hosts = [
+            str(item or "").strip().lower()
+            for item in (profile.get("match_hosts") or [])
+            if str(item or "").strip()
+        ]
+        if match_hosts:
+            if any(candidate in host for candidate in match_hosts):
+                return True
+
+        path_prefixes = [
+            str(item or "").strip().lower()
+            for item in (profile.get("path_prefixes") or [])
+            if str(item or "").strip()
+        ]
+        if path_prefixes:
+            return any(lowered_url.startswith(prefix) for prefix in path_prefixes)
+
+        return False
+
+    @classmethod
+    def _find_asset_request_profile(
+        cls,
+        asset_url: str,
+        asset_kind: str,
+        video_id: str = "",
+        platform_name: str = "",
+    ) -> Tuple[Any, Dict[str, Any]]:
+        for manifest in cls._iter_video_asset_manifests(video_id=video_id, platform_name=platform_name):
+            policy = cls._get_manifest_asset_policy(manifest, asset_kind)
+            for raw_profile in (policy.get("request_profiles") or []):
+                if not isinstance(raw_profile, dict):
+                    continue
+                profile = dict(raw_profile)
+                if cls._request_profile_matches(asset_url, profile):
+                    return manifest, profile
+        return None, {}
+
+    @staticmethod
+    def _extract_nested_mapping(payload: Dict[str, Any], field_path: str) -> Dict[str, Any]:
+        current: Any = dict(payload or {})
+        for part in [str(item or "").strip() for item in str(field_path or "").split(".") if str(item or "").strip()]:
+            if not isinstance(current, dict):
+                return {}
+            current = current.get(part)
+        return dict(current or {}) if isinstance(current, dict) else {}
+
+    @classmethod
+    def _load_profile_cookie_header(cls, manifest, profile: Dict[str, Any]) -> str:
+        config_key = str(profile.get("cookie_config_key") or getattr(manifest, "config_key", "") or "").strip()
+        if not config_key:
+            return ""
+
+        cookie_field_path = str(profile.get("cookie_field_path") or "cookies").strip() or "cookies"
+        config = get_protocol_config_store().get_plugin_config(config_key, reload=True) or {}
+        cookies = cls._extract_nested_mapping(config, cookie_field_path)
+        if not cookies:
+            return ""
+
+        cookie_pairs = []
+        for key, value in cookies.items():
+            normalized_key = str(key or "").strip()
+            normalized_value = str(value or "").strip()
+            if not normalized_key or not normalized_value:
+                continue
+            cookie_pairs.append(f"{normalized_key}={normalized_value}")
+        return "; ".join(cookie_pairs)
+
+    @classmethod
+    def _build_protocol_asset_headers(
+        cls,
+        asset_url: str,
+        asset_kind: str,
+        video_id: str = "",
+        platform_name: str = "",
+        content_id: str = "",
+    ) -> Dict[str, str]:
+        if str(asset_kind or "").strip() == "preview_video":
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "*/*",
+            }
+        else:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            }
+
+        normalized_url = str(asset_url or "").strip()
+        parsed = urlparse(normalized_url)
+        if parsed.scheme and parsed.netloc:
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
+        manifest, profile = cls._find_asset_request_profile(
+            normalized_url,
+            asset_kind,
+            video_id=video_id,
+            platform_name=platform_name,
+        )
+        if not profile:
+            return headers
+
+        effective_content_id = str(content_id or cls._get_video_original_id(video_id, platform_name=platform_name) or "").strip()
+
+        referer_template = str(profile.get("referer_template") or "").strip()
+        referer = str(profile.get("referer") or "").strip()
+        if referer_template:
+            try:
+                referer = referer_template.format(content_id=effective_content_id)
+            except Exception:
+                referer = referer_template
+        if referer:
+            headers["Referer"] = referer
+
+        origin = str(profile.get("origin") or "").strip()
+        if origin:
+            headers["Origin"] = origin
+
+        cookie_header = cls._load_profile_cookie_header(manifest, profile)
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+
+        extra_headers = dict(profile.get("headers") or {})
+        for header_key, header_value in extra_headers.items():
+            normalized_key = str(header_key or "").strip()
+            normalized_value = str(header_value or "").strip()
+            if normalized_key and normalized_value:
+                headers[normalized_key] = normalized_value
+
+        return headers
+
+    @classmethod
+    def _normalize_protocol_asset_url(
+        cls,
+        asset_url: str,
+        asset_kind: str,
+        video_id: str = "",
+        platform_name: str = "",
+    ) -> str:
+        normalized_url = str(asset_url or "").strip()
+        if not normalized_url:
+            return ""
+        if normalized_url.startswith("//"):
+            return f"https:{normalized_url}"
+        if normalized_url.startswith(("/static/", "/media/", "/api/", "/v1/")):
+            return normalized_url
+        if not normalized_url.startswith("/"):
+            return normalized_url
+
+        manifest = cls._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name).get("manifest")
+        policy = cls._get_manifest_asset_policy(manifest, asset_kind)
+        base_url = str(policy.get("url_base") or "").strip()
+        if not base_url:
+            return normalized_url
+        return urljoin(f"{base_url.rstrip('/')}/", normalized_url.lstrip("/"))
+
+    @classmethod
+    def _video_platform_allows_preview_download(cls, video_id: str = "", platform_name: str = "") -> bool:
+        manifest = cls._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name).get("manifest")
+        policy = cls._get_manifest_asset_policy(manifest, "preview_video")
+        download_enabled = policy.get("download_enabled")
+        if download_enabled is None:
+            return True
+        return bool(download_enabled)
 
     def _build_preview_asset_root(self, video_id: str, source: str) -> tuple:
         source_key = self._normalize_preview_source(source)
-        platform_key = self._get_video_platform_key(video_id)
-
-        if source_key == "preview":
-            root_dir = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, platform_key)
-        else:
-            root_dir = os.path.join(VIDEO_DIR, platform_key)
+        context = self._resolve_video_protocol_context(video_id=video_id)
+        platform_key = str(context.get("platform_key") or "LOCAL")
+        manifest = context.get("manifest")
+        base_root = VIDEO_RECOMMENDATION_CACHE_DIR if source_key == "preview" else VIDEO_DIR
+        root_dir = build_platform_root_dir(base_root, manifest=manifest, platform_name=platform_key)
 
         root_relative = os.path.relpath(os.path.abspath(root_dir), os.path.abspath(DATA_DIR)).replace("\\", "/").strip("/")
         root_url = f"/media/{root_relative}"
@@ -2099,6 +2441,51 @@ class VideoAppService(BaseContentAppService):
 
         return url
 
+    @classmethod
+    def to_frontend_asset_url(
+        cls,
+        asset_url: str,
+        *,
+        asset_kind: str = "image",
+        video_id: str = "",
+        platform_name: str = "",
+        content_id: str = "",
+        proxy_base_path: str = "/api/v1/video/proxy2",
+    ) -> str:
+        normalized_input = str(asset_url or "").strip()
+        if not normalized_input:
+            return ""
+
+        resolved_url = cls._resolve_proxy_source_url(normalized_input) or normalized_input
+        normalized_url = cls._normalize_protocol_asset_url(
+            resolved_url,
+            asset_kind=asset_kind,
+            video_id=video_id,
+            platform_name=platform_name,
+        )
+
+        manifest, profile = cls._find_asset_request_profile(
+            normalized_url,
+            asset_kind,
+            video_id=video_id,
+            platform_name=platform_name,
+        )
+        _ = manifest
+
+        should_proxy = False
+        if isinstance(profile, dict):
+            proxy_mode = str(profile.get("proxy_mode") or "").strip().lower()
+            if proxy_mode in {"frontend", "browser", "always"}:
+                should_proxy = True
+            elif profile.get("frontend_proxy") is True:
+                should_proxy = True
+
+        if not should_proxy:
+            return normalized_url
+
+        encoded_url = base64.b64encode(normalized_url.encode("utf-8")).decode("utf-8")
+        return f"{proxy_base_path}?url={encoded_url}"
+
     def _begin_asset_download(self, task_key: str) -> bool:
         with self.__class__._asset_download_lock:
             if task_key in self.__class__._asset_download_tasks:
@@ -2126,58 +2513,11 @@ class VideoAppService(BaseContentAppService):
             return ".mp4"
         return ""
 
-    @staticmethod
-    def _load_javdb_cookie_header() -> str:
-        try:
-            config_path = THIRD_PARTY_CONFIG_PATH
-            if not os.path.exists(config_path):
-                return ""
-
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-
-            cookies = (
-                (config.get("adapters") or {})
-                .get("javdb", {})
-                .get("cookies", {})
-            )
-            if not isinstance(cookies, dict):
-                return ""
-
-            pairs = []
-            for key, value in cookies.items():
-                key_str = str(key or "").strip()
-                if not key_str:
-                    continue
-                pairs.append(f"{key_str}={str(value or '')}")
-            return "; ".join(pairs)
-        except Exception:
-            return ""
-
     def _build_preview_video_headers(self, preview_url: str) -> Dict[str, str]:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "*/*",
-        }
-
-        parsed = urlparse(preview_url or "")
-        host = (parsed.netloc or "").lower()
-
-        if "javdb" in host or "jdbstatic.com" in host:
-            headers["Referer"] = "https://javdb.com/"
-            cookie_header = self._load_javdb_cookie_header()
-            if cookie_header:
-                headers["Cookie"] = cookie_header
-            return headers
-
-        if "missav" in host or "surrit" in host or "mushroom" in host:
-            headers["Referer"] = "https://missav.ai/"
-            headers["Origin"] = "https://missav.ai"
-            return headers
-
-        if parsed.scheme and parsed.netloc:
-            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
-        return headers
+        return self._build_protocol_asset_headers(
+            preview_url,
+            asset_kind="preview_video",
+        )
 
     def _request_preview_url(
         self,
@@ -2187,17 +2527,16 @@ class VideoAppService(BaseContentAppService):
         timeout: int = 0,
         allow_redirects: bool = True,
     ):
-        # Prefer Missav client's request stack to reuse curl_cffi impersonation and anti-bot handling.
+        # Prefer protocol-declared transport client to reuse anti-bot request stacks.
         try:
-            client = get_legacy_missav_client(proxy_base_path="/api/v1/video")
-            return client._request(
+            client = get_preview_request_client(proxy_base_path="/api/v1/video")
+            return client.request(
                 "GET",
                 url,
                 headers=headers,
                 stream=stream,
                 timeout=timeout,
                 allow_redirects=allow_redirects,
-                impersonate=getattr(client, "impersonate", "chrome120"),
             )
         except Exception as e:
             app_logger.warning(f"preview request fallback to requests: url={url}, error={e}")
@@ -2753,19 +3092,14 @@ class VideoAppService(BaseContentAppService):
         thread.start()
 
     def _build_video_cover_save_paths(self, video_id: str) -> tuple:
-        from core.platform import remove_platform_prefix
-
-        platform_key = self._get_video_platform_key(video_id)
-        if platform_key == "JAVBUS":
-            cover_dir = JAVBUS_COVER_DIR
-        elif platform_key == "LOCAL":
-            cover_dir = LOCAL_VIDEO_COVER_DIR
-        else:
-            cover_dir = JAVDB_COVER_DIR
+        context = self._resolve_video_protocol_context(video_id=video_id)
+        platform_key = str(context.get("platform_key") or "LOCAL")
+        manifest = context.get("manifest")
+        cover_root = os.path.join(STATIC_DIR, "cover")
+        cover_dir = build_platform_root_dir(cover_root, manifest=manifest, platform_name=platform_key)
         os.makedirs(cover_dir, exist_ok=True)
 
-        _, original_id = remove_platform_prefix(str(video_id or ""))
-        cover_name = str(original_id or video_id or "").strip()
+        cover_name = self._get_video_original_id(video_id)
         cover_name = re.sub(r"[^0-9A-Za-z._-]+", "_", cover_name).strip("._")
         if not cover_name:
             cover_name = self._sanitize_video_asset_id(video_id)
@@ -2955,23 +3289,19 @@ class VideoAppService(BaseContentAppService):
             error_logger.error(f"删除预览资源文件失败: {abs_path}, error={e}")
 
     def _build_image_request_headers(self, image_url: str, video_id: str = "") -> Dict[str, str]:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
-        }
-
-        if image_url and "javbus.com" in image_url.lower():
-            from core.platform import remove_platform_prefix
-            _, raw_id = remove_platform_prefix(str(video_id or ""))
-            referer_id = (raw_id or video_id or "").strip()
-            headers["Referer"] = f"https://www.javbus.com/{referer_id}" if referer_id else "https://www.javbus.com/"
-
-        return headers
+        return self._build_protocol_asset_headers(
+            image_url,
+            asset_kind="image",
+            video_id=video_id,
+        )
 
     def _download_image_content(self, image_url: str, video_id: str = "") -> Optional[bytes]:
         resolved_url = self._resolve_proxy_source_url(image_url) or str(image_url or "").strip()
-        if resolved_url.startswith("//"):
-            resolved_url = f"https:{resolved_url}"
+        resolved_url = self._normalize_protocol_asset_url(
+            resolved_url,
+            asset_kind="image",
+            video_id=video_id,
+        )
 
         lowered = resolved_url.lower()
         if not (lowered.startswith("http://") or lowered.startswith("https://")):

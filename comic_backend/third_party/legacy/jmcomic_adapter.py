@@ -633,3 +633,17 @@ class JMComicAdapter(BaseAdapter):
     def get_image_url(self, album_id: str, page: int) -> Optional[str]:
         """获取单张图片URL"""
         return f"https://cdn-msp.jmapinodeudzn.net/media/photos/{album_id}/{page:05d}.webp"
+
+    def get_preview_image_urls(self, album_id: str, preview_pages: List[int]) -> List[str]:
+        preview_urls: List[str] = []
+        for page in list(preview_pages or []):
+            try:
+                page_num = int(page or 0)
+            except Exception:
+                continue
+            if page_num <= 0:
+                continue
+            image_url = self.get_image_url(album_id, page_num)
+            if image_url:
+                preview_urls.append(image_url)
+        return preview_urls

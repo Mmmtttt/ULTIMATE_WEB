@@ -3,11 +3,11 @@
 
 import os
 from PIL import Image
-from core.constants import JM_COVER_DIR, PK_COVER_DIR
+from core.constants import list_platform_cover_dirs
 
 def check_cover_images():
     """检查所有封面图片"""
-    cover_dirs = [JM_COVER_DIR, PK_COVER_DIR]
+    cover_dirs = list_platform_cover_dirs(media_type="comic")
     
     for cover_dir in cover_dirs:
         if not os.path.exists(cover_dir):

@@ -62,32 +62,34 @@ def test_video_javdb_tags_filters_keyword_and_category(third_party_client, monke
     """
     client = third_party_client["client"]
     video_api = third_party_client["video_api"]
-    config_path = third_party_client["third_party_config_path"]
 
-    config = load_json(config_path)
-    config.setdefault("adapters", {}).setdefault("javdb", {})["cookies"] = {
-        "_jdb_session": "sess-x",
-        "over18": "1",
-    }
-    save_json(config_path, config)
+    def fake_execute(platform_name, capability, params=None):
+        assert platform_name == "javdb"
+        assert capability == "taxonomy.tags"
+        assert params == {"keyword": "act", "category": "c1"}
+        return (
+            "javdb",
+            SimpleNamespace(plugin_id="video.javdb"),
+            {
+                "cookie_configured": True,
+                "source_ready": True,
+                "tag_search_available": True,
+                "categories": [{"key": "c1", "name": "C1", "count": 1}],
+                "tags": [
+                    {
+                        "id": "c1=1",
+                        "name": "Action Star",
+                        "category": "c1",
+                        "category_name": "C1",
+                        "tag_id": "1",
+                        "value": "1",
+                    }
+                ],
+                "total": 1,
+            },
+        )
 
-    class FakeTagManager:
-        def get_all_tags(self):
-            return {
-                "c1=1": {"name": "Action Star", "category": "c1", "category_name": "C1", "tag_id": "1", "value": "1"},
-                "c1=2": {"name": "Drama", "category": "c1", "category_name": "C1", "tag_id": "2", "value": "2"},
-                "c2=3": {"name": "Action Else", "category": "c2", "category_name": "C2", "tag_id": "3", "value": "3"},
-            }
-
-        def get_categories(self):
-            return {"c1": "C1", "c2": "C2"}
-
-    class FakeAdapter:
-        def __init__(self):
-            self.api = SimpleNamespace(tag_manager=FakeTagManager())
-
-    monkeypatch.setattr(video_api, "get_video_adapter", lambda *a, **k: FakeAdapter())
-    monkeypatch.setattr(video_api, "_is_javdb_tag_search_available", lambda *_a, **_k: True)
+    monkeypatch.setattr(video_api, "_execute_video_plugin_capability", fake_execute)
 
     response = client.get(
         "/api/v1/video/third-party/javdb/tags",

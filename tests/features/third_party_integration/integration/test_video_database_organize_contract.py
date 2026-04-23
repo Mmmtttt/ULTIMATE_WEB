@@ -133,8 +133,10 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
         assert payload["code"] == 200
 
         data = payload["data"] or {}
-        assert data["matched_on_javdb"] == 1
-        assert data["matched_on_javbus"] == 1
+        assert data["search_platform_order"] == ["javdb", "javbus"]
+        assert data["matched_by_platform"] == {"javdb": 1, "javbus": 1}
+        assert "matched_on_javdb" not in data
+        assert "matched_on_javbus" not in data
         assert data["updated_records"] == 2
         assert data["skipped_no_match"] == 1
         assert data["skipped_already_enriched"] == 0
@@ -278,6 +280,7 @@ def test_video_local_metadata_refresh_updates_single_local_record_and_appends_ta
         assert data["title"] == "Remote Updated Title"
         assert data["creator"] == "Actor Remote"
         assert data["metadata_refresh"]["matched_platform"] == "javdb"
+        assert data["metadata_refresh"]["search_platform_order"] == ["javdb", "javbus"]
         assert data["metadata_refresh"]["bound_tags"] >= 1
 
         refreshed_videos = load_json(videos_path).get("videos") or []

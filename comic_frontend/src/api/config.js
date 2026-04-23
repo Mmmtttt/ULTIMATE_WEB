@@ -1,5 +1,4 @@
 import request from './request'
-import { resolveBackendApiUrl } from '@/runtime/endpoint'
 
 export const configApi = {
   get() {
@@ -28,10 +27,6 @@ export const configApi = {
 
   updateConfigDir(data) {
     return request.put('/v1/config/system/config-dir', data)
-  },
-
-  getJavdbCookieGuideUrl() {
-    return resolveBackendApiUrl('/v1/config/javdb-cookie-guide')
   },
 
   getCacheInfo() {

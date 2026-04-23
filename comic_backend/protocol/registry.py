@@ -18,7 +18,7 @@ class PluginRegistry:
 
     def _validate_manifest(self, payload: dict, path: str) -> PluginManifest:
         manifest = PluginManifest(raw=dict(payload or {}), path=os.path.abspath(path))
-        if manifest.protocol_version != "1.0":
+        if manifest.protocol_version not in {"1.0", "1.1", "2.0"}:
             raise ValueError(f"unsupported protocol version: {manifest.protocol_version}")
         if not manifest.plugin_id:
             raise ValueError("missing plugin.id")
@@ -84,13 +84,25 @@ class PluginRegistry:
                 return manifest
         return None
 
-    def find_by_legacy_platform(self, platform_name: str) -> Optional[PluginManifest]:
+    def find_by_legacy_platform(
+        self,
+        platform_name: str,
+        media_type: Optional[str] = None,
+        capability: Optional[str] = None,
+    ) -> Optional[PluginManifest]:
         lookup = str(platform_name or "").strip().lower()
         if not lookup:
             return None
-        for manifest in self.list_manifests():
-            legacy_platforms = {str(item or "").strip().lower() for item in manifest.legacy_platforms}
-            if lookup in legacy_platforms:
+        for manifest in self.list_manifests(media_type=media_type, capability=capability):
+            identity = manifest.identity or {}
+            candidates = {str(item or "").strip().lower() for item in manifest.legacy_platforms}
+            candidates.add(str(identity.get("platform_label") or "").strip().lower())
+            candidates.add(str(identity.get("host_id_prefix") or "").strip().lower())
+            candidates.add(str(manifest.config_key or "").strip().lower())
+            candidates.add(str(manifest.name or "").strip().lower())
+            candidates.add(str(manifest.plugin_id or "").strip().lower())
+            candidates.discard("")
+            if lookup in candidates:
                 return manifest
         return None
 
@@ -103,4 +115,3 @@ def get_plugin_registry() -> PluginRegistry:
     if _registry_singleton is None:
         _registry_singleton = PluginRegistry()
     return _registry_singleton
-

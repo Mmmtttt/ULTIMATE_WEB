@@ -10,6 +10,15 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.enums import ContentType
+from protocol.gateway import get_protocol_gateway
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    get_capability_default_params,
+    resolve_manifest_host_prefix,
+    resolve_manifest_platform_label,
+    resolve_platform_manifest,
+    split_prefixed_id,
+)
 
 FAVORITES_LIST_ID = "list_favorites_comic"
 
@@ -547,17 +556,15 @@ class ComicAppService:
     @staticmethod
     def _is_local_import_comic_id(comic_id: str) -> bool:
         try:
-            from core.platform import get_original_id
-
-            original_id = str(get_original_id(str(comic_id or "")) or "").strip().upper()
+            _platform_key, original_id, _manifest = split_prefixed_id(comic_id, media_type="comic")
+            original_id = str(original_id or "").strip().upper()
             return original_id.startswith("LOCAL")
         except Exception:
             return False
 
     def _generate_static_cover_from_soft_ref(self, comic_id: str) -> str:
         from application.softref_reader_protocol import require_softref_reader
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR
-        from core.platform import Platform, get_original_id, get_platform_from_id
+        from core.constants import COVER_DIR
 
         try:
             softref_comic_reader = require_softref_reader("comic")
@@ -566,15 +573,11 @@ class ComicAppService:
             if not image_bytes:
                 return ""
 
-            platform = get_platform_from_id(comic_id)
-            if platform == Platform.PK:
-                cover_dir = PK_COVER_DIR
-                cover_prefix = "PK"
-            else:
-                cover_dir = JM_COVER_DIR
-                cover_prefix = "JM"
-
-            original_id = get_original_id(comic_id)
+            _platform_key, original_id, _manifest, cover_prefix = self._resolve_comic_platform_context(comic_id)
+            cover_prefix = cover_prefix or str(_platform_key or "").strip().upper()
+            if not cover_prefix:
+                return ""
+            cover_dir = os.path.join(COVER_DIR, cover_prefix)
             os.makedirs(cover_dir, exist_ok=True)
             lowered_mime = str(mimetype or "").lower()
             suffix = ".jpg"
@@ -665,12 +668,9 @@ class ComicAppService:
     def _cleanup_comic_files(self, comic):
         """清理漫画相关的所有文件"""
         import shutil
-        from core.platform import get_platform_from_id
         from core.constants import COVER_DIR
         from utils.file_parser import file_parser
-        
-        platform = get_platform_from_id(comic.id)
-        
+
         pictures_dir = None
         try:
             pictures_dir = file_parser._get_comic_dir(comic.id)
@@ -726,8 +726,7 @@ class ComicAppService:
         - 如果本地封面文件不存在，则尝试用第 1 张图片生成封面
         - 成功后会更新并持久化 cover_path
         """
-        from core.platform import get_platform_from_id, get_original_id, Platform
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR
+        from core.constants import COVER_DIR
         from utils.file_parser import file_parser
         from utils.image_handler import ImageHandler
 
@@ -739,19 +738,12 @@ class ComicAppService:
                     self._comic_repo.save(comic)
             return
         
-        platform = get_platform_from_id(comic.id)
-        if platform not in (Platform.JM, Platform.PK):
+        platform_key, original_id, _manifest, host_prefix = self._resolve_comic_platform_context(comic.id)
+        if not platform_key or not original_id:
             return
-        
-        original_id = get_original_id(comic.id)
-        
-        # 计算本地封面文件应在的路径
-        if platform == Platform.JM:
-            cover_dir = JM_COVER_DIR
-            expected_prefix = "JM"
-        else:
-            cover_dir = PK_COVER_DIR
-            expected_prefix = "PK"
+
+        cover_dir = os.path.join(COVER_DIR, host_prefix)
+        expected_prefix = host_prefix
         
         cover_full_path = os.path.join(cover_dir, f"{original_id}.jpg")
         
@@ -811,23 +803,79 @@ class ComicAppService:
                 return pages
         return 0
 
-    def _get_download_dir(self, platform):
-        from core.platform import Platform
-        from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
+    @staticmethod
+    def _resolve_comic_platform_context(comic_id: str):
+        platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
+        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+        return platform_key, original_id, manifest, host_prefix
 
-        if platform == Platform.JM:
-            return JM_PICTURES_DIR
-        if platform == Platform.PK:
-            return PK_PICTURES_DIR
-        return None
+    @staticmethod
+    def _list_comic_search_platforms() -> List[str]:
+        platform_keys: List[str] = []
+        seen = set()
+        for manifest in get_protocol_gateway().list_manifests(media_type="comic", capability="catalog.search"):
+            platform_key = resolve_manifest_platform_label(manifest, fallback=manifest.config_key)
+            normalized_key = str(platform_key or "").strip().upper()
+            if not normalized_key or normalized_key in seen:
+                continue
+            seen.add(normalized_key)
+            platform_keys.append(normalized_key)
+        return platform_keys
+
+    @staticmethod
+    def _count_platform_match(counter_map: Dict[str, int], platform_key: str) -> None:
+        normalized_key = str(platform_key or "").strip().upper()
+        if not normalized_key:
+            return
+        counter_map[normalized_key] = int(counter_map.get(normalized_key, 0)) + 1
+
+    @staticmethod
+    def _payload_field_has_value(payload: Dict[str, Any], field_name: str) -> bool:
+        value = payload.get(field_name)
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value) > 0
+        return value is not None
+
+    @classmethod
+    def _should_skip_remote_detail(cls, manifest, first_album: Dict[str, Any]) -> bool:
+        if manifest is None or not hasattr(manifest, "get_capability_entry"):
+            return False
+
+        search_entry = dict(manifest.get_capability_entry("catalog.search") or {})
+        detail_policy = dict(search_entry.get("result_detail_policy") or {})
+        mode = str(detail_policy.get("mode") or "").strip().lower()
+        fields = [
+            str(item or "").strip()
+            for item in (detail_policy.get("fields") or [])
+            if str(item or "").strip()
+        ]
+
+        if mode in {"search_payload", "search_payload_only", "prefer_search_payload"}:
+            return True
+
+        if mode == "search_payload_if_fields_present":
+            if not fields:
+                return False
+            return all(cls._payload_field_has_value(first_album, field_name) for field_name in fields)
+
+        return False
+
+    def _get_download_dir(self, platform):
+        from core.constants import COMIC_DIR
+
+        platform_key = str(getattr(platform, "value", platform) or "").strip()
+        manifest = resolve_platform_manifest(platform_key, media_type="comic") if platform_key else None
+        download_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key)
+        return download_dir if download_dir else None
 
     def _sync_cover_for_record(self, comic_data: dict, platform_service) -> tuple:
         """
         Ensure local cover file and web cover_path for one record.
         Returns: (downloaded_cover, updated_cover_path)
         """
-        from core.platform import Platform, get_platform_from_id, get_original_id
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR
+        from core.constants import COVER_DIR
 
         if self._is_soft_ref_storage_mode(comic_data.get("storage_mode", "")):
             return False, False
@@ -837,13 +885,12 @@ class ComicAppService:
             return False, updated
 
         comic_id = comic_data.get("id")
-        platform = get_platform_from_id(comic_id)
-        if platform not in (Platform.JM, Platform.PK):
+        platform_key, original_id, _manifest, host_prefix = self._resolve_comic_platform_context(comic_id)
+        if not platform_key or not original_id:
             return False, False
 
-        original_id = get_original_id(comic_id)
-        cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
-        cover_prefix = "JM" if platform == Platform.JM else "PK"
+        cover_dir = os.path.join(COVER_DIR, host_prefix)
+        cover_prefix = host_prefix
         cover_file = os.path.join(cover_dir, f"{original_id}.jpg")
         cover_url = f"/static/cover/{cover_prefix}/{original_id}.jpg"
 
@@ -852,7 +899,7 @@ class ComicAppService:
 
         if not os.path.exists(cover_file):
             _, success = platform_service.download_cover(
-                platform,
+                platform_key,
                 original_id,
                 save_path=cover_file,
                 show_progress=False
@@ -1216,14 +1263,9 @@ class ComicAppService:
             return {}
 
         platform_value = str(getattr(platform, "value", platform) or "").strip().upper()
+        manifest = resolve_platform_manifest(platform_value, media_type="comic") if platform_value else None
         detail = first_album
-        skip_remote_detail = False
-        if platform_value == "JM":
-            # Keep "first search result wins", but avoid JM detail API fan-out in local metadata refresh path.
-            has_author = bool(str(first_album.get("author") or "").strip())
-            first_tags = first_album.get("tags")
-            has_tags = isinstance(first_tags, list) and len(first_tags) > 0
-            skip_remote_detail = has_author or has_tags
+        skip_remote_detail = self._should_skip_remote_detail(manifest, first_album)
         app_logger.info(
             f"local metadata first hit: platform={platform_value}, album_id={remote_album_id}, "
             f"title={str(first_album.get('title') or '')[:80]}, skip_remote_detail={skip_remote_detail}"
@@ -1250,7 +1292,6 @@ class ComicAppService:
         try:
             from infrastructure.persistence.json_storage import JsonStorage
             from core.constants import JSON_FILE, TAGS_JSON_FILE
-            from core.platform import Platform
             from core.runtime_profile import is_third_party_enabled
 
             home_storage = JsonStorage(JSON_FILE)
@@ -1260,6 +1301,7 @@ class ComicAppService:
                 home_records = []
                 home_data["comics"] = home_records
 
+            search_platforms = self._list_comic_search_platforms()
             stats = {
                 "total_records": len(home_records),
                 "total_local_candidates": 0,
@@ -1269,8 +1311,8 @@ class ComicAppService:
                 "skipped_invalid_title": 0,
                 "skipped_no_match": 0,
                 "skipped_third_party_disabled": 0,
-                "matched_on_jm": 0,
-                "matched_on_pk": 0,
+                "search_platform_order": search_platforms,
+                "matched_by_platform": {},
                 "updated_records": 0,
                 "updated_authors": 0,
                 "updated_tag_bindings": 0,
@@ -1295,7 +1337,7 @@ class ComicAppService:
                 stats["summary"] = summary
                 return ServiceResult.ok(stats, "Local metadata enrich skipped")
 
-            from third_party.platform_service import get_platform_service
+            from protocol.platform_service import get_platform_service
 
             platform_service = get_platform_service()
             tag_storage = JsonStorage(TAGS_JSON_FILE)
@@ -1335,22 +1377,20 @@ class ComicAppService:
                     cached = match_cache.get(cache_key)
                     matched = dict(cached) if isinstance(cached, dict) else {}
                 else:
-                    jm_error = None
-                    pk_error = None
-                    try:
-                        matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
-                    except Exception as match_error:
-                        jm_error = match_error
-                        error_logger.error(f"Match on JM failed: comic_id={comic_id}, error={match_error}")
-
-                    if not matched:
+                    platform_errors = []
+                    for platform_key in search_platforms:
                         try:
-                            matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
+                            matched = self._match_first_search_result(platform_service, platform_key, clean_title, chapter_key)
+                            if matched:
+                                break
                         except Exception as match_error:
-                            pk_error = match_error
-                            error_logger.error(f"Match on PK failed: comic_id={comic_id}, error={match_error}")
+                            platform_errors.append(platform_key)
+                            error_logger.error(
+                                f"Match on comic platform failed: comic_id={comic_id}, "
+                                f"platform={platform_key}, error={match_error}"
+                            )
 
-                    if not matched and (jm_error is not None or pk_error is not None):
+                    if not matched and platform_errors:
                         stats["failed_records"] += 1
 
                     match_cache[cache_key] = dict(matched) if isinstance(matched, dict) and matched else None
@@ -1360,10 +1400,7 @@ class ComicAppService:
                     continue
 
                 matched_platform = str(matched.get("platform") or "").strip().upper()
-                if matched_platform == Platform.JM.value:
-                    stats["matched_on_jm"] += 1
-                elif matched_platform == Platform.PK.value:
-                    stats["matched_on_pk"] += 1
+                self._count_platform_match(stats["matched_by_platform"], matched_platform)
 
                 detail = matched.get("detail") if isinstance(matched.get("detail"), dict) else {}
                 updated = False
@@ -1479,7 +1516,6 @@ class ComicAppService:
 
     def refresh_local_comic_metadata(self, comic_id: str) -> ServiceResult:
         try:
-            from core.platform import Platform
             from core.runtime_profile import is_third_party_enabled
 
             target_comic_id = str(comic_id or "").strip()
@@ -1501,25 +1537,23 @@ class ComicAppService:
             if not clean_title:
                 return ServiceResult.error("comic title is invalid for metadata matching")
 
-            from third_party.platform_service import get_platform_service
+            from protocol.platform_service import get_platform_service
             platform_service = get_platform_service()
+            search_platforms = self._list_comic_search_platforms()
 
             matched = {}
             matched_platform = ""
-            try:
-                matched = self._match_first_search_result(platform_service, Platform.JM, clean_title, chapter_key)
-                if matched:
-                    matched_platform = Platform.JM.value
-            except Exception as match_error:
-                error_logger.error(f"refresh local comic metadata match on JM failed: comic_id={target_comic_id}, error={match_error}")
-
-            if not matched:
+            for platform_key in search_platforms:
                 try:
-                    matched = self._match_first_search_result(platform_service, Platform.PK, clean_title, chapter_key)
+                    matched = self._match_first_search_result(platform_service, platform_key, clean_title, chapter_key)
                     if matched:
-                        matched_platform = Platform.PK.value
+                        matched_platform = str(matched.get("platform") or platform_key).strip().upper()
+                        break
                 except Exception as match_error:
-                    error_logger.error(f"refresh local comic metadata match on PK failed: comic_id={target_comic_id}, error={match_error}")
+                    error_logger.error(
+                        f"refresh local comic metadata match failed: comic_id={target_comic_id}, "
+                        f"platform={platform_key}, error={match_error}"
+                    )
 
             if not matched:
                 return ServiceResult.error("no remote match found for current comic")
@@ -1566,22 +1600,21 @@ class ComicAppService:
     def check_comic_update(self, comic_id: str) -> ServiceResult:
         """Check whether remote comic has more pages than local files."""
         try:
-            from core.platform import Platform, get_platform_from_id, get_original_id
-            from third_party.platform_service import get_platform_service
+            from protocol.platform_service import get_platform_service
 
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
                 return ServiceResult.error("Comic not found")
 
-            platform = get_platform_from_id(comic_id)
-            if platform not in (Platform.JM, Platform.PK):
+            platform_key, original_id, _manifest, _host_prefix = self._resolve_comic_platform_context(comic_id)
+            if not platform_key or not original_id:
                 return ServiceResult.error("Current platform does not support update check")
 
             local_page_count = self._get_local_page_count(comic_id)
             db_total_page = normalize_total_page(comic.total_page, default=0)
 
             platform_service = get_platform_service()
-            remote_meta = platform_service.get_album_by_id(platform, get_original_id(comic_id))
+            remote_meta = platform_service.get_album_by_id(platform_key, original_id)
             remote_total_page = self._extract_remote_total_page(remote_meta)
             if remote_total_page <= 0:
                 return ServiceResult.error("Failed to get remote page count")
@@ -1602,8 +1635,7 @@ class ComicAppService:
     def download_comic_update(self, comic_id: str, force: bool = False) -> ServiceResult:
         """Download update and sync total_page with local file count."""
         try:
-            from core.platform import Platform, get_platform_from_id, get_original_id
-            from third_party.platform_service import get_platform_service
+            from protocol.platform_service import get_platform_service
 
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
@@ -1618,22 +1650,20 @@ class ComicAppService:
             if not has_update and not force:
                 return ServiceResult.error("No downloadable update found")
 
-            platform = get_platform_from_id(comic_id)
-            if platform not in (Platform.JM, Platform.PK):
+            platform_key, original_id, manifest, _host_prefix = self._resolve_comic_platform_context(comic_id)
+            if not platform_key or not original_id:
                 return ServiceResult.error("Current platform does not support update download")
 
-            download_dir = self._get_download_dir(platform)
+            download_dir = self._get_download_dir(platform_key)
             if not download_dir:
                 return ServiceResult.error("Download directory not found")
 
             platform_service = get_platform_service()
-            kwargs = {}
-            if platform == Platform.JM:
-                kwargs["decode_images"] = True
+            kwargs = get_capability_default_params(manifest, "asset.bundle.fetch")
 
             _, success = platform_service.download_album(
-                platform,
-                get_original_id(comic_id),
+                platform_key,
+                original_id,
                 download_dir=download_dir,
                 show_progress=False,
                 **kwargs
@@ -1679,7 +1709,7 @@ class ComicAppService:
         try:
             from infrastructure.persistence.json_storage import JsonStorage
             from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
-            from third_party.platform_service import get_platform_service
+            from protocol.platform_service import get_platform_service
 
             platform_service = get_platform_service()
 
@@ -1782,180 +1812,5 @@ class ComicAppService:
             return ServiceResult.error("Database organize failed")
     
     def organize_database(self) -> ServiceResult:
-        """整理数据库"""
-        try:
-            from infrastructure.persistence.json_storage import JsonStorage
-            from core.platform import remove_platform_prefix, get_platform_from_id
-            from core.constants import JSON_FILE
-            from third_party.platform_service import get_platform_service
-            
-            app_logger.info("开始整理数据库...")
-            platform_service = get_platform_service()
-            
-            # 整理主页数据库
-            storage = JsonStorage(JSON_FILE)
-            db_data = storage.read()
-            comics = db_data.get('comics', [])
-            
-            total_comics = len(comics)
-            processed_comics = 0
-            downloaded_covers = 0
-            re_downloaded_comics = 0
-            
-            app_logger.info(f"主页数据库中共有 {total_comics} 个漫画")
-            
-            # 遍历所有漫画
-            for comic in comics:
-                comic_id = comic['id']
-                processed_comics += 1
-                
-                if processed_comics % 10 == 0:
-                    app_logger.info(f"已处理 {processed_comics}/{total_comics} 个漫画")
-                
-                platform = get_platform_from_id(comic_id)
-                
-                # 检查封面
-                cover_path = comic.get('cover_path', '')
-                if not cover_path or cover_path.startswith('http'):
-                    try:
-                        # 尝试使用 PlatformService 下载封面
-                        # 注意：这里需要计算正确的保存路径
-                        from core.constants import JM_COVER_DIR, PK_COVER_DIR
-                        from core.platform import Platform
-                        
-                        save_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
-                        save_path = os.path.join(save_dir, f"{remove_platform_prefix(comic_id)[1]}.jpg")
-                        
-                        # 如果文件已存在，直接更新路径
-                        if os.path.exists(save_path):
-                            pass # 下面统一处理
-                        else:
-                            # 下载
-                            detail, success = platform_service.download_cover(
-                                platform, 
-                                remove_platform_prefix(comic_id)[1],
-                                save_path=save_path
-                            )
-                            if success:
-                                downloaded_covers += 1
-                                app_logger.info(f"下载封面成功: {comic_id}")
-                        
-                        # 更新数据库路径
-                        if os.path.exists(save_path):
-                            prefix = "JM" if platform == Platform.JM else "PK"
-                            new_path = f"/static/cover/{prefix}/{remove_platform_prefix(comic_id)[1]}.jpg"
-                            if comic.get('cover_path') != new_path:
-                                comic['cover_path'] = new_path
-                                app_logger.info(f"更新封面路径: {comic_id} -> {new_path}")
-                                
-                    except Exception as e:
-                        error_logger.error(f"处理封面失败 {comic_id}: {e}")
-                
-                # 检查漫画页数 (JM Only)
-                # 这里的逻辑比较特定，暂时保留 platform 判断，或者可以抽象到 PlatformService 的 verify_album 接口
-                if platform == Platform.JM:
-                    total_page = comic.get('total_page', 0)
-                    if total_page > 0:
-                        try:
-                            from utils.file_parser import file_parser
-                            from core.constants import JM_PICTURES_DIR
-                            
-                            image_paths = file_parser.parse_comic_images(comic_id)
-                            if len(image_paths) < total_page:
-                                # 重新下载漫画
-                                original_id = remove_platform_prefix(comic_id)[1]
-                                detail, success = platform_service.download_album(
-                                    platform,
-                                    original_id,
-                                    download_dir=JM_PICTURES_DIR,
-                                    show_progress=False,
-                                    decode_images=True
-                                )
-                                
-                                if success:
-                                    re_downloaded_comics += 1
-                                    app_logger.info(f"重新下载漫画成功: {comic_id} (累计: {re_downloaded_comics})")
-                        except Exception as e:
-                            error_logger.error(f"重新下载漫画失败 {comic_id}: {e}")
-            
-            # 保存主页数据库
-            storage.write(db_data)
-            
-            # 整理推荐页数据库
-            app_logger.info("开始整理推荐页数据库...")
-            from core.constants import RECOMMENDATION_JSON_FILE
-            
-            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            rec_data = rec_storage.read()
-            recommendations = rec_data.get('recommendations', [])
-            
-            total_recommendations = len(recommendations)
-            processed_recommendations = 0
-            rec_downloaded_covers = 0
-            
-            app_logger.info(f"推荐页数据库中共有 {total_recommendations} 个漫画")
-            
-            # 遍历所有推荐漫画
-            for comic in recommendations:
-                comic_id = comic['id']
-                processed_recommendations += 1
-                
-                if processed_recommendations % 10 == 0:
-                    app_logger.info(f"已处理 {processed_recommendations}/{total_recommendations} 个推荐漫画")
-                
-                platform = get_platform_from_id(comic_id)
-                
-                # 检查封面
-                cover_path = comic.get('cover_path', '')
-                if not cover_path or cover_path.startswith('http'):
-                    try:
-                        from core.constants import JM_COVER_DIR, PK_COVER_DIR
-                        from core.platform import Platform
-                        
-                        save_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
-                        save_path = os.path.join(save_dir, f"{remove_platform_prefix(comic_id)[1]}.jpg")
-                        
-                        if not os.path.exists(save_path):
-                            detail, success = platform_service.download_cover(
-                                platform,
-                                remove_platform_prefix(comic_id)[1],
-                                save_path=save_path
-                            )
-                            if success:
-                                rec_downloaded_covers += 1
-                                app_logger.info(f"下载推荐页封面成功: {comic_id}")
-                        
-                        if os.path.exists(save_path):
-                            prefix = "JM" if platform == Platform.JM else "PK"
-                            new_path = f"/static/cover/{prefix}/{remove_platform_prefix(comic_id)[1]}.jpg"
-                            if comic.get('cover_path') != new_path:
-                                comic['cover_path'] = new_path
-                                app_logger.info(f"更新推荐页封面路径: {comic_id} -> {new_path}")
-                                
-                    except Exception as e:
-                        error_logger.error(f"处理推荐页封面失败 {comic_id}: {e}")
-            
-            # 保存推荐页数据库
-            rec_storage.write(rec_data)
-            
-            app_logger.info(f"数据库整理完成！")
-            app_logger.info(f"主页 - 处理漫画总数: {total_comics}")
-            app_logger.info(f"主页 - 下载封面数量: {downloaded_covers}")
-            app_logger.info(f"主页 - 重新下载漫画数量: {re_downloaded_comics}")
-            app_logger.info(f"推荐页 - 处理漫画总数: {total_recommendations}")
-            app_logger.info(f"推荐页 - 下载封面数量: {rec_downloaded_covers}")
-            
-            return ServiceResult.ok({
-                "home": {
-                    "total_comics": total_comics,
-                    "downloaded_covers": downloaded_covers,
-                    "re_downloaded_comics": re_downloaded_comics
-                },
-                "recommendation": {
-                    "total_comics": total_recommendations,
-                    "downloaded_covers": rec_downloaded_covers
-                }
-            }, "数据库整理完成")
-        except Exception as e:
-            error_logger.error(f"整理数据库失败: {e}")
-            return ServiceResult.error("整理数据库失败")
+        """兼容旧入口，统一转发到协议化的新整理流程。"""
+        return self.organize_database_v2()

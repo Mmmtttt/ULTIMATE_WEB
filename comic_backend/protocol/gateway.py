@@ -26,8 +26,17 @@ class ProtocolGateway:
     def get_manifest_by_config_key(self, config_key: str):
         return self.registry.find_by_config_key(config_key)
 
-    def get_manifest_by_legacy_platform(self, platform_name: str):
-        return self.registry.find_by_legacy_platform(platform_name)
+    def get_manifest_by_legacy_platform(
+        self,
+        platform_name: str,
+        media_type: Optional[str] = None,
+        capability: Optional[str] = None,
+    ):
+        return self.registry.find_by_legacy_platform(
+            platform_name,
+            media_type=media_type,
+            capability=capability,
+        )
 
 
 _gateway_singleton: Optional[ProtocolGateway] = None
@@ -38,4 +47,3 @@ def get_protocol_gateway() -> ProtocolGateway:
     if _gateway_singleton is None:
         _gateway_singleton = ProtocolGateway()
     return _gateway_singleton
-

@@ -16,6 +16,8 @@ from core.constants import CACHE_ROOT_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from application.base.content_app_service import BaseCreatorAppService
 from core.enums import ContentType
+from protocol.gateway import get_protocol_gateway
+from protocol.platform_meta import split_prefixed_id
 
 
 class AuthorAppService(BaseCreatorAppService):
@@ -34,12 +36,46 @@ class AuthorAppService(BaseCreatorAppService):
             raise RuntimeError(
                 f"{cls._third_party_disabled_message}: {get_runtime_profile()}"
             )
-        from third_party import external_api
+        from protocol import adapter_api as external_api
         return external_api
 
     @staticmethod
     def _normalize_platform(platform: str) -> str:
-        return "PK" if str(platform or "").strip().upper() == "PK" else "JM"
+        normalized = str(platform or "").strip().upper()
+        return normalized or "UNKNOWN"
+
+    @classmethod
+    def _get_search_platform_descriptors(cls) -> List[Dict]:
+        descriptors: List[Dict] = []
+        try:
+            gateway = get_protocol_gateway()
+            for manifest in gateway.list_manifests(media_type="comic", capability="catalog.search"):
+                adapter_name = str(getattr(manifest, "legacy_adapter_name", "") or manifest.config_key or "").strip()
+                if not adapter_name:
+                    continue
+
+                identity = dict(getattr(manifest, "identity", {}) or {})
+                platform_label = str(identity.get("platform_label") or "").strip()
+                if not platform_label:
+                    for alias in getattr(manifest, "legacy_platforms", []) or []:
+                        alias_value = str(alias or "").strip()
+                        if alias_value:
+                            platform_label = alias_value.upper()
+                            break
+                if not platform_label:
+                    continue
+
+                descriptors.append(
+                    {
+                        "plugin_id": manifest.plugin_id,
+                        "platform": platform_label,
+                        "adapter_name": adapter_name,
+                        "order": getattr(manifest, "order", 100),
+                    }
+                )
+        except Exception as e:
+            error_logger.error(f"加载作者搜索平台协议失败: {e}")
+        return descriptors
 
     @classmethod
     def _get_author_cover_cache_dir(cls, platform: str) -> str:
@@ -110,13 +146,16 @@ class AuthorAppService(BaseCreatorAppService):
         
         try:
             external_api = self._get_external_api()
-            platforms_to_search = ['JM', 'PK']
+            platforms_to_search = self._get_search_platform_descriptors()
             platform_albums = {}
             max_result_count = 0
             
-            for plat in platforms_to_search:
+            for descriptor in platforms_to_search:
                 try:
-                    adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                    plat = str(descriptor.get("platform") or "").strip()
+                    adapter_name = str(descriptor.get("adapter_name") or "").strip()
+                    if not plat or not adapter_name:
+                        continue
                     result = external_api.search_albums(
                         creator_name,
                         page=page,
@@ -136,7 +175,8 @@ class AuthorAppService(BaseCreatorAppService):
                     continue
             
             for i in range(max_result_count):
-                for plat in platforms_to_search:
+                for descriptor in platforms_to_search:
+                    plat = str(descriptor.get("platform") or "").strip()
                     if plat in platform_albums and i < len(platform_albums[plat]):
                         album = platform_albums[plat][i]
                         work_id = str(album.get("album_id", ""))
@@ -169,15 +209,25 @@ class AuthorAppService(BaseCreatorAppService):
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的漫画ID集合"""
         existing_ids = set()
+
+        def _normalize_existing_id(raw_id: str) -> str:
+            normalized_raw_id = str(raw_id or "").strip()
+            if not normalized_raw_id:
+                return ""
+            _platform, original_id, _manifest = split_prefixed_id(
+                normalized_raw_id,
+                media_type="comic",
+            )
+            normalized_original_id = str(original_id or "").strip()
+            return normalized_original_id or normalized_raw_id
         
         try:
             home_storage = JsonStorage(JSON_FILE)
             home_data = home_storage.read()
             for comic in home_data.get('comics', []):
-                raw_id = comic.get('id', '')
-                if raw_id.startswith('JM_'):
-                    raw_id = raw_id[3:]
-                existing_ids.add(raw_id)
+                normalized_id = _normalize_existing_id(comic.get('id', ''))
+                if normalized_id:
+                    existing_ids.add(normalized_id)
         except Exception as e:
             error_logger.error(f"获取主页漫画ID失败: {e}")
         
@@ -185,10 +235,9 @@ class AuthorAppService(BaseCreatorAppService):
             rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
             rec_data = rec_storage.read()
             for comic in rec_data.get('recommendations', []):
-                raw_id = comic.get('id', '')
-                if raw_id.startswith('JM_'):
-                    raw_id = raw_id[3:]
-                existing_ids.add(raw_id)
+                normalized_id = _normalize_existing_id(comic.get('id', ''))
+                if normalized_id:
+                    existing_ids.add(normalized_id)
         except Exception as e:
             error_logger.error(f"获取推荐页漫画ID失败: {e}")
         
@@ -383,8 +432,6 @@ class AuthorAppService(BaseCreatorAppService):
             return ServiceResult.error("检查作者更新失败")
     
     def get_author_new_works(self, author_id: str) -> ServiceResult:
-        from core.platform import get_supported_platforms
-        
         try:
             author = self._author_repo.get_by_id(author_id)
             if not author:
@@ -393,13 +440,16 @@ class AuthorAppService(BaseCreatorAppService):
             works = []
             try:
                 external_api = self._get_external_api()
-                platforms_to_search = get_supported_platforms()
+                platforms_to_search = self._get_search_platform_descriptors()
                 platform_albums = {}
                 max_result_count = 0
                 
-                for plat in platforms_to_search:
+                for descriptor in platforms_to_search:
                     try:
-                        adapter_name = 'jmcomic' if plat == 'JM' else 'picacomic'
+                        plat = str(descriptor.get("platform") or "").strip()
+                        adapter_name = str(descriptor.get("adapter_name") or "").strip()
+                        if not plat or not adapter_name:
+                            continue
                         result = external_api.search_albums(author.name, max_pages=3, adapter_name=adapter_name, fast_mode=True)
                         albums = result.get("albums", [])
                         
@@ -412,7 +462,8 @@ class AuthorAppService(BaseCreatorAppService):
                         continue
                 
                 for i in range(max_result_count):
-                    for plat in platforms_to_search:
+                    for descriptor in platforms_to_search:
+                        plat = str(descriptor.get("platform") or "").strip()
                         if plat in platform_albums and i < len(platform_albums[plat]):
                             album = platform_albums[plat][i]
                             works.append({

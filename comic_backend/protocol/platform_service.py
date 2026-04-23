@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
-
-from core.platform import Platform
+from typing import Any, Dict, List, Optional, Tuple
 from infrastructure.logger import error_logger
 
 from .compatibility import get_plugin_id_for_platform
 from .gateway import ProtocolGateway, get_protocol_gateway
 
-if TYPE_CHECKING:
-    from third_party.base_adapter import BaseAdapter
-else:
-    BaseAdapter = Any
+BaseAdapter = Any
 
 
 class PlatformService:
     """Protocol-backed compatibility service for comic/video platform actions."""
 
     _instance = None
-    _adapters: Dict[Platform, BaseAdapter] = {}
+    _adapters: Dict[str, BaseAdapter] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -30,22 +25,42 @@ class PlatformService:
             self._gateway = gateway or get_protocol_gateway()
             self._initialized = True
 
-    def get_adapter(self, platform: Platform) -> BaseAdapter:
+    @staticmethod
+    def _normalize_platform_name(platform: Any) -> str:
+        return str(getattr(platform, "value", platform) or "").strip().lower()
+
+    def _resolve_plugin_id(
+        self,
+        platform: Any,
+        capability: Optional[str] = None,
+    ) -> str:
+        normalized_name = self._normalize_platform_name(platform)
+        if normalized_name and hasattr(self._gateway, "get_manifest_by_legacy_platform"):
+            manifest = self._gateway.get_manifest_by_legacy_platform(
+                normalized_name,
+                capability=capability,
+            )
+            if manifest is not None:
+                return manifest.plugin_id
         plugin_id = get_plugin_id_for_platform(platform)
         if not plugin_id:
             raise ValueError(f"未知平台: {platform}")
+        return str(plugin_id)
+
+    def get_adapter(self, platform: Any) -> BaseAdapter:
+        plugin_id = self._resolve_plugin_id(platform)
         return self._gateway.get_legacy_client(plugin_id)
 
     def download_album(
         self,
-        platform: Platform,
+        platform: Any,
         album_id: str,
         download_dir: str,
         show_progress: bool = False,
         **kwargs,
     ) -> Tuple[Dict[str, Any], bool]:
         try:
-            plugin_id = get_plugin_id_for_platform(platform)
+            plugin_id = self._resolve_plugin_id(platform, capability="asset.bundle.fetch")
             result = self._gateway.execute_plugin(
                 plugin_id,
                 "asset.bundle.fetch",
@@ -63,13 +78,13 @@ class PlatformService:
 
     def download_cover(
         self,
-        platform: Platform,
+        platform: Any,
         album_id: str,
         save_path: str,
         show_progress: bool = False,
     ) -> Tuple[Dict[str, Any], bool]:
         try:
-            plugin_id = get_plugin_id_for_platform(platform)
+            plugin_id = self._resolve_plugin_id(platform, capability="asset.cover.fetch")
             result = self._gateway.execute_plugin(
                 plugin_id,
                 "asset.cover.fetch",
@@ -86,13 +101,13 @@ class PlatformService:
 
     def get_comic_dir(
         self,
-        platform: Platform,
+        platform: Any,
         album_id: str,
         author: str = None,
         title: str = None,
         base_dir: str = None,
     ) -> str:
-        plugin_id = get_plugin_id_for_platform(platform)
+        plugin_id = self._resolve_plugin_id(platform, capability="storage.comic_dir.resolve")
         return self._gateway.execute_plugin(
             plugin_id,
             "storage.comic_dir.resolve",
@@ -104,14 +119,14 @@ class PlatformService:
             },
         )
 
-    def get_cover_url(self, platform: Platform, album_id: str) -> Optional[str]:
+    def get_cover_url(self, platform: Any, album_id: str) -> Optional[str]:
         return self.get_adapter(platform).get_cover_url(album_id)
 
-    def get_image_url(self, platform: Platform, album_id: str, page: int) -> Optional[str]:
+    def get_image_url(self, platform: Any, album_id: str, page: int) -> Optional[str]:
         return self.get_adapter(platform).get_image_url(album_id, page)
 
-    def get_preview_image_urls(self, platform: Platform, album_id: str, preview_pages: List[int]) -> List[str]:
-        plugin_id = get_plugin_id_for_platform(platform)
+    def get_preview_image_urls(self, platform: Any, album_id: str, preview_pages: List[int]) -> List[str]:
+        plugin_id = self._resolve_plugin_id(platform, capability="asset.preview.resolve")
         return self._gateway.execute_plugin(
             plugin_id,
             "asset.preview.resolve",
@@ -121,8 +136,8 @@ class PlatformService:
             },
         )
 
-    def get_album_by_id(self, platform: Platform, album_id: str) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
+    def get_album_by_id(self, platform: Any, album_id: str) -> Dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(platform, capability="catalog.detail")
         return self._gateway.execute_plugin(
             plugin_id,
             "catalog.detail",
@@ -131,12 +146,12 @@ class PlatformService:
 
     def search_albums(
         self,
-        platform: Platform,
+        platform: Any,
         keyword: str,
         max_pages: int = 1,
         fast_mode: bool = False,
     ) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
+        plugin_id = self._resolve_plugin_id(platform, capability="catalog.search")
         return self._gateway.execute_plugin(
             plugin_id,
             "catalog.search",
@@ -148,29 +163,40 @@ class PlatformService:
             },
         )
 
-    def get_favorites(self, platform: Platform) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
+    def get_favorites(self, platform: Any) -> Dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(platform, capability="collection.favorites")
         return self._gateway.execute_plugin(
             plugin_id,
             "collection.favorites",
             params={},
         )
 
-    def get_favorites_basic(self, platform: Platform) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
-        capability = "collection.favorites_basic" if platform != Platform.JAVDB else "collection.favorites"
+    def get_favorites_basic(self, platform: Any) -> Dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(platform)
+        capability = "collection.favorites_basic"
+        if hasattr(self._gateway, "registry"):
+            try:
+                manifest = self._gateway.registry.get_manifest(plugin_id)
+                if manifest.has_capability("collection.favorites_basic"):
+                    capability = "collection.favorites_basic"
+                elif manifest.has_capability("collection.favorites"):
+                    capability = "collection.favorites"
+                else:
+                    capability = "collection.favorites"
+            except Exception:
+                capability = "collection.favorites"
         return self._gateway.execute_plugin(plugin_id, capability, params={})
 
-    def get_user_lists(self, platform: Platform) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
+    def get_user_lists(self, platform: Any) -> Dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(platform, capability="collection.list")
         return self._gateway.execute_plugin(
             plugin_id,
             "collection.list",
             params={},
         )
 
-    def get_list_detail(self, platform: Platform, list_id: str) -> Dict[str, Any]:
-        plugin_id = get_plugin_id_for_platform(platform)
+    def get_list_detail(self, platform: Any, list_id: str) -> Dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(platform, capability="collection.detail")
         return self._gateway.execute_plugin(
             plugin_id,
             "collection.detail",

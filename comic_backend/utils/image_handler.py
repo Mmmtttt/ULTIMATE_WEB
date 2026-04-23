@@ -1,9 +1,9 @@
 import os
 from io import BytesIO
 from PIL import Image
-from core.constants import COVER_WIDTH, COVER_QUALITY, BACKUP_SUFFIX, JM_COVER_DIR, PK_COVER_DIR
-from core.platform import get_platform_from_id, get_original_id, Platform, PLATFORM_PREFIXES
+from core.constants import COVER_WIDTH, COVER_QUALITY, BACKUP_SUFFIX, COVER_DIR
 from infrastructure.logger import app_logger, error_logger
+from protocol.platform_meta import build_platform_root_dir, resolve_manifest_host_prefix, split_prefixed_id
 
 
 class ImageHandler:
@@ -12,21 +12,17 @@ class ImageHandler:
         self.cover_quality = COVER_QUALITY
     
     def _get_cover_dir(self, comic_id):
-        platform = get_platform_from_id(comic_id)
-        
-        if platform == Platform.JM:
-            return JM_COVER_DIR
-        elif platform == Platform.PK:
-            return PK_COVER_DIR
-        else:
+        platform_key, _original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
+        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+        if not host_prefix:
             raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+        return build_platform_root_dir(COVER_DIR, manifest=manifest, platform_name=platform_key or host_prefix)
     
     def generate_cover(self, comic_id, first_image_path):
         try:
+            platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
             cover_dir = self._get_cover_dir(comic_id)
             os.makedirs(cover_dir, exist_ok=True)
-            
-            original_id = get_original_id(comic_id)
             cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
             
             with Image.open(first_image_path) as img:
@@ -45,8 +41,11 @@ class ImageHandler:
                 resized_img = img.resize((self.cover_width, new_height), Image.LANCZOS)
                 resized_img.save(cover_path, 'JPEG', quality=self.cover_quality)
             
-            platform = get_platform_from_id(comic_id)
-            platform_prefix = PLATFORM_PREFIXES.get(platform, "")
+            platform_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+            if not platform_prefix:
+                platform_prefix = os.path.basename(cover_dir).strip()
+            if not platform_prefix:
+                raise ValueError(f"未知的平台封面前缀: {comic_id}")
             
             app_logger.info(f"封面生成成功: {cover_path}")
             return f"/static/cover/{platform_prefix}/{original_id}.jpg"

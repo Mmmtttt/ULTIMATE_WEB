@@ -2,6 +2,7 @@
 适配器工厂和配置管理
 支持多个第三方 API 的动态加载和切换
 """
+import os
 from typing import Dict, Any, Optional, Type
 from .base_adapter import BaseAdapter
 from .jmcomic_adapter import JMComicAdapter
@@ -9,8 +10,6 @@ from .picacomic_adapter import PicacomicAdapter
 from .javdb_adapter import JavdbAdapter
 from core.constants import (
     DATA_DIR,
-    JM_PICTURES_DIR,
-    PK_PICTURES_DIR,
     THIRD_PARTY_CONFIG_PATH,
     normalize_to_data_dir,
 )
@@ -111,7 +110,10 @@ class AdapterConfig:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self._config = json.load(f)
+                changed = self._merge_protocol_defaults()
                 if self._normalize_storage_config_paths():
+                    changed = True
+                if changed:
                     self._save_config()
             except Exception as e:
                 print(f"加载配置文件失败: {e}")
@@ -135,65 +137,68 @@ class AdapterConfig:
     
     def _get_default_config(self) -> Dict[str, Any]:
         """获取默认配置"""
-        return {
-            "default_adapter": "jmcomic",
-            "adapters": {
-                "jmcomic": {
-                    "enabled": True,
-                    "config_path": "JMComic-Crawler-Python/config.json",
-                    "username": "",
-                    "password": "",
-                    "download_dir": JM_PICTURES_DIR,
-                    "output_json": "comics_database.json",
-                    "progress_file": "download_progress.json",
-                    "favorite_list_file": "favorite_comics.txt",
-                    "consecutive_hit_threshold": 10,
-                    "collection_name": "我的最爱"
-                },
-                "picacomic": {
-                    "enabled": True,
-                    "account": "",
-                    "password": "",
-                    "base_dir": PK_PICTURES_DIR
-                },
-                "javdb": {
-                    "enabled": True,
-                    "domain_index": 0
-                }
-            }
+        self._config = {
+            "default_adapter": "",
+            "adapters": {},
         }
-
-    def _normalize_storage_config_paths(self) -> bool:
-        changed = False
-        adapters = self._config.get("adapters", {})
-
-        jm_config = adapters.get("jmcomic")
-        if isinstance(jm_config, dict):
-            normalized_download_dir = self._normalize_comic_download_dir(
-                jm_config.get("download_dir"),
-                JM_PICTURES_DIR,
-            )
-            if jm_config.get("download_dir") != normalized_download_dir:
-                jm_config["download_dir"] = normalized_download_dir
-                changed = True
-
-        pk_config = adapters.get("picacomic")
-        if isinstance(pk_config, dict):
-            normalized_base_dir = self._normalize_comic_download_dir(
-                pk_config.get("base_dir"),
-                PK_PICTURES_DIR,
-            )
-            if pk_config.get("base_dir") != normalized_base_dir:
-                pk_config["base_dir"] = normalized_base_dir
-                changed = True
-
-        return changed
+        self._merge_protocol_defaults()
+        return dict(self._config)
 
     @staticmethod
-    def _normalize_comic_download_dir(path_value: str, default_abs_path: str) -> str:
-        import os
+    def _get_protocol_gateway():
+        from protocol.gateway import get_protocol_gateway
 
-        default_abs = os.path.abspath(default_abs_path)
+        return get_protocol_gateway()
+
+    @classmethod
+    def _list_protocol_manifests(cls):
+        try:
+            return [
+                manifest
+                for manifest in cls._get_protocol_gateway().list_manifests()
+                if str(getattr(manifest, "config_key", "") or "").strip()
+            ]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _resolve_binding_field_name(binding: Dict[str, Any]) -> str:
+        return str(
+            binding.get("config_field")
+            or binding.get("field")
+            or ""
+        ).strip()
+
+    @classmethod
+    def _resolve_binding_default_abs_path(cls, manifest, binding: Dict[str, Any]) -> str:
+        relative_dir = str(binding.get("relative_dir") or "").strip().replace("\\", "/").strip("/")
+        if not relative_dir:
+            return ""
+
+        identity = dict(getattr(manifest, "identity", {}) or {})
+        host_prefix = str(
+            binding.get("host_prefix")
+            or identity.get("host_id_prefix")
+            or identity.get("platform_label")
+            or getattr(manifest, "config_key", "")
+            or ""
+        ).strip()
+        if not host_prefix:
+            return ""
+
+        resolved_relative = relative_dir.format(
+            host_prefix=host_prefix,
+            config_key=str(getattr(manifest, "config_key", "") or "").strip(),
+            plugin_id=str(getattr(manifest, "plugin_id", "") or "").strip(),
+        ).replace("/", os.sep)
+        return os.path.abspath(os.path.join(DATA_DIR, resolved_relative))
+
+    @classmethod
+    def _normalize_bound_path(cls, path_value: str, manifest, binding: Dict[str, Any]) -> str:
+        default_abs = cls._resolve_binding_default_abs_path(manifest, binding)
+        if not default_abs:
+            return str(path_value or "").strip()
+
         if path_value is None or str(path_value).strip() == "":
             return default_abs
 
@@ -215,6 +220,109 @@ class AdapterConfig:
         except Exception:
             pass
         return normalized
+
+    @classmethod
+    def _build_manifest_default_config(cls, manifest) -> Dict[str, Any]:
+        config_key = str(getattr(manifest, "config_key", "") or "").strip()
+        if not config_key:
+            return {}
+
+        defaults: Dict[str, Any] = {}
+        try:
+            gateway = cls._get_protocol_gateway()
+            defaults = gateway.provider_manager.normalize_config(manifest.plugin_id, {})
+        except Exception:
+            defaults = {}
+
+        normalized_defaults = dict(defaults or {})
+        for binding in manifest.list_data_dir_bindings():
+            field_name = cls._resolve_binding_field_name(binding)
+            default_abs = cls._resolve_binding_default_abs_path(manifest, binding)
+            if field_name and default_abs:
+                normalized_defaults.setdefault(field_name, default_abs)
+        return normalized_defaults
+
+    @classmethod
+    def _get_default_adapter_key(cls) -> str:
+        for manifest in cls._list_protocol_manifests():
+            config_key = str(getattr(manifest, "config_key", "") or "").strip()
+            media_types = {
+                str(item or "").strip().lower()
+                for item in (getattr(manifest, "media_types", []) or [])
+                if str(item or "").strip()
+            }
+            if config_key and "comic" in media_types:
+                return config_key
+
+        manifests = cls._list_protocol_manifests()
+        if manifests:
+            return str(getattr(manifests[0], "config_key", "") or "").strip()
+        return "jmcomic"
+
+    def _merge_protocol_defaults(self) -> bool:
+        changed = False
+        if not isinstance(self._config, dict):
+            self._config = {}
+            changed = True
+
+        adapters = self._config.get("adapters")
+        if not isinstance(adapters, dict):
+            adapters = {}
+            self._config["adapters"] = adapters
+            changed = True
+
+        current_default = str(self._config.get("default_adapter") or "").strip()
+        if not current_default:
+            self._config["default_adapter"] = self._get_default_adapter_key()
+            changed = True
+
+        for manifest in self._list_protocol_manifests():
+            config_key = str(getattr(manifest, "config_key", "") or "").strip()
+            if not config_key:
+                continue
+
+            existing_config = adapters.get(config_key)
+            if not isinstance(existing_config, dict):
+                existing_config = {}
+                adapters[config_key] = existing_config
+                changed = True
+
+            defaults = self._build_manifest_default_config(manifest)
+            merged = dict(existing_config)
+            for field_name, field_value in defaults.items():
+                if field_name not in merged:
+                    merged[field_name] = field_value
+
+            if merged != existing_config:
+                adapters[config_key] = merged
+                changed = True
+
+        return changed
+
+    def _normalize_storage_config_paths(self) -> bool:
+        changed = False
+        adapters = self._config.get("adapters", {})
+
+        for manifest in self._list_protocol_manifests():
+            config_key = str(getattr(manifest, "config_key", "") or "").strip()
+            adapter_config = adapters.get(config_key)
+            if not config_key or not isinstance(adapter_config, dict):
+                continue
+
+            for binding in manifest.list_data_dir_bindings():
+                field_name = self._resolve_binding_field_name(binding)
+                if not field_name:
+                    continue
+                normalized_path = self._normalize_bound_path(
+                    adapter_config.get(field_name),
+                    manifest,
+                    binding,
+                )
+                if adapter_config.get(field_name) != normalized_path:
+                    adapter_config[field_name] = normalized_path
+                    changed = True
+
+        return changed
     
     def get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
         """获取指定适配器的配置
@@ -240,16 +348,27 @@ class AdapterConfig:
         existing_config = self._config['adapters'].get(adapter_name, {})
         normalized_config = dict(existing_config or {})
         normalized_config.update(dict(config or {}))
-        if adapter_name == "jmcomic":
-            normalized_config["download_dir"] = self._normalize_comic_download_dir(
-                normalized_config.get("download_dir"),
-                JM_PICTURES_DIR,
-            )
-        elif adapter_name == "picacomic":
-            normalized_config["base_dir"] = self._normalize_comic_download_dir(
-                normalized_config.get("base_dir"),
-                PK_PICTURES_DIR,
-            )
+
+        manifest = None
+        for candidate in self._list_protocol_manifests():
+            if str(getattr(candidate, "config_key", "") or "").strip() == str(adapter_name or "").strip():
+                manifest = candidate
+                break
+
+        if manifest is not None:
+            defaults = self._build_manifest_default_config(manifest)
+            merged = dict(defaults)
+            merged.update(normalized_config)
+            normalized_config = merged
+            for binding in manifest.list_data_dir_bindings():
+                field_name = self._resolve_binding_field_name(binding)
+                if not field_name:
+                    continue
+                normalized_config[field_name] = self._normalize_bound_path(
+                    normalized_config.get(field_name),
+                    manifest,
+                    binding,
+                )
 
         self._config['adapters'][adapter_name] = normalized_config
         self._save_config()
@@ -260,7 +379,7 @@ class AdapterConfig:
         Returns:
             适配器名称
         """
-        return self._config.get('default_adapter', 'jmcomic')
+        return str(self._config.get('default_adapter') or '').strip() or self._get_default_adapter_key()
     
     def set_default_adapter(self, adapter_name: str):
         """设置默认适配器

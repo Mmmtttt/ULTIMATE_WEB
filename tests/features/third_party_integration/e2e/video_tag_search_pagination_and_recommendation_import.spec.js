@@ -4,7 +4,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  * 用例描述:
  * - 用例目的: 看护前端“JAVDB 标签搜索下一页 + 导入到预览库”链路，防止 page 参数、追加渲染和导入 target 回归。
  * - 测试步骤:
- *   1. mock cookie-status/tags/search-by-tags/import 接口，并为搜索接口返回两页数据。
+ *   1. mock health-status/tags/search-by-tags/import 接口，并为搜索接口返回两页数据。
  *   2. 用户进入 /video-tag-search，选择标签并发起首次搜索。
  *   3. 用户点击“加载更多”触发第二页请求，确认结果列表追加。
  *   4. 用户选择第二页结果并导入到 recommendation。
@@ -21,7 +21,7 @@ test("video tag search load more forwards page and imports to recommendation", a
   const searchQueries = [];
   const importTaskBodies = [];
 
-  await page.route("**/api/v1/video/third-party/javdb/cookie-status", async (route) => {
+  await page.route("**/api/v1/video/third-party/javdb/health-status", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

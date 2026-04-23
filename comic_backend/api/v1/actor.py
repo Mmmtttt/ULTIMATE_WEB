@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.actor_app_service import ActorAppService
 from infrastructure.logger import app_logger, error_logger
+from protocol.presentation import annotate_items
 
 actor_bp = Blueprint('actor', __name__)
 actor_service = ActorAppService()
@@ -20,6 +21,21 @@ def error_response(code, msg):
         "msg": msg,
         "data": None
     })
+
+
+def _annotate_actor_works(items, capability="person.works"):
+    annotated = []
+    for item in items or []:
+        platform_name = str((item or {}).get("platform") or "").strip()
+        annotated.extend(
+            annotate_items(
+                [item],
+                platform_name=platform_name,
+                media_type="video",
+                capability=capability,
+            )
+        )
+    return annotated
 
 
 @actor_bp.route('/list', methods=['GET'])
@@ -69,7 +85,9 @@ def search_actor_works():
         result = actor_service.search_actor_works_by_name(actor_name, offset, limit)
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["works"] = _annotate_actor_works(payload.get("works", []), capability="person.works")
+            return success_response(payload)
         else:
             return error_response(500, result.message)
     except Exception as e:
@@ -140,7 +158,9 @@ def get_new_works(actor_id):
         result = actor_service.get_actor_new_works(actor_id)
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["new_works"] = _annotate_actor_works(payload.get("new_works", []), capability="person.works")
+            return success_response(payload)
         else:
             return error_response(400, result.message)
     except Exception as e:
@@ -181,7 +201,9 @@ def get_actor_works(actor_id):
         )
         
         if result.success:
-            return success_response(result.data)
+            payload = dict(result.data or {})
+            payload["works"] = _annotate_actor_works(payload.get("works", []), capability="person.works")
+            return success_response(payload)
         else:
             return error_response(400, result.message)
     except Exception as e:
@@ -230,7 +252,7 @@ def actor_videos():
         
         result = actor_service.get_actor_videos(actor_name)
         if result.success:
-            return success_response(result.data)
+            return success_response(_annotate_actor_works(result.data, capability="person.works"))
         else:
             return error_response(500, result.message)
     except Exception as e:

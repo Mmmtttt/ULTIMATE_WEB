@@ -9,7 +9,12 @@ from core.utils import get_current_date
 
 class ComicJsonRepository(ComicRepository):
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage()
+        if storage is not None:
+            self._storage = storage
+        else:
+            from core.constants import JSON_FILE as ACTIVE_JSON_FILE
+
+            self._storage = JsonStorage(ACTIVE_JSON_FILE)
     
     def get_by_id(self, comic_id: str) -> Optional[Comic]:
         data = self._storage.read()
@@ -127,7 +132,12 @@ class ComicJsonRepositoryV2(BaseContentJsonRepository):
     _data_key = "comics"
     
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage()
+        if storage is not None:
+            self._storage = storage
+        else:
+            from core.constants import JSON_FILE as ACTIVE_JSON_FILE
+
+            self._storage = JsonStorage(ACTIVE_JSON_FILE)
     
     def _get_entity_class(self):
         return Comic

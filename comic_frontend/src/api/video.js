@@ -1,5 +1,13 @@
 import request from './request'
 
+function encodeRequiredPlatform(platform) {
+  const normalized = String(platform || '').trim().toLowerCase()
+  if (!normalized) {
+    throw new Error('platform is required')
+  }
+  return encodeURIComponent(normalized)
+}
+
 export const videoApi = {
   getList(params = {}) {
     return request.get('/v1/video/list', { params })
@@ -79,12 +87,12 @@ export const videoApi = {
     return request.get('/v1/video/third-party/search', { params: { keyword, page, platform } })
   },
 
-  thirdPartyJavdbCookieStatus() {
-    return request.get('/v1/video/third-party/javdb/cookie-status')
+  thirdPartyPlatformHealthStatus(platform) {
+    return request.get(`/v1/video/third-party/${encodeRequiredPlatform(platform)}/health-status`)
   },
 
-  thirdPartyJavdbTags(keyword = '', category = '') {
-    return request.get('/v1/video/third-party/javdb/tags', {
+  thirdPartyPlatformTags(platform, keyword = '', category = '') {
+    return request.get(`/v1/video/third-party/${encodeRequiredPlatform(platform)}/tags`, {
       params: {
         keyword,
         category
@@ -92,11 +100,12 @@ export const videoApi = {
     })
   },
 
-  thirdPartyJavdbSearchByTags(tagIds = [], page = 1) {
+  thirdPartyPlatformSearchByTags(platform, tagIds = [], page = 1) {
+    const normalizedPlatform = encodeRequiredPlatform(platform)
     const params = new URLSearchParams()
     tagIds.forEach(tagId => params.append('tag_ids', tagId))
     params.append('page', String(page))
-    return request.get(`/v1/video/third-party/javdb/search-by-tags?${params.toString()}`)
+    return request.get(`/v1/video/third-party/${normalizedPlatform}/search-by-tags?${params.toString()}`)
   },
   
   thirdPartyDetail(videoId) {
@@ -111,7 +120,7 @@ export const videoApi = {
     return request.get('/v1/video/third-party/actor/works', { params: { actor_id: actorId, page } })
   },
   
-  thirdPartyImport(videoIdOrCode, target = 'home', platform = 'javdb') {
+  thirdPartyImport(videoIdOrCode, target = 'home', platform) {
     return request.post('/v1/video/third-party/import', { video_id: videoIdOrCode, target, platform })
   },
   

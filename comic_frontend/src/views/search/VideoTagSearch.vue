@@ -3,8 +3,8 @@
     <div class="page-header">
       <van-icon name="arrow-left" class="back-icon" @click="$router.back()" />
       <div class="header-copy">
-        <div class="header-title">JAVDB 标签搜索</div>
-        <div class="header-subtitle">多选内置标签后搜索并导入</div>
+        <div class="header-title">{{ currentPlatformLabel }} 标签搜索</div>
+        <div class="header-subtitle">多选平台内置标签后搜索并导入</div>
       </div>
     </div>
 
@@ -16,16 +16,36 @@
     </div>
 
     <template v-else>
-      <van-loading v-if="!cookieStatusChecked" class="loading-center" />
+      <van-loading v-if="!platformsLoaded || !platformStatusChecked" class="loading-center" />
 
-      <div v-else-if="!cookieConfigured" class="mode-empty">
+      <div v-else-if="availablePlatforms.length === 0" class="mode-empty">
         <EmptyState
-          title="未配置cookie"
-          description="请先在系统配置中填写JAVDB cookie后再使用标签搜索"
+          title="暂无可用平台"
+          description="当前没有声明标签搜索能力的视频插件"
+        />
+      </div>
+
+      <div v-else-if="!platformConfigured" class="mode-empty">
+        <EmptyState
+          title="未完成平台配置"
+          :description="platformConfigMessage"
         />
       </div>
 
       <template v-else>
+        <div v-if="availablePlatforms.length > 1" class="platform-switch">
+          <button
+            v-for="platform in availablePlatforms"
+            :key="platform.platform"
+            type="button"
+            class="platform-pill"
+            :class="{ active: selectedPlatform === platform.platform }"
+            @click="selectPlatform(platform.platform)"
+          >
+            {{ platform.label }}
+          </button>
+        </div>
+
         <div class="filters-card">
         <div class="filter-actions">
           <span class="selected-summary">已选 {{ selectedTagIds.length }} 个标签</span>
@@ -106,7 +126,7 @@
         <EmptyState
           v-else-if="!searchExecuted"
           title="先选标签再搜索"
-          description="标签来源于 JAVDB 内置标签库"
+          :description="`标签来源于 ${currentPlatformLabel} 内置标签能力`"
         />
 
         <div v-else class="results-container">
@@ -125,14 +145,17 @@
               :class="{ selected: isResultSelected(item) }"
               @click="toggleResultSelection(item)"
             >
-              <div class="card-cover video-cover-landscape">
+              <div
+                class="card-cover"
+                :style="getCardCoverStyle(item)"
+              >
                 <van-image
                   :src="getCoverUrl(item)"
-                  fit="cover"
+                  :fit="getCardCoverFit(item)"
                   class="cover-image"
                   lazy-load
                 />
-                <div class="platform-badge">JAVDB</div>
+                <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
                 <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
                 <div v-if="isResultSelected(item)" class="select-overlay">
                   <van-icon name="success" class="select-icon" />
@@ -174,12 +197,25 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useImportTaskStore } from '@/stores'
 import { videoApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
-import { getCoverUrl, isAllSelected, toggleSelectAll } from '@/utils'
+import {
+  buildDisplayCoverStyle,
+  fetchProtocolPlatformOptions,
+  getCoverUrl,
+  isAllSelected,
+  resolveDisplayCoverFit,
+  resolveImportPlatform,
+  resolvePlatformBadgeLabel,
+  shouldShowPlatformBadge,
+  toggleSelectAll,
+} from '@/utils'
 
+const route = useRoute()
+const router = useRouter()
 const modeStore = useModeStore()
 const importTaskStore = useImportTaskStore()
 
@@ -189,8 +225,12 @@ const loadingTags = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
 const searchExecuted = ref(false)
-const cookieConfigured = ref(false)
-const cookieStatusChecked = ref(false)
+const platformsLoaded = ref(false)
+const platformConfigured = ref(false)
+const platformStatusChecked = ref(false)
+const platformStatusMessage = ref('')
+const availablePlatforms = ref([])
+const selectedPlatform = ref('')
 
 const allTags = ref([])
 const categories = ref([])
@@ -203,6 +243,15 @@ const hasMore = ref(false)
 const paginationInfo = ref(null)
 
 const showImportSheet = ref(false)
+
+const currentPlatformOption = computed(() => {
+  return availablePlatforms.value.find(item => item.platform === selectedPlatform.value) || availablePlatforms.value[0] || null
+})
+
+const currentPlatformLabel = computed(() => currentPlatformOption.value?.label || '平台')
+const platformConfigMessage = computed(() => {
+  return platformStatusMessage.value || `请先在系统配置中完成 ${currentPlatformLabel.value} 所需配置后再使用标签搜索`
+})
 
 const categoryTabs = computed(() => {
   return [
@@ -230,7 +279,7 @@ const normalizedResults = computed(() => {
       ...item,
       id: item.id || item.video_id,
       cover_path: item.cover_path || item.cover_url,
-      platform: item.platform || 'javdb'
+      platform: item.platform || selectedPlatform.value || ''
     }
   })
 })
@@ -239,22 +288,56 @@ const isAllResultsSelected = computed(() => {
   return isAllSelected(selectedResultIds.value, normalizedResults.value, item => getItemId(item))
 })
 
-async function ensureCookieConfigured(showDialog = false) {
+function resetPlatformData() {
+  allTags.value = []
+  categories.value = []
+  activeCategory.value = 'all'
+  selectedTagIds.value = []
+  results.value = []
+  selectedResultIds.value = []
+  hasMore.value = false
+  paginationInfo.value = null
+  searchExecuted.value = false
+}
+
+async function syncSelectedPlatformToRoute() {
+  const nextPlatform = String(selectedPlatform.value || '').trim().toLowerCase()
+  const currentPlatform = String(route.query.platform || '').trim().toLowerCase()
+  if (!nextPlatform || nextPlatform === currentPlatform) {
+    return
+  }
+  await router.replace({
+    path: route.path,
+    query: {
+      ...route.query,
+      platform: nextPlatform
+    }
+  })
+}
+
+async function ensurePlatformConfigured(showDialog = false) {
+  const platform = String(selectedPlatform.value || '').trim().toLowerCase()
+  if (!platform) {
+    platformConfigured.value = false
+    platformStatusChecked.value = true
+    platformStatusMessage.value = '当前没有可用的平台'
+    resetPlatformData()
+    return false
+  }
+
   try {
-    const res = await videoApi.thirdPartyJavdbCookieStatus()
+    const res = await videoApi.thirdPartyPlatformHealthStatus(platform)
     const configured = Boolean(res?.code === 200 && res?.data?.configured)
-    cookieConfigured.value = configured
-    cookieStatusChecked.value = true
+    platformConfigured.value = configured
+    platformStatusChecked.value = true
+    platformStatusMessage.value = String(res?.data?.message || '').trim()
 
     if (!configured) {
-      allTags.value = []
-      categories.value = []
-      activeCategory.value = 'all'
-      selectedTagIds.value = []
+      resetPlatformData()
       if (showDialog) {
         await showConfirmDialog({
           title: '提示',
-          message: '未配置cookie，请先在系统配置中填写JAVDB cookie',
+          message: platformConfigMessage.value,
           showCancelButton: false,
           confirmButtonText: '知道了'
         })
@@ -263,17 +346,15 @@ async function ensureCookieConfigured(showDialog = false) {
 
     return configured
   } catch (e) {
-    cookieConfigured.value = false
-    cookieStatusChecked.value = true
-    allTags.value = []
-    categories.value = []
-    activeCategory.value = 'all'
-    selectedTagIds.value = []
+    platformConfigured.value = false
+    platformStatusChecked.value = true
+    platformStatusMessage.value = String(e?.message || '').trim()
+    resetPlatformData()
 
     if (showDialog) {
       await showConfirmDialog({
         title: '提示',
-        message: e?.message || '未配置cookie，请先在系统配置中填写JAVDB cookie',
+        message: platformConfigMessage.value,
         showCancelButton: false,
         confirmButtonText: '知道了'
       })
@@ -284,9 +365,7 @@ async function ensureCookieConfigured(showDialog = false) {
 
 async function switchToVideoMode() {
   modeStore.setMode('video')
-  const configured = await ensureCookieConfigured()
-  if (!configured) return
-  loadTags()
+  await loadAvailablePlatforms()
 }
 
 function toggleTag(tagId) {
@@ -307,6 +386,22 @@ function removeSelectedTag(tagId) {
 
 function getItemId(item) {
   return item.id || item.video_id
+}
+
+function getCardCoverFit(item) {
+  return resolveDisplayCoverFit(item) || 'cover'
+}
+
+function getCardCoverStyle(item) {
+  return buildDisplayCoverStyle(item, '16 / 9', '3 / 2')
+}
+
+function shouldRenderPlatformBadge(item) {
+  return shouldShowPlatformBadge(item)
+}
+
+function getPlatformBadgeLabel(item) {
+  return resolvePlatformBadgeLabel(item)
 }
 
 function formatScore(score) {
@@ -336,26 +431,73 @@ function toggleSelectAllResults() {
   toggleSelectAll(selectedResultIds, normalizedResults.value, item => getItemId(item))
 }
 
+async function activateSelectedPlatform() {
+  platformStatusChecked.value = false
+  platformConfigured.value = false
+  platformStatusMessage.value = ''
+  resetPlatformData()
+  await syncSelectedPlatformToRoute()
+  const configured = await ensurePlatformConfigured()
+  if (!configured) return
+  await loadTags()
+}
+
+async function loadAvailablePlatforms() {
+  platformsLoaded.value = false
+  try {
+    const options = await fetchProtocolPlatformOptions({
+      mediaType: 'video',
+      capability: 'taxonomy.tag_search'
+    })
+    availablePlatforms.value = options
+
+    const requestedPlatform = String(route.query.platform || '').trim().toLowerCase()
+    const resolvedPlatform = options.some(item => item.platform === requestedPlatform)
+      ? requestedPlatform
+      : (options[0]?.platform || '')
+
+    selectedPlatform.value = resolvedPlatform
+    platformsLoaded.value = true
+    await activateSelectedPlatform()
+  } catch (error) {
+    availablePlatforms.value = []
+    selectedPlatform.value = ''
+    platformConfigured.value = false
+    platformStatusChecked.value = true
+    platformStatusMessage.value = String(error?.message || '加载平台失败').trim()
+    resetPlatformData()
+    platformsLoaded.value = true
+  }
+}
+
+async function selectPlatform(platform) {
+  const normalizedPlatform = String(platform || '').trim().toLowerCase()
+  if (!normalizedPlatform || normalizedPlatform === selectedPlatform.value) {
+    return
+  }
+  selectedPlatform.value = normalizedPlatform
+  await activateSelectedPlatform()
+}
+
 async function loadTags() {
-  if (!isVideoMode.value || !cookieConfigured.value || !cookieStatusChecked.value) return
+  if (!isVideoMode.value || !platformConfigured.value || !platformStatusChecked.value) return
 
   loadingTags.value = true
   try {
-    const res = await videoApi.thirdPartyJavdbTags()
+    const res = await videoApi.thirdPartyPlatformTags(selectedPlatform.value)
     if (res.code === 200 && res.data) {
       if (res.data.cookie_configured === false) {
-        cookieConfigured.value = false
-        allTags.value = []
-        categories.value = []
-        activeCategory.value = 'all'
+        platformConfigured.value = false
+        platformStatusMessage.value = String(res.data.message || '').trim()
+        resetPlatformData()
         return
       }
 
       if (res.data.source_ready === false) {
-        showToast(res.data.message || 'JAVDB 内置标签库未初始化')
+        showToast(res.data.message || `${currentPlatformLabel.value} 内置标签库未初始化`)
       }
       if (res.data.tag_search_available === false) {
-        showToast('JAVDB 标签搜索需要登录，请检查 cookies')
+        showToast(`${currentPlatformLabel.value} 标签搜索暂不可用，请检查平台配置`)
       }
 
       allTags.value = res.data.tags || []
@@ -382,8 +524,8 @@ async function loadTags() {
 }
 
 async function handleSearch() {
-  if (!cookieConfigured.value) {
-    await ensureCookieConfigured(true)
+  if (!platformConfigured.value) {
+    await ensurePlatformConfigured(true)
     return
   }
 
@@ -400,7 +542,7 @@ async function handleSearch() {
   paginationInfo.value = null
 
   try {
-    const res = await videoApi.thirdPartyJavdbSearchByTags(selectedTagIds.value, 1)
+    const res = await videoApi.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, 1)
     if (res.code === 200 && res.data) {
       results.value = res.data.videos || []
       paginationInfo.value = {
@@ -428,7 +570,7 @@ async function loadMore() {
   loadingMore.value = true
   try {
     const nextPage = (paginationInfo.value?.page || 1) + 1
-    const res = await videoApi.thirdPartyJavdbSearchByTags(selectedTagIds.value, nextPage)
+    const res = await videoApi.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, nextPage)
     if (res.code === 200 && res.data) {
       results.value = [...results.value, ...(res.data.videos || [])]
       paginationInfo.value = {
@@ -457,7 +599,7 @@ async function confirmImport(target) {
 
   const itemsByPlatform = {}
   selectedItems.forEach(item => {
-    const platform = String(item.platform || 'javdb').toUpperCase()
+    const platform = String(resolveImportPlatform(item) || selectedPlatform.value || '').trim().toUpperCase()
     const videoId = getItemId(item)
     if (!videoId) return
     if (!itemsByPlatform[platform]) {
@@ -490,9 +632,7 @@ async function confirmImport(target) {
 }
 
 onMounted(async () => {
-  const configured = await ensureCookieConfigured()
-  if (!configured) return
-  loadTags()
+  await loadAvailablePlatforms()
 })
 </script>
 
@@ -543,6 +683,32 @@ onMounted(async () => {
 
 .mode-switch-btn {
   width: 100%;
+}
+
+.platform-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.platform-pill {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.platform-pill.active {
+  border-color: rgba(47, 116, 255, 0.5);
+  background: rgba(89, 160, 255, 0.18);
+  color: var(--brand-700);
+  font-weight: 600;
 }
 
 .filters-card,
@@ -684,11 +850,7 @@ onMounted(async () => {
 
 .card-cover {
   position: relative;
-  aspect-ratio: 2 / 3;
-}
-
-.remote-results-grid.video-mode .card-cover.video-cover-landscape {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--media-cover-aspect-ratio, 2 / 3);
 }
 
 .cover-image {
@@ -815,8 +977,8 @@ onMounted(async () => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .remote-results-grid.video-mode .card-cover.video-cover-landscape {
-    aspect-ratio: 3 / 2;
+  .card-cover {
+    aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
   }
 
   .remote-results-grid.video-mode .card-title {

@@ -18,6 +18,9 @@ export * from './validators'
 // 存储工具
 export * from './storage'
 
+// 协议平台工具
+export * from './protocol'
+
 /**
  * 防抖函数
  * @param {Function} fn - 要执行的函数

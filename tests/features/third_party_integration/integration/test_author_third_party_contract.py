@@ -171,6 +171,7 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
     assert len(new_works) >= 1
     assert all(item.get("author") == "Author-TP-A" for item in new_works)
     assert all(str(item.get("cover_url", "")).startswith("https://img/") for item in new_works)
+    assert all(item.get("plugin_id") in {"comic.jmcomic", "comic.picacomic"} for item in new_works)
     assert len(calls["search"]) >= 2
     assert {"jmcomic", "picacomic"}.issubset({item["adapter_name"] for item in calls["search"]})
     assert len(calls["detail"]) >= 1
@@ -268,6 +269,8 @@ def test_author_works_force_refresh_persists_latest_work_for_subscription_summar
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["works"][0]["id"] == "AR-8801"
+    assert payload["data"]["works"][0]["plugin_id"] == "comic.jmcomic"
+    assert payload["data"]["works"][1]["plugin_id"] == "comic.picacomic"
 
     authors = load_json(meta_dir / "authors_database.json").get("authors", [])
     saved = find_by_id(authors, author_id)

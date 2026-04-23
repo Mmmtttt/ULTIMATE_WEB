@@ -118,8 +118,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
       }
 
       if (!payload.content_type) {
-        const platform = String(payload.platform || '').trim().toUpperCase()
-        payload.content_type = ['JAVDB', 'JAVBUS'].includes(platform) ? 'video' : 'comic'
+        payload.content_type = 'comic'
       }
 
       const response = await request.post('/v1/comic/import/async', payload)

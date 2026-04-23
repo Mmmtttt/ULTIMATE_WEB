@@ -183,6 +183,7 @@ import { useRouter } from 'vue-router'
 import { useListStore, useModeStore, useImportTaskStore } from '@/stores'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import listApi from '@/api/list'
+import { fetchProtocolPlatformOptions } from '@/utils'
 
 const router = useRouter()
 const listStore = useListStore()
@@ -214,17 +215,7 @@ const loadingPlatformLists = ref(false)
 const selectedPlatformList = ref(null)
 const importing = ref(false)
 const syncing = ref(false)
-
-const availablePlatforms = computed(() => {
-  if (currentContentType.value === 'video') {
-    return [{ label: 'JAVDB', value: 'JAVDB' }]
-  } else {
-    return [
-      { label: 'JMComic', value: 'JM' },
-      { label: 'PK', value: 'PK' }
-    ]
-  }
-})
+const availablePlatforms = ref([])
 
 const canGoStep3 = computed(() => {
   if (importMethod.value === 'id') {
@@ -234,6 +225,39 @@ const canGoStep3 = computed(() => {
   }
   return false
 })
+
+async function loadAvailablePlatforms() {
+  try {
+    const options = await fetchProtocolPlatformOptions({
+      mediaType: currentContentType.value
+    })
+    availablePlatforms.value = options
+      .filter((item) => {
+        const capabilities = new Set(item.capabilities || [])
+        const virtualLists = Array.isArray(item.plugin?.collections?.virtual_lists)
+          ? item.plugin.collections.virtual_lists
+          : []
+        return (
+          capabilities.has('collection.list') ||
+          capabilities.has('collection.detail') ||
+          capabilities.has('collection.favorites') ||
+          capabilities.has('collection.favorites_basic') ||
+          virtualLists.length > 0
+        )
+      })
+      .map((item) => ({
+        label: item.label,
+        value: String(item.platform || '').trim().toUpperCase()
+      }))
+  } catch (error) {
+    availablePlatforms.value = []
+    console.error('加载平台列表失败', error)
+  }
+
+  if (!availablePlatforms.value.some(item => item.value === selectedPlatform.value)) {
+    selectedPlatform.value = availablePlatforms.value[0]?.value || ''
+  }
+}
 
 async function loadLists() {
   loading.value = true
@@ -334,7 +358,7 @@ watch(importMethod, async (val) => {
 
 function resetImportDialog() {
   currentStep.value = 1
-  selectedPlatform.value = ''
+  selectedPlatform.value = availablePlatforms.value[0]?.value || ''
   importMethod.value = ''
   listIdInput.value = ''
   platformLists.value = []
@@ -447,6 +471,11 @@ async function syncList(list) {
 
 onMounted(() => {
   loadLists()
+  loadAvailablePlatforms()
+})
+
+watch(currentContentType, () => {
+  loadAvailablePlatforms()
 })
 </script>
 

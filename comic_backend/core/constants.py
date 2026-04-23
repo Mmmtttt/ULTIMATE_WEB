@@ -13,41 +13,8 @@ DEFAULT_SERVER_CONFIG = {
 }
 
 DEFAULT_THIRD_PARTY_CONFIG = {
-    "default_adapter": "jmcomic",
-    "adapters": {
-        "jmcomic": {
-            "enabled": True,
-            "config_path": "JMComic-Crawler-Python/config.json",
-            "username": "请输入账号",
-            "password": "请输入密码",
-            "download_dir": "./comic_backend/data/comic/JM",
-            "output_json": "comics_database.json",
-            "progress_file": "download_progress.json",
-            "favorite_list_file": "favorite_comics.txt",
-            "consecutive_hit_threshold": 10,
-            "collection_name": "我的最爱",
-        },
-        "picacomic": {
-            "enabled": True,
-            "account": "请输入账号",
-            "password": "请输入密码",
-            "base_dir": "./comic_backend/data/comic/PK",
-        },
-        "javdb": {
-            "enabled": True,
-            "domain_index": 0,
-            "timeout": 30,
-            "retry_times": 3,
-            "sleep_time": 0.5,
-            "cookies": {
-                "_jdb_session": "请输入cookie",
-                "list_mode": "h",
-                "theme": "auto",
-                "over18": "1",
-                "locale": "zh",
-            },
-        },
-    },
+    "default_adapter": "",
+    "adapters": {},
 }
 
 
@@ -461,6 +428,115 @@ PK_RECOMMENDATION_CACHE_DIR = os.path.join(COMIC_RECOMMENDATION_CACHE_DIR, "PK")
 JAVDB_RECOMMENDATION_CACHE_DIR = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, "JAVDB")
 JAVBUS_RECOMMENDATION_CACHE_DIR = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, "JAVBUS")
 
+
+def _iter_protocol_platform_specs():
+    try:
+        from protocol.gateway import get_protocol_gateway
+    except Exception:
+        return []
+
+    try:
+        manifests = list(get_protocol_gateway().list_manifests())
+    except Exception:
+        return []
+
+    specs = []
+    seen = set()
+    for manifest in manifests:
+        identity = dict(getattr(manifest, "identity", {}) or {})
+        host_prefix = str(
+            identity.get("host_id_prefix")
+            or identity.get("platform_label")
+            or getattr(manifest, "config_key", "")
+            or getattr(manifest, "name", "")
+            or ""
+        ).strip().upper()
+        media_types = {
+            str(item or "").strip().lower()
+            for item in (getattr(manifest, "media_types", []) or [])
+            if str(item or "").strip()
+        }
+        if not host_prefix or not media_types:
+            continue
+        key = (host_prefix, tuple(sorted(media_types)))
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append(
+            {
+                "host_prefix": host_prefix,
+                "media_types": sorted(media_types),
+                "plugin_id": str(getattr(manifest, "plugin_id", "") or "").strip(),
+            }
+        )
+    return specs
+
+
+def list_protocol_platform_storage_dirs():
+    dirs = []
+    for spec in _iter_protocol_platform_specs():
+        host_prefix = str(spec.get("host_prefix") or "").strip().upper()
+        media_types = {str(item or "").strip().lower() for item in (spec.get("media_types") or [])}
+        if not host_prefix:
+            continue
+        if "comic" in media_types:
+            dirs.extend(
+                [
+                    os.path.join(COMIC_DIR, host_prefix),
+                    os.path.join(COVER_DIR, host_prefix),
+                    os.path.join(COMIC_RECOMMENDATION_CACHE_DIR, host_prefix),
+                ]
+            )
+        if "video" in media_types:
+            dirs.extend(
+                [
+                    os.path.join(VIDEO_DIR, host_prefix),
+                    os.path.join(COVER_DIR, host_prefix),
+                    os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, host_prefix),
+                ]
+            )
+    return dirs
+
+
+def list_platform_cover_dirs(media_type: str = ""):
+    normalized_media_type = str(media_type or "").strip().lower()
+    cover_dirs = []
+    seen = set()
+
+    for spec in _iter_protocol_platform_specs():
+        host_prefix = str(spec.get("host_prefix") or "").strip().upper()
+        media_types = {str(item or "").strip().lower() for item in (spec.get("media_types") or [])}
+        if not host_prefix:
+            continue
+        if normalized_media_type and normalized_media_type not in media_types:
+            continue
+        cover_dir = os.path.join(COVER_DIR, host_prefix)
+        if cover_dir in seen:
+            continue
+        seen.add(cover_dir)
+        cover_dirs.append(cover_dir)
+
+    if normalized_media_type in {"", "video"} and LOCAL_VIDEO_COVER_DIR not in seen:
+        seen.add(LOCAL_VIDEO_COVER_DIR)
+        cover_dirs.append(LOCAL_VIDEO_COVER_DIR)
+
+    if cover_dirs:
+        return cover_dirs
+
+    if normalized_media_type == "comic":
+        fallback_dirs = [JM_COVER_DIR, PK_COVER_DIR]
+    elif normalized_media_type == "video":
+        fallback_dirs = [JAVDB_COVER_DIR, JAVBUS_COVER_DIR, LOCAL_VIDEO_COVER_DIR]
+    else:
+        fallback_dirs = [JM_COVER_DIR, PK_COVER_DIR, JAVDB_COVER_DIR, JAVBUS_COVER_DIR, LOCAL_VIDEO_COVER_DIR]
+
+    for cover_dir in fallback_dirs:
+        if cover_dir not in seen:
+            seen.add(cover_dir)
+            cover_dirs.append(cover_dir)
+
+    return cover_dirs
+
 COVER_WIDTH = 800
 COVER_QUALITY = 95
 SUPPORTED_FORMATS = ['.jpg', '.jpeg', '.png', '.webp']
@@ -506,13 +582,40 @@ def ensure_base_dirs():
 
 
 def ensure_platform_dirs():
+    protocol_dirs = list_protocol_platform_storage_dirs()
     dirs = [
-        JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR, JAVDB_PICTURES_DIR, JAVBUS_PICTURES_DIR, LOCAL_VIDEO_PICTURES_DIR,
-        JM_COVER_DIR, PK_COVER_DIR, JAVDB_COVER_DIR, JAVBUS_COVER_DIR, LOCAL_VIDEO_COVER_DIR,
-        JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR,
-        JAVDB_RECOMMENDATION_CACHE_DIR, JAVBUS_RECOMMENDATION_CACHE_DIR
+        LOCAL_PICTURES_DIR,
+        LOCAL_VIDEO_PICTURES_DIR,
+        LOCAL_VIDEO_COVER_DIR,
     ]
+    if protocol_dirs:
+        dirs.extend(protocol_dirs)
+    else:
+        dirs.extend(
+            [
+                JM_PICTURES_DIR,
+                PK_PICTURES_DIR,
+                JAVDB_PICTURES_DIR,
+                JAVBUS_PICTURES_DIR,
+                JM_COVER_DIR,
+                PK_COVER_DIR,
+                JAVDB_COVER_DIR,
+                JAVBUS_COVER_DIR,
+                JM_RECOMMENDATION_CACHE_DIR,
+                PK_RECOMMENDATION_CACHE_DIR,
+                JAVDB_RECOMMENDATION_CACHE_DIR,
+                JAVBUS_RECOMMENDATION_CACHE_DIR,
+            ]
+        )
+    deduped_dirs = []
+    seen = set()
     for d in dirs:
+        normalized = os.path.abspath(d)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped_dirs.append(normalized)
+    for d in deduped_dirs:
         os.makedirs(d, exist_ok=True)
 
 

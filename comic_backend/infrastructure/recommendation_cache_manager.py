@@ -10,15 +10,18 @@ import re
 from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
-from core.platform import get_platform_from_id, get_original_id, Platform
 from core.constants import (
     COMIC_RECOMMENDATION_CACHE_DIR,
-    JM_RECOMMENDATION_CACHE_DIR,
-    PK_RECOMMENDATION_CACHE_DIR,
     RECOMMENDATION_CACHE_INDEX_FILE,
     RECOMMENDATION_JSON_FILE,
 )
 from infrastructure.persistence.json_storage import JsonStorage
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    resolve_manifest_host_prefix,
+    split_prefixed_id,
+)
+from protocol.gateway import get_protocol_gateway
 
 
 class RecommendationCacheManager:
@@ -62,139 +65,41 @@ class RecommendationCacheManager:
     def _ensure_dirs(self):
         """确保目录存在"""
         os.makedirs(self.cache_dir, exist_ok=True)
-        os.makedirs(JM_RECOMMENDATION_CACHE_DIR, exist_ok=True)
-        os.makedirs(PK_RECOMMENDATION_CACHE_DIR, exist_ok=True)
         os.makedirs(os.path.dirname(self.cache_index_file), exist_ok=True)
     
     def _get_comic_cache_dir(self, comic_id: str) -> str:
         """获取漫画缓存目录"""
-        platform = get_platform_from_id(comic_id)
-        original_id = get_original_id(comic_id)
-        
-        if platform == Platform.JM:
-            return os.path.join(JM_RECOMMENDATION_CACHE_DIR, original_id)
-        elif platform == Platform.PK:
-            return self._get_pk_comic_dir(comic_id)
-        else:
-            error_logger.warning(f"未知的平台类型，漫画ID: {comic_id}，将使用JM作为默认平台")
-            return os.path.join(JM_RECOMMENDATION_CACHE_DIR, comic_id)
-    
-    def _get_pk_comic_dir(self, comic_id: str) -> str:
-        """获取PK平台漫画的实际目录"""
-        original_id = get_original_id(comic_id)
-        
+        platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
+        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+        if not original_id:
+            error_logger.warning(f"未知的平台类型，漫画ID: {comic_id}，将使用缓存根目录兜底")
+            return os.path.join(self.cache_dir, str(comic_id or "").strip())
+
+        base_dir = build_platform_root_dir(self.cache_dir, manifest=manifest, platform_name=platform_key)
+
         try:
             storage = JsonStorage(RECOMMENDATION_JSON_FILE)
             db_data = storage.read()
             recommendations = db_data.get("recommendations", [])
-            
-            author = "unknown"
-            title = "unknown"
-            
-            for rec in recommendations:
-                if rec.get("id") == comic_id:
-                    author = rec.get("author") or "unknown"
-                    title = rec.get("title") or f"漫画_{original_id}"
-                    break
-            
-            author_variants = self._generate_name_variants(author)
-            title_variants = self._generate_name_variants(title)
-            
-            pk_comics_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, "comics")
-            if os.path.exists(pk_comics_dir):
-                matched_author_dir = None
-                for author_var in author_variants:
-                    test_author_dir = os.path.join(pk_comics_dir, author_var)
-                    if os.path.exists(test_author_dir):
-                        matched_author_dir = test_author_dir
-                        break
-                
-                if matched_author_dir:
-                    for title_var in title_variants:
-                        comic_dir = os.path.join(matched_author_dir, title_var)
-                        if os.path.exists(comic_dir):
-                            return comic_dir
+            recommendation = next((rec for rec in recommendations if rec.get("id") == comic_id), {}) or {}
+            author = recommendation.get("author") or "unknown"
+            title = recommendation.get("title") or f"漫画_{original_id}"
 
-                    # 作者已匹配但标题可能经过路径清洗（如 / -> _），继续做标题模糊匹配
-                    try:
-                        title_dirs = os.listdir(matched_author_dir)
-                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
-                        if matched_title_dir:
-                            return os.path.join(matched_author_dir, matched_title_dir)
-                    except Exception:
-                        pass
-                
-                if not matched_author_dir:
-                    author_dirs = os.listdir(pk_comics_dir)
-                    matched_author_dir = self._fuzzy_match_dir(author_dirs, author)
-                    if matched_author_dir:
-                        matched_author_dir = os.path.join(pk_comics_dir, matched_author_dir)
-                        title_dirs = os.listdir(matched_author_dir)
-                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
-                        if matched_title_dir:
-                            comic_dir = os.path.join(matched_author_dir, matched_title_dir)
-                            return comic_dir
-            
-            fallback_dir = os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
-            return fallback_dir
+            from protocol.platform_service import get_platform_service
+
+            comic_dir = get_platform_service().get_comic_dir(
+                platform_key or host_prefix,
+                original_id,
+                author=author,
+                title=title,
+                base_dir=base_dir,
+            )
+            if comic_dir:
+                return comic_dir
         except Exception as e:
-            error_logger.error(f"解析 PK 推荐页漫画目录失败，使用默认目录结构: {e}")
-            return os.path.join(PK_RECOMMENDATION_CACHE_DIR, original_id)
-    
-    def _generate_name_variants(self, name):
-        """生成名称的变体，用于目录匹配"""
-        name = (name or "").strip().rstrip(".")
-        variants = set()
-        variants.add(name)
-        variants.add(self._normalize_fs_name(name))
-        
-        if " | " in name:
-            variants.add(name.replace(" | ", " _ "))
-            variants.add(name.replace(" | ", "_"))
-        if "|" in name:
-            variants.add(name.replace("|", " _ "))
-            variants.add(name.replace("|", "_"))
-        
-        variants.add(name.replace(" ", ""))
-        variants.add(name.replace("  ", " "))
-        
-        return list(variants)
+            error_logger.error(f"解析协议推荐缓存目录失败，使用默认目录结构: comic_id={comic_id}, error={e}")
 
-    def _normalize_fs_name(self, name: str) -> str:
-        """按下载器规则对目录名做规范化，提升命中率"""
-        normalized = (name or "").strip().rstrip(".")
-        normalized = re.sub(r'[\\/:*?"<>|]', '_', normalized)
-        normalized = re.sub(r"\s+", " ", normalized)
-        return normalized
-    
-    def _fuzzy_match_dir(self, dir_list, target_name):
-        """模糊匹配目录名"""
-        if not target_name or not dir_list:
-            return None
-        
-        target_lower = target_name.lower()
-        
-        for dir_name in dir_list:
-            if dir_name.lower() == target_lower:
-                return dir_name
-        
-        target_variants = self._generate_name_variants(target_name)
-        for dir_name in dir_list:
-            dir_lower = dir_name.lower()
-            for variant in target_variants:
-                if variant.lower() == dir_lower:
-                    return dir_name
-        
-        for dir_name in dir_list:
-            dir_lower = dir_name.lower()
-            if target_lower in dir_lower or dir_lower in target_lower:
-                if len(target_lower) > 0 and len(dir_lower) > 0:
-                    common_chars = set(target_lower) & set(dir_lower)
-                    ratio = len(common_chars) / max(len(set(target_lower)), len(set(dir_lower)))
-                    if ratio > 0.8:
-                        return dir_name
-        
-        return None
+        return os.path.join(base_dir, original_id)
     
     def _load_cache_index(self):
         """加载缓存索引"""
@@ -551,31 +456,35 @@ class RecommendationCacheManager:
         """
         with self._cache_lock:
             count = 0
-            
-            cache_dirs = [JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR]
-            
-            for cache_dir in cache_dirs:
-                if not os.path.exists(cache_dir):
+            indexed_dirs = {
+                os.path.abspath(self._get_comic_cache_dir(comic_id))
+                for comic_id in self._cache_index.keys()
+            }
+
+            manifests = list(get_protocol_gateway().list_manifests(media_type="comic"))
+            for manifest in manifests:
+                cache_dir = build_platform_root_dir(self.cache_dir, manifest=manifest)
+                host_prefix = resolve_manifest_host_prefix(manifest)
+                if not host_prefix or not os.path.exists(cache_dir):
                     continue
-                
-                for entry in os.scandir(cache_dir):
-                    if entry.is_dir():
-                        original_id = entry.name
-                        if cache_dir == JM_RECOMMENDATION_CACHE_DIR:
-                            comic_id_with_prefix = f"JM{original_id}"
-                        elif cache_dir == PK_RECOMMENDATION_CACHE_DIR:
-                            comic_id_with_prefix = f"PK{original_id}"
-                        else:
-                            continue
-                        
-                        if comic_id_with_prefix not in self._cache_index and original_id not in self._cache_index:
-                            try:
-                                import shutil
-                                shutil.rmtree(entry.path)
-                                count += 1
-                                app_logger.info(f"清理孤立缓存目录: {comic_id_with_prefix}")
-                            except Exception as e:
-                                error_logger.error(f"清理孤立目录失败 {comic_id_with_prefix}: {e}")
+
+                cache_root_abs = os.path.abspath(cache_dir)
+                for current_root, _dirnames, _filenames in os.walk(cache_root_abs, topdown=False):
+                    current_abs = os.path.abspath(current_root)
+                    if current_abs == cache_root_abs:
+                        continue
+                    if current_abs in indexed_dirs:
+                        continue
+                    if any(indexed_dir.startswith(f"{current_abs}{os.sep}") for indexed_dir in indexed_dirs):
+                        continue
+                    try:
+                        import shutil
+                        shutil.rmtree(current_abs)
+                        count += 1
+                        relative_path = os.path.relpath(current_abs, cache_root_abs).replace("\\", "/")
+                        app_logger.info(f"清理孤立缓存目录: {host_prefix}/{relative_path}")
+                    except Exception as e:
+                        error_logger.error(f"清理孤立目录失败 {current_abs}: {e}")
             
             return count
     

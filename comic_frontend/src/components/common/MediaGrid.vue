@@ -6,21 +6,19 @@
       class="media-card"
       :class="{
         'list-mode-card': isListMode,
-        'video-item': isVideoItem(item),
-        'video-platform-javbus': isJavbusPlatform(item),
-        'video-platform-javdb': isVideoItem(item) && !isJavbusPlatform(item)
+        'video-item': isVideoItem(item)
       }"
       @click="$emit('click', item)"
     >
       <template v-if="!isListMode">
-        <div class="media-cover">
+        <div class="media-cover" :style="getCoverStyle(item)">
           <van-image 
             :src="getCoverUrl(item)" 
             :fit="resolveCoverFit(item)"
             class="cover-image"
             lazy-load
           />
-          <div v-if="item.platform" class="media-platform">{{ item.platform }}</div>
+          <div v-if="shouldRenderPlatformBadge(item)" class="media-platform">{{ getPlatformBadgeLabel(item) }}</div>
           <div v-if="item.code" class="media-code">{{ item.code }}</div>
           <div v-if="item.score" class="media-score score-badge">{{ formatScore(item.score) }}</div>
           <div v-if="showProgress && item.current_page && item.current_page > 0" class="media-progress">
@@ -98,7 +96,13 @@
 import { computed } from 'vue'
 import { useDevice } from '@/composables/useDevice'
 import { useModeStore } from '@/stores'
-import { getCoverUrl as resolveCoverUrl } from '@/utils'
+import {
+  buildDisplayCoverStyle,
+  getCoverUrl as resolveCoverUrl,
+  resolveDisplayCoverFit,
+  resolvePlatformBadgeLabel,
+  shouldShowPlatformBadge,
+} from '@/utils'
 
 const props = defineProps({
   items: {
@@ -159,27 +163,32 @@ function isSelected(item) {
 }
 
 function isVideoItem(item) {
-  const platform = String(item?.platform || '').trim().toLowerCase()
+  const pluginId = String(item?.plugin_id || '').trim().toLowerCase()
+  const contentType = String(item?.content_type || '').trim().toLowerCase()
   return Boolean(
+    contentType === 'video' ||
+    pluginId.startsWith('video.') ||
     (Array.isArray(item?.actors) && item.actors.length > 0) ||
-    platform === 'javdb' ||
-    platform === 'javbus' ||
     item?.video_id ||
     item?.preview_video ||
     item?.preview_video_local
   )
 }
 
-function isJavbusPlatform(item) {
-  const platform = String(item?.platform || '').trim().toLowerCase()
-  return platform === 'javbus'
+function resolveCoverFit(item) {
+  return resolveDisplayCoverFit(item) || 'cover'
 }
 
-function resolveCoverFit(item) {
-  if (isVideoItem(item) && isJavbusPlatform(item)) {
-    return 'contain'
-  }
-  return 'cover'
+function getCoverStyle(item) {
+  return buildDisplayCoverStyle(item)
+}
+
+function shouldRenderPlatformBadge(item) {
+  return shouldShowPlatformBadge(item)
+}
+
+function getPlatformBadgeLabel(item) {
+  return resolvePlatformBadgeLabel(item)
 }
 
 function formatScore(score) {
@@ -292,16 +301,8 @@ function displaySubtitle(item) {
 
 .media-cover {
   position: relative;
-  aspect-ratio: 2 / 3;
+  aspect-ratio: var(--media-cover-aspect-ratio, 2 / 3);
   background: linear-gradient(145deg, rgba(70, 108, 171, 0.24) 0%, rgba(102, 138, 198, 0.2) 100%);
-}
-
-.media-card.video-item.video-platform-javdb .media-cover {
-  aspect-ratio: 16 / 9;
-}
-
-.media-card.video-item.video-platform-javbus .media-cover {
-  aspect-ratio: 2 / 3;
 }
 
 .cover-image {
@@ -563,8 +564,8 @@ function displaySubtitle(item) {
     font-size: 10px;
   }
 
-  .media-card.video-item.video-platform-javdb .media-cover {
-    aspect-ratio: 3 / 2;
+  .media-cover {
+    aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
   }
 
   .media-card.video-item .play-btn {

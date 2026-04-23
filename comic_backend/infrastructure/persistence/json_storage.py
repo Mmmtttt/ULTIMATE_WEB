@@ -114,7 +114,7 @@ class JsonStorage:
             app_logger.info(f"JSON 文件读取成功: {self.json_file}")
             return data
         except json.JSONDecodeError as e:
-            error_logger.error(f"JSON 文件损坏: {e}")
+            error_logger.error(f"JSON 文件损坏: path={self.json_file}, error={e}")
             return self.restore_backup()
         except Exception as e:
             error_logger.error(f"读取 JSON 文件失败: {e}")

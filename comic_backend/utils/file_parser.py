@@ -1,15 +1,18 @@
 import os
 import re
 from core.constants import (
-    JM_PICTURES_DIR,
-    PK_PICTURES_DIR,
+    COMIC_DIR,
     LOCAL_PICTURES_DIR,
     SUPPORTED_FORMATS,
     JSON_FILE,
     RECOMMENDATION_JSON_FILE,
 )
-from core.platform import get_platform_from_id, get_original_id, Platform
 from infrastructure.logger import app_logger, error_logger
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    resolve_manifest_host_prefix,
+    split_prefixed_id,
+)
 
 
 class FileParser:
@@ -37,98 +40,48 @@ class FileParser:
     def _get_comic_dir(self, comic_id):
         """
         根据漫画 ID 推断其在本地的根目录。
-        对于不同平台，目录结构可能不同：
-        - JM: data/comic/JM/{original_id}
-        - PK: 默认使用 Picacomic-Crawler 的目录规则：comics/{author}/{title}
+        优先走插件协议声明的 `storage.comic_dir.resolve`，让目录规则由插件自己决定。
         """
-        platform = get_platform_from_id(comic_id)
-        original_id = get_original_id(comic_id)
-        
-        if platform == Platform.JM:
-            jm_dir = os.path.join(JM_PICTURES_DIR, original_id)
-            local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
+        platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
+        if not original_id:
+            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
 
-            # 本地导入漫画（LOCAL...）优先放置在 comic/local 目录。
-            if str(original_id or "").upper().startswith("LOCAL"):
-                comic_record = self._find_comic_record(comic_id)
-                stored_dir_name = str((comic_record or {}).get("local_asset_dir_name", "")).strip()
-                if stored_dir_name:
-                    named_local_dir = os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
-                    if os.path.exists(named_local_dir):
-                        return named_local_dir
-                if os.path.exists(local_dir):
-                    return local_dir
-                if os.path.exists(jm_dir):
-                    return jm_dir
-                if stored_dir_name:
-                    return os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
-                return local_dir
-
-            if os.path.exists(jm_dir):
-                return jm_dir
+        local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
+        if str(original_id or "").upper().startswith("LOCAL"):
+            comic_record = self._find_comic_record(comic_id)
+            stored_dir_name = str((comic_record or {}).get("local_asset_dir_name", "")).strip()
+            if stored_dir_name:
+                named_local_dir = os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
+                if os.path.exists(named_local_dir):
+                    return named_local_dir
             if os.path.exists(local_dir):
                 return local_dir
-            return jm_dir
-        elif platform == Platform.PK:
-            # 优先按 Picacomic-Crawler 默认规则推导目录:
-            # base_dir = PK_PICTURES_DIR
-            # dir_rule = 'comics/{author}/{title}'
-            try:
-                author = "unknown"
-                title = "unknown"
+            if stored_dir_name:
+                return os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
+            return local_dir
 
-                comic_record = self._find_comic_record(comic_id) or {}
-                author = comic_record.get("author") or comic_record.get("creator") or "unknown"
-                title = comic_record.get("title") or f"漫画_{original_id}"
+        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+        base_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key or host_prefix)
+        comic_record = self._find_comic_record(comic_id) or {}
+        author = comic_record.get("author") or comic_record.get("creator") or "unknown"
+        title = comic_record.get("title") or f"漫画_{original_id}"
 
-                # 生成可能的作者和标题变体
-                author_variants = self._generate_name_variants(author)
-                title_variants = self._generate_name_variants(title)
-                
-                pk_comics_dir = os.path.join(PK_PICTURES_DIR, "comics")
-                if os.path.exists(pk_comics_dir):
-                    # 首先尝试匹配作者目录
-                    matched_author_dir = None
-                    for author_var in author_variants:
-                        test_author_dir = os.path.join(pk_comics_dir, author_var)
-                        if os.path.exists(test_author_dir):
-                            matched_author_dir = test_author_dir
-                            break
-                    
-                    # 如果找到作者目录，尝试匹配标题目录
-                    if matched_author_dir:
-                        for title_var in title_variants:
-                            comic_dir = os.path.join(matched_author_dir, title_var)
-                            if os.path.exists(comic_dir):
-                                return comic_dir
-                        # 作者目录已命中时，也要继续做标题模糊匹配，避免 / 等字符清洗后失配
-                        title_dirs = os.listdir(matched_author_dir)
-                        matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
-                        if matched_title_dir:
-                            comic_dir = os.path.join(matched_author_dir, matched_title_dir)
-                            return comic_dir
-                    
-                    # 如果没找到精确匹配，尝试模糊匹配作者目录
-                    if not matched_author_dir:
-                        author_dirs = os.listdir(pk_comics_dir)
-                        matched_author_dir = self._fuzzy_match_dir(author_dirs, author)
-                        if matched_author_dir:
-                            matched_author_dir = os.path.join(pk_comics_dir, matched_author_dir)
-                            # 在匹配的作者目录下模糊匹配标题目录
-                            title_dirs = os.listdir(matched_author_dir)
-                            matched_title_dir = self._fuzzy_match_dir(title_dirs, title)
-                            if matched_title_dir:
-                                comic_dir = os.path.join(matched_author_dir, matched_title_dir)
-                                return comic_dir
-                
-                # 回退到按 original_id 命名的目录，兼容未来可能的目录规则调整
-                fallback_dir = os.path.join(PK_PICTURES_DIR, original_id)
-                return fallback_dir
-            except Exception as e:
-                error_logger.error(f"解析 PK 漫画目录失败，使用默认目录结构: {e}")
-                return os.path.join(PK_PICTURES_DIR, original_id)
-        else:
-            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+        try:
+            from protocol.platform_service import get_platform_service
+
+            comic_dir = get_platform_service().get_comic_dir(
+                platform_key or host_prefix,
+                original_id,
+                author=author,
+                title=title,
+                base_dir=base_dir,
+            )
+            if comic_dir:
+                return comic_dir
+        except Exception as e:
+            error_logger.error(f"解析协议漫画目录失败，使用默认目录结构: comic_id={comic_id}, error={e}")
+
+        return os.path.join(base_dir, original_id)
     
     def _generate_name_variants(self, name):
         """生成名称的变体，用于目录匹配"""

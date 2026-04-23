@@ -24,7 +24,10 @@ from core.constants import (
     VIDEO_RECOMMENDATION_JSON_FILE
 )
 from application.base.content_app_service import BaseCreatorAppService
+from application.video_runtime_support import get_video_adapter as get_protocol_video_adapter
 from core.enums import ContentType
+from protocol.gateway import get_protocol_gateway
+from protocol.platform_meta import resolve_manifest_platform_label
 
 
 class ActorAppService(BaseCreatorAppService):
@@ -37,10 +40,44 @@ class ActorAppService(BaseCreatorAppService):
 
     @staticmethod
     def _normalize_platform(platform: str) -> str:
-        raw = str(platform or "").strip().lower()
-        if raw == "javbus":
-            return "JAVBUS"
-        return "JAVDB"
+        return str(platform or "").strip().upper()
+
+    @staticmethod
+    def _list_video_search_platforms() -> List[str]:
+        platforms: List[str] = []
+        for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"):
+            platform_name = str(
+                resolve_manifest_platform_label(
+                    manifest,
+                    fallback=getattr(manifest, "config_key", "") or getattr(manifest, "plugin_id", ""),
+                )
+                or ""
+            ).strip().lower()
+            if platform_name and platform_name not in platforms:
+                platforms.append(platform_name)
+        return platforms
+
+    @staticmethod
+    def _get_video_asset_service_cls():
+        from application.video_app_service import VideoAppService
+
+        return VideoAppService
+
+    @staticmethod
+    def _get_video_adapter(platform: str):
+        normalized_platform = str(platform or "").strip().lower()
+        return get_protocol_video_adapter(normalized_platform)
+
+    @classmethod
+    def _to_frontend_work_cover_url(cls, cover_url: str, platform: str, content_id: str = "") -> str:
+        video_service_cls = cls._get_video_asset_service_cls()
+        return video_service_cls.to_frontend_asset_url(
+            cover_url,
+            asset_kind="cover",
+            video_id=content_id,
+            platform_name=platform,
+            content_id=content_id,
+        )
 
     @classmethod
     def _get_actor_cover_cache_dir(cls, platform: str) -> str:
@@ -106,22 +143,19 @@ class ActorAppService(BaseCreatorAppService):
                 "page": int           # 当前页码
             }
         """
-        from api.v1.video import get_video_adapter, to_proxy_image_url
-        
         works = []
         has_more = False
         
         try:
-            platforms_to_search = ["javdb", "javbus"]
+            platforms_to_search = self._list_video_search_platforms()
             platform_videos = {}
-            max_result_count = 0
             
             for plat in platforms_to_search:
                 try:
-                    adapter = get_video_adapter(plat)
+                    adapter = self._get_video_adapter(plat)
                     result = {}
 
-                    if plat == "javdb" and hasattr(adapter, "search_actor") and hasattr(adapter, "get_actor_works"):
+                    if hasattr(adapter, "search_actor") and hasattr(adapter, "get_actor_works"):
                         actor_id = ""
                         actors = adapter.search_actor(creator_name) or []
                         if isinstance(actors, list) and actors:
@@ -173,12 +207,11 @@ class ActorAppService(BaseCreatorAppService):
                     
                     if videos:
                         platform_videos[plat] = videos
-                        max_result_count = max(max_result_count, len(videos))
                 except Exception as e:
                     error_logger.error(f"搜索演员 {creator_name} 在平台 {plat} 的作品失败: {e}")
                     continue
             
-            # 按平台分组输出：先 JAVDB，再 JAVBUS（不交错）
+            # 按协议声明顺序分组输出，不在宿主内写死平台名。
             for plat in platforms_to_search:
                 for video in platform_videos.get(plat, []):
                     work_id = str(video.get("video_id") or video.get("code") or "")
@@ -190,7 +223,7 @@ class ActorAppService(BaseCreatorAppService):
                     if os.path.exists(os.path.join(self._get_actor_cover_cache_dir(plat), f"{work_id}.jpg")):
                         cover_url = local_cover
                     elif cover_url:
-                        cover_url = to_proxy_image_url(str(cover_url))
+                        cover_url = self._to_frontend_work_cover_url(str(cover_url), plat, work_id)
                     
                     works.append({
                         "id": work_id,
@@ -238,20 +271,31 @@ class ActorAppService(BaseCreatorAppService):
         if not cover_url:
             return ""
 
-        normalized_cover_url = str(cover_url or "").strip()
+        video_service_cls = None
         try:
             from application.video_app_service import VideoAppService
 
-            resolved_cover_url = VideoAppService._resolve_proxy_source_url(normalized_cover_url)
+            video_service_cls = VideoAppService
+        except Exception:
+            video_service_cls = None
+
+        normalized_cover_url = str(cover_url or "").strip()
+        try:
+            if video_service_cls is not None:
+                resolved_cover_url = video_service_cls._resolve_proxy_source_url(normalized_cover_url)
+            else:
+                resolved_cover_url = ""
             if resolved_cover_url:
                 normalized_cover_url = str(resolved_cover_url).strip()
+            if video_service_cls is not None:
+                normalized_cover_url = video_service_cls._normalize_protocol_asset_url(
+                    normalized_cover_url,
+                    asset_kind="cover",
+                    video_id=content_id,
+                    platform_name=platform,
+                )
         except Exception:
             pass
-
-        if normalized_cover_url.startswith("//"):
-            normalized_cover_url = f"https:{normalized_cover_url}"
-        if normalized_cover_url.startswith("/pics/"):
-            normalized_cover_url = f"https://www.javbus.com{normalized_cover_url}"
 
         platform_key = self._normalize_platform(platform)
         cache_dir = self._get_actor_cover_cache_dir(platform_key)
@@ -268,10 +312,19 @@ class ActorAppService(BaseCreatorAppService):
         
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
-            if 'javbus.com' in normalized_cover_url.lower():
-                headers['Referer'] = f"https://www.javbus.com/{content_id}"
+            try:
+                if video_service_cls is not None:
+                    headers = video_service_cls._build_protocol_asset_headers(
+                        normalized_cover_url,
+                        asset_kind="cover",
+                        video_id=content_id,
+                        platform_name=platform,
+                        content_id=content_id,
+                    )
+            except Exception:
+                pass
             
             response = requests.get(normalized_cover_url, headers=headers, timeout=10)
             if response.status_code != 200:

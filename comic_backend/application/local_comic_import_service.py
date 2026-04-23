@@ -20,6 +20,7 @@ from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS
 from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
+from protocol.platform_meta import build_platform_root_dir, resolve_manifest_host_prefix, split_prefixed_id
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
 
@@ -2100,8 +2101,7 @@ class LocalComicImportService:
         reader = None
         try:
             from application.softref_reader_protocol import require_softref_reader
-            from core.constants import JM_COVER_DIR, PK_COVER_DIR
-            from core.platform import Platform, get_original_id, get_platform_from_id
+            from core.constants import COVER_DIR
 
             reader = require_softref_reader("comic")
             stream, mimetype = reader.get_image_stream(comic_id, 1)
@@ -2114,15 +2114,15 @@ class LocalComicImportService:
             if not image_bytes:
                 return ""
 
-            platform = get_platform_from_id(comic_id)
-            if platform == Platform.PK:
-                cover_dir = PK_COVER_DIR
-                cover_prefix = "PK"
-            else:
-                cover_dir = JM_COVER_DIR
-                cover_prefix = "JM"
-
-            original_id = get_original_id(comic_id)
+            platform_key, _original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
+            cover_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+            if not cover_prefix:
+                return ""
+            cover_dir = build_platform_root_dir(COVER_DIR, manifest=manifest, platform_name=platform_key)
+            _resolved_platform, original_id, _resolved_manifest = split_prefixed_id(
+                comic_id,
+                media_type="comic",
+            )
             os.makedirs(cover_dir, exist_ok=True)
             suffix = self._softref_cover_suffix_from_mimetype(mimetype)
             cover_abs_path = os.path.join(cover_dir, f"{original_id}{suffix}")
@@ -2336,7 +2336,10 @@ class LocalComicImportService:
                     comic_id = self._build_local_comic_id(work_path, existing_ids)
                     record["comic_id"] = comic_id
 
-                original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
+                _resolved_platform, original_id, _resolved_manifest = split_prefixed_id(
+                    comic_id,
+                    media_type="comic",
+                )
                 page_count = int(entry.get("图片数量", 0) or 0)
                 cover_path = "/static/default/default_cover.jpg"
 

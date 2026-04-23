@@ -3,71 +3,26 @@
 为现有漫画生成封面
 支持多平台（JM、PK等）
 """
+import json
 import os
 import sys
 from pathlib import Path
-from PIL import Image
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR, LOCAL_PICTURES_DIR, JM_COVER_DIR, PK_COVER_DIR, COVER_WIDTH, COVER_QUALITY
-from core.platform import get_platform_from_id, get_original_id, Platform, PLATFORM_PREFIXES
-from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import app_logger, error_logger
 from utils.file_parser import file_parser
+from utils.image_handler import image_handler
 
 
 def generate_cover(comic_id, first_image_path):
     """生成封面缩略图"""
     try:
-        platform = get_platform_from_id(comic_id)
-        original_id = get_original_id(comic_id)
-        
-        # 确定封面目录
-        if platform == Platform.JM:
-            cover_dir = JM_COVER_DIR
-        elif platform == Platform.PK:
-            cover_dir = PK_COVER_DIR
-        else:
-            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
-        
-        # 确保封面目录存在
-        os.makedirs(cover_dir, exist_ok=True)
-        
-        # 封面保存路径（使用原始ID）
-        cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
-        
-        # 如果封面已存在，跳过
-        if os.path.exists(cover_path):
-            app_logger.info(f"封面已存在: {cover_path}")
-            platform_prefix = PLATFORM_PREFIXES.get(platform, "")
-            return f"/static/cover/{platform_prefix}/{original_id}.jpg"
-        
-        # 读取原始图片
-        with Image.open(first_image_path) as img:
-            # 计算缩放比例
-            width, height = img.size
-            if width <= 0 or height <= 0:
-                raise ValueError("图片尺寸无效")
-            ratio = COVER_WIDTH / width
-            new_height = int(height * ratio)
-            
-            if img.mode not in ("RGB", "L"):
-                img = img.convert("RGB")
-            elif img.mode == "L":
-                img = img.convert("RGB")
-
-            # 缩放图片
-            resized_img = img.resize((COVER_WIDTH, new_height), Image.LANCZOS)
-            
-            # 保存为JPEG格式
-            resized_img.save(cover_path, 'JPEG', quality=COVER_QUALITY)
-        
-        platform_prefix = PLATFORM_PREFIXES.get(platform, "")
-        cover_url = f"/static/cover/{platform_prefix}/{original_id}.jpg"
-        app_logger.info(f"封面生成成功: {cover_path}")
+        cover_url = image_handler.generate_cover(comic_id, first_image_path)
+        if cover_url and cover_url != "/static/default/default_cover.jpg":
+            app_logger.info(f"封面生成成功: comic_id={comic_id}, cover_url={cover_url}")
         return cover_url
     except Exception as e:
         error_logger.error(f"生成封面失败: {e}")
@@ -145,8 +100,6 @@ def process_database(json_file, data_key):
 
 def main():
     """主函数"""
-    import json
-    
     app_logger.info("=" * 60)
     app_logger.info("开始为现有漫画生成封面")
     app_logger.info("=" * 60)

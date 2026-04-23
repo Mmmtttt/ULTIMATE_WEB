@@ -4,7 +4,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  * 用例描述:
  * - 用例目的: 看护前端“JAVDB 标签搜索 -> 导入”链路与后端第三方接口契约，防止 tag_ids/page/import body 参数回归。
  * - 测试步骤:
- *   1. mock JAVDB cookie-status/tags/search-by-tags/import 接口返回。
+ *   1. mock JAVDB health-status/tags/search-by-tags/import 接口返回。
  *   2. 用户进入 /video-tag-search，必要时切换到视频模式，选择标签并执行搜索。
  *   3. 用户选择搜索结果并执行导入到本地库。
  *   4. 断言 search-by-tags 与 import 请求参数，以及前端结果渲染。
@@ -20,7 +20,7 @@ test("video tag search forwards third-party query and import contracts", async (
   const searchQueries = [];
   const importTaskBodies = [];
 
-  await page.route("**/api/v1/video/third-party/javdb/cookie-status", async (route) => {
+  await page.route("**/api/v1/video/third-party/javdb/health-status", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

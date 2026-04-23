@@ -149,7 +149,7 @@ def test_<case_name>(integration_runtime):
    - /api/v1/comic/import/online（by_id/by_search，adapter_name、platform_service 调用入参）
 2. 视频接口：
    - /api/v1/video/third-party/search
-   - /api/v1/video/third-party/javdb/cookie-status
+   - /api/v1/video/third-party/<platform>/health-status
    - /api/v1/video/third-party/javdb/search-by-tags
    - /api/v1/video/third-party/detail
    - /api/v1/video/third-party/actor/search

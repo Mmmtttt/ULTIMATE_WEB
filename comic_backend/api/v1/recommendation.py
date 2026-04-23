@@ -2,7 +2,13 @@ from flask import Blueprint, request, jsonify, send_file
 from application.recommendation_app_service import RecommendationAppService
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
+from core.constants import COMIC_RECOMMENDATION_CACHE_DIR
 from core.utils import normalize_total_page
+from protocol.platform_meta import (
+    build_platform_root_dir,
+    get_default_platform_label,
+    split_prefixed_id,
+)
 from .runtime_guard import third_party_unavailable_response
 import os
 import sys
@@ -328,7 +334,7 @@ def migrate_recommendations_to_local():
 
         from infrastructure.task_manager import task_manager
         task_id = task_manager.create_task(
-            platform='JM',
+            platform=get_default_platform_label(media_type="comic"),
             import_type='migrate_to_local',
             target='home',
             comic_ids=normalized_ids,
@@ -390,21 +396,24 @@ def download_to_cache():
         detail = result.data
         total_page = normalize_total_page(detail.get('total_page', 0))
         
-        from core.platform import get_platform_from_id, get_original_id, Platform
-        from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
-        
-        platform = get_platform_from_id(recommendation_id)
-        original_id = get_original_id(recommendation_id)
+        platform_key, original_id, manifest = split_prefixed_id(recommendation_id, media_type="comic")
+        if not original_id:
+            return error_response(400, "无效的 recommendation_id")
+        if not platform_key:
+            return error_response(400, "无法识别推荐内容所属平台")
         
         try:
-            from third_party.platform_service import get_platform_service
-            from core.constants import JM_RECOMMENDATION_CACHE_DIR, PK_RECOMMENDATION_CACHE_DIR
+            from protocol.platform_service import get_platform_service
             
             platform_service = get_platform_service()
-            download_dir = JM_RECOMMENDATION_CACHE_DIR if platform == Platform.JM else PK_RECOMMENDATION_CACHE_DIR
+            download_dir = build_platform_root_dir(
+                COMIC_RECOMMENDATION_CACHE_DIR,
+                manifest=manifest,
+                platform_name=platform_key,
+            )
             
             album_detail, success = platform_service.download_album(
-                platform,
+                platform_key,
                 original_id,
                 download_dir=download_dir,
                 show_progress=False

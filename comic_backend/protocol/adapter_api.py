@@ -26,16 +26,10 @@ class ProtocolAdapterAPI:
 
     def get_adapter(self, adapter_name: Optional[str] = None):
         resolved_adapter = self._resolve_adapter_name(adapter_name)
-        adapter_config = self._config_store.get_adapter_config(resolved_adapter)
         plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
-        if plugin_id:
-            return self._gateway.get_legacy_client(plugin_id)
-
-        from third_party.adapter_factory import AdapterFactory
-        from third_party.credential_guard import ensure_adapter_query_ready
-
-        ensure_adapter_query_ready(resolved_adapter, adapter_config)
-        return AdapterFactory.get_adapter(resolved_adapter, adapter_config)
+        if not plugin_id:
+            raise ValueError(f"unsupported adapter: {resolved_adapter}")
+        return self._gateway.get_legacy_client(plugin_id)
 
     def get_album_by_id(self, album_id: str, adapter_name: Optional[str] = None) -> Dict[str, Any]:
         resolved_adapter = self._resolve_adapter_name(adapter_name)
@@ -181,4 +175,3 @@ def set_default_adapter(adapter_name: str):
 
 def reset_adapter(adapter_name: str):
     return get_protocol_adapter_api().reset_adapter(adapter_name)
-

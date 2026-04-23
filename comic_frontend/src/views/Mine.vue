@@ -142,9 +142,16 @@
         <van-radio-group v-model="importPlatform" class="import-options">
           <div class="option-group">
             <div class="option-title">来源平台</div>
-            <van-radio v-if="!isVideoMode" name="JM">JMComic</van-radio>
-            <van-radio v-if="!isVideoMode" name="PK">Picacomic</van-radio>
-            <van-radio v-if="isVideoMode" name="JAVDB">JavDB</van-radio>
+            <template v-if="currentImportPlatforms.length > 0">
+              <van-radio
+                v-for="platform in currentImportPlatforms"
+                :key="platform.value"
+                :name="platform.value"
+              >
+                {{ platform.label }}
+              </van-radio>
+            </template>
+            <div v-else class="option-empty">当前模式暂无可用平台</div>
           </div>
         </van-radio-group>
         
@@ -197,6 +204,7 @@ import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore,
 import { configApi, organizeApi } from '@/api'
 import { closeToast, showFailToast, showConfirmDialog, showLoadingToast, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
+import { fetchProtocolPlatformOptions } from '@/utils'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -215,7 +223,7 @@ const showImportDialog = ref(false)
 const showCachePanel = ref(false)
 const importType = ref('by_id')
 const importTarget = ref('home')
-const importPlatform = ref('JM')
+const importPlatform = ref('')
 const importId = ref('')
 const importFile = ref(null)
 const importing = ref(false)
@@ -224,6 +232,7 @@ const showOrganizeSheet = ref(false)
 const organizeActions = ref([])
 const runningOrganizeAction = ref(false)
 const loadingOrganizeOptions = ref(false)
+const importPlatformOptions = ref([])
 
 // Cache Info
 const cacheInfo = ref({
@@ -261,6 +270,7 @@ const hasNewVersion = computed(() => appUpdateStore.hasUpdate)
 const updateStatusText = computed(() => appUpdateStore.statusText)
 const updateCheckedAtText = computed(() => appUpdateStore.checkedAtText)
 const updateReleaseUrl = computed(() => appUpdateStore.releaseUrl)
+const currentImportPlatforms = computed(() => importPlatformOptions.value)
 
 async function handleManualCheckUpdate() {
   const result = await appUpdateStore.checkForUpdates({ source: 'manual', showPrompt: true })
@@ -379,12 +389,21 @@ function buildOrganizeResultDetail(action, payload) {
       `无匹配: ${Number(payload?.skipped_no_match || 0)}`,
       `已补全跳过: ${Number(payload?.skipped_already_enriched || 0)}`
     ]
-    if (isVideoMode.value) {
-      lines.push(`JAVDB命中: ${Number(payload?.matched_on_javdb || 0)}`)
-      lines.push(`JAVBUS命中: ${Number(payload?.matched_on_javbus || 0)}`)
+    const matchedByPlatform = payload?.matched_by_platform
+    const entries = matchedByPlatform && typeof matchedByPlatform === 'object'
+      ? Object.entries(matchedByPlatform)
+      : []
+    if (entries.length > 0) {
+      entries.forEach(([platform, count]) => {
+        lines.push(`${String(platform || '').toUpperCase()}命中: ${Number(count || 0)}`)
+      })
     } else {
-      lines.push(`JM命中: ${Number(payload?.matched_on_jm || 0)}`)
-      lines.push(`PK命中: ${Number(payload?.matched_on_pk || 0)}`)
+      const platformOrder = Array.isArray(payload?.search_platform_order)
+        ? payload.search_platform_order
+        : []
+      platformOrder.forEach((platform) => {
+        lines.push(`${String(platform || '').toUpperCase()}命中: 0`)
+      })
     }
     return lines.join('\n')
   }
@@ -396,6 +415,26 @@ function buildOrganizeResultDetail(action, payload) {
     ].join('\n')
   }
   return summary
+}
+
+async function loadImportPlatformOptions() {
+  try {
+    const options = await fetchProtocolPlatformOptions({
+      mediaType: isVideoMode.value ? 'video' : 'comic',
+      capability: 'catalog.search'
+    })
+    importPlatformOptions.value = options.map((item) => ({
+      label: item.label,
+      value: String(item.platform || '').trim().toUpperCase()
+    }))
+  } catch (error) {
+    importPlatformOptions.value = []
+    console.error('加载导入平台失败', error)
+  }
+
+  if (!importPlatformOptions.value.some(item => item.value === importPlatform.value)) {
+    importPlatform.value = importPlatformOptions.value[0]?.value || ''
+  }
 }
 
 async function openOrganizePanel() {
@@ -530,8 +569,13 @@ async function handleComicImport() {
   const params = {
     import_type: importType.value,
     target: importTarget.value,
-    platform: importPlatform.value,
+    platform: String(importPlatform.value || '').trim().toUpperCase(),
+    content_type: 'comic',
     comic_id: normalizeImportId(importId.value, importPlatform.value)
+  }
+
+  if (!params.platform) {
+    throw new Error('当前模式暂无可用平台')
   }
 
   if (importType.value === 'by_id' && !params.comic_id) {
@@ -555,7 +599,11 @@ async function handleComicImport() {
 
 async function handleVideoImport() {
   const target = importTarget.value
-  const defaultPlatform = String(importPlatform.value || 'JAVDB').toUpperCase()
+  const defaultPlatform = String(importPlatform.value || '').trim().toUpperCase()
+
+  if (!defaultPlatform) {
+    throw new Error('当前模式暂无可用平台')
+  }
 
   if (importType.value === 'by_id') {
     const videoCode = normalizeVideoCode(importId.value)
@@ -625,11 +673,12 @@ onMounted(async () => {
   }
   await listStore.fetchLists()
   await importTaskStore.fetchTasks()
+  await loadImportPlatformOptions()
 })
 
-watch(() => modeStore.currentMode, () => {
-  importPlatform.value = isVideoMode.value ? 'JAVDB' : 'JM'
+watch(() => modeStore.currentMode, async () => {
   organizeActions.value = []
+  await loadImportPlatformOptions()
 })
 </script>
 
@@ -760,6 +809,11 @@ watch(() => modeStore.currentMode, () => {
   font-size: 14px;
   color: var(--text-secondary);
   margin-bottom: 8px;
+}
+
+.option-empty {
+  font-size: 13px;
+  color: var(--text-tertiary);
 }
 
 .dialog-buttons {

@@ -6,26 +6,29 @@ from flask import Blueprint, request, jsonify, Response, make_response, send_fil
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.config_app_service import ConfigAppService
+from application.video_runtime_support import (
+    build_video_host_id as runtime_build_video_host_id,
+    execute_video_plugin_capability as runtime_execute_video_plugin_capability,
+    get_default_video_platform_name as runtime_get_default_video_platform_name,
+    get_playback_proxy_client as runtime_get_playback_proxy_client,
+    get_video_adapter as runtime_get_video_adapter,
+    get_video_platform_query_status as runtime_get_video_platform_query_status,
+    resolve_video_manifest_or_error as runtime_resolve_video_manifest_or_error,
+    resolve_video_lookup_context as runtime_resolve_video_lookup_context,
+)
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
-from bs4 import BeautifulSoup, FeatureNotFound
-import re
 import os
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
 import mimetypes
 from .runtime_guard import require_third_party
-from protocol.compatibility import (
-    get_legacy_missav_client,
-    get_legacy_video_adapter,
-    get_plugin_id_for_video_platform,
-    get_query_status_for_video_platform,
-)
-from protocol.runtime_config import get_protocol_config_store
+from protocol.gateway import get_protocol_gateway
+from protocol.presentation import annotate_item, annotate_items
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
@@ -52,13 +55,18 @@ def error_response(code, msg):
     })
 
 
-def _get_missav_client():
-    """Load Missav third-party client lazily to keep backend core portable."""
+def _get_video_proxy_client():
+    """Load a protocol-declared playback proxy client lazily."""
     if not is_third_party_enabled():
         raise RuntimeError(
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
-    return get_legacy_missav_client(proxy_base_path='/api/v1/video')
+    return runtime_get_playback_proxy_client(proxy_base_path='/api/v1/video')
+
+
+def _get_missav_client():
+    """Compatibility shim for older tests and callers."""
+    return _get_video_proxy_client()
 
 
 def _build_play_sources(code: str):
@@ -346,7 +354,7 @@ def import_video():
                     preview_video=(result.data or {}).get("preview_video", ""),
                     thumbnail_images=(result.data or {}).get("thumbnail_images", []),
                     allow_cover=True,
-                    allow_preview_video=not _is_javbus_platform(video_id=video_id),
+                    allow_preview_video=_platform_allows_preview_video_download(video_id=video_id),
                 )
 
                 recent_result = video_service.apply_recent_import_tags(
@@ -389,7 +397,7 @@ def batch_import():
                         preview_video=(video_item or {}).get("preview_video", ""),
                         thumbnail_images=(video_item or {}).get("thumbnail_images", []),
                         allow_cover=True,
-                        allow_preview_video=not _is_javbus_platform(
+                        allow_preview_video=_platform_allows_preview_video_download(
                             platform=(video_item or {}).get("platform", ""),
                             video_id=item_id
                         ),
@@ -616,31 +624,80 @@ def get_by_actor(actor_name):
         return error_response(500, "服务器内部错误")
 
 
-def get_video_adapter(platform_name="javdb", *args, **kwargs):
-    """获取视频平台适配器"""
-    if not is_third_party_enabled():
-        raise RuntimeError(
-            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
-        )
-    normalized_platform = str(platform_name or "").strip().lower()
-    plugin_id = get_plugin_id_for_video_platform(normalized_platform)
-    if normalized_platform == "javdb":
-        status = _get_video_platform_query_status("javdb")
-        if not bool(status.get("configured", False)):
-            raise RuntimeError(str(status.get("message") or "JAVDB 平台未配置 cookie"))
-    if plugin_id:
-        return get_legacy_video_adapter(normalized_platform, *args, **kwargs)
-    raise ValueError(f"不支持的视频平台: {platform_name}")
+def get_video_adapter(platform_name="", *args, **kwargs):
+    """获取协议视频平台客户端。"""
+    return runtime_get_video_adapter(platform_name, *args, **kwargs)
 
 
 def _get_video_platform_query_status(platform_name: str) -> dict:
-    return get_query_status_for_video_platform(platform_name)
+    return runtime_get_video_platform_query_status(platform_name)
+
+
+def _get_default_video_platform_name() -> str:
+    return runtime_get_default_video_platform_name()
+
+
+def _resolve_video_lookup_context(
+    *,
+    video_id: str = "",
+    code: str = "",
+    platform_name: str = "",
+):
+    return runtime_resolve_video_lookup_context(
+        video_id=video_id,
+        code=code,
+        platform_name=platform_name,
+    )
+
+
+def _build_video_host_id(platform_name: str, original_id: str) -> str:
+    return runtime_build_video_host_id(platform_name, original_id)
+
+
+def _manifest_nested_bool(manifest, path: tuple[str, ...], default: bool = True) -> bool:
+    current = getattr(manifest, "resource_policy", {}) if manifest is not None else {}
+    if not isinstance(current, dict):
+        return default
+    for key in path:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+    if current is None:
+        return default
+    return bool(current)
+
+
+def _platform_supports_preview_video(platform: str = "", video_id: str = "") -> bool:
+    _, _, manifest = _resolve_video_lookup_context(platform_name=platform, video_id=video_id)
+    return _manifest_nested_bool(
+        manifest,
+        ("assets", "preview_video", "available"),
+        default=True,
+    )
+
+
+def _platform_allows_preview_video_download(platform: str = "", video_id: str = "") -> bool:
+    _, _, manifest = _resolve_video_lookup_context(platform_name=platform, video_id=video_id)
+    return _manifest_nested_bool(
+        manifest,
+        ("assets", "preview_video", "download_enabled"),
+        default=True,
+    )
 
 
 def get_all_video_adapters(*args, **kwargs):
     """获取所有视频平台适配器"""
     adapters = {}
-    for platform in ['javdb', 'javbus']:
+    for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"):
+        identity = dict(getattr(manifest, "identity", {}) or {})
+        platform = str(
+            identity.get("platform_label")
+            or getattr(manifest, "config_key", "")
+            or getattr(manifest, "plugin_id", "")
+            or ""
+        ).strip().lower()
+        if not platform:
+            continue
         try:
             adapters[platform] = get_video_adapter(platform, *args, **kwargs)
         except Exception as e:
@@ -648,18 +705,23 @@ def get_all_video_adapters(*args, **kwargs):
     return adapters
 
 
-def to_proxy_image_url(url: str) -> str:
-    """将防盗链图片地址转换为本地代理地址，避免前端直连403。"""
-    if not url:
-        return url
-
-    lower_url = url.lower()
-    if 'javbus.com/pics/' not in lower_url:
-        return url
-
-    import base64
-    encoded_url = base64.b64encode(url.encode('utf-8')).decode('utf-8')
-    return f"/api/v1/video/proxy2?url={encoded_url}"
+def to_proxy_image_url(
+    url: str,
+    *,
+    asset_kind: str = "image",
+    video_id: str = "",
+    platform_name: str = "",
+    content_id: str = "",
+) -> str:
+    """Resolve frontend-safe asset URLs using plugin resource policy."""
+    return VideoAppService.to_frontend_asset_url(
+        url,
+        asset_kind=asset_kind,
+        video_id=video_id,
+        platform_name=platform_name,
+        content_id=content_id,
+        proxy_base_path="/api/v1/video/proxy2",
+    )
 
 
 _PREVIEW_VIDEO_MEDIA_MARKERS = (".mp4", ".m3u8", ".webm", ".mov", ".m4v")
@@ -715,23 +777,57 @@ def _should_refresh_preview_video_url(url: str) -> bool:
     if not normalized:
         return False
 
-    lowered = normalized.lower()
-    if "javdb.com/movies/ttm3u8/preview/" not in lowered:
-        return False
-
     try:
         parsed = urlparse(normalized)
-        query = parse_qs(parsed.query or "")
-        expire_raw = (query.get("t") or [None])[0]
-        if expire_raw and str(expire_raw).isdigit():
-            expire_at = int(expire_raw)
-            # 提前 2 分钟刷新，避免打开详情时 token 刚好过期
-            return expire_at <= int(time.time()) + 120
+        host = str(parsed.netloc or "").strip().lower()
+        lowered = normalized.lower()
     except Exception:
-        return True
+        return False
 
-    # JavDB 该类签名链接通常短时有效，未解析到时间参数也主动刷新
-    return True
+    for manifest in get_protocol_gateway().list_manifests(media_type="video"):
+        policy = dict(getattr(manifest, "resource_policy", {}) or {})
+        assets = dict(policy.get("assets") or {})
+        preview_policy = dict(assets.get("preview_video") or {})
+        refresh_hint = dict(preview_policy.get("refresh_hint") or {})
+        if not refresh_hint:
+            continue
+
+        match_hosts = [
+            str(item or "").strip().lower()
+            for item in (refresh_hint.get("match_hosts") or [])
+            if str(item or "").strip()
+        ]
+        path_prefixes = [
+            str(item or "").strip().lower()
+            for item in (refresh_hint.get("path_prefixes") or [])
+            if str(item or "").strip()
+        ]
+        host_matches = bool(match_hosts) and any(candidate in host for candidate in match_hosts)
+        path_matches = bool(path_prefixes) and any(lowered.startswith(prefix) for prefix in path_prefixes)
+        if match_hosts or path_prefixes:
+            if not host_matches and not path_matches:
+                continue
+
+        mode = str(refresh_hint.get("mode") or "").strip().lower()
+        if mode not in {"signed_query_expire", "query_expire"}:
+            continue
+
+        query_param = str(refresh_hint.get("query_param") or "t").strip() or "t"
+        lead_seconds = int(refresh_hint.get("lead_seconds") or 120)
+        refresh_when_missing = bool(refresh_hint.get("refresh_when_missing"))
+
+        try:
+            query = parse_qs(parsed.query or "")
+            expire_raw = (query.get(query_param) or [None])[0]
+            if expire_raw and str(expire_raw).isdigit():
+                expire_at = int(expire_raw)
+                return expire_at <= int(time.time()) + lead_seconds
+        except Exception:
+            return refresh_when_missing
+
+        return refresh_when_missing
+
+    return False
 
 
 def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
@@ -739,8 +835,11 @@ def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
         return
 
     video_id = str(video_data.get("id") or "").strip()
+    platform_name = str(video_data.get("platform") or "").strip().lower()
     code = str(video_data.get("code") or "").strip()
     if not video_id and not code:
+        return
+    if not _platform_supports_preview_video(platform=platform_name, video_id=video_id):
         return
 
     refresh_key = f"{source}:{video_id or code}"
@@ -752,25 +851,17 @@ def _schedule_preview_video_refresh(video_data: dict, source: str = "local"):
         _preview_refresh_last_run[refresh_key] = now
 
     def worker():
-        platform_name = "javdb"
-        lookup_id = ""
-
-        try:
-            from core.platform import Platform as CorePlatform, remove_platform_prefix
-
-            parsed_platform, original_id = remove_platform_prefix(video_id)
-            if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS]:
-                platform_name = parsed_platform.value.lower()
-                lookup_id = str(original_id or "").strip()
-        except Exception:
-            pass
-
+        resolved_platform, lookup_id, _manifest = _resolve_video_lookup_context(
+            video_id=video_id,
+            code=code,
+            platform_name=platform_name,
+        )
         lookup = lookup_id or code or video_id
         if not lookup:
             return
 
         try:
-            adapter = get_video_adapter(platform_name)
+            adapter = get_video_adapter(resolved_platform)
             detail = adapter.get_video_detail(lookup)
             if not detail and code and hasattr(adapter, "get_video_by_code"):
                 detail = adapter.get_video_by_code(code)
@@ -798,17 +889,14 @@ def _refresh_preview_video_now(video_id: str, source: str = "local", force_downl
 
     current_data = current_video.to_dict() if hasattr(current_video, "to_dict") else {}
     code = str(current_data.get("code") or "").strip()
-
-    platform_name = "javdb"
-    lookup_id = ""
-    try:
-        from core.platform import Platform as CorePlatform, remove_platform_prefix
-        parsed_platform, original_id = remove_platform_prefix(video_id)
-        if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS]:
-            platform_name = parsed_platform.value.lower()
-            lookup_id = str(original_id or "").strip()
-    except Exception:
-        pass
+    platform_name = str(current_data.get("platform") or "").strip().lower()
+    if not _platform_supports_preview_video(platform=platform_name, video_id=video_id):
+        return {"success": False, "message": "当前平台未声明预览视频能力"}
+    platform_name, lookup_id, _manifest = _resolve_video_lookup_context(
+        video_id=video_id,
+        code=code,
+        platform_name=platform_name,
+    )
 
     lookup = lookup_id or code or video_id
     if not lookup:
@@ -882,6 +970,12 @@ def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dic
     _ensure_local_asset_fields(video_data)
     video_data["preview_video_local"] = _sanitize_preview_video_value(video_data.get("preview_video_local", ""))
 
+    platform_name = str(video_data.get("platform") or "").strip().lower()
+    video_id = str(video_data.get("id") or "").strip()
+    if not _platform_supports_preview_video(platform=platform_name, video_id=video_id):
+        video_data["preview_video"] = ""
+        return video_data
+
     normalized_preview = _sanitize_preview_video_value(video_data.get("preview_video", ""))
     if normalized_preview:
         video_data["preview_video"] = normalized_preview
@@ -892,16 +986,6 @@ def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dic
     video_data["preview_video"] = ""
     _schedule_preview_video_refresh(video_data, source=source)
     return video_data
-
-
-def _is_javbus_platform(platform: str = "", video_id: str = "") -> bool:
-    platform_name = str(platform or "").strip().lower()
-    if platform_name == "javbus":
-        return True
-
-    normalized_id = str(video_id or "").strip().upper()
-    return normalized_id.startswith("JAVBUS")
-
 
 def _get_preview_import_auto_download_enabled() -> bool:
     try:
@@ -938,6 +1022,7 @@ def _schedule_video_asset_cache(
     preview = _sanitize_preview_video_value(preview_video or "")
     thumbs = [str(item or "").strip() for item in (thumbnail_images or []) if str(item or "").strip()]
     auto_download_enabled = _should_auto_download_preview_assets(source)
+    allow_preview_video = bool(allow_preview_video) and _platform_allows_preview_video_download(video_id=video_id)
 
     if allow_cover and cover:
         # 封面始终下载，不受预览库自动下载开关影响
@@ -1005,176 +1090,130 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
     )
 
 
-def _parse_javdb_tag_ids(tag_ids):
-    """
-    解析前端传入的 JAVDB tag id（格式如 c1=23 或 c4=22,19）。
-    支持同一分类多标签组合，并保留用户选择顺序。
-    """
-    tag_params = {}
-    invalid_tag_ids = []
-
-    for raw_tag_id in tag_ids or []:
-        normalized = str(raw_tag_id or "").strip().lower()
-        if not normalized:
-            continue
-
-        category, sep, value = normalized.partition("=")
-        category = category.strip()
-        raw_values = value.strip()
-
-        if not sep or not re.fullmatch(r"c\d+", category):
-            invalid_tag_ids.append(str(raw_tag_id))
-            continue
-
-        values = []
-        for part in raw_values.split(","):
-            value_part = part.strip()
-            if not value_part:
-                continue
-            if not value_part.isdigit():
-                continue
-            values.append(int(value_part))
-
-        if not values:
-            invalid_tag_ids.append(str(raw_tag_id))
-            continue
-
-        tag_params.setdefault(category, [])
-        for parsed_value in values:
-            if parsed_value not in tag_params[category]:
-                tag_params[category].append(parsed_value)
-
-    def _category_sort_key(category_key: str):
-        suffix = category_key[1:]
-        return int(suffix) if suffix.isdigit() else 999
-
-    effective_tag_ids = []
-    for category_key in sorted(tag_params.keys(), key=_category_sort_key):
-        for value_item in tag_params[category_key]:
-            effective_tag_ids.append(f"{category_key}={value_item}")
-
-    return tag_params, effective_tag_ids, invalid_tag_ids, []
+def _resolve_video_manifest_or_error(platform_name: str, capability: str | None = None):
+    return runtime_resolve_video_manifest_or_error(platform_name, capability=capability)
 
 
-def _build_javdb_tag_query(tag_params):
-    """构建 JAVDB 标签查询字符串，支持同分类多值（如 c4=22,19）。"""
-    query_parts = []
-
-    def _category_sort_key(category_key: str):
-        suffix = category_key[1:]
-        return int(suffix) if suffix.isdigit() else 999
-
-    for category_key in sorted(tag_params.keys(), key=_category_sort_key):
-        values = tag_params.get(category_key) or []
-        if not values:
-            continue
-        joined_values = ",".join(str(v) for v in values)
-        query_parts.append(f"{category_key}={joined_values}")
-
-    return "&".join(query_parts)
+def _execute_video_plugin_capability(platform_name: str, capability: str, params: dict | None = None):
+    return runtime_execute_video_plugin_capability(platform_name, capability, params=params)
 
 
-def _search_javdb_by_tag_params(adapter, page: int, tag_params):
-    """
-    使用原站 /tags 查询，支持同一分类多标签组合（c4=22,19）。
-    """
-    query_string = _build_javdb_tag_query(tag_params)
-    if not query_string:
-        raise ValueError("empty tag query")
+def _get_video_platform_health_status(platform_name: str):
+    _platform, _manifest, payload = _execute_video_plugin_capability(
+        platform_name,
+        "health.query.status",
+    )
+    return dict(payload or {})
 
-    if page <= 1:
-        path = f"/tags?{query_string}"
-    else:
-        path = f"/tags?{query_string}&page={page}"
 
-    response = adapter.api.get(path)
-    html_text = response.text or ""
-    if _is_javdb_login_page(html_text):
-        raise PermissionError("JAVDB 标签搜索需要登录")
+def _read_video_tag_search_params() -> tuple[int, list[str]]:
+    page = request.args.get('page', 1, type=int) or 1
+    page = max(page, 1)
 
+    requested_tag_ids = request.args.getlist('tag_ids')
+    if not requested_tag_ids:
+        csv_tag_ids = (request.args.get('tag_ids') or '').strip()
+        if csv_tag_ids:
+            requested_tag_ids = [part.strip() for part in csv_tag_ids.split(',') if part.strip()]
+    return page, requested_tag_ids
+
+
+def _video_platform_health_status_response(platform_name: str):
     try:
-        soup = BeautifulSoup(html_text, "lxml")
-    except FeatureNotFound:
-        soup = BeautifulSoup(html_text, "html.parser")
-    items = soup.select('div.item a')
-
-    parse_work = getattr(adapter.api, "_parse_work_item", None)
-    works = []
-    if callable(parse_work):
-        for item in items:
-            try:
-                work = parse_work(item)
-                if work:
-                    works.append(work)
-            except Exception:
-                continue
-
-    has_next = soup.select_one('nav.pagination a[rel="next"]') is not None
-
-    return {
-        "page": page,
-        "has_next": has_next,
-        "works": works,
-        "query": query_string
-    }
-
-
-def _is_javdb_login_page(html_text: str) -> bool:
-    """判断返回页面是否为 JAVDB 登录页。"""
-    if not html_text:
-        return False
-
-    lower_html = html_text.lower()
-    title_match = re.search(r"<title[^>]*>(.*?)</title>", lower_html, re.DOTALL)
-    title_text = title_match.group(1).strip() if title_match else ""
-
-    if "登入 | javdb" in title_text:
-        return True
-    if "login | javdb" in title_text:
-        return True
-
-    return False
-
-
-def _is_javdb_tag_search_available(adapter) -> bool:
-    """
-    检查 JAVDB 标签页是否可访问。
-    若 cookies 失效通常会跳转登录页，返回 False。
-    """
-    try:
-        response = adapter.api.get('/tags')
-        return not _is_javdb_login_page(response.text)
+        return success_response(_get_video_platform_health_status(platform_name))
     except Exception as e:
-        app_logger.warning(f"检查 JAVDB 标签页可用性失败，默认放行: {e}")
-        return True
+        error_logger.error(f"检查视频平台配置状态失败 platform={platform_name}: {e}")
+        return error_response(500, "server error")
 
 
-def _get_javdb_cookie_config_status():
-    """读取 third_party_config.json 中 JAVDB cookies 配置状态。"""
-    if not is_third_party_enabled():
-        raise RuntimeError(
-            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+def _video_taxonomy_tags_response(platform_name: str):
+    try:
+        keyword = (request.args.get('keyword') or '').strip().lower()
+        category_filter = (request.args.get('category') or '').strip().lower()
+        _platform, _manifest, payload = _execute_video_plugin_capability(
+            platform_name,
+            "taxonomy.tags",
+            params={
+                "keyword": keyword,
+                "category": category_filter,
+            },
         )
-    javdb_config = get_protocol_config_store().get_plugin_config("javdb", reload=True) or {}
-    status = get_query_status_for_video_platform("javdb")
-    cookies = javdb_config.get('cookies') or {}
+        return success_response(dict(payload or {}))
+    except Exception as e:
+        error_logger.error(f"获取视频平台标签失败 platform={platform_name}: {e}")
+        return error_response(500, "server error")
 
-    normalized_cookies = {}
-    if isinstance(cookies, dict):
-        for raw_key, raw_value in cookies.items():
-            key = str(raw_key or '').strip()
-            value = str(raw_value or '').strip()
-            if key and value:
-                normalized_cookies[key] = value
 
-    cookie_keys = sorted(normalized_cookies.keys())
-    has_session_cookie = bool(status.get("configured", False))
-    return {
-        "configured": bool(status.get("configured", False)),
-        "cookie_keys": cookie_keys,
-        "has_session_cookie": has_session_cookie,
-        "message": str(status.get("message") or ""),
-    }
+def _video_tag_search_response(platform_name: str):
+    try:
+        page, requested_tag_ids = _read_video_tag_search_params()
+
+        resolved_platform_name, manifest, payload = _execute_video_plugin_capability(
+            platform_name,
+            "taxonomy.tag_search",
+            params={
+                "page": page,
+                "tag_ids": requested_tag_ids,
+            },
+        )
+
+        result = dict(payload or {})
+        works = result.get('videos') or result.get('works') or []
+        videos = []
+
+        for work in works:
+            video = dict(work or {})
+            video['platform'] = resolved_platform_name
+            content_id = str(video.get('video_id') or video.get('id') or video.get('code') or "").strip()
+            if video.get('cover_url'):
+                video['cover_url'] = to_proxy_image_url(
+                    video.get('cover_url'),
+                    asset_kind="cover",
+                    video_id=content_id,
+                    platform_name=resolved_platform_name,
+                    content_id=content_id,
+                )
+            if video.get('thumbnail_url'):
+                video['thumbnail_url'] = to_proxy_image_url(
+                    video.get('thumbnail_url'),
+                    asset_kind="image",
+                    video_id=content_id,
+                    platform_name=resolved_platform_name,
+                    content_id=content_id,
+                )
+            videos.append(
+                annotate_item(
+                    video,
+                    plugin_id=manifest.plugin_id,
+                    media_type="video",
+                    capability="taxonomy.tag_search",
+                )
+            )
+
+        return success_response({
+            "platform": resolved_platform_name,
+            "page": result.get('page', page),
+            "has_next": result.get('has_next', False),
+            "total_pages": result.get('total_pages'),
+            "videos": videos,
+            "query": result.get('query'),
+            "requested_tag_ids": result.get('requested_tag_ids', requested_tag_ids),
+            "effective_tag_ids": result.get('effective_tag_ids', []),
+            "invalid_tag_ids": result.get('invalid_tag_ids', []),
+            "overridden_tag_ids": result.get('overridden_tag_ids', []),
+        })
+    except ValueError as e:
+        error_logger.error(f"视频平台标签搜索失败(参数) platform={platform_name}: {e}")
+        return error_response(400, str(e))
+    except PermissionError as e:
+        error_logger.error(f"视频平台标签搜索失败(权限) platform={platform_name}: {e}")
+        return error_response(401, str(e))
+    except RuntimeError as e:
+        error_logger.error(f"视频平台标签搜索失败(配置) platform={platform_name}: {e}")
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"视频平台标签搜索失败 platform={platform_name}: {e}")
+        return error_response(500, "server error")
 
 
 @video_bp.route('/third-party/search', methods=['GET'])
@@ -1191,18 +1230,38 @@ def third_party_search():
         app_logger.info(f"开始搜索视频，平台: {platform}, 关键词: {keyword}, 页码: {page}")
 
         normalized_platform = str(platform or "").strip().lower()
+        search_plugins = []
+        search_lookup = {}
+        for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"):
+            legacy_platforms = [str(item or "").strip().lower() for item in manifest.legacy_platforms if str(item or "").strip()]
+            if not legacy_platforms:
+                continue
+
+            descriptor = {
+                "manifest": manifest,
+                "canonical_platform": legacy_platforms[0],
+                "legacy_platforms": legacy_platforms,
+            }
+            search_plugins.append(descriptor)
+            for alias in legacy_platforms:
+                search_lookup[alias] = descriptor
+
+        supported_platforms = sorted({item["canonical_platform"] for item in search_plugins})
         if normalized_platform == 'all':
-            platforms_to_search = ['javdb', 'javbus']
-        elif normalized_platform in {'javdb', 'javbus'}:
-            platforms_to_search = [normalized_platform]
+            platforms_to_search = search_plugins
         else:
-            return error_response(400, f"不支持的视频平台: {platform}")
+            descriptor = search_lookup.get(normalized_platform)
+            if descriptor is None:
+                return error_response(400, f"不支持的视频平台: {platform}，支持的平台: {supported_platforms}")
+            platforms_to_search = [descriptor]
 
         all_videos = []
         platform_results = {}
         platform_errors = {}
         
-        for plat in platforms_to_search:
+        for descriptor in platforms_to_search:
+            manifest = descriptor["manifest"]
+            plat = descriptor["canonical_platform"]
             status = _get_video_platform_query_status(plat)
             if not bool(status.get("configured", False)):
                 platform_errors[plat] = str(status.get("message") or f"{plat} 平台未配置查询凭据")
@@ -1213,14 +1272,32 @@ def third_party_search():
             try:
                 adapter = get_video_adapter(plat)
                 result = adapter.search_videos(keyword, page=page, max_pages=1)
-                videos = result.get('videos', [])
+                videos = annotate_items(
+                    result.get('videos', []),
+                    plugin_id=manifest.plugin_id,
+                    media_type="video",
+                    capability="catalog.search",
+                )
                 
                 for video in videos:
                     video['platform'] = plat
+                    content_id = str(video.get('video_id') or video.get('id') or video.get('code') or "").strip()
                     if video.get('cover_url'):
-                        video['cover_url'] = to_proxy_image_url(video.get('cover_url'))
+                        video['cover_url'] = to_proxy_image_url(
+                            video.get('cover_url'),
+                            asset_kind="cover",
+                            video_id=content_id,
+                            platform_name=plat,
+                            content_id=content_id,
+                        )
                     if video.get('thumbnail_url'):
-                        video['thumbnail_url'] = to_proxy_image_url(video.get('thumbnail_url'))
+                        video['thumbnail_url'] = to_proxy_image_url(
+                            video.get('thumbnail_url'),
+                            asset_kind="image",
+                            video_id=content_id,
+                            platform_name=plat,
+                            content_id=content_id,
+                        )
                 
                 platform_results[plat] = {
                     'page': result.get('page', page),
@@ -1267,165 +1344,25 @@ def third_party_search():
         return error_response(500, "服务器内部错误")
 
 
-@video_bp.route('/third-party/javdb/cookie-status', methods=['GET'])
+@video_bp.route('/third-party/<platform_name>/health-status', methods=['GET'])
 @require_third_party(error_response)
-def third_party_javdb_cookie_status():
-    """检查 JAVDB cookies 是否已配置。"""
-    try:
-        return success_response(_get_javdb_cookie_config_status())
-    except Exception as e:
-        error_logger.error(f"检查 JAVDB cookies 配置状态失败: {e}")
-        return error_response(500, "server error")
+def third_party_platform_health_status(platform_name: str):
+    """检查指定视频平台查询状态。"""
+    return _video_platform_health_status_response(platform_name)
 
 
-@video_bp.route('/third-party/javdb/tags', methods=['GET'])
+@video_bp.route('/third-party/<platform_name>/tags', methods=['GET'])
 @require_third_party(error_response)
-def third_party_javdb_tags():
-    """获取 JAVDB 内置标签（来自 javdb-api-scraper 的 TagManager）"""
-    try:
-        keyword = (request.args.get('keyword') or '').strip().lower()
-        category_filter = (request.args.get('category') or '').strip().lower()
-        cookie_status = _get_javdb_cookie_config_status()
-
-        if not cookie_status.get("configured"):
-            return success_response({
-                "categories": [],
-                "tags": [],
-                "total": 0,
-                "source_ready": False,
-                "tag_search_available": False,
-                "cookie_configured": False,
-                "message": str(cookie_status.get("message") or "未配置cookie，请先在系统配置中填写JAVDB cookie")
-            })
-
-        adapter = get_video_adapter('javdb')
-        tag_manager = adapter.api.tag_manager
-        tag_search_available = _is_javdb_tag_search_available(adapter)
-
-        all_tags = tag_manager.get_all_tags() or {}
-        categories = tag_manager.get_categories() or {}
-
-        if not all_tags:
-            app_logger.warning("JAVDB 内置标签库为空，可能缺少 tags_database.enc")
-            return success_response({
-                "categories": [],
-                "tags": [],
-                "total": 0,
-                "source_ready": False,
-                "tag_search_available": tag_search_available,
-                "cookie_configured": True,
-                "message": "JAVDB 内置标签库未初始化（缺少 tags_database.enc）"
-            })
-
-        tags = []
-        category_counts = {}
-
-        for tag_id, tag_info in all_tags.items():
-            category = str(tag_info.get('category') or '').strip().lower()
-            category_name = tag_info.get('category_name') or categories.get(category, '')
-            tag_name = str(tag_info.get('name') or '').strip()
-
-            if category_filter and category != category_filter:
-                continue
-
-            searchable_text = f"{tag_name} {tag_id}".lower()
-            if keyword and keyword not in searchable_text:
-                continue
-
-            category_counts[category] = category_counts.get(category, 0) + 1
-
-            tags.append({
-                "id": str(tag_id),
-                "name": tag_name,
-                "category": category,
-                "category_name": category_name,
-                "tag_id": str(tag_info.get('tag_id') or ''),
-                "value": str(tag_info.get('value') or '')
-            })
-
-        tags.sort(key=lambda item: (item.get('category', ''), item.get('name', '')))
-
-        response_categories = []
-        for category_key, category_name in sorted(categories.items(), key=lambda x: x[0]):
-            if category_filter and category_key != category_filter:
-                continue
-            count = category_counts.get(category_key, 0)
-            if keyword and count == 0:
-                continue
-            response_categories.append({
-                "key": category_key,
-                "name": category_name,
-                "count": count
-            })
-
-        return success_response({
-            "categories": response_categories,
-            "tags": tags,
-            "total": len(tags),
-            "source_ready": True,
-            "tag_search_available": tag_search_available,
-            "cookie_configured": True
-        })
-    except Exception as e:
-        error_logger.error(f"获取 JAVDB 内置标签失败: {e}")
-        return error_response(500, "server error")
+def third_party_platform_tags(platform_name: str):
+    """获取指定视频平台暴露的 taxonomy.tags 能力。"""
+    return _video_taxonomy_tags_response(platform_name)
 
 
-@video_bp.route('/third-party/javdb/search-by-tags', methods=['GET'])
+@video_bp.route('/third-party/<platform_name>/search-by-tags', methods=['GET'])
 @require_third_party(error_response)
-def third_party_javdb_search_by_tags():
-    """通过 JAVDB 内置标签组合搜索视频"""
-    try:
-        page = request.args.get('page', 1, type=int) or 1
-        page = max(page, 1)
-
-        requested_tag_ids = request.args.getlist('tag_ids')
-        if not requested_tag_ids:
-            csv_tag_ids = (request.args.get('tag_ids') or '').strip()
-            if csv_tag_ids:
-                requested_tag_ids = [part.strip() for part in csv_tag_ids.split(',') if part.strip()]
-
-        tag_params, effective_tag_ids, invalid_tag_ids, overridden_tag_ids = _parse_javdb_tag_ids(requested_tag_ids)
-
-        if not tag_params:
-            return error_response(400, "请至少提供一个有效 tag_id（格式如 c1=23）")
-
-        adapter = get_video_adapter('javdb')
-        if not _is_javdb_tag_search_available(adapter):
-            return error_response(401, "JAVDB 标签搜索需要登录，请更新 cookies 后重试")
-
-        result = _search_javdb_by_tag_params(adapter, page=page, tag_params=tag_params)
-
-        works = result.get('works', []) or []
-        videos = []
-
-        for work in works:
-            video = dict(work or {})
-            video['platform'] = 'javdb'
-            if video.get('cover_url'):
-                video['cover_url'] = to_proxy_image_url(video.get('cover_url'))
-            if video.get('thumbnail_url'):
-                video['thumbnail_url'] = to_proxy_image_url(video.get('thumbnail_url'))
-            videos.append(video)
-
-        return success_response({
-            "platform": "javdb",
-            "page": result.get('page', page),
-            "has_next": result.get('has_next', False),
-            "total_pages": result.get('total_pages'),
-            "videos": videos,
-            "query": result.get('query'),
-            "requested_tag_ids": requested_tag_ids,
-            "effective_tag_ids": effective_tag_ids,
-            "invalid_tag_ids": invalid_tag_ids,
-            "overridden_tag_ids": overridden_tag_ids
-        })
-    except RuntimeError as e:
-        error_logger.error(f"JAVDB 标签搜索失败(配置): {e}")
-        return error_response(400, str(e))
-    except Exception as e:
-        error_logger.error(f"JAVDB 标签搜索失败: {e}")
-        return error_response(500, "server error")
+def third_party_platform_search_by_tags(platform_name: str):
+    """通过指定视频平台的 taxonomy.tag_search 能力搜索视频。"""
+    return _video_tag_search_response(platform_name)
 
 
 @video_bp.route('/third-party/detail', methods=['GET'])
@@ -1433,7 +1370,7 @@ def third_party_javdb_search_by_tags():
 def third_party_detail():
     try:
         video_id = request.args.get('video_id')
-        platform = request.args.get('platform', 'javdb')
+        platform = request.args.get('platform', _get_default_video_platform_name())
         
         if not video_id:
             return error_response(400, "缺少参数")
@@ -1442,7 +1379,14 @@ def third_party_detail():
         detail = adapter.get_video_detail(video_id)
         
         if detail:
-            return success_response(detail)
+            return success_response(
+                annotate_item(
+                    detail,
+                    platform_name=platform,
+                    media_type="video",
+                    capability="catalog.detail",
+                )
+            )
         else:
             return error_response(404, "视频不存在")
     except RuntimeError as e:
@@ -1458,7 +1402,7 @@ def third_party_detail():
 def third_party_actor_search():
     try:
         actor_name = request.args.get('actor_name')
-        platform = request.args.get('platform', 'javdb')
+        platform = request.args.get('platform', _get_default_video_platform_name())
         
         if not actor_name:
             return error_response(400, "缺少演员名称")
@@ -1481,7 +1425,7 @@ def third_party_actor_works():
     try:
         actor_id = request.args.get('actor_id')
         page = request.args.get('page', 1, type=int)
-        platform = request.args.get('platform', 'javdb')
+        platform = request.args.get('platform', _get_default_video_platform_name())
         
         if not actor_id:
             return error_response(400, "缺少演员ID")
@@ -1504,10 +1448,24 @@ def third_party_actor_works():
                             # 覆盖为本地封面路径，实现“先本地缓存，否则图床”
                             work["cover_url"] = local_cover
                 if work.get("cover_url") and not str(work.get("cover_url")).startswith("/static/"):
-                    work["cover_url"] = to_proxy_image_url(work.get("cover_url"))
+                    content_id = str(work.get("video_id") or work.get("id") or code or "").strip()
+                    work["cover_url"] = to_proxy_image_url(
+                        work.get("cover_url"),
+                        asset_kind="cover",
+                        video_id=content_id,
+                        platform_name=platform,
+                        content_id=content_id,
+                    )
             except Exception as e:
                 error_logger.error(f"为演员作品匹配本地封面失败: {e}")
-            enhanced_works.append(work)
+            enhanced_works.append(
+                annotate_item(
+                    work,
+                    platform_name=platform,
+                    media_type="video",
+                    capability="person.works",
+                )
+            )
         
         response_data = {
             "platform": platform,
@@ -1533,26 +1491,17 @@ def third_party_import():
         data = request.json
         video_id = str(data.get('video_id') or '').strip()
         target = data.get('target', 'home')
-        platform = data.get('platform', 'javdb').lower()
+        platform = str(data.get('platform') or '').strip().lower()
         
         if not video_id:
             return error_response(400, "缺少视频ID或code")
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
-
-        from core.platform import Platform as CorePlatform, add_platform_prefix, remove_platform_prefix
-
-        if '_' in video_id:
-            parts = video_id.split('_', 1)
-            if len(parts) == 2 and parts[0].upper() in ['JAVDB', 'JAVBUS']:
-                platform = parts[0].lower()
-                video_id = parts[1]
-        else:
-            parsed_platform, original_id = remove_platform_prefix(video_id)
-            if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS] and original_id and original_id != video_id:
-                platform = parsed_platform.value.lower()
-                video_id = original_id
+        platform, video_id, _manifest = _resolve_video_lookup_context(
+            video_id=video_id,
+            platform_name=platform,
+        )
         
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
@@ -1572,8 +1521,7 @@ def third_party_import():
         if not detail:
             return error_response(404, "视频不存在")
 
-        platform_enum = CorePlatform.JAVBUS if platform == 'javbus' else CorePlatform.JAVDB
-        video_id_full = add_platform_prefix(platform_enum, video_id)
+        video_id_full = _build_video_host_id(platform, video_id)
         video_code = (detail.get("code", "") or "").strip()
         
         if target == 'home':
@@ -1597,7 +1545,17 @@ def third_party_import():
                     video_tag_ids.append(tag_name_to_id[tag_name])
 
             cover_url = detail.get("cover_url", "")
-            cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+            cover_path_fallback = (
+                to_proxy_image_url(
+                    cover_url,
+                    asset_kind="cover",
+                    video_id=video_id_full,
+                    platform_name=platform,
+                    content_id=video_id,
+                )
+                if cover_url
+                else ""
+            )
 
             video_data = {
                 "id": video_id_full,
@@ -1635,7 +1593,10 @@ def third_party_import():
                     preview_video=video_data.get("preview_video", ""),
                     thumbnail_images=video_data.get("thumbnail_images", []),
                     allow_cover=True,
-                    allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_data["id"]),
+                    allow_preview_video=_platform_allows_preview_video_download(
+                        platform=platform,
+                        video_id=video_data["id"],
+                    ),
                 )
                 
                 app_logger.info(f"导入视频成功: {video_data['id']}, 标签: {video_tag_ids}")
@@ -1678,7 +1639,17 @@ def third_party_import():
                 return error_response(400, f"视频 {video_id_full} 已存在")
             
             cover_url = detail.get("cover_url", "")
-            cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+            cover_path_fallback = (
+                to_proxy_image_url(
+                    cover_url,
+                    asset_kind="cover",
+                    video_id=video_id_full,
+                    platform_name=platform,
+                    content_id=video_id,
+                )
+                if cover_url
+                else ""
+            )
 
             video_data = {
                 "id": video_id_full,
@@ -1715,7 +1686,10 @@ def third_party_import():
                 preview_video=video_data.get("preview_video", ""),
                 thumbnail_images=video_data.get("thumbnail_images", []),
                 allow_cover=True,
-                allow_preview_video=not _is_javbus_platform(platform=platform, video_id=video_id_full),
+                allow_preview_video=_platform_allows_preview_video_download(
+                    platform=platform,
+                    video_id=video_id_full,
+                ),
             )
 
             recent_result = video_service.apply_recent_import_tags(
@@ -1836,8 +1810,17 @@ def migrate_video_recommendations_to_local():
             return error_response(400, "missing parameter: video_ids")
 
         from infrastructure.task_manager import task_manager
+        task_platform = ""
+        for candidate_id in normalized_ids:
+            resolved_platform, _lookup_id, _manifest = _resolve_video_lookup_context(video_id=candidate_id)
+            if str(resolved_platform or "").strip():
+                task_platform = str(resolved_platform).strip().upper()
+                break
+        if not task_platform:
+            task_platform = str(_get_default_video_platform_name() or "").strip().upper()
+
         task_id = task_manager.create_task(
-            platform='JAVDB',
+            platform=task_platform,
             import_type='migrate_to_local',
             target='home',
             comic_ids=normalized_ids,

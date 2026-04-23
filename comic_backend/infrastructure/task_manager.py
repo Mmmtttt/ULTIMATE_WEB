@@ -321,11 +321,67 @@ class TaskManager:
             return normalized
 
         platform_key = str(platform or "").strip().upper()
-        if platform_key in {"JAVDB", "JAVBUS"}:
-            return "video"
-        if platform_key in {"JM", "PK"}:
-            return "comic"
+        if platform_key:
+            try:
+                from protocol.platform_meta import resolve_manifest_media_type, resolve_platform_manifest
+
+                manifest = resolve_platform_manifest(platform_key)
+                if manifest is not None:
+                    return resolve_manifest_media_type(manifest)
+            except Exception:
+                pass
         return "comic"
+
+    @staticmethod
+    def _normalize_platform_value(platform: Any) -> str:
+        return str(getattr(platform, "value", platform) or "").strip()
+
+    @classmethod
+    def _resolve_comic_manifest(cls, platform: Any):
+        from protocol.platform_meta import resolve_platform_manifest
+
+        platform_name = cls._normalize_platform_value(platform)
+        if not platform_name:
+            return None
+        return resolve_platform_manifest(platform_name, media_type="comic")
+
+    @classmethod
+    def _resolve_comic_host_prefix(cls, platform: Any) -> str:
+        from protocol.platform_meta import resolve_manifest_host_prefix
+
+        manifest = cls._resolve_comic_manifest(platform)
+        fallback = cls._normalize_platform_value(platform).upper()
+        return resolve_manifest_host_prefix(manifest, fallback=fallback)
+
+    @classmethod
+    def _build_comic_host_id(cls, platform: Any, album_id: str) -> str:
+        from protocol.platform_meta import build_prefixed_id
+
+        return build_prefixed_id(cls._resolve_comic_host_prefix(platform), album_id)
+
+    @classmethod
+    def _resolve_comic_download_dir(cls, platform: Any) -> str:
+        from core.constants import COMIC_DIR
+        from protocol.platform_meta import build_platform_root_dir
+
+        manifest = cls._resolve_comic_manifest(platform)
+        return build_platform_root_dir(
+            COMIC_DIR,
+            manifest=manifest,
+            platform_name=cls._normalize_platform_value(platform),
+        )
+
+    @classmethod
+    def _resolve_comic_cover_dir(cls, platform: Any) -> str:
+        from core.constants import COVER_DIR
+        from protocol.platform_meta import build_platform_root_dir
+
+        manifest = cls._resolve_comic_manifest(platform)
+        return build_platform_root_dir(
+            COVER_DIR,
+            manifest=manifest,
+            platform_name=cls._normalize_platform_value(platform),
+        )
 
     def _execute_comic_import(self, task: ImportTask) -> Dict:
         """执行漫画导入操作"""
@@ -337,14 +393,21 @@ class TaskManager:
         if project_root not in sys.path:
             sys.path.insert(0, project_root)
         
-        from third_party.platform_service import get_platform_service
-        from core.platform import Platform
+        from protocol.platform_service import get_platform_service
         from infrastructure.persistence.json_storage import JsonStorage
         from core.constants import TAGS_JSON_FILE
         from core.utils import normalize_total_page
         
         try:
-            platform = Platform(task.platform)
+            from protocol.platform_meta import resolve_manifest_platform_label
+
+            platform = self._normalize_platform_value(task.platform)
+            if not platform:
+                return {'success': False, 'error': '缺少平台标识'}
+
+            manifest = self._resolve_comic_manifest(platform)
+            if manifest is not None:
+                platform = resolve_manifest_platform_label(manifest, fallback=platform)
             platform_service = get_platform_service()
             
             # 从独立的标签数据库读取tag
@@ -408,13 +471,15 @@ class TaskManager:
             
             # 如果是主页导入，需要下载图片
             if task.target == 'home':
-                from core.platform import get_original_id
-                from core.constants import JM_PICTURES_DIR, PK_PICTURES_DIR
+                from protocol.platform_meta import split_prefixed_id
                 
                 total_comics = len(converted_data.get('comics', []))
                 for idx, comic in enumerate(converted_data.get('comics', [])):
                     try:
-                        original_id = get_original_id(comic['id'])
+                        _platform_key, original_id, _manifest = split_prefixed_id(
+                            comic['id'],
+                            media_type="comic",
+                        )
                         
                         # 如果是批量导入，更新进度 - 显示漫画进度
                         if task.import_type == 'by_list':
@@ -425,7 +490,7 @@ class TaskManager:
                             self._save_tasks()
                         
                         # 使用 PlatformService 下载漫画
-                        download_dir = JM_PICTURES_DIR if platform == Platform.JM else PK_PICTURES_DIR
+                        download_dir = self._resolve_comic_download_dir(platform)
                         detail, success = platform_service.download_album(
                             platform,
                             original_id,
@@ -458,44 +523,37 @@ class TaskManager:
 
     @staticmethod
     def _normalize_video_lookup(video_id: str, platform: str) -> Tuple[str, str]:
-        from core.platform import Platform as CorePlatform, remove_platform_prefix
+        from application.video_runtime_support import resolve_video_lookup_context
 
-        resolved_platform = str(platform or "javdb").strip().lower()
-        resolved_video_id = str(video_id or "").strip()
-
-        if "_" in resolved_video_id:
-            parts = resolved_video_id.split("_", 1)
-            if len(parts) == 2 and parts[0].upper() in {"JAVDB", "JAVBUS"}:
-                resolved_platform = parts[0].lower()
-                resolved_video_id = parts[1].strip()
-                return resolved_platform, resolved_video_id
-
-        parsed_platform, original_id = remove_platform_prefix(resolved_video_id)
-        if parsed_platform in [CorePlatform.JAVDB, CorePlatform.JAVBUS] and original_id and original_id != resolved_video_id:
-            resolved_platform = parsed_platform.value.lower()
-            resolved_video_id = str(original_id).strip()
-
-        return resolved_platform, resolved_video_id
+        resolved_platform, resolved_video_id, _manifest = resolve_video_lookup_context(
+            video_id=str(video_id or "").strip(),
+            platform_name=str(platform or "").strip().lower(),
+        )
+        return str(resolved_platform or "").strip().lower(), str(resolved_video_id or "").strip()
 
     def _execute_video_import(self, task: ImportTask) -> Dict:
         """执行视频导入操作"""
         try:
-            from api.v1.video import (
+            from application.video_app_service import VideoAppService
+            from application.video_runtime_support import (
+                build_video_host_id,
                 get_video_adapter,
-                video_service,
+                platform_allows_preview_video_download,
+                resolve_video_lookup_context,
+                sanitize_preview_video_value,
+                schedule_video_asset_cache,
                 to_proxy_image_url,
-                _sanitize_preview_video_value,
-                _schedule_video_asset_cache,
-                _is_javbus_platform,
             )
-            from core.platform import Platform as CorePlatform, add_platform_prefix
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
             from infrastructure.persistence.json_storage import JsonStorage
             from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
             from core.utils import get_current_time
 
-            platform_name = str(task.platform or "JAVDB").strip().lower()
+            video_service = VideoAppService()
+            platform_name, _lookup_id, _manifest = resolve_video_lookup_context(
+                platform_name=str(task.platform or "").strip().lower(),
+            )
             tag_service = TagAppService()
             existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
             tag_name_to_id = {
@@ -569,8 +627,7 @@ class TaskManager:
                         failed_items.append({"lookup": raw_lookup, "reason": "缺少视频番号"})
                         continue
 
-                    platform_enum = CorePlatform.JAVBUS if resolved_platform == "javbus" else CorePlatform.JAVDB
-                    video_id_full = add_platform_prefix(platform_enum, resolved_lookup)
+                    video_id_full = build_video_host_id(resolved_platform, resolved_lookup)
 
                     if task.target == "home":
                         existing = video_service.get_video_by_code(video_code)
@@ -601,7 +658,17 @@ class TaskManager:
                             tag_ids.append(tag_id)
 
                     cover_url = str(detail.get("cover_url", "") or "").strip()
-                    cover_path_fallback = to_proxy_image_url(cover_url) if cover_url else ""
+                    cover_path_fallback = (
+                        to_proxy_image_url(
+                            cover_url,
+                            asset_kind="cover",
+                            video_id=video_id_full,
+                            platform_name=resolved_platform,
+                            content_id=resolved_lookup,
+                        )
+                        if cover_url
+                        else ""
+                    )
                     video_data = {
                         "id": video_id_full,
                         "title": detail.get("title", ""),
@@ -612,7 +679,7 @@ class TaskManager:
                         "actors": detail.get("actors", []),
                         "magnets": detail.get("magnets", []),
                         "thumbnail_images": detail.get("thumbnail_images", []),
-                        "preview_video": _sanitize_preview_video_value(detail.get("preview_video", "")),
+                        "preview_video": sanitize_preview_video_value(detail.get("preview_video", "")),
                         "cover_path": cover_path_fallback,
                         "thumbnail_images_local": [],
                         "preview_video_local": "",
@@ -627,14 +694,18 @@ class TaskManager:
                             failed_count += 1
                             failed_items.append({"lookup": raw_lookup, "reason": import_result.message or "导入失败"})
                             continue
-                        _schedule_video_asset_cache(
+                        schedule_video_asset_cache(
                             video_id=video_data["id"],
                             source="local",
                             cover_url=cover_url,
                             preview_video=video_data.get("preview_video", ""),
                             thumbnail_images=video_data.get("thumbnail_images", []),
                             allow_cover=True,
-                            allow_preview_video=not _is_javbus_platform(platform=resolved_platform, video_id=video_data["id"]),
+                            allow_preview_video=platform_allows_preview_video_download(
+                                platform=resolved_platform,
+                                video_id=video_data["id"],
+                            ),
+                            video_service=video_service,
                         )
                     else:
                         now = get_current_time()
@@ -643,14 +714,18 @@ class TaskManager:
                         preview_db_data.setdefault("video_recommendations", []).append(video_data)
                         preview_codes.add(video_code.upper())
                         preview_dirty = True
-                        _schedule_video_asset_cache(
+                        schedule_video_asset_cache(
                             video_id=video_data["id"],
                             source="preview",
                             cover_url=cover_url,
                             preview_video=video_data.get("preview_video", ""),
                             thumbnail_images=video_data.get("thumbnail_images", []),
                             allow_cover=True,
-                            allow_preview_video=not _is_javbus_platform(platform=resolved_platform, video_id=video_data["id"]),
+                            allow_preview_video=platform_allows_preview_video_download(
+                                platform=resolved_platform,
+                                video_id=video_data["id"],
+                            ),
+                            video_service=video_service,
                         )
 
                     task.title = str(detail.get("title", "") or task.title or "视频导入")
@@ -740,13 +815,7 @@ class TaskManager:
     
     def _convert_to_standard_format(self, albums: List[Dict], existing_tags: List[Dict], platform) -> Dict:
         """将平台数据转换为系统标准格式"""
-        from core.platform import add_platform_prefix, get_original_id, PLATFORM_PREFIXES, Platform
         from datetime import datetime
-        import os
-        import requests
-        from PIL import Image
-        from io import BytesIO
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR
         from core.utils import get_preview_pages, normalize_total_page
         
         tag_name_to_id = {}
@@ -769,7 +838,7 @@ class TaskManager:
         comics = []
         
         # 使用 PlatformService 获取预览图片 URL
-        from third_party.platform_service import get_platform_service
+        from protocol.platform_service import get_platform_service
         platform_service = get_platform_service()
         
         for album in albums:
@@ -805,7 +874,7 @@ class TaskManager:
             local_cover_path = self._download_cover(album_id, cover_url, platform)
             
             comic = {
-                "id": add_platform_prefix(platform, album_id),
+                "id": self._build_comic_host_id(platform, album_id),
                 "title": album.get("title", ""),
                 "title_jp": album.get("title_jp", ""),
                 "author": album.get("author", ""),
@@ -856,22 +925,21 @@ class TaskManager:
         使用 PlatformService 统一处理不同平台的封面下载
         """
         import os
-        from core.constants import JM_COVER_DIR, PK_COVER_DIR
-        from core.platform import Platform, PLATFORM_PREFIXES
-        from third_party.platform_service import get_platform_service
+        from protocol.platform_service import get_platform_service
         
         if not album_id:
             return ""
         
         try:
-            cover_dir = JM_COVER_DIR if platform == Platform.JM else PK_COVER_DIR
+            cover_dir = self._resolve_comic_cover_dir(platform)
             os.makedirs(cover_dir, exist_ok=True)
             cover_path = os.path.join(cover_dir, f"{album_id}.jpg")
+            host_prefix = self._resolve_comic_host_prefix(platform)
+            static_cover_path = f"/static/cover/{host_prefix}/{album_id}.jpg" if host_prefix else f"/static/cover/{album_id}.jpg"
             
             # 已有本地封面，直接返回
             if os.path.exists(cover_path):
-                platform_prefix = PLATFORM_PREFIXES.get(platform, "")
-                return f"/static/cover/{platform_prefix}/{album_id}.jpg" if platform_prefix else f"/static/cover/{album_id}.jpg"
+                return static_cover_path
             
             # 使用 PlatformService 下载封面
             platform_service = get_platform_service()
@@ -883,10 +951,8 @@ class TaskManager:
             )
             
             if success and os.path.exists(cover_path):
-                platform_prefix = PLATFORM_PREFIXES.get(platform, "")
-                local_path = f"/static/cover/{platform_prefix}/{album_id}.jpg" if platform_prefix else f"/static/cover/{album_id}.jpg"
-                app_logger.info(f"封面下载成功: {album_id} -> {local_path}")
-                return local_path
+                app_logger.info(f"封面下载成功: {album_id} -> {static_cover_path}")
+                return static_cover_path
             else:
                 error_logger.warning(f"封面下载失败: {album_id}")
                 return ""

@@ -3,14 +3,18 @@ from domain.recommendation import Recommendation, RecommendationRepository
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_date
-from core.constants import RECOMMENDATION_JSON_FILE
 
 
 class RecommendationJsonRepository(RecommendationRepository):
     """推荐漫画 JSON 仓库实现 - 使用独立的 JSON 文件存储"""
     
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage(RECOMMENDATION_JSON_FILE)
+        if storage is not None:
+            self._storage = storage
+        else:
+            from core.constants import RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE
+
+            self._storage = JsonStorage(ACTIVE_RECOMMENDATION_JSON_FILE)
     
     def get_by_id(self, recommendation_id: str) -> Optional[Recommendation]:
         """根据ID获取推荐漫画"""

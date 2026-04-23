@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from application.list_app_service import ListAppService
 from infrastructure.logger import app_logger, error_logger
+from protocol.gateway import get_protocol_gateway
 from .runtime_guard import require_third_party
 
 list_bp = Blueprint('list', __name__)
@@ -21,6 +22,35 @@ def error_response(code, msg):
         "msg": msg,
         "data": None
     })
+
+
+def _resolve_platform_manifest(platform_name: str, capability: str = None):
+    return get_protocol_gateway().get_manifest_by_legacy_platform(
+        str(platform_name or "").strip(),
+        capability=capability,
+    )
+
+
+def _resolve_platform_content_type(platform_name: str) -> str:
+    manifest = _resolve_platform_manifest(platform_name)
+    if manifest is None:
+        return "comic"
+
+    media_types = {
+        str(item or "").strip().lower()
+        for item in (manifest.media_types or [])
+        if str(item or "").strip()
+    }
+    return "video" if "video" in media_types else "comic"
+
+
+def _supports_virtual_or_remote_favorites(platform_name: str) -> bool:
+    manifest = _resolve_platform_manifest(platform_name)
+    if manifest is None:
+        return False
+    if manifest.list_virtual_lists():
+        return True
+    return manifest.has_capability("collection.favorites_basic") or manifest.has_capability("collection.favorites")
 
 
 @list_bp.route('/list', methods=['GET'])
@@ -336,7 +366,9 @@ def import_platform_list():
             return error_response(400, "缺少必要参数: platform, platform_list_id")
 
         normalized_platform = str(platform).strip().upper()
-        content_type = 'video' if normalized_platform in {'JAVDB', 'JAVBUS'} else 'comic'
+        if _resolve_platform_manifest(normalized_platform) is None:
+            return error_response(400, f"不支持的平台: {platform}")
+        content_type = _resolve_platform_content_type(normalized_platform)
 
         from infrastructure.task_manager import task_manager
         task_id = task_manager.create_task(
@@ -396,7 +428,7 @@ def sync_platform_list():
 def import_platform_favorites():
     """导入平台收藏夹
     
-    用于漫画平台（JM、PK）的收藏夹导入功能
+    用于第三方平台声明的收藏夹导入功能
     将远程平台收藏夹导入到对应的“远程跟踪”清单
     """
     try:
@@ -411,9 +443,9 @@ def import_platform_favorites():
             return error_response(400, "缺少必要参数: platform")
         
         platform = platform.upper()
-        
-        if platform not in ['JM', 'PK']:
-            return error_response(400, "不支持的平台，仅支持: JM, PK")
+
+        if not _supports_virtual_or_remote_favorites(platform):
+            return error_response(400, "该平台未声明收藏夹导入能力")
         
         result = list_service.import_platform_favorites(platform, source)
         if result.success:
@@ -431,7 +463,7 @@ def import_platform_favorites():
 def sync_platform_favorites():
     """同步平台收藏夹
     
-    用于漫画平台（JM、PK）的收藏夹同步功能
+    用于第三方平台声明的收藏夹同步功能
     将远程平台收藏夹的新增内容同步到对应的“远程跟踪”清单
     """
     try:
@@ -446,9 +478,9 @@ def sync_platform_favorites():
             return error_response(400, "缺少必要参数: platform")
         
         platform = platform.upper()
-        
-        if platform not in ['JM', 'PK']:
-            return error_response(400, "不支持的平台，仅支持: JM, PK")
+
+        if not _supports_virtual_or_remote_favorites(platform):
+            return error_response(400, "该平台未声明收藏夹同步能力")
         
         result = list_service.sync_platform_favorites(platform, source)
         if result.success:

@@ -5,12 +5,32 @@ from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.logger import error_logger
 from core.utils import get_current_time, generate_id
 from core.enums import ContentType
-from core.constants import LISTS_JSON_FILE, JSON_FILE, RECOMMENDATION_JSON_FILE, VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
 
 
 class ListJsonRepository(ListRepository):
     def __init__(self, storage: JsonStorage = None):
-        self._storage = storage or JsonStorage(LISTS_JSON_FILE)
+        if storage is not None:
+            self._storage = storage
+        else:
+            from core.constants import LISTS_JSON_FILE as ACTIVE_LISTS_JSON_FILE
+
+            self._storage = JsonStorage(ACTIVE_LISTS_JSON_FILE)
+
+    @staticmethod
+    def _get_content_databases():
+        from core.constants import (
+            JSON_FILE as ACTIVE_JSON_FILE,
+            RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE,
+            VIDEO_JSON_FILE as ACTIVE_VIDEO_JSON_FILE,
+            VIDEO_RECOMMENDATION_JSON_FILE as ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE,
+        )
+
+        return [
+            (ACTIVE_JSON_FILE, "comics"),
+            (ACTIVE_RECOMMENDATION_JSON_FILE, "recommendations"),
+            (ACTIVE_VIDEO_JSON_FILE, "videos"),
+            (ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE, "video_recommendations"),
+        ]
     
     def get_by_id(self, list_id: str) -> Optional[List]:
         data = self._storage.read()
@@ -60,14 +80,7 @@ class ListJsonRepository(ListRepository):
                 return False
             
             # 从所有内容数据库中移除对该清单的引用
-            content_databases = [
-                (JSON_FILE, "comics"),
-                (RECOMMENDATION_JSON_FILE, "recommendations"),
-                (VIDEO_JSON_FILE, "videos"),
-                (VIDEO_RECOMMENDATION_JSON_FILE, "video_recommendations")
-            ]
-            
-            for db_file, content_key in content_databases:
+            for db_file, content_key in self._get_content_databases():
                 content_storage = JsonStorage(db_file)
                 content_data = content_storage.read()
                 contents = content_data.get(content_key, [])
@@ -112,15 +125,18 @@ class ListJsonRepository(ListRepository):
     
     def get_comic_count(self, list_id: str) -> int:
         count = 0
-        
-        # 从漫画数据库统计
-        comic_storage = JsonStorage(JSON_FILE)
+
+        from core.constants import (
+            JSON_FILE as ACTIVE_JSON_FILE,
+            RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE,
+        )
+
+        comic_storage = JsonStorage(ACTIVE_JSON_FILE)
         comic_data = comic_storage.read()
         comics = comic_data.get("comics", [])
         count += sum(1 for c in comics if list_id in c.get("list_ids", []) and not c.get("is_deleted"))
-        
-        # 从推荐漫画数据库统计
-        rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+
+        rec_storage = JsonStorage(ACTIVE_RECOMMENDATION_JSON_FILE)
         rec_data = rec_storage.read()
         recommendations = rec_data.get("recommendations", [])
         count += sum(1 for r in recommendations if list_id in r.get("list_ids", []) and not r.get("is_deleted"))
@@ -129,15 +145,18 @@ class ListJsonRepository(ListRepository):
     
     def get_video_count(self, list_id: str) -> int:
         count = 0
-        
-        # 从视频数据库统计
-        video_storage = JsonStorage(VIDEO_JSON_FILE)
+
+        from core.constants import (
+            VIDEO_JSON_FILE as ACTIVE_VIDEO_JSON_FILE,
+            VIDEO_RECOMMENDATION_JSON_FILE as ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE,
+        )
+
+        video_storage = JsonStorage(ACTIVE_VIDEO_JSON_FILE)
         video_data = video_storage.read()
         videos = video_data.get("videos", [])
         count += sum(1 for v in videos if list_id in v.get("list_ids", []) and not v.get("is_deleted"))
-        
-        # 从推荐视频数据库统计
-        video_rec_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
+
+        video_rec_storage = JsonStorage(ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE)
         video_rec_data = video_rec_storage.read()
         video_recommendations = video_rec_data.get("video_recommendations", [])
         count += sum(1 for vr in video_recommendations if list_id in vr.get("list_ids", []) and not vr.get("is_deleted"))

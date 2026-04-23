@@ -1,37 +1,4 @@
 {
-  "default_adapter": "jmcomic",
-  "adapters": {
-    "jmcomic": {
-      "enabled": true,
-      "config_path": "JMComic-Crawler-Python/config.json",
-      "username": "请输入账号",
-      "password": "请输入密码",
-      "download_dir": "./comic_backend/data/comic/JM",
-      "output_json": "comics_database.json",
-      "progress_file": "download_progress.json",
-      "favorite_list_file": "favorite_comics.txt",
-      "consecutive_hit_threshold": 10,
-      "collection_name": "我的最爱"
-    },
-    "picacomic": {
-      "enabled": true,
-      "account": "请输入账号",
-      "password": "请输入密码",
-      "base_dir": "./comic_backend/data/comic/PK"
-    },
-    "javdb": {
-      "enabled": true,
-      "domain_index": 0,
-      "timeout": 30,
-      "retry_times": 3,
-      "sleep_time": 0.5,
-      "cookies": {
-        "_jdb_session": "请输入cookie",
-        "list_mode": "h",
-        "theme": "auto",
-        "over18": "1",
-        "locale": "zh"
-      }
-    }
-  }
+  "default_adapter": "",
+  "adapters": {}
 }

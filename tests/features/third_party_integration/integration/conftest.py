@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import os
 import sys
@@ -21,14 +22,48 @@ def _reset_backend_modules() -> None:
         "api.v1.runtime_guard",
         "api.v1.comic",
         "api.v1.video",
+        "api.v1.list",
+        "api.v1.author",
+        "api.v1.actor",
         "api.v1.organize",
+        "api.v1.recommendation",
+        "application",
         "core.constants",
         "core.runtime_profile",
         "application.database_organize_service",
+        "application.comic_app_service",
+        "application.list_app_service",
+        "application.author_app_service",
+        "application.actor_app_service",
+        "application.recommendation_app_service",
         "application.video_app_service",
+        "protocol",
+        "protocol.gateway",
+        "protocol.provider_manager",
+        "protocol.registry",
+        "protocol.runtime_config",
+        "protocol.platform_service",
+        "protocol.compatibility",
+        "third_party",
+        "third_party.adapter_factory",
+        "third_party.external_api",
+        "third_party.platform_service",
+        "utils",
+        "utils.file_parser",
+        "utils.image_handler",
+        "infrastructure.recommendation_cache_manager",
     ]
     for name in module_names:
         sys.modules.pop(name, None)
+
+    for name in list(sys.modules):
+        if (
+            name == "protocol"
+            or name.startswith("protocol.")
+            or name == "third_party"
+            or name.startswith("third_party.")
+        ):
+            sys.modules.pop(name, None)
 
 
 def _ensure_flask_cors_available() -> None:
@@ -50,6 +85,26 @@ def _ensure_flask_cors_available() -> None:
 
     fallback.CORS = _NoOpCORS
     sys.modules["flask_cors"] = fallback
+
+
+def _ensure_backend_utils_package(backend_root: Path) -> None:
+    utils_root = backend_root / "utils"
+    existing_utils = sys.modules.get("utils")
+    existing_utils_file = str(getattr(existing_utils, "__file__", "") or "")
+    if existing_utils_file.startswith(str(utils_root)):
+        return
+
+    spec = importlib.util.spec_from_file_location(
+        "utils",
+        utils_root / "__init__.py",
+        submodule_search_locations=[str(utils_root)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"failed to load backend utils package from {utils_root}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["utils"] = module
+    spec.loader.exec_module(module)
 
 
 @pytest.fixture(scope="module")
@@ -113,6 +168,7 @@ def third_party_client():
 
     _ensure_flask_cors_available()
     _reset_backend_modules()
+    _ensure_backend_utils_package(backend_root)
     backend_app = importlib.import_module("app")
     backend_app.app.config.update(TESTING=True)
 
