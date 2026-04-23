@@ -84,23 +84,21 @@ class PluginRegistry:
                 return manifest
         return None
 
-    def find_by_legacy_platform(
+    def find_by_lookup_name(
         self,
-        platform_name: str,
+        lookup_name: str,
         media_type: Optional[str] = None,
         capability: Optional[str] = None,
     ) -> Optional[PluginManifest]:
-        lookup = str(platform_name or "").strip().lower()
+        lookup = str(lookup_name or "").strip().lower()
         if not lookup:
             return None
         for manifest in self.list_manifests(media_type=media_type, capability=capability):
-            identity = manifest.identity or {}
-            candidates = {str(item or "").strip().lower() for item in manifest.legacy_platforms}
-            candidates.add(str(identity.get("platform_label") or "").strip().lower())
-            candidates.add(str(identity.get("host_id_prefix") or "").strip().lower())
-            candidates.add(str(manifest.config_key or "").strip().lower())
-            candidates.add(str(manifest.name or "").strip().lower())
-            candidates.add(str(manifest.plugin_id or "").strip().lower())
+            candidates = {
+                str(item or "").strip().lower()
+                for item in manifest.list_lookup_names()
+                if str(item or "").strip()
+            }
             candidates.discard("")
             if lookup in candidates:
                 return manifest

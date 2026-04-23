@@ -1,72 +1,78 @@
+import importlib.util
 import sys
 import types
 from pathlib import Path
 
 import pytest
 
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from third_party.jmcomic_adapter import JMComicAdapter
+
+def _load_provider_module(monkeypatch):
+    fake_jmcomic_api = types.SimpleNamespace(
+        download_album=lambda *_args, **_kwargs: ({}, True),
+        get_album_detail=lambda *_args, **_kwargs: {},
+        get_client=lambda **_kwargs: object(),
+        get_favorite_comics=lambda **_kwargs: {"comics": []},
+        get_favorite_comics_full=lambda **_kwargs: {"comics": []},
+        search_comics=lambda *_args, **_kwargs: {"results": [], "page_count": 1},
+        search_comics_full=lambda *_args, **_kwargs: {"results": [], "page_count": 1},
+    )
+    monkeypatch.setitem(sys.modules, "jmcomic_api", fake_jmcomic_api)
+
+    module_path = BACKEND_ROOT / "third_party" / "JMComic-Crawler-Python" / "ultimate_provider.py"
+    spec = importlib.util.spec_from_file_location("jmcomic_provider_for_tests", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load provider from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-class _DummyApiClient:
-    client_key = "api"
-
-
-def _build_adapter(monkeypatch, config):
-    monkeypatch.setattr(JMComicAdapter, "_load_jmcomic_api", lambda self: None)
-    return JMComicAdapter(config=config)
+def _build_provider(module):
+    return module.JMComicProvider(manifest={}, manifest_path="")
 
 
 def test_get_search_client_requires_credentials(monkeypatch):
-    adapter = _build_adapter(monkeypatch, {"username": "", "password": ""})
+    module = _load_provider_module(monkeypatch)
+    provider = _build_provider(module)
 
-    fake_module = types.SimpleNamespace(get_client=lambda **kwargs: _DummyApiClient())
-    monkeypatch.setitem(sys.modules, "jmcomic_api", fake_module)
-
-    with pytest.raises(RuntimeError, match="仅支持 API 登录态"):
-        adapter._get_search_client()
+    with pytest.raises(RuntimeError, match="未配置账号或密码"):
+        provider._get_search_client({"username": "", "password": ""})
 
 
-def test_get_search_client_uses_api_login_and_returns_login_mode(monkeypatch):
+def test_get_search_client_uses_api_login_and_returns_username(monkeypatch):
+    module = _load_provider_module(monkeypatch)
+    provider = _build_provider(module)
     called = {}
+    dummy_client = object()
 
     def fake_get_client(username=None, password=None):
         called["username"] = username
         called["password"] = password
-        return _DummyApiClient()
+        return dummy_client
 
-    adapter = _build_adapter(
-        monkeypatch,
-        {"username": "请输入账号", "password": "请输入密码"},
-    )
-    monkeypatch.setattr(adapter, "_is_login_session_valid", lambda client, username: True)
+    monkeypatch.setattr(module, "get_client", fake_get_client)
 
-    fake_module = types.SimpleNamespace(get_client=fake_get_client)
-    monkeypatch.setitem(sys.modules, "jmcomic_api", fake_module)
+    client, username = provider._get_search_client({"username": "test_user", "password": "test_pass"})
 
-    client, is_login = adapter._get_search_client()
-
-    assert is_login is True
-    assert getattr(client, "client_key", "") == "api"
-    assert called["username"] == "请输入账号"
-    assert called["password"] == "请输入密码"
+    assert client is dummy_client
+    assert username == "test_user"
+    assert called == {"username": "test_user", "password": "test_pass"}
 
 
-def test_get_search_client_raises_when_login_probe_fails(monkeypatch):
+def test_get_search_client_raises_when_api_login_fails(monkeypatch):
+    module = _load_provider_module(monkeypatch)
+    provider = _build_provider(module)
+
     def fake_get_client(username=None, password=None):
-        return _DummyApiClient()
+        raise RuntimeError("boom")
 
-    adapter = _build_adapter(
-        monkeypatch,
-        {"username": "请输入账号", "password": "请输入密码"},
-    )
-    monkeypatch.setattr(adapter, "_is_login_session_valid", lambda client, username: False)
+    monkeypatch.setattr(module, "get_client", fake_get_client)
 
-    fake_module = types.SimpleNamespace(get_client=fake_get_client)
-    monkeypatch.setitem(sys.modules, "jmcomic_api", fake_module)
-
-    with pytest.raises(RuntimeError, match="登录态校验失败"):
-        adapter._get_search_client()
+    with pytest.raises(RuntimeError, match="登录失败"):
+        provider._get_search_client({"username": "test_user", "password": "test_pass"})

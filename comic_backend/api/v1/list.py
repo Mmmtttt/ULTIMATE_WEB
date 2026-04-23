@@ -25,10 +25,8 @@ def error_response(code, msg):
 
 
 def _resolve_platform_manifest(platform_name: str, capability: str = None):
-    return get_protocol_gateway().get_manifest_by_legacy_platform(
-        str(platform_name or "").strip(),
-        capability=capability,
-    )
+    gateway = get_protocol_gateway()
+    return gateway.get_manifest_by_lookup(str(platform_name or "").strip(), capability=capability)
 
 
 def _resolve_platform_content_type(platform_name: str) -> str:

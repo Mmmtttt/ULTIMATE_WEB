@@ -34,10 +34,10 @@ export function pluginSupportsMediaType(plugin, mediaType) {
 
 export function getProtocolPluginPlatform(plugin) {
   const identity = plugin?.identity || {}
-  const legacyPlatforms = Array.isArray(plugin?.legacy_platforms) ? plugin.legacy_platforms : []
+  const lookupNames = Array.isArray(plugin?.lookup_names) ? plugin.lookup_names : []
   const candidates = [
     identity?.platform_label,
-    legacyPlatforms[0],
+    lookupNames[0],
     identity?.host_id_prefix,
     plugin?.config_key,
     plugin?.name,

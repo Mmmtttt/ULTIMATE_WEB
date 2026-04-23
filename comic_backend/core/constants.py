@@ -410,23 +410,10 @@ VIDEO_PICTURES_DIR = VIDEO_DIR
 VIDEO_RECOMMENDATION_CACHE_DIR = os.path.join(RECOMMENDATION_CACHE_DIR, "video")
 VIDEO_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "video")
 
-JM_PICTURES_DIR = os.path.join(COMIC_DIR, "JM")
-PK_PICTURES_DIR = os.path.join(COMIC_DIR, "PK")
 LOCAL_PICTURES_DIR = os.path.join(COMIC_DIR, "local")
-JAVDB_PICTURES_DIR = os.path.join(VIDEO_DIR, "JAVDB")
-JAVBUS_PICTURES_DIR = os.path.join(VIDEO_DIR, "JAVBUS")
 LOCAL_VIDEO_PICTURES_DIR = os.path.join(VIDEO_DIR, "LOCAL")
 
-JM_COVER_DIR = os.path.join(COVER_DIR, "JM")
-PK_COVER_DIR = os.path.join(COVER_DIR, "PK")
-JAVDB_COVER_DIR = os.path.join(COVER_DIR, "JAVDB")
-JAVBUS_COVER_DIR = os.path.join(COVER_DIR, "JAVBUS")
 LOCAL_VIDEO_COVER_DIR = os.path.join(COVER_DIR, "LOCAL")
-
-JM_RECOMMENDATION_CACHE_DIR = os.path.join(COMIC_RECOMMENDATION_CACHE_DIR, "JM")
-PK_RECOMMENDATION_CACHE_DIR = os.path.join(COMIC_RECOMMENDATION_CACHE_DIR, "PK")
-JAVDB_RECOMMENDATION_CACHE_DIR = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, "JAVDB")
-JAVBUS_RECOMMENDATION_CACHE_DIR = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, "JAVBUS")
 
 
 def _iter_protocol_platform_specs():
@@ -523,17 +510,19 @@ def list_platform_cover_dirs(media_type: str = ""):
     if cover_dirs:
         return cover_dirs
 
-    if normalized_media_type == "comic":
-        fallback_dirs = [JM_COVER_DIR, PK_COVER_DIR]
-    elif normalized_media_type == "video":
-        fallback_dirs = [JAVDB_COVER_DIR, JAVBUS_COVER_DIR, LOCAL_VIDEO_COVER_DIR]
-    else:
-        fallback_dirs = [JM_COVER_DIR, PK_COVER_DIR, JAVDB_COVER_DIR, JAVBUS_COVER_DIR, LOCAL_VIDEO_COVER_DIR]
+    # Fallback to currently existing sub-dirs to avoid hard-coded platform names.
+    if os.path.isdir(COVER_DIR):
+        for entry in os.listdir(COVER_DIR):
+            candidate = os.path.join(COVER_DIR, entry)
+            if not os.path.isdir(candidate):
+                continue
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            cover_dirs.append(candidate)
 
-    for cover_dir in fallback_dirs:
-        if cover_dir not in seen:
-            seen.add(cover_dir)
-            cover_dirs.append(cover_dir)
+    if normalized_media_type in {"", "video"} and LOCAL_VIDEO_COVER_DIR not in seen:
+        cover_dirs.append(LOCAL_VIDEO_COVER_DIR)
 
     return cover_dirs
 
@@ -591,22 +580,19 @@ def ensure_platform_dirs():
     if protocol_dirs:
         dirs.extend(protocol_dirs)
     else:
-        dirs.extend(
-            [
-                JM_PICTURES_DIR,
-                PK_PICTURES_DIR,
-                JAVDB_PICTURES_DIR,
-                JAVBUS_PICTURES_DIR,
-                JM_COVER_DIR,
-                PK_COVER_DIR,
-                JAVDB_COVER_DIR,
-                JAVBUS_COVER_DIR,
-                JM_RECOMMENDATION_CACHE_DIR,
-                PK_RECOMMENDATION_CACHE_DIR,
-                JAVDB_RECOMMENDATION_CACHE_DIR,
-                JAVBUS_RECOMMENDATION_CACHE_DIR,
-            ]
-        )
+        for root in (
+            COMIC_PICTURES_DIR,
+            VIDEO_PICTURES_DIR,
+            COVER_DIR,
+            COMIC_RECOMMENDATION_CACHE_DIR,
+            VIDEO_RECOMMENDATION_CACHE_DIR,
+        ):
+            if not os.path.isdir(root):
+                continue
+            for entry in os.listdir(root):
+                candidate = os.path.join(root, entry)
+                if os.path.isdir(candidate):
+                    dirs.append(candidate)
     deduped_dirs = []
     seen = set()
     for d in dirs:

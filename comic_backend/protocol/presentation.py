@@ -32,7 +32,7 @@ def resolve_manifest(
         except Exception:
             manifest = None
     else:
-        manifest = gateway.get_manifest_by_legacy_platform(
+        manifest = gateway.get_manifest_by_lookup(
             str(platform_name or "").strip(),
             media_type=media_type,
             capability=capability,

@@ -55,9 +55,7 @@ class PluginConfigService:
             for action in manifest.list_configuration_actions():
                 normalized_action = dict(action or {})
                 helper_key = str(
-                    normalized_action.get("helper_key")
-                    or normalized_action.get("legacy_helper_key")
-                    or ""
+                    normalized_action.get("helper_key") or ""
                 ).strip()
                 action_kind = str(normalized_action.get("kind") or "").strip().lower()
                 if (
@@ -88,7 +86,7 @@ class PluginConfigService:
                     helper_urls[helper_key] = helper_value
 
             for action in actions:
-                helper_key = str(action.get("helper_key") or action.get("legacy_helper_key") or "").strip()
+                helper_key = str(action.get("helper_key") or "").strip()
                 helper_value = str(action.get("url") or "").strip()
                 action_kind = str(action.get("kind") or "").strip().lower()
                 if helper_key and helper_value and action_kind == "open_url":

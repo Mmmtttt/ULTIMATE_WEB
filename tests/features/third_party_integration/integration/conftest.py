@@ -45,7 +45,6 @@ def _reset_backend_modules() -> None:
         "protocol.platform_service",
         "protocol.compatibility",
         "third_party",
-        "third_party.adapter_factory",
         "third_party.external_api",
         "third_party.platform_service",
         "utils",

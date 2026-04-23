@@ -1303,17 +1303,34 @@ def third_party_search():
         search_plugins = []
         search_lookup = {}
         for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"):
-            legacy_platforms = [str(item or "").strip().lower() for item in manifest.legacy_platforms if str(item or "").strip()]
-            if not legacy_platforms:
+            identity = dict(getattr(manifest, "identity", {}) or {})
+            canonical_platform = str(
+                identity.get("platform_label")
+                or manifest.config_key
+                or manifest.name
+                or ""
+            ).strip().lower()
+            aliases = {
+                canonical_platform,
+                str(identity.get("host_id_prefix") or "").strip().lower(),
+                str(manifest.config_key or "").strip().lower(),
+                *[
+                    str(item or "").strip().lower()
+                    for item in getattr(manifest, "identity_aliases", []) or []
+                    if str(item or "").strip()
+                ],
+            }
+            aliases.discard("")
+            if not canonical_platform or not aliases:
                 continue
 
             descriptor = {
                 "manifest": manifest,
-                "canonical_platform": legacy_platforms[0],
-                "legacy_platforms": legacy_platforms,
+                "canonical_platform": canonical_platform,
+                "aliases": sorted(aliases),
             }
             search_plugins.append(descriptor)
-            for alias in legacy_platforms:
+            for alias in aliases:
                 search_lookup[alias] = descriptor
 
         supported_platforms = sorted({item["canonical_platform"] for item in search_plugins})

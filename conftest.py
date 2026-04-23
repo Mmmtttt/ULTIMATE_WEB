@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 
-def pytest_configure(_config) -> None:
+def pytest_configure(config) -> None:
     from tests.tools.prepare_test_env import prepare_profile
 
     prepared = prepare_profile("collection_bootstrap", clean=True)

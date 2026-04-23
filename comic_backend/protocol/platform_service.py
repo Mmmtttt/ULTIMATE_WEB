@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 from infrastructure.logger import error_logger
 
-from .compatibility import get_plugin_id_for_platform
 from .gateway import ProtocolGateway, get_protocol_gateway
 
 BaseAdapter = Any
@@ -35,21 +34,18 @@ class PlatformService:
         capability: Optional[str] = None,
     ) -> str:
         normalized_name = self._normalize_platform_name(platform)
-        if normalized_name and hasattr(self._gateway, "get_manifest_by_legacy_platform"):
-            manifest = self._gateway.get_manifest_by_legacy_platform(
+        if normalized_name:
+            manifest = self._gateway.get_manifest_by_lookup(
                 normalized_name,
                 capability=capability,
             )
             if manifest is not None:
                 return manifest.plugin_id
-        plugin_id = get_plugin_id_for_platform(platform)
-        if not plugin_id:
-            raise ValueError(f"未知平台: {platform}")
-        return str(plugin_id)
+        raise ValueError(f"未知平台: {platform}")
 
     def get_adapter(self, platform: Any) -> BaseAdapter:
         plugin_id = self._resolve_plugin_id(platform)
-        return self._gateway.get_legacy_client(plugin_id)
+        return self._gateway.get_client(plugin_id)
 
     def download_album(
         self,

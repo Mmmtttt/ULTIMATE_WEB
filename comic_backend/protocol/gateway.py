@@ -14,8 +14,8 @@ class ProtocolGateway:
     def execute_plugin(self, plugin_id: str, capability: str, params: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None) -> Any:
         return self.provider_manager.execute(plugin_id, capability, params=params, context=context)
 
-    def get_legacy_client(self, plugin_id: str, *args, **kwargs):
-        return self.provider_manager.get_legacy_client(plugin_id, *args, **kwargs)
+    def get_client(self, plugin_id: str, *args, **kwargs):
+        return self.provider_manager.get_client(plugin_id, *args, **kwargs)
 
     def get_query_status(self, plugin_id: str) -> Dict[str, Any]:
         return self.provider_manager.get_query_status(plugin_id)
@@ -26,14 +26,14 @@ class ProtocolGateway:
     def get_manifest_by_config_key(self, config_key: str):
         return self.registry.find_by_config_key(config_key)
 
-    def get_manifest_by_legacy_platform(
+    def get_manifest_by_lookup(
         self,
-        platform_name: str,
+        lookup_name: str,
         media_type: Optional[str] = None,
         capability: Optional[str] = None,
     ):
-        return self.registry.find_by_legacy_platform(
-            platform_name,
+        return self.registry.find_by_lookup_name(
+            lookup_name,
             media_type=media_type,
             capability=capability,
         )

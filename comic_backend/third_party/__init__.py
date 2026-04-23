@@ -1,7 +1,7 @@
 import importlib
 
 
-__all__ = ["external_api", "adapter_factory", "base_adapter", "jmcomic_adapter", "adapter", "legacy"]
+__all__ = ["external_api", "platform_service", "adapter"]
 
 
 def __getattr__(name):

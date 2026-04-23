@@ -57,7 +57,7 @@ def _resolve_platform_manifest(platform_name: str, media_type: str = ""):
     if not normalized_name:
         return None
 
-    manifest = gateway.get_manifest_by_legacy_platform(
+    manifest = gateway.get_manifest_by_lookup(
         normalized_name,
         media_type=normalized_media_type or None,
     )
@@ -79,7 +79,7 @@ def _resolve_manifest_platform_label(manifest) -> str:
     identity = manifest.identity if manifest is not None else {}
     for candidate in (
         identity.get("platform_label"),
-        *(manifest.legacy_platforms if manifest is not None else []),
+        *(manifest.identity_aliases if manifest is not None else []),
         identity.get("host_id_prefix"),
         manifest.config_key if manifest is not None else "",
         manifest.name if manifest is not None else "",
@@ -522,7 +522,13 @@ def search_third_party_comics():
 
             platform_label = str((manifest.identity or {}).get("platform_label") or "").strip()
             if not platform_label:
-                platform_label = str((manifest.legacy_platforms or [manifest.name])[0] or "").strip()
+                platform_label = str(
+                    (
+                        getattr(manifest, "identity_aliases", None)
+                        or [str((manifest.identity or {}).get("platform_label") or "").strip(), manifest.name]
+                    )[0]
+                    or ""
+                ).strip()
             if not platform_label:
                 continue
 

@@ -155,7 +155,7 @@ class FileParser:
             
             image_paths = []
             
-            # 使用递归遍历，兼容 PK 平台按章节分级的目录结构
+            # 使用递归遍历，兼容部分平台按章节分级的目录结构
             for root, _, files in os.walk(comic_dir):
                 for file in files:
                     if self.validate_image_format(file):

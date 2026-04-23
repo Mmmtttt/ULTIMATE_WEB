@@ -50,14 +50,14 @@ class AuthorAppService(BaseCreatorAppService):
         try:
             gateway = get_protocol_gateway()
             for manifest in gateway.list_manifests(media_type="comic", capability="catalog.search"):
-                adapter_name = str(getattr(manifest, "legacy_adapter_name", "") or manifest.config_key or "").strip()
+                adapter_name = str(manifest.config_key or manifest.plugin_id or "").strip()
                 if not adapter_name:
                     continue
 
                 identity = dict(getattr(manifest, "identity", {}) or {})
                 platform_label = str(identity.get("platform_label") or "").strip()
                 if not platform_label:
-                    for alias in getattr(manifest, "legacy_platforms", []) or []:
+                    for alias in getattr(manifest, "identity_aliases", []) or []:
                         alias_value = str(alias or "").strip()
                         if alias_value:
                             platform_label = alias_value.upper()

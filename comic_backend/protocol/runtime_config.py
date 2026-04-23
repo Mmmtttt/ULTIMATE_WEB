@@ -314,7 +314,7 @@ class ProtocolConfigStore:
         self.set_default_config_key(adapter_name)
 
     @staticmethod
-    def list_legacy_config_keys():
+    def list_config_keys():
         store = ProtocolConfigStore()
         store._ensure_loaded()
         configured = set()

@@ -12,7 +12,17 @@ from protocol.platform_service import PlatformService
 class _FakeGateway:
     def __init__(self):
         self.executed = []
-        self.legacy_clients = []
+        self.clients = []
+        self._manifest_by_lookup = {
+            "jm": "comic.jmcomic",
+            "javdb": "video.javdb",
+        }
+
+    def get_manifest_by_lookup(self, lookup_name, capability=None):
+        plugin_id = self._manifest_by_lookup.get(str(lookup_name or "").strip().lower())
+        if not plugin_id:
+            return None
+        return type("Manifest", (), {"plugin_id": plugin_id})()
 
     def execute_plugin(self, plugin_id, capability, params=None, context=None):
         self.executed.append(
@@ -29,13 +39,13 @@ class _FakeGateway:
             return {"detail": {"saved": True}, "success": True}
         return {"ok": True}
 
-    def get_legacy_client(self, plugin_id, *args, **kwargs):
+    def get_client(self, plugin_id, *args, **kwargs):
         client = {
             "plugin_id": plugin_id,
             "args": args,
             "kwargs": kwargs,
         }
-        self.legacy_clients.append(client)
+        self.clients.append(client)
         return client
 
 

@@ -65,21 +65,21 @@ def test_core_platform_lists_include_manifest_registered_video_plugin():
     assert "MISSAV" in get_supported_platforms()
 
 
-def test_split_prefixed_id_uses_internal_legacy_prefix_fallback_without_core_platform(monkeypatch):
+def test_split_prefixed_id_returns_unresolved_when_registry_empty(monkeypatch):
     class _EmptyGateway:
         def list_manifests(self, media_type=None, capability=None):
             return []
 
-        def get_manifest_by_legacy_platform(self, *_args, **_kwargs):
+        def get_manifest_by_config_key(self, *_args, **_kwargs):
             return None
 
-        def get_manifest_by_config_key(self, *_args, **_kwargs):
+        def get_manifest_by_lookup(self, *_args, **_kwargs):
             return None
 
     monkeypatch.setattr(platform_meta_module, "get_protocol_gateway", lambda: _EmptyGateway())
 
     platform_key, original_id, manifest = split_prefixed_id("JAVDBABP123", media_type="video")
 
-    assert platform_key == "JAVDB"
-    assert original_id == "ABP123"
+    assert platform_key == ""
+    assert original_id == "JAVDBABP123"
     assert manifest is None

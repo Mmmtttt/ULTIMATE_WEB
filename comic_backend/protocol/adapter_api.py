@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from .compatibility import get_plugin_id_for_adapter_name
 from .gateway import ProtocolGateway, get_protocol_gateway
 from .runtime_config import ProtocolConfigStore
 
@@ -24,25 +23,31 @@ class ProtocolAdapterAPI:
         resolved = adapter_name if adapter_name is not None else self._config_store.get_default_adapter()
         return str(resolved or "").strip()
 
+    def _resolve_manifest(self, adapter_name: Optional[str] = None):
+        resolved_adapter = self._resolve_adapter_name(adapter_name)
+        if not resolved_adapter:
+            return None
+        manifest = self._gateway.get_manifest_by_config_key(resolved_adapter)
+        if manifest is not None:
+            return manifest
+        return self._gateway.get_manifest_by_lookup(resolved_adapter)
+
     def get_adapter(self, adapter_name: Optional[str] = None):
         resolved_adapter = self._resolve_adapter_name(adapter_name)
-        plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
-        if not plugin_id:
+        manifest = self._resolve_manifest(resolved_adapter)
+        if manifest is None:
             raise ValueError(f"unsupported adapter: {resolved_adapter}")
-        return self._gateway.get_legacy_client(plugin_id)
+        return self._gateway.get_client(manifest.plugin_id)
 
     def get_album_by_id(self, album_id: str, adapter_name: Optional[str] = None) -> Dict[str, Any]:
-        resolved_adapter = self._resolve_adapter_name(adapter_name)
-        plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
-        if plugin_id:
+        manifest = self._resolve_manifest(adapter_name)
+        if manifest is not None:
             return self._gateway.execute_plugin(
-                plugin_id,
+                manifest.plugin_id,
                 "catalog.detail",
                 params={"album_id": album_id},
             )
-
-        adapter = self.get_adapter(resolved_adapter)
-        return adapter.get_album_by_id(album_id)
+        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
 
     def search_albums(
         self,
@@ -52,11 +57,10 @@ class ProtocolAdapterAPI:
         adapter_name: Optional[str] = None,
         fast_mode: bool = False,
     ) -> Dict[str, Any]:
-        resolved_adapter = self._resolve_adapter_name(adapter_name)
-        plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
-        if plugin_id:
+        manifest = self._resolve_manifest(adapter_name)
+        if manifest is not None:
             return self._gateway.execute_plugin(
-                plugin_id,
+                manifest.plugin_id,
                 "catalog.search",
                 params={
                     "keyword": keyword,
@@ -66,21 +70,17 @@ class ProtocolAdapterAPI:
                 },
             )
 
-        adapter = self.get_adapter(resolved_adapter)
-        return adapter.search_albums(keyword, page, max_pages, fast_mode)
+        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
 
     def get_favorites(self, adapter_name: Optional[str] = None) -> Dict[str, Any]:
-        resolved_adapter = self._resolve_adapter_name(adapter_name)
-        plugin_id = get_plugin_id_for_adapter_name(resolved_adapter)
-        if plugin_id:
+        manifest = self._resolve_manifest(adapter_name)
+        if manifest is not None:
             return self._gateway.execute_plugin(
-                plugin_id,
+                manifest.plugin_id,
                 "collection.favorites",
                 params={},
             )
-
-        adapter = self.get_adapter(resolved_adapter)
-        return adapter.get_favorites()
+        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
 
     def list_available_adapters(self) -> list:
         discovered = []
@@ -88,7 +88,7 @@ class ProtocolAdapterAPI:
             config_key = str(manifest.config_key or "").strip()
             if config_key:
                 discovered.append(config_key)
-        return sorted(set(self._config_store.list_legacy_config_keys()) | set(discovered))
+        return sorted(set(self._config_store.list_config_keys()) | set(discovered))
 
     def get_adapter_config(self, adapter_name: str) -> Dict[str, Any]:
         return self._config_store.get_adapter_config(adapter_name)

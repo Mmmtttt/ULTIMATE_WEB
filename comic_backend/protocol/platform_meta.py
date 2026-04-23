@@ -6,14 +6,6 @@ from typing import Any, Dict, Optional, Tuple
 from .gateway import get_protocol_gateway
 
 
-_LEGACY_PLATFORM_PREFIXES = (
-    ("JAVBUS", "JAVBUS"),
-    ("JAVDB", "JAVDB"),
-    ("JM", "JM"),
-    ("PK", "PK"),
-)
-
-
 def resolve_platform_manifest(
     platform_name: str,
     media_type: Optional[str] = None,
@@ -25,7 +17,7 @@ def resolve_platform_manifest(
         return None
 
     gateway = get_protocol_gateway()
-    manifest = gateway.get_manifest_by_legacy_platform(
+    manifest = gateway.get_manifest_by_lookup(
         normalized_name,
         media_type=normalized_media_type or None,
         capability=capability,
@@ -75,7 +67,7 @@ def resolve_manifest_platform_label(manifest, fallback: str = "") -> str:
     for candidate in (
         identity.get("platform_label"),
         identity.get("host_id_prefix"),
-        *(getattr(manifest, "legacy_platforms", []) or []),
+        *(getattr(manifest, "identity_aliases", []) or []),
         getattr(manifest, "config_key", ""),
         getattr(manifest, "name", ""),
     ):
@@ -129,15 +121,6 @@ def get_capability_default_params(manifest, capability: str) -> Dict[str, Any]:
     return dict(raw_params) if isinstance(raw_params, dict) else {}
 
 
-def _split_legacy_prefixed_id(content_id: str) -> Tuple[str, str]:
-    normalized_id = str(content_id or "").strip()
-    upper_id = normalized_id.upper()
-    for prefix, platform_label in _LEGACY_PLATFORM_PREFIXES:
-        if upper_id.startswith(prefix):
-            return platform_label, normalized_id[len(prefix):]
-    return "", normalized_id
-
-
 def split_prefixed_id(content_id: str, media_type: Optional[str] = None) -> Tuple[str, str, Any]:
     normalized_id = str(content_id or "").strip()
     normalized_media_type = str(media_type or "").strip().lower()
@@ -166,6 +149,4 @@ def split_prefixed_id(content_id: str, media_type: Optional[str] = None) -> Tupl
                 manifest,
             )
 
-    platform_name, original_id = _split_legacy_prefixed_id(normalized_id)
-    manifest = resolve_platform_manifest(platform_name, media_type=normalized_media_type or None) if platform_name else None
-    return platform_name, str(original_id or "").strip(), manifest
+    return "", normalized_id, None

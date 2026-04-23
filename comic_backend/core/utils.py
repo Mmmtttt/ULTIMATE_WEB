@@ -27,7 +27,7 @@ def normalize_total_page(total_page, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
 
-    # PK occasionally returns negative values for pages_count.
+    # Some upstream platforms may occasionally return negative page counts.
     if normalized < 0:
         normalized = abs(normalized)
 

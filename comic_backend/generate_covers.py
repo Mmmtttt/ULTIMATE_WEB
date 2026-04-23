@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 为现有漫画生成封面
-支持多平台（JM、PK等）
+支持多平台
 """
 import json
 import os

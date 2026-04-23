@@ -66,7 +66,8 @@ class ListAppService:
         if not platform_key:
             return None
         try:
-            return self._get_protocol_gateway().get_manifest_by_legacy_platform(
+            gateway = self._get_protocol_gateway()
+            return gateway.get_manifest_by_lookup(
                 platform_key,
                 media_type=media_type,
                 capability=capability,
@@ -82,7 +83,7 @@ class ListAppService:
             platform_label = str(identity.get("platform_label") or "").strip()
             if platform_label:
                 return platform_label
-            for alias in getattr(manifest, "legacy_platforms", []) or []:
+            for alias in getattr(manifest, "identity_aliases", []) or []:
                 normalized_alias = str(alias or "").strip()
                 if normalized_alias:
                     return normalized_alias.upper()
@@ -345,7 +346,7 @@ class ListAppService:
             return f"远程跟踪：{platform_str}{base_name}"
         return f"远程跟踪：{base_name}"
 
-    def _infer_legacy_tracking_platform(self, content_type) -> str:
+    def _infer_single_tracking_platform(self, content_type) -> str:
         media_type = "video" if content_type == ContentType.VIDEO else "comic"
         manifests = list(
             self._get_protocol_gateway().list_manifests(
@@ -1094,7 +1095,7 @@ class ListAppService:
                 import re
                 match = re.search(r'远程清单ID[：:]\s*(\S+)', lst.desc)
                 if match:
-                    inferred_platform = self._infer_legacy_tracking_platform(lst.content_type)
+                    inferred_platform = self._infer_single_tracking_platform(lst.content_type)
                     if not inferred_platform:
                         return ServiceResult.error("该清单缺少平台信息，且无法根据协议自动识别平台")
                     lst.platform = inferred_platform
@@ -1844,7 +1845,7 @@ class ListAppService:
         """导入平台收藏夹到平台对应的远程跟踪清单
         
         Args:
-            platform_str: 平台字符串 (JM 或 PK)
+            platform_str: 平台标识（由插件协议定义）
             source: 导入来源 - "local" 本地库, "preview" 预览库
             
         Returns:
@@ -1871,7 +1872,7 @@ class ListAppService:
         只导入新增的漫画，不重复导入已存在的漫画
         
         Args:
-            platform_str: 平台字符串 (JM 或 PK)
+            platform_str: 平台标识（由插件协议定义）
             source: 导入来源 - "local" 本地库, "preview" 预览库
             
         Returns:

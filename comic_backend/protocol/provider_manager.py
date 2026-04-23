@@ -59,7 +59,7 @@ class ProviderManager:
         if not isinstance(provider, ProtocolProvider):
             # Some test/runtime entrypoints may import the same provider base through
             # different module roots, so prefer capability-based validation here.
-            required_methods = ("get_legacy_client", "execute", "normalize_config", "serialize_public_config")
+            required_methods = ("execute", "normalize_config", "serialize_public_config")
             if not all(callable(getattr(provider, method_name, None)) for method_name in required_methods):
                 raise TypeError(f"{plugin_key} provider must inherit ProtocolProvider")
         self._providers[plugin_key] = provider
@@ -90,11 +90,11 @@ class ProviderManager:
             config,
         )
 
-    def get_legacy_client(self, plugin_id: str, *args, **kwargs):
+    def get_client(self, plugin_id: str, *args, **kwargs):
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
-        return provider.get_legacy_client(config, *args, **kwargs)
+        return provider.build_client(config, *args, **kwargs)
 
     def normalize_config(self, plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         provider = self.get_provider(plugin_id)

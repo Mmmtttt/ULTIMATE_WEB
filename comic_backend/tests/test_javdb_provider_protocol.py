@@ -8,6 +8,23 @@ from types import SimpleNamespace
 import pytest
 
 
+def _load_javdb_api_class():
+    backend_root = Path(__file__).resolve().parents[1]
+    plugin_root = backend_root / "third_party" / "javdb-api-scraper"
+    plugin_path = str(plugin_root)
+    if plugin_path not in sys.path:
+        sys.path.insert(0, plugin_path)
+
+    module_name = "test_javdb_api_runtime"
+    api_path = plugin_root / "javdb_api.py"
+    spec = importlib.util.spec_from_file_location(module_name, api_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module.JavdbAPI
+
+
 def _load_javdb_provider_class():
     provider_path = (
         Path(__file__).resolve().parents[1]
@@ -66,7 +83,7 @@ def test_javdb_provider_taxonomy_tags_filters_keyword_and_category(monkeypatch):
         def __init__(self):
             self.api = SimpleNamespace(tag_manager=FakeTagManager())
 
-    monkeypatch.setattr(provider, "get_legacy_client", lambda *_args, **_kwargs: FakeAdapter())
+    monkeypatch.setattr(provider, "_get_adapter", lambda *_args, **_kwargs: FakeAdapter())
     monkeypatch.setattr(provider, "_is_tag_search_available", lambda *_args, **_kwargs: True)
 
     result = provider.execute(
@@ -102,7 +119,7 @@ def test_javdb_provider_taxonomy_tag_search_parses_ids_and_builds_query(monkeypa
         def __init__(self):
             self.api = FakeJavdbApi()
 
-    monkeypatch.setattr(provider, "get_legacy_client", lambda *_args, **_kwargs: FakeAdapter())
+    monkeypatch.setattr(provider, "_get_adapter", lambda *_args, **_kwargs: FakeAdapter())
     monkeypatch.setattr(provider, "_is_tag_search_available", lambda *_args, **_kwargs: True)
 
     result = provider.execute(
@@ -126,7 +143,7 @@ def test_javdb_provider_taxonomy_tag_search_requires_login(monkeypatch):
     class FakeAdapter:
         api = SimpleNamespace()
 
-    monkeypatch.setattr(provider, "get_legacy_client", lambda *_args, **_kwargs: FakeAdapter())
+    monkeypatch.setattr(provider, "_get_adapter", lambda *_args, **_kwargs: FakeAdapter())
     monkeypatch.setattr(provider, "_is_tag_search_available", lambda *_args, **_kwargs: False)
 
     with pytest.raises(PermissionError):
@@ -136,3 +153,37 @@ def test_javdb_provider_taxonomy_tag_search_requires_login(monkeypatch):
             context={},
             config={"enabled": True, "cookies": {"_jdb_session": "sess-x", "over18": "1"}},
         )
+
+
+def test_javdb_api_extracts_preview_video_from_nested_source_element(monkeypatch):
+    JavdbAPI = _load_javdb_api_class()
+    api = JavdbAPI(domain_index=0)
+    html = """
+    <html>
+      <body>
+        <div class="columns">
+          <article class="message video-panel">
+            <div class="message-body">
+              <div class="tile-images preview-images">
+                <a class="preview-video-container" href="#preview-video"></a>
+                <video id="preview-video" playsinline controls muted preload="auto" style="display:none">
+                  <source src="https://javdb.com/movies/ttm3u8/preview/389838/0/720p.m3u8?sign=test-sign&t=1776962800" type="application/x-mpegURL" />
+                </video>
+              </div>
+            </div>
+          </article>
+        </div>
+      </body>
+    </html>
+    """
+
+    monkeypatch.setattr(
+        api,
+        "get",
+        lambda path: SimpleNamespace(text=html, url=f"https://javdb.com{path}"),
+    )
+
+    detail = api.get_video_detail("YwG8Ve", download_images=False)
+
+    assert detail["preview_video"].startswith("https://javdb.com/movies/ttm3u8/preview/")
+    assert "sign=test-sign" in detail["preview_video"]

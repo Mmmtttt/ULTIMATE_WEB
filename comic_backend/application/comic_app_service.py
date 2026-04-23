@@ -72,7 +72,7 @@ class ComicAppService:
             
             comic_list = []
             for c in comics:
-                # 确保封面存在（特别是 PK 平台，必要时用第 1 张图片生成）
+                # 确保封面存在（对未落地封面的内容，必要时用第 1 张图片生成）
                 try:
                     self._ensure_cover(c)
                 except Exception as e:
