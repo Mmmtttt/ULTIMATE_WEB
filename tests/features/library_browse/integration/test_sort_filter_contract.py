@@ -181,6 +181,11 @@ def test_video_list_sort_by_score_matches_seed_file_order(integration_runtime):
 
     actual_ids = [item["id"] for item in payload["data"]]
     assert actual_ids == expected_ids
+    assert {item.get("plugin_id") for item in payload["data"]} == {"video.javdb"}
+    assert all(
+        ((((item.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
+        for item in payload["data"]
+    )
 
 
 @pytest.mark.integration

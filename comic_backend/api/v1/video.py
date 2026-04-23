@@ -987,6 +987,76 @@ def _ensure_preview_video_detail(video_data: dict, source: str = "local") -> dic
     _schedule_preview_video_refresh(video_data, source=source)
     return video_data
 
+
+def _resolve_protocol_video_platform_name(video_data: dict) -> str:
+    if not isinstance(video_data, dict):
+        return ""
+
+    platform_name = str(video_data.get("platform") or "").strip().lower()
+    video_id = str(video_data.get("id") or "").strip()
+    code = str(video_data.get("code") or "").strip()
+
+    resolved_platform, _lookup_id, _manifest = _resolve_video_lookup_context(
+        video_id=video_id,
+        code=code,
+        platform_name=platform_name,
+    )
+    return str(resolved_platform or platform_name or "").strip().lower()
+
+
+def _decorate_video_recommendation_item(
+    video_data: dict,
+    *,
+    tag_map: dict | None = None,
+    include_preview_detail: bool = False,
+) -> dict:
+    if not isinstance(video_data, dict):
+        return {}
+
+    decorated = dict(video_data)
+    decorated["source"] = "preview"
+    _ensure_local_asset_fields(decorated)
+
+    video_tag_ids = decorated.get("tag_ids", []) or []
+    normalized_tag_map = tag_map if isinstance(tag_map, dict) else {}
+    decorated["tags"] = [
+        {"id": tid, "name": normalized_tag_map.get(tid, tid)}
+        for tid in video_tag_ids
+    ]
+
+    if include_preview_detail:
+        decorated = _ensure_preview_video_detail(decorated, source="preview")
+    else:
+        decorated["preview_video"] = _sanitize_preview_video_value(decorated.get("preview_video", ""))
+        decorated["preview_video_local"] = _sanitize_preview_video_value(decorated.get("preview_video_local", ""))
+
+    platform_name = _resolve_protocol_video_platform_name(decorated)
+    if platform_name:
+        decorated = annotate_item(
+            decorated,
+            platform_name=platform_name,
+            media_type="video",
+        )
+
+    return decorated
+
+
+def _decorate_video_recommendation_items(
+    videos: list[dict] | None,
+    *,
+    tag_map: dict | None = None,
+    include_preview_detail: bool = False,
+) -> list[dict]:
+    return [
+        _decorate_video_recommendation_item(
+            video,
+            tag_map=tag_map,
+            include_preview_detail=include_preview_detail,
+        )
+        for video in (videos or [])
+        if isinstance(video, dict)
+    ]
+
 def _get_preview_import_auto_download_enabled() -> bool:
     try:
         result = config_service.get_config()
@@ -1738,14 +1808,10 @@ def get_video_recommendation_list():
                 continue
             if min_score is not None and (video.get('score') or 0) < min_score:
                 continue
-            
-            video_with_tags = video.copy()
-            _ensure_local_asset_fields(video_with_tags)
-            video_tag_ids = video.get('tag_ids', [])
-            video_with_tags['preview_video'] = _sanitize_preview_video_value(video_with_tags.get('preview_video', ''))
-            video_with_tags['preview_video_local'] = _sanitize_preview_video_value(video_with_tags.get('preview_video_local', ''))
-            video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-            filtered_videos.append(video_with_tags)
+
+            filtered_videos.append(
+                _decorate_video_recommendation_item(video, tag_map=tag_map)
+            )
         
         if sort_type == 'score':
             filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=True)
@@ -1783,11 +1849,11 @@ def get_video_recommendation_detail():
         
         for video in videos:
             if video.get('id') == video_id:
-                video_with_tags = video.copy()
-                _ensure_local_asset_fields(video_with_tags)
-                video_tag_ids = video.get('tag_ids', [])
-                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-                detail = _ensure_preview_video_detail(video_with_tags, source="preview")
+                detail = _decorate_video_recommendation_item(
+                    video,
+                    tag_map=tag_map,
+                    include_preview_detail=True,
+                )
                 return success_response(detail)
         
         return error_response(404, "视频不存在")
@@ -2059,10 +2125,9 @@ def get_video_recommendation_trash_list():
         trash_videos = []
         for video in videos:
             if video.get('is_deleted'):
-                video_with_tags = video.copy()
-                video_tag_ids = video.get('tag_ids', [])
-                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-                trash_videos.append(video_with_tags)
+                trash_videos.append(
+                    _decorate_video_recommendation_item(video, tag_map=tag_map)
+                )
         
         trash_videos.sort(key=lambda x: x.get('deleted_time', ''), reverse=True)
         return success_response(trash_videos)
@@ -2278,10 +2343,9 @@ def search_video_recommendations():
             code = video.get('code', '').lower()
             actors = ' '.join(video.get('actors', [])).lower()
             if keyword in title or keyword in code or keyword in actors:
-                video_with_tags = video.copy()
-                video_tag_ids = video.get('tag_ids', [])
-                video_with_tags['tags'] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video_tag_ids]
-                results.append(video_with_tags)
+                results.append(
+                    _decorate_video_recommendation_item(video, tag_map=tag_map)
+                )
         
         return success_response(results)
     except Exception as e:
@@ -2321,7 +2385,9 @@ def filter_video_recommendations():
             video_info = v.to_dict()
             video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
             results.append(video_info)
-        
+
+        results = _decorate_video_recommendation_items(results, tag_map=tag_map)
+
         app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
         return success_response(results)
     except Exception as e:

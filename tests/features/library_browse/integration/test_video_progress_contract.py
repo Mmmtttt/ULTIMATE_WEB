@@ -152,6 +152,8 @@ def test_video_detail_returns_full_info(integration_runtime):
     assert data["id"] == PRIMARY_VIDEO_ID
     assert "title" in data
     assert "score" in data
+    assert data["plugin_id"] == "video.javdb"
+    assert ((((data.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
 
 
 @pytest.mark.integration

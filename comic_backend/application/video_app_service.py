@@ -44,6 +44,7 @@ from protocol.platform_meta import (
     resolve_platform_manifest,
     split_prefixed_id,
 )
+from protocol.presentation import annotate_item
 from protocol.runtime_config import get_protocol_config_store
 
 
@@ -190,6 +191,37 @@ class VideoAppService(BaseContentAppService):
         error_logger.error("创建视频系统标签失败")
         return None
 
+    @classmethod
+    def _resolve_video_annotation_platform_name(cls, video_data: Dict[str, Any]) -> str:
+        raw = dict(video_data or {})
+        explicit_platform = str(raw.get("platform") or "").strip()
+        if explicit_platform and explicit_platform.lower() != "local":
+            return explicit_platform
+
+        video_id = str(raw.get("id") or "").strip()
+        context = cls._resolve_video_protocol_context(video_id=video_id, platform_name=explicit_platform)
+        resolved_platform = str(context.get("platform_name") or "").strip().lower()
+        if resolved_platform and resolved_platform != "local":
+            return resolved_platform
+
+        return ""
+
+    @classmethod
+    def _annotate_video_record(cls, video_data: Dict[str, Any]) -> Dict[str, Any]:
+        raw = dict(video_data or {})
+        platform_name = cls._resolve_video_annotation_platform_name(raw)
+        if not platform_name:
+            return raw
+        return annotate_item(raw, platform_name=platform_name, media_type="video")
+
+    @classmethod
+    def _annotate_video_records(cls, video_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            cls._annotate_video_record(item)
+            for item in (video_records or [])
+            if isinstance(item, dict)
+        ]
+
     def apply_recent_import_tags(
         self,
         video_ids: List[str],
@@ -277,6 +309,7 @@ class VideoAppService(BaseContentAppService):
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 video_list.append(video_info)
+            video_list = self._annotate_video_records(video_list)
             
             app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
             return ServiceResult.ok(video_list)
@@ -297,6 +330,7 @@ class VideoAppService(BaseContentAppService):
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids]
             detail["source"] = "local"
             detail["storage_path"] = self._resolve_video_storage_path(video)
+            detail = self._annotate_video_record(detail)
             
             app_logger.info(f"获取视频详情成功: {video_id}")
             return ServiceResult.ok(detail)
@@ -325,7 +359,7 @@ class VideoAppService(BaseContentAppService):
             video = self._video_repo.get_by_code(code)
             if not video:
                 return ServiceResult.error("视频不存在")
-            return ServiceResult.ok(video.to_dict())
+            return ServiceResult.ok(self._annotate_video_record(video.to_dict()))
         except Exception as e:
             error_logger.error(f"根据番号获取视频失败: {e}")
             return ServiceResult.error("获取视频失败")
@@ -343,6 +377,7 @@ class VideoAppService(BaseContentAppService):
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
+            results = self._annotate_video_records(results)
             
             app_logger.info(f"搜索成功: 关键词'{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
@@ -1849,6 +1884,7 @@ class VideoAppService(BaseContentAppService):
         try:
             videos = self._video_repo.get_all()
             trash_list = [v.to_dict() for v in videos if v.is_deleted]
+            trash_list = self._annotate_video_records(trash_list)
             return ServiceResult.ok(trash_list)
         except Exception as e:
             error_logger.error(f"获取回收站列表失败: {e}")
@@ -1858,7 +1894,7 @@ class VideoAppService(BaseContentAppService):
         try:
             videos = self._video_repo.get_by_tag(tag_id)
             videos = [v for v in videos if not v.is_deleted]
-            return ServiceResult.ok([v.to_dict() for v in videos])
+            return ServiceResult.ok(self._annotate_video_records([v.to_dict() for v in videos]))
         except Exception as e:
             error_logger.error(f"获取标签视频失败: {e}")
             return ServiceResult.error("获取视频失败")
@@ -1872,7 +1908,7 @@ class VideoAppService(BaseContentAppService):
                     continue
                 if actor_name in v.actors:
                     filtered.append(v.to_dict())
-            return ServiceResult.ok(filtered)
+            return ServiceResult.ok(self._annotate_video_records(filtered))
         except Exception as e:
             error_logger.error(f"获取演员视频失败: {e}")
             return ServiceResult.error("获取视频失败")
@@ -1955,7 +1991,7 @@ class VideoAppService(BaseContentAppService):
                 return ServiceResult.error("failed to save video")
 
             app_logger.info(f"update video meta success: {video_id}")
-            return ServiceResult.ok(video.to_dict(), "updated")
+            return ServiceResult.ok(self._annotate_video_record(video.to_dict()), "updated")
         except Exception as e:
             error_logger.error(f"update video meta failed: {e}")
             return ServiceResult.error("update failed")
@@ -1971,6 +2007,7 @@ class VideoAppService(BaseContentAppService):
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
+            results = self._annotate_video_records(results)
             
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
@@ -1990,6 +2027,7 @@ class VideoAppService(BaseContentAppService):
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 results.append(video_info)
+            results = self._annotate_video_records(results)
             
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
