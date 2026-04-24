@@ -1582,6 +1582,55 @@ def prepare_desktop_release_bundle(
     return bundle_dir
 
 
+def _normalize_string_list(values: object) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for item in values or []:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
+    if not third_party_root.exists():
+        return []
+
+    roots: List[Path] = []
+    for child in sorted(third_party_root.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
+            roots.append(child)
+    return roots
+
+
+def collect_pyinstaller_plugin_metadata(staged_backend: Path) -> Dict[str, List[str]]:
+    third_party_root = staged_backend / "third_party"
+    plugin_roots = discover_packaged_plugin_roots(third_party_root)
+
+    collect_all: List[str] = []
+    hidden_imports: List[str] = []
+    pip_requirements: List[str] = []
+
+    for plugin_root in plugin_roots:
+        for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+            payload = load_json(manifest_path)
+            packaging = dict((((payload.get("packaging") or {}).get("pyinstaller")) or {}))
+            collect_all.extend(_normalize_string_list(packaging.get("collect_all") or []))
+            hidden_imports.extend(_normalize_string_list(packaging.get("hidden_imports") or []))
+            pip_requirements.extend(_normalize_string_list(packaging.get("pip_requirements") or []))
+
+    return {
+        "plugin_roots": [str(path) for path in plugin_roots],
+        "collect_all": _normalize_string_list(collect_all),
+        "hidden_imports": _normalize_string_list(hidden_imports),
+        "pip_requirements": _normalize_string_list(pip_requirements),
+    }
+
+
 def write_pyinstaller_scripts(
     out_dir: Path,
     staged_target_dir: Path,
@@ -1599,7 +1648,8 @@ def write_pyinstaller_scripts(
     # 使用绝对路径确保PyInstaller能找到文件
     staged_backend = staged_target_dir / "comic_backend"
     server_config_src = staged_target_dir / "server_config.json"
-    
+    plugin_packaging = collect_pyinstaller_plugin_metadata(staged_backend)
+
     cmd = [
         "python",
         "-m",
@@ -1622,14 +1672,24 @@ def write_pyinstaller_scripts(
         "--collect-all", "PIL",
         "--collect-all", "bs4",
         "--hidden-import", "_multiprocessing",
-        # 保持与源码目录一致的相对布局，确保冻结环境下协议层仍能从
-        # comic_backend/third_party 扫描到所有插件 manifest。
-        f"--add-data", f"{staged_backend / 'third_party' / 'JMComic-Crawler-Python'}{sep}comic_backend/third_party/JMComic-Crawler-Python",
-        f"--add-data", f"{staged_backend / 'third_party' / 'Missav'}{sep}comic_backend/third_party/Missav",
-        f"--add-data", f"{staged_backend / 'third_party' / 'Picacomic-Crawler'}{sep}comic_backend/third_party/Picacomic-Crawler",
-        f"--add-data", f"{staged_backend / 'third_party' / 'javdb-api-scraper'}{sep}comic_backend/third_party/javdb-api-scraper",
         entry,
     ]
+
+    for collect_name in plugin_packaging["collect_all"]:
+        cmd.insert(-1, "--collect-all")
+        cmd.insert(-1, collect_name)
+
+    for hidden_import in plugin_packaging["hidden_imports"]:
+        cmd.insert(-1, "--hidden-import")
+        cmd.insert(-1, hidden_import)
+
+    # 保持与源码目录一致的相对布局，确保冻结环境下协议层仍能从
+    # comic_backend/third_party 扫描到所有插件 manifest。
+    for plugin_root in plugin_packaging["plugin_roots"]:
+        plugin_root_path = Path(plugin_root)
+        destination = f"comic_backend/third_party/{plugin_root_path.name}"
+        cmd.insert(-1, "--add-data")
+        cmd.insert(-1, f"{plugin_root_path}{sep}{destination}")
     
     if server_config_src.exists():
         cmd.insert(-1, f"--add-data")

@@ -76,3 +76,23 @@ def test_get_search_client_raises_when_api_login_fails(monkeypatch):
 
     with pytest.raises(RuntimeError, match="登录失败"):
         provider._get_search_client({"username": "test_user", "password": "test_pass"})
+
+
+def test_provider_bootstraps_local_jmcomic_package_from_plugin_dir():
+    plugin_root = BACKEND_ROOT / "third_party" / "JMComic-Crawler-Python"
+    lib_src_dir = (plugin_root / "lib" / "src").resolve()
+    module_name = "jmcomic_provider_packaged_import_test"
+
+    for name in ("jmcomic", "jmcomic_api", module_name):
+        sys.modules.pop(name, None)
+
+    spec = importlib.util.spec_from_file_location(module_name, plugin_root / "ultimate_provider.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load provider from {plugin_root / 'ultimate_provider.py'}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    jmcomic_module = sys.modules.get("jmcomic")
+    assert jmcomic_module is not None
+    assert lib_src_dir in Path(str(jmcomic_module.__file__ or "")).resolve().parents

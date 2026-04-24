@@ -38,6 +38,11 @@ if (-not (Test-Path $venvPython)) {
 Write-Info "Install Python build dependencies into venv"
 & $venvPython -m pip install --upgrade pip setuptools wheel
 & $venvPython -m pip install -r "comic_backend/requirements.txt" pyinstaller
+$pluginPackagingReqFile = Join-Path $repoRoot ".plugin_packaging_requirements.txt"
+& $venvPython "scripts/export_plugin_packaging_requirements.py" "--output" $pluginPackagingReqFile
+if ((Test-Path $pluginPackagingReqFile) -and ((Get-Item $pluginPackagingReqFile).Length -gt 0)) {
+    & $venvPython -m pip install -r $pluginPackagingReqFile
+}
 
 if (-not $SkipFrontendBuild) {
     Write-Info "Install and build frontend"

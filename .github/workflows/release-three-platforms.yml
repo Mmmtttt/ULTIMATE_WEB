@@ -112,6 +112,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r comic_backend/requirements.txt pyinstaller
+          python scripts/export_plugin_packaging_requirements.py --output .plugin_packaging_requirements.txt
+          if [ -s .plugin_packaging_requirements.txt ]; then
+            python -m pip install -r .plugin_packaging_requirements.txt
+          fi
 
       - name: install frontend dependencies
         shell: bash
