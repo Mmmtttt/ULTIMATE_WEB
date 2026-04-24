@@ -2,19 +2,50 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Dict, List, Optional
 
 from infrastructure.logger import app_logger, error_logger
 
 from .base import PluginManifest
+from core.constants import BACKEND_ROOT, PROJECT_ROOT
 
 
 class PluginRegistry:
     def __init__(self, search_root: Optional[str] = None):
-        default_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "third_party"))
-        self.search_root = os.path.abspath(search_root or default_root)
+        self.search_root = os.path.abspath(search_root) if search_root else None
         self._manifests: Dict[str, PluginManifest] = {}
         self._loaded = False
+
+    def _get_search_roots(self) -> List[str]:
+        if self.search_root:
+            return [self.search_root]
+
+        candidates: List[str] = [
+            os.path.abspath(os.path.join(BACKEND_ROOT, "third_party")),
+            os.path.abspath(os.path.join(PROJECT_ROOT, "backend_source", "third_party")),
+            os.path.abspath(os.path.join(PROJECT_ROOT, "comic_backend", "third_party")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "third_party")),
+        ]
+
+        meipass_root = str(getattr(sys, "_MEIPASS", "") or "").strip()
+        if meipass_root:
+            candidates.extend(
+                [
+                    os.path.abspath(os.path.join(meipass_root, "comic_backend", "third_party")),
+                    os.path.abspath(os.path.join(meipass_root, "third_party")),
+                ]
+            )
+
+        deduped: List[str] = []
+        seen = set()
+        for candidate in candidates:
+            normalized = os.path.abspath(str(candidate or "").strip())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
 
     def _validate_manifest(self, payload: dict, path: str) -> PluginManifest:
         manifest = PluginManifest(raw=dict(payload or {}), path=os.path.abspath(path))
@@ -28,27 +59,31 @@ class PluginRegistry:
 
     def refresh(self) -> None:
         manifests: Dict[str, PluginManifest] = {}
-        if not os.path.exists(self.search_root):
-            self._manifests = manifests
-            self._loaded = True
-            return
+        search_roots = self._get_search_roots()
 
-        for root, _dirs, files in os.walk(self.search_root):
-            if "ultimate-plugin.json" not in files:
+        for search_root in search_roots:
+            if not os.path.exists(search_root):
                 continue
 
-            path = os.path.join(root, "ultimate-plugin.json")
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    payload = json.load(f)
-                manifest = self._validate_manifest(payload, path)
-                manifests[manifest.plugin_id] = manifest
-            except Exception as exc:
-                error_logger.error(f"load protocol manifest failed: {path}, error={exc}")
+            for root, _dirs, files in os.walk(search_root):
+                if "ultimate-plugin.json" not in files:
+                    continue
+
+                path = os.path.join(root, "ultimate-plugin.json")
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        payload = json.load(f)
+                    manifest = self._validate_manifest(payload, path)
+                    manifests.setdefault(manifest.plugin_id, manifest)
+                except Exception as exc:
+                    error_logger.error(f"load protocol manifest failed: {path}, error={exc}")
 
         self._manifests = manifests
         self._loaded = True
-        app_logger.info(f"protocol registry loaded plugins: {sorted(self._manifests.keys())}")
+        app_logger.info(
+            f"protocol registry loaded plugins: {sorted(self._manifests.keys())}, "
+            f"search_roots={search_roots}"
+        )
 
     def _ensure_loaded(self) -> None:
         if not self._loaded:

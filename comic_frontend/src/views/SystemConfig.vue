@@ -115,10 +115,21 @@
           type="primary"
           block
           round
-          :loading="savingSystemConfig"
-          @click="saveSystemDataDir"
+          :loading="savingSystemConfigMode === 'migrate'"
+          @click="saveSystemDataDirWithMigration"
         >
           保存并迁移 data 目录
+        </van-button>
+        <van-button
+          plain
+          type="primary"
+          block
+          round
+          class="secondary-action"
+          :loading="savingSystemConfigMode === 'rebind'"
+          @click="saveSystemDataDirWithoutMigration"
+        >
+          仅保存 data 目录路径
         </van-button>
       </div>
     </van-cell-group>
@@ -269,7 +280,7 @@ const adapterForms = ref({})
 const systemDataDir = ref('')
 const runtimeDataDir = ref('')
 const resolvedDataDir = ref('')
-const savingSystemConfig = ref(false)
+const savingSystemConfigMode = ref('')
 const configDirInput = ref('')
 const runtimeConfigDir = ref('')
 const selectedConfigDir = ref('')
@@ -543,7 +554,7 @@ async function saveAdapterConfig(adapterName) {
   }
 }
 
-async function saveSystemDataDir() {
+async function saveSystemDataDir({ migrateData }) {
   const value = String(systemDataDir.value || '').trim()
   if (!value) {
     showFailToast('请填写 data_dir')
@@ -552,8 +563,10 @@ async function saveSystemDataDir() {
 
   try {
     await showConfirmDialog({
-      title: '确认迁移',
-      message: '将迁移当前 data 目录到新路径，并自动重启后端使配置生效，是否继续？',
+      title: migrateData ? '确认迁移' : '确认仅修改路径',
+      message: migrateData
+        ? '将直接移动当前 data 目录到新路径，并自动重启后端使配置生效，是否继续？'
+        : '将仅修改 data_dir 配置并重启后端，原目录数据不会移动，是否继续？',
       confirmButtonText: '继续',
       cancelButtonText: '取消',
     })
@@ -561,16 +574,20 @@ async function saveSystemDataDir() {
     return
   }
 
-  savingSystemConfig.value = true
+  savingSystemConfigMode.value = migrateData ? 'migrate' : 'rebind'
   try {
     const response = await configApi.updateSystemConfig({
       data_dir: value,
-      migrate_data: true,
+      migrate_data: Boolean(migrateData),
       restart_now: true,
     })
 
     if (response.code === 200) {
-      showSuccessToast('配置已保存，后端正在重启，请稍后刷新页面')
+      showSuccessToast(
+        migrateData
+          ? 'data 目录已迁移，后端正在重启，请稍后刷新页面'
+          : 'data 目录路径已保存，后端正在重启，请稍后刷新页面'
+      )
       setTimeout(() => {
         reloadPage()
       }, 2800)
@@ -587,8 +604,16 @@ async function saveSystemDataDir() {
     }
     showFailToast(error?.message || '保存失败')
   } finally {
-    savingSystemConfig.value = false
+    savingSystemConfigMode.value = ''
   }
+}
+
+function saveSystemDataDirWithMigration() {
+  return saveSystemDataDir({ migrateData: true })
+}
+
+function saveSystemDataDirWithoutMigration() {
+  return saveSystemDataDir({ migrateData: false })
 }
 
 async function saveConfigDir() {
@@ -715,6 +740,10 @@ onMounted(async () => {
 
 .inline-actions {
   padding: 10px 16px 16px;
+}
+
+.secondary-action {
+  margin-top: 10px;
 }
 
 .mmmtttt-config {

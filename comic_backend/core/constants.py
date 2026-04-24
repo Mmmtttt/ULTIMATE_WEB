@@ -341,11 +341,18 @@ def _load_server_config():
     return dict(DEFAULT_SERVER_CONFIG)
 
 
-def _resolve_data_dir():
-    config = _load_server_config()
-    storage = config.get("storage", {}) if isinstance(config, dict) else {}
-    configured_data_dir = storage.get("data_dir", "./comic_backend/data")
-    configured_data_dir = str(configured_data_dir or "./comic_backend/data").strip()
+def resolve_configured_data_dir(configured_data_dir: str | None = None) -> str:
+    if configured_data_dir is None:
+        config = _load_server_config()
+        storage = config.get("storage", {}) if isinstance(config, dict) else {}
+        configured_data_dir = storage.get(
+            "data_dir",
+            DEFAULT_SERVER_CONFIG.get("storage", {}).get("data_dir", "./comic_backend/data"),
+        )
+
+    configured_data_dir = str(
+        configured_data_dir or DEFAULT_SERVER_CONFIG.get("storage", {}).get("data_dir", "./comic_backend/data")
+    ).strip()
     configured_data_dir = os.path.expandvars(os.path.expanduser(configured_data_dir))
     runtime_profile = str(os.environ.get("BACKEND_RUNTIME_PROFILE", "")).strip().lower()
     android_files_dir = str(os.environ.get("ANDROID_APP_FILES_DIR", "")).strip()
@@ -369,6 +376,10 @@ def _resolve_data_dir():
     return os.path.abspath(os.path.join(PROJECT_ROOT, configured_data_dir))
 
 
+def _resolve_data_dir():
+    return resolve_configured_data_dir()
+
+
 def normalize_to_data_dir(path_value, default_relative=""):
     """Normalize non-absolute storage path values into DATA_DIR."""
     if path_value is None or str(path_value).strip() == "":
@@ -389,7 +400,7 @@ def normalize_to_data_dir(path_value, default_relative=""):
     return os.path.abspath(os.path.join(DATA_DIR, *parts))
 
 
-DATA_DIR = _resolve_data_dir()
+DATA_DIR = resolve_configured_data_dir()
 META_DIR = os.path.join(DATA_DIR, "meta_data")
 STATIC_DIR = os.path.join(DATA_DIR, "static")
 COVER_DIR = os.path.join(STATIC_DIR, "cover")

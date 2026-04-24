@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -25,13 +24,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Set
 
+from versioning import DEFAULT_APP_VERSION, has_numeric_version, normalize_app_version
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT_DIR / "comic_backend"
 FRONTEND_DIR = ROOT_DIR / "comic_frontend"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "output" / "multi_target"
-DEFAULT_APP_VERSION = "0.0.0"
 
 BASE_BACKEND_EXCLUDE_DIRS = {
     "__pycache__",
@@ -100,19 +99,6 @@ def load_targets(config_path: Path) -> List[Dict]:
         raise ValueError("no valid targets in config")
     return normalized
 
-
-def normalize_app_version(raw: str) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return ""
-
-    if text.lower().startswith("refs/tags/"):
-        text = text.split("/", 2)[-1]
-    if text.startswith(("v", "V")) and re.search(r"\d", text[1:]):
-        text = text[1:]
-    return text.strip()
-
-
 def resolve_app_version(cli_app_version: str = "") -> str:
     candidates = [
         cli_app_version,
@@ -122,7 +108,7 @@ def resolve_app_version(cli_app_version: str = "") -> str:
     ]
     for candidate in candidates:
         normalized = normalize_app_version(candidate)
-        if normalized and re.search(r"\d", normalized):
+        if has_numeric_version(normalized):
             return normalized
 
     package_json = FRONTEND_DIR / "package.json"
@@ -130,7 +116,7 @@ def resolve_app_version(cli_app_version: str = "") -> str:
         try:
             raw = json.loads(package_json.read_text(encoding="utf-8"))
             package_version = normalize_app_version(raw.get("version", ""))
-            if package_version:
+            if has_numeric_version(package_version) and package_version != DEFAULT_APP_VERSION:
                 return package_version
         except Exception:
             pass

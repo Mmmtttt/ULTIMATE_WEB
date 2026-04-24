@@ -1,4 +1,5 @@
 ﻿import json
+import copy
 import os
 import shutil
 import sys
@@ -9,11 +10,11 @@ from flask import Blueprint, jsonify, request, send_from_directory
 
 from application.config_app_service import ConfigAppService
 from core.constants import (
-    BACKEND_ROOT,
     CACHE_ROOT_DIR,
     COMIC_RECOMMENDATION_CACHE_DIR,
     DATA_DIR,
-    PROJECT_ROOT,
+    DEFAULT_SERVER_CONFIG,
+    resolve_configured_data_dir,
     SERVER_CONFIG_PATH,
     VIDEO_RECOMMENDATION_CACHE_DIR,
     VIDEO_RECOMMENDATION_JSON_FILE,
@@ -31,10 +32,18 @@ from protocol.gateway import get_protocol_gateway
 config_bp = Blueprint('config', __name__)
 config_service = ConfigAppService()
 
-_PROJECT_ROOT = PROJECT_ROOT
-_BACKEND_ROOT = BACKEND_ROOT
 _VIDEO_PREVIEW_CACHE_DIR = VIDEO_RECOMMENDATION_CACHE_DIR
 _VIDEO_LOCAL_ASSET_FIELDS = ("cover_path_local", "thumbnail_images_local", "preview_video_local")
+_RUNTIME_MOVE_SKIP_TOP_LEVELS = {"logs"}
+_KNOWN_DATA_DIR_TOP_LEVELS = {
+    "meta_data",
+    "comic",
+    "video",
+    "static",
+    "cache",
+    "recommendation_cache",
+    "logs",
+}
 
 
 def success_response(data=None, msg="成功"):
@@ -54,11 +63,7 @@ def error_response(code, msg):
 
 
 def _default_server_config():
-    return {
-        "backend": {"host": "0.0.0.0", "port": 5000},
-        "frontend": {"host": "0.0.0.0", "port": 5173},
-        "storage": {"data_dir": "./comic_backend/data"},
-    }
+    return copy.deepcopy(DEFAULT_SERVER_CONFIG)
 
 
 def _load_server_config():
@@ -78,11 +83,7 @@ def _save_server_config(config):
 
 
 def _resolve_data_dir(path_value):
-    raw = str(path_value or '').strip() or './comic_backend/data'
-    expanded = os.path.expandvars(os.path.expanduser(raw))
-    if os.path.isabs(expanded):
-        return os.path.abspath(expanded)
-    return os.path.abspath(os.path.join(_PROJECT_ROOT, expanded))
+    return resolve_configured_data_dir(path_value)
 
 
 def _is_same_path(path_a, path_b):
@@ -172,6 +173,130 @@ def _clear_preview_video_local_fields():
     }
 
 
+def _looks_like_data_dir(root_dir):
+    if not os.path.isdir(root_dir):
+        return False
+
+    try:
+        entries = {
+            str(entry.name or "").strip().lower()
+            for entry in os.scandir(root_dir)
+            if str(entry.name or "").strip()
+        }
+    except OSError:
+        return False
+
+    if "meta_data" in entries:
+        return True
+    return bool(entries & _KNOWN_DATA_DIR_TOP_LEVELS)
+
+def _validate_target_data_dir(dst_abs):
+    if not os.path.exists(dst_abs):
+        return
+    if not os.path.isdir(dst_abs):
+        raise ValueError("目标 data 路径必须是目录")
+    if any(os.scandir(dst_abs)) and (not _looks_like_data_dir(dst_abs)):
+        raise ValueError("目标 data 目录非空，请选择空目录或合法 data 目录")
+
+
+def _move_path_merge(src_path, dst_path):
+    if not os.path.exists(src_path):
+        return 0
+
+    if os.path.isdir(src_path):
+        if os.path.exists(dst_path) and (not os.path.isdir(dst_path)):
+            raise ValueError(f"目标路径存在同名文件，无法迁移目录: {dst_path}")
+        os.makedirs(dst_path, exist_ok=True)
+        moved_files = 0
+        for entry in os.listdir(src_path):
+            moved_files += _move_path_merge(
+                os.path.join(src_path, entry),
+                os.path.join(dst_path, entry),
+            )
+        try:
+            os.rmdir(src_path)
+        except OSError:
+            pass
+        return moved_files
+
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    if os.path.isdir(dst_path):
+        raise ValueError(f"目标路径存在同名目录，无法迁移文件: {dst_path}")
+    if os.path.exists(dst_path):
+        os.remove(dst_path)
+    shutil.move(src_path, dst_path)
+    return 1
+
+
+def _move_data_dir_contents(src_dir, dst_dir, skip_top_level=None):
+    src_abs = os.path.abspath(src_dir)
+    dst_abs = os.path.abspath(dst_dir)
+
+    if _is_same_path(src_abs, dst_abs):
+        return {
+            "migrated": False,
+            "moved_files": 0,
+            "source": src_abs,
+            "target": dst_abs,
+            "message": "data_dir 未变化，无需迁移",
+        }
+
+    if not os.path.exists(src_abs):
+        os.makedirs(dst_abs, exist_ok=True)
+        return {
+            "migrated": False,
+            "moved_files": 0,
+            "source": src_abs,
+            "target": dst_abs,
+            "message": "当前 data 目录不存在，已创建目标目录",
+        }
+
+    if _is_sub_path(src_abs, dst_abs) or _is_sub_path(dst_abs, src_abs):
+        raise ValueError("目标路径不能与当前 data 目录互为父子目录")
+
+    _validate_target_data_dir(dst_abs)
+    os.makedirs(dst_abs, exist_ok=True)
+
+    moved_files = 0
+    skipped_entries = []
+    skip_names = {
+        str(item or "").strip().lower()
+        for item in (skip_top_level or [])
+        if str(item or "").strip()
+    }
+
+    for entry in os.listdir(src_abs):
+        if entry.lower() in skip_names:
+            skipped_entries.append(entry)
+            continue
+        moved_files += _move_path_merge(
+            os.path.join(src_abs, entry),
+            os.path.join(dst_abs, entry),
+        )
+
+    try:
+        if not any(os.scandir(src_abs)):
+            os.rmdir(src_abs)
+    except OSError:
+        pass
+
+    message = "data 目录迁移完成"
+    mode = "move"
+    if skipped_entries:
+        message = "data 目录迁移完成，日志目录将在重启后切换"
+        mode = "runtime_move"
+
+    return {
+        "migrated": moved_files > 0,
+        "moved_files": moved_files,
+        "source": src_abs,
+        "target": dst_abs,
+        "mode": mode,
+        "skipped_top_level": sorted(skipped_entries),
+        "message": message,
+    }
+
+
 def _resolve_plugin_helper(config_key: str, helper_key: str):
     manifest = get_protocol_gateway().get_manifest_by_config_key(str(config_key or "").strip())
     if manifest is None:
@@ -249,52 +374,8 @@ def _build_storage_info(dir_path, label, description=""):
 def _move_data_dir(src_dir, dst_dir):
     src_abs = os.path.abspath(src_dir)
     dst_abs = os.path.abspath(dst_dir)
-
-    if _is_same_path(src_abs, dst_abs):
-        return {
-            "migrated": False,
-            "moved_files": 0,
-            "source": src_abs,
-            "target": dst_abs,
-            "message": "data_dir 未变化，无需迁移",
-        }
-
-    if not os.path.exists(src_abs):
-        os.makedirs(dst_abs, exist_ok=True)
-        return {
-            "migrated": False,
-            "moved_files": 0,
-            "source": src_abs,
-            "target": dst_abs,
-            "message": "当前 data 目录不存在，已创建目标目录",
-        }
-
-    if _is_sub_path(src_abs, dst_abs) or _is_sub_path(dst_abs, src_abs):
-        raise ValueError("目标路径不能与当前 data 目录互为父子目录")
-
-    moved_files = _count_files(src_abs)
-
-    if not os.path.exists(dst_abs):
-        os.makedirs(os.path.dirname(dst_abs), exist_ok=True)
-        shutil.move(src_abs, dst_abs)
-    else:
-        if any(os.scandir(dst_abs)):
-            raise ValueError("目标 data 目录非空，请选择空目录或新目录")
-
-        for entry in os.listdir(src_abs):
-            shutil.move(os.path.join(src_abs, entry), os.path.join(dst_abs, entry))
-        try:
-            os.rmdir(src_abs)
-        except OSError:
-            pass
-
-    return {
-        "migrated": True,
-        "moved_files": moved_files,
-        "source": src_abs,
-        "target": dst_abs,
-        "message": "data 目录迁移完成",
-    }
+    skip_top_level = _RUNTIME_MOVE_SKIP_TOP_LEVELS if _is_same_path(src_abs, DATA_DIR) else None
+    return _move_data_dir_contents(src_abs, dst_abs, skip_top_level=skip_top_level)
 
 
 def _should_rebase_to_new_data_dir(path_value, old_data_dir):

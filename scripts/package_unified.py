@@ -1622,11 +1622,12 @@ def write_pyinstaller_scripts(
         "--collect-all", "PIL",
         "--collect-all", "bs4",
         "--hidden-import", "_multiprocessing",
-        # 打包所有third_party子库（使用绝对路径）
-        f"--add-data", f"{staged_backend / 'third_party' / 'JMComic-Crawler-Python'}{sep}third_party/JMComic-Crawler-Python",
-        f"--add-data", f"{staged_backend / 'third_party' / 'Missav'}{sep}third_party/Missav",
-        f"--add-data", f"{staged_backend / 'third_party' / 'Picacomic-Crawler'}{sep}third_party/Picacomic-Crawler",
-        f"--add-data", f"{staged_backend / 'third_party' / 'javdb-api-scraper'}{sep}third_party/javdb-api-scraper",
+        # 保持与源码目录一致的相对布局，确保冻结环境下协议层仍能从
+        # comic_backend/third_party 扫描到所有插件 manifest。
+        f"--add-data", f"{staged_backend / 'third_party' / 'JMComic-Crawler-Python'}{sep}comic_backend/third_party/JMComic-Crawler-Python",
+        f"--add-data", f"{staged_backend / 'third_party' / 'Missav'}{sep}comic_backend/third_party/Missav",
+        f"--add-data", f"{staged_backend / 'third_party' / 'Picacomic-Crawler'}{sep}comic_backend/third_party/Picacomic-Crawler",
+        f"--add-data", f"{staged_backend / 'third_party' / 'javdb-api-scraper'}{sep}comic_backend/third_party/javdb-api-scraper",
         entry,
     ]
     

@@ -36,6 +36,8 @@ def test_system_config_update_invokes_third_party_storage_path_rebase_hook(third
     old_runtime_dir = str(get_payload["data"]["current_runtime_data_dir"])
 
     new_data_dir = (runtime_root / "data_rebased").resolve()
+    if str(new_data_dir) == old_runtime_dir:
+        new_data_dir = (runtime_root / "data_rebased_next").resolve()
 
     monkeypatch.setattr(
         config_api,

@@ -32,42 +32,11 @@ jobs:
           if [[ -z "$RAW_VERSION" ]]; then
             RAW_VERSION="${GITHUB_REF_NAME:-}"
           fi
-
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          def normalize_app_version(raw: str) -> str:
-              text = str(raw or "").strip()
-              if not text:
-                  return ""
-              if text.lower().startswith("refs/tags/"):
-                  text = text.split("/", 2)[-1]
-              if text.startswith(("v", "V")) and re.search(r"\d", text[1:]):
-                  text = text[1:]
-              return text.strip()
-
-          cli_version = normalize_app_version(os.environ.get("RAW_VERSION", ""))
-          if cli_version and re.search(r"\d", cli_version):
-              resolved = cli_version
-          else:
-              package_json = Path("comic_frontend/package.json")
-              resolved = ""
-              if package_json.exists():
-                  try:
-                      payload = json.loads(package_json.read_text(encoding="utf-8"))
-                      candidate = normalize_app_version(str(payload.get("version", "")))
-                      if candidate and re.search(r"\d", candidate):
-                          resolved = candidate
-                  except Exception:
-                      resolved = ""
-              if not resolved:
-                  resolved = f"0.0.{os.environ.get('GITHUB_RUN_NUMBER', '0')}"
-
-          print(f"app_version={resolved}")
-          PY
+          RESOLVED_VERSION="$(python scripts/versioning.py \
+            --raw-version "$RAW_VERSION" \
+            --package-json "comic_frontend/package.json" \
+            --run-number "${GITHUB_RUN_NUMBER:-0}")"
+          echo "app_version=${RESOLVED_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: print resolved app version
         shell: bash

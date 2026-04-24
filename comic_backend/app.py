@@ -1,4 +1,5 @@
 import atexit
+import copy
 import json
 import os
 import sys
@@ -15,6 +16,7 @@ from core.constants import (
     COMIC_DIR,
     COVER_DIR,
     DATA_DIR,
+    DEFAULT_SERVER_CONFIG,
     RECOMMENDATION_CACHE_DIR,
     SERVER_CONFIG_PATH,
     STATIC_DIR,
@@ -35,11 +37,7 @@ def load_server_config():
                 return json.load(f)
         except Exception:
             pass
-    return {
-        "backend": {"host": "0.0.0.0", "port": 5000},
-        "frontend": {"host": "0.0.0.0", "port": 5173},
-        "storage": {"data_dir": "./comic_backend/data"}
-    }
+    return copy.deepcopy(DEFAULT_SERVER_CONFIG)
 
 
 SERVER_CONFIG = load_server_config()
