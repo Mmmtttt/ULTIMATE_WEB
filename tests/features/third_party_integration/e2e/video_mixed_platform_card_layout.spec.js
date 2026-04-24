@@ -45,6 +45,17 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
               platform: "javdb",
               cover_url: "/static/default/default_cover.jpg",
               actors: ["A"],
+              display: {
+                cover: {
+                  aspect_ratio: "16 / 9",
+                  mobile_aspect_ratio: "3 / 2",
+                  fit: "cover",
+                },
+                badge: {
+                  label: "JAVDB",
+                  show_platform_label: true,
+                },
+              },
             },
             {
               id: "JVID-BUS-1",
@@ -53,6 +64,16 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
               platform: "javbus",
               cover_url: "/static/default/default_cover.jpg",
               actors: ["B"],
+              display: {
+                cover: {
+                  aspect_ratio: "2 / 3",
+                  fit: "contain",
+                },
+                badge: {
+                  label: "JAVBUS",
+                  show_platform_label: true,
+                },
+              },
             },
           ],
         },
@@ -72,27 +93,39 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
 
   await page.locator(".van-tab").nth(2).click();
   await expect(page.locator(".remote-result-card")).toHaveCount(2);
-  await expect(page.locator(".card-cover.video-cover-landscape")).toHaveCount(1);
-  await expect(page.locator(".card-cover.video-cover-portrait")).toHaveCount(1);
 
   const dimensions = await page.evaluate(() => {
-    const landscape = document.querySelector(".card-cover.video-cover-landscape");
-    const portrait = document.querySelector(".card-cover.video-cover-portrait");
+    const cards = Array.from(document.querySelectorAll(".remote-result-card")).map((card) => {
+      const title = card.querySelector(".card-title")?.textContent?.trim() || "";
+      const cover = card.querySelector(".card-cover");
+      const rect = cover?.getBoundingClientRect();
+      const style = cover ? window.getComputedStyle(cover) : null;
+      return {
+        title,
+        height: rect?.height || 0,
+        width: rect?.width || 0,
+        ratioVar: style?.getPropertyValue("--media-cover-aspect-ratio")?.trim() || "",
+      };
+    });
+    const landscape = cards.find((item) => item.title.includes("Landscape"));
+    const portrait = cards.find((item) => item.title.includes("Portrait"));
     if (!landscape || !portrait) {
       return null;
     }
-    const l = landscape.getBoundingClientRect();
-    const p = portrait.getBoundingClientRect();
     return {
-      landscapeHeight: l.height,
-      portraitHeight: p.height,
-      landscapeRatio: l.width / Math.max(1, l.height),
-      portraitRatio: p.width / Math.max(1, p.height),
-      heightDelta: Math.abs(l.height - p.height),
+      landscapeHeight: landscape.height,
+      portraitHeight: portrait.height,
+      landscapeRatio: landscape.width / Math.max(1, landscape.height),
+      portraitRatio: portrait.width / Math.max(1, portrait.height),
+      landscapeRatioVar: landscape.ratioVar,
+      portraitRatioVar: portrait.ratioVar,
+      heightDelta: Math.abs(landscape.height - portrait.height),
     };
   });
 
   expect(dimensions).not.toBeNull();
+  expect(dimensions.landscapeRatioVar).toBe("16 / 9");
+  expect(dimensions.portraitRatioVar).toBe("2 / 3");
   expect(dimensions.landscapeHeight).toBeLessThan(dimensions.portraitHeight);
   expect(dimensions.landscapeRatio).toBeGreaterThan(dimensions.portraitRatio);
   expect(dimensions.heightDelta).toBeGreaterThan(20);

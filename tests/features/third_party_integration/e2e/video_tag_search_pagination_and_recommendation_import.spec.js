@@ -21,6 +21,52 @@ test("video tag search load more forwards page and imports to recommendation", a
   const searchQueries = [];
   const importTaskBodies = [];
 
+  await page.route("**/api/v1/comic/third-party/config", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 200,
+        msg: "ok",
+        data: {
+          default_adapter: "javdb",
+          adapter_order: ["javdb"],
+          plugins: [
+            {
+              plugin_id: "video.javdb",
+              config_key: "javdb",
+              name: "JAVDB",
+              version: "1.0.0",
+              media_types: ["video"],
+              capabilities: ["taxonomy.tag_search", "taxonomy.tags", "health.query.status"],
+              lookup_names: ["video.javdb", "javdb", "JAVDB"],
+              identity: {
+                content_type: "video",
+                host_id_prefix: "JAVDB",
+                platform_label: "JAVDB",
+                aliases: ["javdb"],
+              },
+              presentation: {
+                media_card: {
+                  cover: {
+                    aspect_ratio: "16 / 9",
+                    mobile_aspect_ratio: "3 / 2",
+                    fit: "cover",
+                  },
+                  badge: {
+                    show_platform_label: true,
+                    label: "JAVDB",
+                  },
+                },
+              },
+              order: 30,
+            },
+          ],
+        },
+      }),
+    });
+  });
+
   await page.route("**/api/v1/video/third-party/javdb/health-status", async (route) => {
     await route.fulfill({
       status: 200,
