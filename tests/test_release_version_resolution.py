@@ -46,3 +46,10 @@ def test_release_workflow_uses_shared_versioning_script():
     workflow_text = workflow_path.read_text(encoding="utf-8")
 
     assert "python scripts/versioning.py" in workflow_text
+
+
+def test_test_gate_workflow_checks_out_recursive_submodules():
+    workflow_path = ROOT_DIR / ".github" / "workflows" / "test-gate.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+
+    assert "submodules: recursive" in workflow_text

@@ -157,13 +157,7 @@ def comic_init():
         import time
         comic_id = data['comic_id']
         title = data.get('title', f"漫画_{comic_id}")
-        
-        image_paths = file_parser.parse_comic_images(comic_id)
-        if not image_paths:
-            return error_response(404, "漫画目录不存在或无有效图片")
-        
-        cover_path = image_handler.generate_cover(comic_id, image_paths[0])
-        
+
         from infrastructure.persistence.json_storage import JsonStorage
         storage = JsonStorage()
         db_data = storage.read()
@@ -171,6 +165,12 @@ def comic_init():
         existing_comic = next((c for c in db_data.get('comics', []) if c['id'] == comic_id), None)
         if existing_comic:
             return error_response(400, "漫画已存在")
+        
+        image_paths = file_parser.parse_comic_images(comic_id)
+        if not image_paths:
+            return error_response(404, "漫画目录不存在或无有效图片")
+        
+        cover_path = image_handler.generate_cover(comic_id, image_paths[0])
         
         new_comic = {
             "id": comic_id,
