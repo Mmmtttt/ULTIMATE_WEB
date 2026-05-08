@@ -33,6 +33,12 @@ class BaseContent(BaseEntity):
     create_time: str = ""
     last_access_time: str = ""
     is_deleted: bool = False
+    platform: str = ""
+    plugin_id: str = ""
+    plugin_name: str = ""
+    display: Dict[str, Any] = field(default_factory=dict)
+    storage_path_relative: str = ""
+    storage_path_kind: str = ""
     content_type: ContentType = ContentType.COMIC
     
     def to_dict(self) -> dict:
@@ -51,6 +57,12 @@ class BaseContent(BaseEntity):
             "create_time": self.create_time,
             "last_access_time": self.last_access_time,
             "is_deleted": self.is_deleted,
+            "platform": self.platform,
+            "plugin_id": self.plugin_id,
+            "plugin_name": self.plugin_name,
+            "display": dict(self.display or {}),
+            "storage_path_relative": self.storage_path_relative,
+            "storage_path_kind": self.storage_path_kind,
             "content_type": self.content_type.value
         }
     
@@ -74,6 +86,12 @@ class BaseContent(BaseEntity):
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_access_time", data.get("last_read_time", "")),
             is_deleted=data.get("is_deleted", False),
+            platform=data.get("platform", ""),
+            plugin_id=data.get("plugin_id", ""),
+            plugin_name=data.get("plugin_name", ""),
+            display=dict(data.get("display") or {}),
+            storage_path_relative=data.get("storage_path_relative", ""),
+            storage_path_kind=data.get("storage_path_kind", ""),
             content_type=content_type
         )
     

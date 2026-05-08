@@ -45,6 +45,13 @@ class DatabaseOrganizeService:
                     "confirm_message": "将联网补全 LOCAL 漫画信息，是否继续？",
                     "implemented": True,
                 },
+                {
+                    "action": "refresh_persisted_metadata",
+                    "name": "补全新版元数据",
+                    "description": "为本地库和预览库补全相对路径、平台信息与展示配置。",
+                    "confirm_message": "将把旧漫画数据库补全为新版元数据格式，是否继续？",
+                    "implemented": True,
+                },
             ]
         else:
             options = [
@@ -60,6 +67,13 @@ class DatabaseOrganizeService:
                     "name": "LOCAL补全信息",
                     "description": "为 LOCAL 视频按协议声明的搜索平台顺序补全标题、作者、标签与预览资源。",
                     "confirm_message": "将联网补全 LOCAL 视频信息，是否继续？",
+                    "implemented": True,
+                },
+                {
+                    "action": "refresh_persisted_metadata",
+                    "name": "补全新版元数据",
+                    "description": "为本地库和预览库补全相对路径、平台信息与封面展示比例。",
+                    "confirm_message": "将把旧视频数据库补全为新版元数据格式，是否继续？",
                     "implemented": True,
                 },
             ]
@@ -89,6 +103,8 @@ class DatabaseOrganizeService:
                 return self._video_service.organize_deduplicate_by_code()
             if normalized_action == "enrich_local_metadata":
                 return self._video_service.organize_enrich_local_metadata()
+            if normalized_action == "refresh_persisted_metadata":
+                return self._video_service.organize_refresh_persisted_metadata()
             return ServiceResult.error(f"不支持的视频整理动作: {normalized_action}")
 
         if normalized_action == "repair_cover":
@@ -105,5 +121,8 @@ class DatabaseOrganizeService:
 
         if normalized_action == "enrich_local_metadata":
             return self._comic_service.organize_enrich_local_metadata()
+
+        if normalized_action == "refresh_persisted_metadata":
+            return self._comic_service.organize_refresh_persisted_metadata()
 
         return ServiceResult.error(f"不支持的整理动作: {normalized_action}")

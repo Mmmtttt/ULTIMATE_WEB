@@ -1,5 +1,6 @@
 import os
 import re
+from application.persisted_content_metadata import resolve_data_relative_path
 from core.constants import (
     COMIC_DIR,
     LOCAL_PICTURES_DIR,
@@ -42,13 +43,19 @@ class FileParser:
         根据漫画 ID 推断其在本地的根目录。
         优先走插件协议声明的 `storage.comic_dir.resolve`，让目录规则由插件自己决定。
         """
+        comic_record = self._find_comic_record(comic_id) or {}
+        stored_relative = str((comic_record or {}).get("storage_path_relative", "")).strip()
+        if stored_relative:
+            stored_abs = resolve_data_relative_path(stored_relative)
+            if stored_abs:
+                return stored_abs
+
         platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
         if not original_id:
             raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
 
         local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
         if str(original_id or "").upper().startswith("LOCAL"):
-            comic_record = self._find_comic_record(comic_id)
             stored_dir_name = str((comic_record or {}).get("local_asset_dir_name", "")).strip()
             if stored_dir_name:
                 named_local_dir = os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
@@ -62,7 +69,6 @@ class FileParser:
 
         host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
         base_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key or host_prefix)
-        comic_record = self._find_comic_record(comic_id) or {}
         author = comic_record.get("author") or comic_record.get("creator") or "unknown"
         title = comic_record.get("title") or f"漫画_{original_id}"
 

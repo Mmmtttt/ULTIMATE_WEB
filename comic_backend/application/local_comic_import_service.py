@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from application.persisted_content_metadata import normalize_data_relative_path
 from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
 from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.logger import app_logger
@@ -2419,8 +2420,16 @@ class LocalComicImportService:
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF:
                     comic_record["storage_mode"] = "soft_ref"
                     comic_record["soft_ref_locator"] = work_path
+                    relative_source = normalize_data_relative_path(work_path)
+                    if relative_source:
+                        comic_record["storage_path_relative"] = relative_source
+                    comic_record["storage_path_kind"] = "source"
                 else:
                     comic_record["local_asset_dir_name"] = str(record.get("local_asset_dir_name", "")).strip()
+                    relative_target_dir = normalize_data_relative_path(str(target_dir))
+                    if relative_target_dir:
+                        comic_record["storage_path_relative"] = relative_target_dir
+                    comic_record["storage_path_kind"] = "local_dir"
 
                 ok, inserted = self._append_comic_record(comic_record)
                 if not ok:

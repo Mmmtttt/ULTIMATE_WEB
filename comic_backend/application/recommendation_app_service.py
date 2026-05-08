@@ -1,6 +1,10 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import os
 import shutil
+from application.persisted_content_metadata import (
+    build_persisted_annotation,
+    normalize_data_relative_path,
+)
 from domain.comic import Comic, ComicRepository
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
@@ -35,6 +39,35 @@ class RecommendationAppService:
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._platform_service = None
+
+    @staticmethod
+    def _recommendation_to_summary_dict(recommendation: Recommendation, tag_map: Dict[str, str]) -> Dict[str, Any]:
+        payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else {}
+        payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
+        return payload
+
+    def _build_recommendation_persisted_metadata(
+        self,
+        recommendation_payload: Dict[str, Any],
+        *,
+        storage_path: str = "",
+        storage_kind: str = "",
+        platform_name: str = "",
+        plugin_id: str = "",
+    ) -> Dict[str, Any]:
+        persisted = build_persisted_annotation(
+            recommendation_payload,
+            media_type="comic",
+            plugin_id=plugin_id or None,
+            platform_name=platform_name or None,
+        )
+        if storage_path:
+            relative_path = normalize_data_relative_path(storage_path)
+            if relative_path:
+                persisted["storage_path_relative"] = relative_path
+        if storage_kind:
+            persisted["storage_path_kind"] = storage_kind
+        return persisted
 
     def _get_platform_service(self):
         if self._platform_service is not None:
@@ -91,21 +124,8 @@ class RecommendationAppService:
             # 构建返回数据
             recommendation_list = []
             for r in recommendations:
-                rec_info = {
-                    "id": r.id,
-                    "title": r.title,
-                    "author": r.author,
-                    "desc": r.desc,
-                    "cover_path": r.cover_path,  # 图床 URL
-                    "total_page": normalize_total_page(r.total_page),
-                    "current_page": r.current_page,
-                    "score": r.score,
-                    "tag_ids": r.tag_ids,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
-                    "last_read_time": r.last_read_time,
-                    "create_time": r.create_time,
-                    "list_ids": r.list_ids
-                }
+                rec_info = self._recommendation_to_summary_dict(r, tag_map)
+                rec_info["total_page"] = normalize_total_page(r.total_page)
                 recommendation_list.append(rec_info)
             
             app_logger.info(f"获取推荐列表成功，共 {len(recommendation_list)} 个")
@@ -163,27 +183,14 @@ class RecommendationAppService:
                     except Exception as e:
                         error_logger.warning(f"获取协议预览图片失败: {recommendation_id}, {e}")
 
-            detail = {
-                "id": recommendation.id,
-                "title": recommendation.title,
-                "title_jp": recommendation.title_jp,
-                "author": recommendation.author,
-                "desc": recommendation.desc,
-                "cover_path": recommendation.cover_path,
-                "total_page": normalized_total_page,
-                "current_page": recommendation.current_page,
-                "score": recommendation.score,
-                "tag_ids": recommendation.tag_ids,
-                "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids],
-                "list_ids": recommendation.list_ids,
-                "preview_pages": preview_pages,
-                "preview_image_urls": preview_image_urls,
-                "is_cached": is_cached,
-                "last_read_time": recommendation.last_read_time,
-                "create_time": recommendation.create_time,
-                "is_favorited": is_favorited,
-                "source": "preview"
-            }
+            detail = recommendation.to_dict()
+            detail["total_page"] = normalized_total_page
+            detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
+            detail["preview_pages"] = preview_pages
+            detail["preview_image_urls"] = preview_image_urls
+            detail["is_cached"] = is_cached
+            detail["is_favorited"] = is_favorited
+            detail["source"] = "preview"
 
             app_logger.info(f"获取推荐详情成功: {recommendation_id}, 平台: {platform_key}, 缓存状态: {is_cached}")
             return ServiceResult.ok(detail)
@@ -413,8 +420,24 @@ class RecommendationAppService:
                         list_ids=list(recommendation.list_ids or []),
                         create_time=create_time,
                         last_access_time=last_read_time,
-                        is_deleted=False
+                        is_deleted=False,
+                        platform=recommendation.platform or "",
+                        plugin_id=getattr(recommendation, "plugin_id", "") or "",
+                        plugin_name=getattr(recommendation, "plugin_name", "") or "",
+                        display=dict(getattr(recommendation, "display", {}) or {}),
                     )
+
+                    local_dir = self._get_local_comic_dir(recommendation)
+                    platform_key, _original_id, _manifest = split_prefixed_id(recommendation.id, media_type="comic")
+                    persisted_updates = self._build_recommendation_persisted_metadata(
+                        local_comic.to_dict(),
+                        storage_path=local_dir or "",
+                        storage_kind="local_dir" if local_dir else "",
+                        platform_name=recommendation.platform or platform_key,
+                        plugin_id=getattr(recommendation, "plugin_id", "") or "",
+                    )
+                    for key, value in persisted_updates.items():
+                        setattr(local_comic, key, value)
 
                     if not self._comic_repo.save(local_comic):
                         failed_count += 1
@@ -677,7 +700,13 @@ class RecommendationAppService:
                 create_time=get_current_time(),
                 last_read_time=get_current_time(),
                 preview_image_urls=data.get("preview_image_urls", []),
-                preview_pages=data.get("preview_pages", [])
+                preview_pages=data.get("preview_pages", []),
+                platform=data.get("platform", ""),
+                plugin_id=data.get("plugin_id", ""),
+                plugin_name=data.get("plugin_name", ""),
+                display=dict(data.get("display") or {}),
+                storage_path_relative=data.get("storage_path_relative", ""),
+                storage_path_kind=data.get("storage_path_kind", ""),
             )
             
             if self._recommendation_repo.save(recommendation):
@@ -717,16 +746,9 @@ class RecommendationAppService:
             
             result = []
             for r in trash_list:
-                result.append({
-                    "id": r.id,
-                    "title": r.title,
-                    "author": r.author,
-                    "cover_path": r.cover_path,
-                    "total_page": normalize_total_page(r.total_page),
-                    "score": r.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in r.tag_ids],
-                    "create_time": r.create_time
-                })
+                payload = self._recommendation_to_summary_dict(r, tag_map)
+                payload["total_page"] = normalize_total_page(r.total_page)
+                result.append(payload)
             
             app_logger.info(f"获取回收站列表成功，共 {len(result)} 个漫画")
             return ServiceResult.ok(result)

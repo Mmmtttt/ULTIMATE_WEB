@@ -5,6 +5,7 @@ Mmmtttt
 
 from typing import List, Dict, Optional, Any, Tuple
 import base64
+import math
 import os
 import re
 import shutil
@@ -13,6 +14,11 @@ import requests
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, unquote
 from PIL import Image
+from application.persisted_content_metadata import (
+    build_persisted_annotation,
+    normalize_data_relative_path,
+    resolve_data_relative_path,
+)
 
 from domain.video import Video, VideoRepository
 from domain.video_recommendation import VideoRecommendationRepository, VideoRecommendation
@@ -164,6 +170,103 @@ class VideoAppService(BaseContentAppService):
 
     def _get_repo_by_source(self, source: str = "local"):
         return self._video_rec_repo if source == "preview" else self._video_repo
+
+    @staticmethod
+    def _apply_persisted_fields(target: Any, updates: Dict[str, Any]) -> bool:
+        changed = False
+        for key, value in (updates or {}).items():
+            if isinstance(target, dict):
+                current = target.get(key)
+                if current != value:
+                    target[key] = value
+                    changed = True
+                continue
+
+            if getattr(target, key, None) != value:
+                setattr(target, key, value)
+                changed = True
+        return changed
+
+    def _build_video_persisted_metadata(
+        self,
+        video_payload: Dict[str, Any],
+        *,
+        storage_path: str = "",
+        storage_kind: str = "",
+        platform_name: str = "",
+        plugin_id: str = "",
+    ) -> Dict[str, Any]:
+        persisted = build_persisted_annotation(
+            video_payload,
+            media_type="video",
+            plugin_id=plugin_id or None,
+            platform_name=platform_name or None,
+        )
+        if storage_path:
+            relative_path = normalize_data_relative_path(storage_path)
+            if relative_path:
+                persisted["storage_path_relative"] = relative_path
+        if storage_kind:
+            persisted["storage_path_kind"] = storage_kind
+        return persisted
+
+    @staticmethod
+    def _format_cover_aspect_ratio(width: int, height: int) -> str:
+        try:
+            width_value = int(width)
+            height_value = int(height)
+        except Exception:
+            return ""
+        if width_value <= 0 or height_value <= 0:
+            return ""
+
+        ratio = width_value / height_value
+        common_ratios = (
+            (16, 9),
+            (3, 2),
+            (4, 3),
+            (1, 1),
+            (2, 3),
+            (9, 16),
+        )
+        closest = min(common_ratios, key=lambda item: abs((item[0] / item[1]) - ratio))
+        if abs((closest[0] / closest[1]) - ratio) <= 0.08:
+            return f"{closest[0]} / {closest[1]}"
+
+        divisor = math.gcd(width_value, height_value)
+        if divisor > 0:
+            width_value //= divisor
+            height_value //= divisor
+        return f"{width_value} / {height_value}"
+
+    def _build_video_display_from_cover_asset(self, video_payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_display = dict((video_payload or {}).get("display") or {})
+        cover_display = dict(raw_display.get("cover") or {})
+        if str(cover_display.get("aspect_ratio") or "").strip():
+            return {}
+
+        cover_candidates = [
+            str((video_payload or {}).get("cover_path_local") or "").strip(),
+            str((video_payload or {}).get("cover_path") or "").strip(),
+        ]
+        for candidate in cover_candidates:
+            abs_path = self._resolve_static_asset_abs_path(candidate)
+            if not abs_path or not os.path.isfile(abs_path):
+                continue
+            try:
+                with Image.open(abs_path) as image:
+                    aspect_ratio = self._format_cover_aspect_ratio(*image.size)
+            except Exception:
+                continue
+            if not aspect_ratio:
+                continue
+
+            cover_display["aspect_ratio"] = aspect_ratio
+            cover_display.setdefault("mobile_aspect_ratio", aspect_ratio)
+            raw_display["cover"] = cover_display
+            return {"display": raw_display}
+
+        return {}
 
     def _ensure_recent_import_tag_id(self) -> Optional[str]:
         configured_tag = self._tag_repo.get_by_id(self.RECENT_IMPORT_TAG_ID)
@@ -339,6 +442,12 @@ class VideoAppService(BaseContentAppService):
             return ServiceResult.error("获取视频详情失败")
     
     def _resolve_video_storage_path(self, video: Video) -> str:
+        stored_relative = str(getattr(video, "storage_path_relative", "") or "").strip()
+        if stored_relative:
+            stored_abs = resolve_data_relative_path(stored_relative)
+            if stored_abs:
+                return stored_abs
+
         source_path = str(getattr(video, "local_source_path", "") or "").strip()
         if source_path:
             if source_path.startswith(("http://", "https://")):
@@ -592,6 +701,15 @@ class VideoAppService(BaseContentAppService):
             return ""
 
         candidates = []
+
+        stored_relative = str(getattr(video, "storage_path_relative", "") or "").strip()
+        if stored_relative:
+            stored_abs = resolve_data_relative_path(stored_relative)
+            if stored_abs:
+                if os.path.isfile(stored_abs):
+                    candidates.append(os.path.dirname(stored_abs))
+                else:
+                    candidates.append(stored_abs)
 
         stored_dir_name = str(getattr(video, "local_asset_dir_name", "") or "").strip()
         if stored_dir_name:
@@ -885,6 +1003,12 @@ class VideoAppService(BaseContentAppService):
                             existing_video.local_source_filename = local_source_filename
                             existing_video.source_origin = self.SOURCE_ORIGIN_LOCAL_IMPORT
                             existing_video.source_updated_time = get_current_time()
+                            existing_video.storage_path_relative = normalize_data_relative_path(local_source_path)
+                            existing_video.storage_path_kind = (
+                                "local_file"
+                                if existing_video.storage_path_relative
+                                else "source"
+                            )
 
                             if not self._video_repo.save(existing_video):
                                 raise RuntimeError("save local source on existing video failed")
@@ -920,6 +1044,12 @@ class VideoAppService(BaseContentAppService):
                             "source_origin": self.SOURCE_ORIGIN_LOCAL_IMPORT,
                             "source_updated_time": get_current_time(),
                             "local_metadata_enriched": False,
+                            "storage_path_relative": normalize_data_relative_path(local_source_path),
+                            "storage_path_kind": (
+                                "local_file"
+                                if normalize_data_relative_path(local_source_path)
+                                else "source"
+                            ),
                         }
 
                         result = self.import_video(payload)
@@ -1005,6 +1135,22 @@ class VideoAppService(BaseContentAppService):
         if not video:
             return None
 
+        stored_relative = str(getattr(video, "storage_path_relative", "") or "").strip()
+        if stored_relative:
+            stored_abs = resolve_data_relative_path(stored_relative)
+            if stored_abs:
+                if os.path.isfile(stored_abs):
+                    return stored_abs
+                if os.path.isdir(stored_abs):
+                    preferred_filename = self._resolve_video_source_filename(video)
+                    preferred_candidate = os.path.join(stored_abs, preferred_filename)
+                    if preferred_filename and os.path.isfile(preferred_candidate):
+                        return preferred_candidate
+                    for ext in self.VIDEO_FILE_EXTENSIONS:
+                        candidate = os.path.join(stored_abs, f"{self.LOCAL_VIDEO_FILENAME}{ext}")
+                        if os.path.isfile(candidate):
+                            return candidate
+
         local_video_url = str(getattr(video, "local_video_path", "") or "").strip()
         if local_video_url.startswith("/media/"):
             file_relative = local_video_url[len("/media/"):].lstrip("/")
@@ -1043,6 +1189,62 @@ class VideoAppService(BaseContentAppService):
                     return candidate
         return None
 
+    def _refresh_video_persisted_metadata(self, video: Any, *, source: str) -> bool:
+        if not video:
+            return False
+
+        payload = video.to_dict() if hasattr(video, "to_dict") else dict(video or {})
+        video_id = str(payload.get("id") or "").strip()
+        platform_name = str(payload.get("platform") or "").strip()
+        plugin_id = str(payload.get("plugin_id") or "").strip()
+
+        context = self._resolve_video_protocol_context(video_id=video_id, platform_name=platform_name)
+        if not platform_name:
+            platform_name = str(context.get("platform_name") or "").strip()
+        manifest = context.get("manifest")
+        if manifest is not None and not plugin_id:
+            plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip()
+
+        storage_path = ""
+        storage_kind = str(payload.get("storage_path_kind") or "").strip()
+        if source == "local":
+            storage_path = self._resolve_video_storage_path(video if hasattr(video, "id") else Video.from_dict(payload))
+            if storage_path and os.path.isfile(storage_path):
+                storage_kind = "local_file"
+            elif storage_path and normalize_data_relative_path(storage_path):
+                storage_kind = storage_kind or "preview_asset_dir"
+            elif str(payload.get("local_source_path") or "").strip():
+                storage_kind = storage_kind or "source"
+            elif video_id:
+                try:
+                    root_dir, _, _source_key = self._build_preview_asset_root(video_id, "local")
+                    storage_path = os.path.join(root_dir, self._sanitize_video_asset_id(video_id))
+                    storage_kind = storage_kind or "preview_asset_dir"
+                except Exception:
+                    storage_path = ""
+        else:
+            try:
+                root_dir, _, _source_key = self._build_preview_asset_root(video_id, "preview")
+                storage_path = os.path.join(root_dir, self._sanitize_video_asset_id(video_id))
+                storage_kind = storage_kind or "preview_asset_dir"
+            except Exception:
+                storage_path = ""
+
+        updates = self._build_video_persisted_metadata(
+            payload,
+            storage_path=storage_path,
+            storage_kind=storage_kind,
+            platform_name=platform_name,
+            plugin_id=plugin_id,
+        )
+        display_updates = self._build_video_display_from_cover_asset({**payload, **updates})
+        if display_updates:
+            raw_display = dict(updates.get("display") or payload.get("display") or {})
+            raw_display.update(dict(display_updates.get("display") or {}))
+            updates["display"] = raw_display
+
+        return self._apply_persisted_fields(video, updates)
+
     def import_video(self, video_data: Dict) -> ServiceResult:
         try:
             incoming_id = str(video_data.get("id") or "").strip()
@@ -1061,6 +1263,12 @@ class VideoAppService(BaseContentAppService):
                 desc=video_data.get("desc", ""),
                 score=video_data.get("score"),
                 tag_ids=video_data.get("tag_ids", []),
+                platform=video_data.get("platform", ""),
+                plugin_id=video_data.get("plugin_id", ""),
+                plugin_name=video_data.get("plugin_name", ""),
+                display=dict(video_data.get("display") or {}),
+                storage_path_relative=video_data.get("storage_path_relative", ""),
+                storage_path_kind=video_data.get("storage_path_kind", ""),
                 magnets=video_data.get("magnets", []),
                 thumbnail_images=video_data.get("thumbnail_images", []),
                 preview_video=video_data.get("preview_video", ""),
@@ -1547,6 +1755,8 @@ class VideoAppService(BaseContentAppService):
                     continue
 
                 update_stats = self._apply_remote_detail_to_video(video, detail, tag_name_to_id)
+                if self._refresh_video_persisted_metadata(video, source="local"):
+                    update_stats["updated_fields"] = int(update_stats.get("updated_fields", 0)) + 1
                 if matched_platform:
                     matched_by_platform = stats.get("matched_by_platform")
                     if isinstance(matched_by_platform, dict):
@@ -1591,6 +1801,55 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"organize enrich local video metadata failed: {e}")
             return ServiceResult.error("local video metadata enrich failed")
+
+    def organize_refresh_persisted_metadata(self) -> ServiceResult:
+        try:
+            home_stats = {
+                "total_records": 0,
+                "updated_records": 0,
+                "skipped_deleted": 0,
+            }
+            recommendation_stats = {
+                "total_records": 0,
+                "updated_records": 0,
+                "skipped_deleted": 0,
+            }
+
+            for video in self._video_repo.get_all():
+                if not isinstance(video, Video):
+                    continue
+                home_stats["total_records"] += 1
+                if bool(video.is_deleted):
+                    home_stats["skipped_deleted"] += 1
+                    continue
+                if self._refresh_video_persisted_metadata(video, source="local"):
+                    if self._video_repo.save(video):
+                        home_stats["updated_records"] += 1
+
+            for recommendation in self._video_rec_repo.get_all():
+                recommendation_stats["total_records"] += 1
+                if bool(getattr(recommendation, "is_deleted", False)):
+                    recommendation_stats["skipped_deleted"] += 1
+                    continue
+                if self._refresh_video_persisted_metadata(recommendation, source="preview"):
+                    if self._video_rec_repo.save(recommendation):
+                        recommendation_stats["updated_records"] += 1
+
+            summary = (
+                f"视频新版元数据补全完成：本地库更新 {home_stats['updated_records']} 条，"
+                f"预览库更新 {recommendation_stats['updated_records']} 条"
+            )
+            return ServiceResult.ok(
+                {
+                    "home": home_stats,
+                    "recommendation": recommendation_stats,
+                    "summary": summary,
+                },
+                "video persisted metadata refresh completed",
+            )
+        except Exception as e:
+            error_logger.error(f"refresh video persisted metadata failed: {e}")
+            return ServiceResult.error("refresh video persisted metadata failed")
 
     def refresh_local_video_metadata(self, video_id: str) -> ServiceResult:
         try:
@@ -1643,6 +1902,8 @@ class VideoAppService(BaseContentAppService):
                 if str(tag.name or "").strip()
             }
             update_stats = self._apply_remote_detail_to_video(video, detail, tag_name_to_id)
+            if self._refresh_video_persisted_metadata(video, source="local"):
+                update_stats["updated_fields"] = int(update_stats.get("updated_fields", 0)) + 1
 
             if not self._video_repo.save(video):
                 return ServiceResult.error("save video metadata failed")
@@ -1806,6 +2067,12 @@ class VideoAppService(BaseContentAppService):
                         cover_path_local=getattr(recommendation_video, "cover_path_local", "") or "",
                         thumbnail_images_local=list(getattr(recommendation_video, "thumbnail_images_local", []) or []),
                         preview_video_local=getattr(recommendation_video, "preview_video_local", "") or "",
+                        platform=getattr(recommendation_video, "platform", "") or "",
+                        plugin_id=getattr(recommendation_video, "plugin_id", "") or "",
+                        plugin_name=getattr(recommendation_video, "plugin_name", "") or "",
+                        display=dict(getattr(recommendation_video, "display", {}) or {}),
+                        storage_path_relative=getattr(recommendation_video, "storage_path_relative", "") or "",
+                        storage_path_kind=getattr(recommendation_video, "storage_path_kind", "") or "",
                     )
                     local_video.actors = list(recommendation_video.actors or [])
 
@@ -1817,6 +2084,8 @@ class VideoAppService(BaseContentAppService):
                             "reason": assets_result.get("reason", "asset_migrate_failed")
                         })
                         continue
+
+                    self._refresh_video_persisted_metadata(local_video, source="local")
 
                     if not self._video_repo.save(local_video):
                         failed_count += 1

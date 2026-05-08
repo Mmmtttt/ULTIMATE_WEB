@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, send_file
 from application.comic_app_service import ComicAppService
 from application.database_organize_service import DatabaseOrganizeService
 from application.local_comic_import_service import local_comic_import_service
+from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
 from application.softref_comic_reader import (
     SoftRefPasswordRequiredError,
     SoftRefSourceMissingError,
@@ -9,6 +10,7 @@ from application.softref_comic_reader import (
 from application.softref_reader_protocol import require_softref_reader
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
 from core.constants import (
@@ -1303,6 +1305,18 @@ def import_online():
         
         converted_data = adapter.parse_meta_data(meta_json)
         new_comics = converted_data.get(comics_key, [])
+
+        for comic in new_comics:
+            if not isinstance(comic, dict):
+                continue
+            comic.update(
+                build_persisted_annotation(
+                    comic,
+                    media_type="comic",
+                    plugin_id=getattr(manifest, "plugin_id", "") or None,
+                    platform_name=platform_name,
+                )
+            )
         
         new_comics, skipped_ids = checker.filter_duplicates(new_comics)
         
@@ -1340,6 +1354,20 @@ def import_online():
                                 detail.get('local_pages', detail.get('pages_count', comic['total_page'])),
                                 default=normalize_total_page(comic.get('total_page', 0))
                             )
+                            try:
+                                resolved_dir = platform_service.get_comic_dir(
+                                    platform_name,
+                                    original_id,
+                                    author=comic.get("author") or None,
+                                    title=comic.get("title") or None,
+                                    base_dir=download_dir
+                                )
+                                relative_dir = normalize_data_relative_path(resolved_dir)
+                                if relative_dir:
+                                    comic["storage_path_relative"] = relative_dir
+                                    comic["storage_path_kind"] = "local_dir"
+                            except Exception:
+                                pass
                         else:
                             failed_downloads.append(comic['id'])
                     except Exception as e:
@@ -1412,6 +1440,14 @@ def import_online():
                         comic_id,
                         media_type="comic",
                     )
+                    try:
+                        predicted_cache_dir = recommendation_cache_manager._get_comic_cache_dir(comic_id)
+                        relative_cache_dir = normalize_data_relative_path(predicted_cache_dir)
+                        if relative_cache_dir:
+                            comic["storage_path_relative"] = relative_cache_dir
+                            comic["storage_path_kind"] = "preview_cache_dir"
+                    except Exception:
+                        pass
                     cover_path = os.path.join(cover_dir, f"{original_id}.jpg")
                     
                     # 已有本地封面则跳过

@@ -3,7 +3,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from core.enums import ContentType
 
 
@@ -35,6 +35,12 @@ class VideoRecommendation:
     cover_path_local: str = ""
     thumbnail_images_local: List[str] = field(default_factory=list)
     preview_video_local: str = ""
+    platform: str = ""
+    plugin_id: str = ""
+    plugin_name: str = ""
+    display: Dict[str, Any] = field(default_factory=dict)
+    storage_path_relative: str = ""
+    storage_path_kind: str = ""
     
     _actors: List[str] = field(default_factory=list, repr=False)
     
@@ -73,6 +79,12 @@ class VideoRecommendation:
             cover_path_local=data.get("cover_path_local", ""),
             thumbnail_images_local=data.get("thumbnail_images_local", []),
             preview_video_local=data.get("preview_video_local", ""),
+            platform=data.get("platform", ""),
+            plugin_id=data.get("plugin_id", ""),
+            plugin_name=data.get("plugin_name", ""),
+            display=dict(data.get("display") or {}),
+            storage_path_relative=data.get("storage_path_relative", ""),
+            storage_path_kind=data.get("storage_path_kind", ""),
             _actors=data.get("actors", [])
         )
     
@@ -102,6 +114,12 @@ class VideoRecommendation:
             "cover_path_local": self.cover_path_local,
             "thumbnail_images_local": self.thumbnail_images_local,
             "preview_video_local": self.preview_video_local,
+            "platform": self.platform,
+            "plugin_id": self.plugin_id,
+            "plugin_name": self.plugin_name,
+            "display": dict(self.display or {}),
+            "storage_path_relative": self.storage_path_relative,
+            "storage_path_kind": self.storage_path_kind,
             "actors": self._actors
         }
     

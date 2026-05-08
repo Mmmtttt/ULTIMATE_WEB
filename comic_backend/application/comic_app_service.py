@@ -3,6 +3,11 @@ import base64
 import json
 import os
 import re
+from application.persisted_content_metadata import (
+    build_persisted_annotation,
+    normalize_data_relative_path,
+    resolve_data_relative_path,
+)
 from domain.comic import Comic, ComicRepository
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
@@ -31,6 +36,55 @@ class ComicAppService:
     ):
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
+
+    @staticmethod
+    def _apply_persisted_fields(target: Any, updates: Dict[str, Any]) -> bool:
+        changed = False
+        for key, value in (updates or {}).items():
+            if isinstance(target, dict):
+                current = target.get(key)
+                if current != value:
+                    target[key] = value
+                    changed = True
+                continue
+
+            if getattr(target, key, None) != value:
+                setattr(target, key, value)
+                changed = True
+        return changed
+
+    def _build_comic_persisted_metadata(
+        self,
+        comic_payload: Dict[str, Any],
+        *,
+        storage_path: str = "",
+        storage_kind: str = "",
+        platform_name: str = "",
+        plugin_id: str = "",
+    ) -> Dict[str, Any]:
+        persisted = build_persisted_annotation(
+            comic_payload,
+            media_type="comic",
+            plugin_id=plugin_id or None,
+            platform_name=platform_name or None,
+        )
+        if storage_path:
+            relative_path = normalize_data_relative_path(storage_path)
+            if relative_path:
+                persisted["storage_path_relative"] = relative_path
+        if storage_kind:
+            persisted["storage_path_kind"] = storage_kind
+        return persisted
+
+    @staticmethod
+    def _comic_to_summary_dict(comic: Comic, tag_map: Dict[str, str], *, include_progress: bool = True) -> Dict[str, Any]:
+        payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
+        payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
+        if not include_progress:
+            payload.pop("current_page", None)
+            payload.pop("last_read_time", None)
+            payload.pop("list_ids", None)
+        return payload
     
     def get_comic_list(
         self,
@@ -77,23 +131,8 @@ class ComicAppService:
                     self._ensure_cover(c)
                 except Exception as e:
                     error_logger.error(f"确保漫画封面失败（列表）: {c.id}, {e}")
-                
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "desc": c.desc,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "current_page": c.current_page,
-                    "score": c.score,
-                    "tag_ids": c.tag_ids,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
-                    "last_read_time": c.last_read_time,
-                    "create_time": c.create_time,
-                    "list_ids": c.list_ids
-                }
-                comic_list.append(comic_info)
+
+                comic_list.append(self._comic_to_summary_dict(c, tag_map))
             
             app_logger.info(f"获取漫画列表成功，共 {len(comic_list)} 个漫画")
             return ServiceResult.ok(comic_list)
@@ -121,31 +160,14 @@ class ComicAppService:
             is_favorited = FAVORITES_LIST_ID in comic.list_ids
             storage_path, storage_path_kind = self._resolve_comic_storage_path(comic)
             
-            detail = {
-                "id": comic.id,
-                "title": comic.title,
-                "title_jp": comic.title_jp,
-                "author": comic.author,
-                "desc": comic.desc,
-                "cover_path": comic.cover_path,
-                "total_page": comic.total_page,
-                "current_page": comic.current_page,
-                "score": comic.score,
-                "tag_ids": comic.tag_ids,
-                "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids],
-                "preview_images": [f"/api/v1/comic/image?comic_id={comic_id}&page_num={p}" for p in preview_pages],
-                "preview_pages": preview_pages,
-                "last_read_time": comic.last_read_time,
-                "create_time": comic.create_time,
-                "list_ids": comic.list_ids,
-                "is_favorited": is_favorited,
-                "source": "local",
-                "import_source": comic.import_source,
-                "storage_mode": comic.storage_mode,
-                "soft_ref_locator": comic.soft_ref_locator,
-                "storage_path": storage_path,
-                "storage_path_kind": storage_path_kind,
-            }
+            detail = comic.to_dict()
+            detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
+            detail["preview_images"] = [f"/api/v1/comic/image?comic_id={comic_id}&page_num={p}" for p in preview_pages]
+            detail["preview_pages"] = preview_pages
+            detail["is_favorited"] = is_favorited
+            detail["source"] = "local"
+            detail["storage_path"] = storage_path
+            detail["storage_path_kind"] = storage_path_kind or str(detail.get("storage_path_kind", "")).strip()
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")
             return ServiceResult.ok(detail)
@@ -235,16 +257,7 @@ class ComicAppService:
             
             results = []
             for c in comics:
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "score": c.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids]
-                }
-                results.append(comic_info)
+                results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
             app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
@@ -260,16 +273,7 @@ class ComicAppService:
             
             results = []
             for c in comics:
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "score": c.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids]
-                }
-                results.append(comic_info)
+                results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
@@ -286,21 +290,7 @@ class ComicAppService:
             
             results = []
             for c in comics:
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "current_page": c.current_page,
-                    "score": c.score,
-                    "tag_ids": c.tag_ids,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
-                    "last_read_time": c.last_read_time,
-                    "create_time": c.create_time,
-                    "list_ids": c.list_ids
-                }
-                results.append(comic_info)
+                results.append(self._comic_to_summary_dict(c, tag_map))
             
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
@@ -362,17 +352,7 @@ class ComicAppService:
             
             comic_list = []
             for c in trash_comics:
-                comic_info = {
-                    "id": c.id,
-                    "title": c.title,
-                    "author": c.author,
-                    "cover_path": c.cover_path,
-                    "total_page": c.total_page,
-                    "score": c.score,
-                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in c.tag_ids],
-                    "create_time": c.create_time
-                }
-                comic_list.append(comic_info)
+                comic_list.append(self._comic_to_summary_dict(c, tag_map))
             
             app_logger.info(f"获取回收站列表成功，共 {len(comic_list)} 个漫画")
             return ServiceResult.ok(comic_list)
@@ -512,6 +492,13 @@ class ComicAppService:
         if not comic:
             return "", ""
 
+        stored_relative = str(getattr(comic, "storage_path_relative", "") or "").strip()
+        stored_kind = str(getattr(comic, "storage_path_kind", "") or "").strip()
+        if stored_relative:
+            stored_abs = resolve_data_relative_path(stored_relative)
+            if stored_abs:
+                return self._normalize_display_path(stored_abs), stored_kind or "local_dir"
+
         if self._is_soft_ref_storage_mode(getattr(comic, "storage_mode", "")):
             locator = str(getattr(comic, "soft_ref_locator", "") or getattr(comic, "import_source", "")).strip()
             payload = self._decode_softref_locator(locator) if locator.startswith("softref://") else {}
@@ -541,6 +528,45 @@ class ComicAppService:
         if source_path:
             return source_path, "source"
         return "", ""
+
+    def _refresh_comic_persisted_metadata(self, comic: Any, *, source: str) -> bool:
+        if not comic:
+            return False
+
+        payload = comic.to_dict() if hasattr(comic, "to_dict") else dict(comic or {})
+        comic_id = str(payload.get("id") or "").strip()
+        platform_name = str(payload.get("platform") or "").strip()
+        plugin_id = str(payload.get("plugin_id") or "").strip()
+
+        if comic_id and not comic_id.upper().startswith("LOCAL"):
+            resolved_platform, _original_id, manifest, _host_prefix = self._resolve_comic_platform_context(comic_id)
+            if resolved_platform:
+                platform_name = platform_name or str(resolved_platform or "").strip()
+            if manifest is not None and not plugin_id:
+                plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip()
+
+        storage_path = ""
+        storage_kind = str(payload.get("storage_path_kind") or "").strip()
+        if source == "local":
+            storage_path, resolved_kind = self._resolve_comic_storage_path(comic if hasattr(comic, "id") else Comic.from_dict(payload))
+            storage_kind = resolved_kind or storage_kind
+        else:
+            try:
+                from infrastructure.recommendation_cache_manager import recommendation_cache_manager
+
+                storage_path = recommendation_cache_manager._get_comic_cache_dir(comic_id)
+                storage_kind = storage_kind or "preview_cache_dir"
+            except Exception:
+                storage_path = ""
+
+        updates = self._build_comic_persisted_metadata(
+            payload,
+            storage_path=storage_path,
+            storage_kind=storage_kind,
+            platform_name=platform_name,
+            plugin_id=plugin_id,
+        )
+        return self._apply_persisted_fields(comic, updates)
 
     @staticmethod
     def _is_missing_cover_path(cover_path: str) -> bool:
@@ -1427,6 +1453,18 @@ class ComicAppService:
                     stats["updated_tag_bindings"] += bound_count
                     updated = True
 
+                persisted_updated = self._apply_persisted_fields(
+                    comic,
+                    self._build_comic_persisted_metadata(
+                        comic,
+                        storage_path=self._resolve_comic_storage_path(Comic.from_dict(comic))[0],
+                        storage_kind=self._resolve_comic_storage_path(Comic.from_dict(comic))[1],
+                        platform_name=matched_platform,
+                    ),
+                )
+                if persisted_updated:
+                    updated = True
+
                 comic["local_metadata_enriched"] = True
                 if updated:
                     stats["updated_records"] += 1
@@ -1578,6 +1616,15 @@ class ComicAppService:
 
             if not bool(getattr(comic, "local_metadata_enriched", False)):
                 comic.local_metadata_enriched = True
+                updated_fields += 1
+
+            persisted_updates = self._build_comic_persisted_metadata(
+                comic.to_dict(),
+                storage_path=self._resolve_comic_storage_path(comic)[0],
+                storage_kind=self._resolve_comic_storage_path(comic)[1],
+                platform_name=matched_platform,
+            )
+            if self._apply_persisted_fields(comic, persisted_updates):
                 updated_fields += 1
 
             if not self._comic_repo.save(comic):
@@ -1810,6 +1857,58 @@ class ComicAppService:
         except Exception as e:
             error_logger.error(f"Organize database v2 failed: {e}")
             return ServiceResult.error("Database organize failed")
+
+    def organize_refresh_persisted_metadata(self) -> ServiceResult:
+        try:
+            from infrastructure.persistence.repositories import RecommendationJsonRepository
+
+            recommendation_repo = RecommendationJsonRepository()
+            home_stats = {
+                "total_records": 0,
+                "updated_records": 0,
+                "skipped_deleted": 0,
+            }
+            recommendation_stats = {
+                "total_records": 0,
+                "updated_records": 0,
+                "skipped_deleted": 0,
+            }
+
+            for comic in self._comic_repo.get_all():
+                if not isinstance(comic, Comic):
+                    continue
+                home_stats["total_records"] += 1
+                if bool(comic.is_deleted):
+                    home_stats["skipped_deleted"] += 1
+                    continue
+                if self._refresh_comic_persisted_metadata(comic, source="local"):
+                    if self._comic_repo.save(comic):
+                        home_stats["updated_records"] += 1
+
+            for recommendation in recommendation_repo.get_all():
+                recommendation_stats["total_records"] += 1
+                if bool(getattr(recommendation, "is_deleted", False)):
+                    recommendation_stats["skipped_deleted"] += 1
+                    continue
+                if self._refresh_comic_persisted_metadata(recommendation, source="recommendation"):
+                    if recommendation_repo.save(recommendation):
+                        recommendation_stats["updated_records"] += 1
+
+            summary = (
+                f"漫画新版元数据补全完成：本地库更新 {home_stats['updated_records']} 条，"
+                f"预览库更新 {recommendation_stats['updated_records']} 条"
+            )
+            return ServiceResult.ok(
+                {
+                    "home": home_stats,
+                    "recommendation": recommendation_stats,
+                    "summary": summary,
+                },
+                "comic persisted metadata refresh completed",
+            )
+        except Exception as e:
+            error_logger.error(f"refresh comic persisted metadata failed: {e}")
+            return ServiceResult.error("refresh comic persisted metadata failed")
     
     def organize_database(self) -> ServiceResult:
         """兼容旧入口，统一转发到协议化的新整理流程。"""

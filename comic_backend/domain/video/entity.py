@@ -56,6 +56,12 @@ class Video(BaseContent):
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_access_time", ""),
             is_deleted=data.get("is_deleted", False),
+            platform=data.get("platform", ""),
+            plugin_id=data.get("plugin_id", ""),
+            plugin_name=data.get("plugin_name", ""),
+            display=dict(data.get("display") or {}),
+            storage_path_relative=data.get("storage_path_relative", ""),
+            storage_path_kind=data.get("storage_path_kind", ""),
             content_type=ContentType.VIDEO,
             code=data.get("code", ""),
             date=data.get("date", ""),
@@ -79,6 +85,12 @@ class Video(BaseContent):
     def to_dict(self) -> dict:
         base_dict = super().to_dict()
         base_dict.update({
+            "platform": self.platform,
+            "plugin_id": self.plugin_id,
+            "plugin_name": self.plugin_name,
+            "display": dict(self.display or {}),
+            "storage_path_relative": self.storage_path_relative,
+            "storage_path_kind": self.storage_path_kind,
             "code": self.code,
             "date": self.date,
             "series": self.series,

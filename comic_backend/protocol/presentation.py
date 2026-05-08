@@ -82,8 +82,10 @@ def annotate_item(
     if display:
         annotated["display"] = display
 
-    annotated.setdefault("plugin_id", manifest.plugin_id)
-    annotated.setdefault("plugin_name", manifest.name)
+    if not str(annotated.get("plugin_id") or "").strip():
+        annotated["plugin_id"] = manifest.plugin_id
+    if not str(annotated.get("plugin_name") or "").strip():
+        annotated["plugin_name"] = manifest.name
 
     display_badge = dict(display.get("badge") or {})
     badge_label = str(display_badge.get("label") or "").strip()

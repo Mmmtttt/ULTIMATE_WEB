@@ -30,6 +30,7 @@ from infrastructure.persistence.json_storage import JsonStorage
 
 file_parser_module = importlib.import_module("utils.file_parser")
 image_handler_module = importlib.import_module("utils.image_handler")
+persisted_metadata_module = importlib.import_module("application.persisted_content_metadata")
 
 
 def _create_image(path: Path, color: tuple[int, int, int]) -> None:
@@ -52,6 +53,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json := meta_dir / "comics_database.json"))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(meta_dir / "recommendations_database.json"))
     monkeypatch.setattr(image_handler_module, "COVER_DIR", str(tmp_path / "static" / "cover"))
+    monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(tmp_path))
     tags_json = meta_dir / "tags_database.json"
 
     service = LocalComicImportService()
@@ -79,6 +81,8 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     original_id = comic_id
 
     assert comic.get("local_asset_dir_name") == "作品A"
+    assert comic.get("storage_path_relative") == "comic/local/作品A"
+    assert comic.get("storage_path_kind") == "local_dir"
     imported_dir = local_pictures_dir / "作品A"
     assert imported_dir.exists()
     assert not (jm_pictures_dir / original_id).exists()
@@ -122,6 +126,7 @@ def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_pa
     monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
+    monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(tmp_path))
 
     legacy_comic_id = "LOCALLEGACY001"
     legacy_dir = local_pictures_dir / legacy_comic_id
@@ -151,5 +156,55 @@ def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_pa
     )
 
     parsed_images = file_parser_module.file_parser.parse_comic_images(legacy_comic_id)
+    assert len(parsed_images) == 2
+    assert Path(parsed_images[0]).name == "001.png"
+
+
+def test_file_parser_prefers_persisted_relative_path_for_remote_comic(tmp_path, monkeypatch):
+    local_pictures_dir = tmp_path / "comic" / "local"
+    comic_root = tmp_path / "comic"
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+
+    comics_json = meta_dir / "comics_database.json"
+    recommendations_json = meta_dir / "recommendations_database.json"
+    recommendations_json.write_text(json.dumps({"recommendations": []}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
+    monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(comic_root))
+    monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
+    monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
+    monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(tmp_path))
+
+    comic_id = "JM1436655"
+    remote_dir = comic_root / "JM" / "1436655"
+    _create_image(remote_dir / "001.png", (128, 0, 255))
+    _create_image(remote_dir / "002.png", (64, 255, 64))
+
+    comics_json.write_text(
+        json.dumps(
+            {
+                "comics": [
+                    {
+                        "id": comic_id,
+                        "title": "协议路径作品",
+                        "author": "作者A",
+                        "cover_path": "",
+                        "total_page": 2,
+                        "current_page": 1,
+                        "tag_ids": [],
+                        "list_ids": [],
+                        "storage_path_relative": "comic/JM/1436655",
+                        "storage_path_kind": "local_dir",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    parsed_images = file_parser_module.file_parser.parse_comic_images(comic_id)
     assert len(parsed_images) == 2
     assert Path(parsed_images[0]).name == "001.png"

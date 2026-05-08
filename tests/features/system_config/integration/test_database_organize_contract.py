@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from PIL import Image
 
 from tests.shared.runtime_data import find_by_id, load_json, save_json
 
@@ -25,10 +26,11 @@ def test_organize_options_returns_mode_specific_actions(integration_runtime):
     assert comic_data.get("mode") == "comic"
 
     action_map = {item.get("action"): item for item in (comic_data.get("options") or [])}
-    assert {"repair_cover", "deduplicate_by_title", "enrich_local_metadata"}.issubset(set(action_map))
+    assert {"repair_cover", "deduplicate_by_title", "enrich_local_metadata", "refresh_persisted_metadata"}.issubset(set(action_map))
     assert action_map["repair_cover"]["implemented"] is True
     assert action_map["deduplicate_by_title"]["implemented"] is True
     assert action_map["enrich_local_metadata"]["implemented"] is True
+    assert action_map["refresh_persisted_metadata"]["implemented"] is True
 
     video_resp = requests.get(
         f"{base_url}/api/v1/organize/options",
@@ -41,9 +43,129 @@ def test_organize_options_returns_mode_specific_actions(integration_runtime):
     video_data = video_payload["data"] or {}
     assert video_data.get("mode") == "video"
     video_action_map = {item.get("action"): item for item in (video_data.get("options") or [])}
-    assert {"deduplicate_by_code", "enrich_local_metadata"}.issubset(set(video_action_map))
+    assert {"deduplicate_by_code", "enrich_local_metadata", "refresh_persisted_metadata"}.issubset(set(video_action_map))
     assert video_action_map["deduplicate_by_code"]["implemented"] is True
     assert video_action_map["enrich_local_metadata"]["implemented"] is True
+    assert video_action_map["refresh_persisted_metadata"]["implemented"] is True
+
+
+def _write_test_image(path: Path, size: tuple[int, int], color: tuple[int, int, int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color).save(path, format="JPEG")
+
+
+@pytest.mark.integration
+def test_refresh_persisted_metadata_backfills_comic_relative_storage_path(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    comics_path = meta_dir / "comics_database.json"
+
+    original = load_json(comics_path)
+    comic_dir = data_dir / "comic" / "JM" / "1436655"
+    _write_test_image(comic_dir / "001.jpg", (90, 140), (220, 40, 40))
+
+    try:
+        save_json(
+            comics_path,
+            {
+                "collection_name": "Test Comics",
+                "user": "test-user",
+                "total_comics": 1,
+                "last_updated": "2026-05-08",
+                "comics": [
+                    {
+                        "id": "JM1436655",
+                        "title": "协议回填漫画",
+                        "author": "作者A",
+                        "cover_path": "/static/cover/JM/1436655.jpg",
+                        "total_page": 1,
+                        "current_page": 1,
+                        "tag_ids": [],
+                        "list_ids": [],
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+
+        response = requests.post(
+            f"{base_url}/api/v1/organize/run",
+            json={"mode": "comic", "action": "refresh_persisted_metadata"},
+            timeout=60,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+
+        refreshed = load_json(comics_path).get("comics") or []
+        record = find_by_id(refreshed, "JM1436655")
+        assert record is not None
+        assert record.get("storage_path_relative") == "comic/JM/1436655"
+        assert record.get("storage_path_kind") == "local_dir"
+    finally:
+        save_json(comics_path, original)
+
+
+@pytest.mark.integration
+def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    data_dir: Path = integration_runtime["data_dir"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original = load_json(videos_path)
+    source_file = data_dir / "video" / "JAVDB" / "BACKFILL001" / "source.mp4"
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    _write_test_image(data_dir / "static" / "cover" / "JAVDB" / "BACKFILL001.jpg", (160, 90), (40, 40, 220))
+
+    try:
+        save_json(
+            videos_path,
+            {
+                "collection_name": "Test Videos",
+                "user": "test-user",
+                "total_videos": 1,
+                "last_updated": "2026-05-08",
+                "videos": [
+                    {
+                        "id": "JAVDBBACKFILL001",
+                        "title": "协议回填视频",
+                        "code": "ABP-123",
+                        "cover_path": "/static/cover/JAVDB/BACKFILL001.jpg",
+                        "local_video_path": "/media/video/JAVDB/BACKFILL001/source.mp4",
+                        "local_source_path": str(source_file),
+                        "preview_video": "",
+                        "thumbnail_images": [],
+                        "tag_ids": [],
+                        "list_ids": [],
+                        "create_time": "2026-05-08T00:00:00",
+                        "last_access_time": "2026-05-08T00:00:00",
+                        "is_deleted": False,
+                    }
+                ],
+            },
+        )
+
+        response = requests.post(
+            f"{base_url}/api/v1/organize/run",
+            json={"mode": "video", "action": "refresh_persisted_metadata"},
+            timeout=60,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+
+        refreshed = load_json(videos_path).get("videos") or []
+        record = find_by_id(refreshed, "JAVDBBACKFILL001")
+        assert record is not None
+        assert record.get("storage_path_relative") == "video/JAVDB/BACKFILL001/source.mp4"
+        assert record.get("storage_path_kind") == "local_file"
+        cover_display = ((record.get("display") or {}).get("cover") or {})
+        assert cover_display.get("aspect_ratio") == "16 / 9"
+    finally:
+        save_json(videos_path, original)
 
 
 @pytest.mark.integration

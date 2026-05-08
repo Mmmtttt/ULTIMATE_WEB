@@ -8,6 +8,7 @@ import time
 import threading
 import re
 from typing import Dict, List, Optional, Tuple
+from application.persisted_content_metadata import resolve_data_relative_path
 from collections import OrderedDict
 from infrastructure.logger import app_logger, error_logger
 from core.constants import (
@@ -69,6 +70,20 @@ class RecommendationCacheManager:
     
     def _get_comic_cache_dir(self, comic_id: str) -> str:
         """获取漫画缓存目录"""
+        try:
+            storage = JsonStorage(RECOMMENDATION_JSON_FILE)
+            db_data = storage.read()
+            recommendations = db_data.get("recommendations", [])
+            recommendation = next((rec for rec in recommendations if rec.get("id") == comic_id), {}) or {}
+            stored_relative = str(recommendation.get("storage_path_relative", "")).strip()
+            stored_kind = str(recommendation.get("storage_path_kind", "")).strip().lower()
+            if stored_relative and stored_kind in {"preview_cache_dir", "local_dir"}:
+                stored_abs = resolve_data_relative_path(stored_relative)
+                if stored_abs:
+                    return stored_abs
+        except Exception:
+            recommendation = {}
+
         platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
         host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
         if not original_id:
@@ -78,10 +93,6 @@ class RecommendationCacheManager:
         base_dir = build_platform_root_dir(self.cache_dir, manifest=manifest, platform_name=platform_key)
 
         try:
-            storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            db_data = storage.read()
-            recommendations = db_data.get("recommendations", [])
-            recommendation = next((rec for rec in recommendations if rec.get("id") == comic_id), {}) or {}
             author = recommendation.get("author") or "unknown"
             title = recommendation.get("title") or f"漫画_{original_id}"
 

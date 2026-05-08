@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from core.utils import normalize_total_page
 
 
@@ -22,6 +22,12 @@ class Recommendation:
     is_deleted: bool = False
     preview_image_urls: List[str] = field(default_factory=list)  # 预览图片 URL 列表
     preview_pages: List[int] = field(default_factory=list)        # 预览页码列表
+    platform: str = ""
+    plugin_id: str = ""
+    plugin_name: str = ""
+    display: Dict[str, Any] = field(default_factory=dict)
+    storage_path_relative: str = ""
+    storage_path_kind: str = ""
     
     @classmethod
     def from_dict(cls, data: dict) -> "Recommendation":
@@ -53,7 +59,13 @@ class Recommendation:
             last_read_time=data.get("last_read_time", ""),
             is_deleted=data.get("is_deleted", False),
             preview_image_urls=data.get("preview_image_urls") or [],
-            preview_pages=data.get("preview_pages") or []
+            preview_pages=data.get("preview_pages") or [],
+            platform=data.get("platform", ""),
+            plugin_id=data.get("plugin_id", ""),
+            plugin_name=data.get("plugin_name", ""),
+            display=dict(data.get("display") or {}),
+            storage_path_relative=data.get("storage_path_relative", ""),
+            storage_path_kind=data.get("storage_path_kind", ""),
         )
     
     def to_dict(self) -> dict:
@@ -73,7 +85,13 @@ class Recommendation:
             "last_read_time": self.last_read_time,
             "is_deleted": self.is_deleted,
             "preview_image_urls": self.preview_image_urls,
-            "preview_pages": self.preview_pages
+            "preview_pages": self.preview_pages,
+            "platform": self.platform,
+            "plugin_id": self.plugin_id,
+            "plugin_name": self.plugin_name,
+            "display": dict(self.display or {}),
+            "storage_path_relative": self.storage_path_relative,
+            "storage_path_kind": self.storage_path_kind,
         }
     
     def update_progress(self, page: int):

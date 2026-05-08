@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify, Response, make_response, send_fil
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.config_app_service import ConfigAppService
+from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
 from application.video_runtime_support import (
     build_video_host_id as runtime_build_video_host_id,
     execute_video_plugin_capability as runtime_execute_video_plugin_capability,
@@ -1075,6 +1076,36 @@ def _should_auto_download_preview_assets(source: str = "local") -> bool:
     return _get_preview_import_auto_download_enabled()
 
 
+def _build_persisted_video_import_fields(
+    video_data: dict,
+    *,
+    platform_name: str,
+    plugin_id: str,
+    source: str,
+) -> dict:
+    payload = dict(video_data or {})
+    persisted = build_persisted_annotation(
+        payload,
+        media_type="video",
+        plugin_id=plugin_id or None,
+        platform_name=platform_name or None,
+    )
+    video_id = str(payload.get("id") or "").strip()
+    if not video_id:
+        return persisted
+
+    try:
+        root_dir, _, _ = video_service._build_preview_asset_root(video_id, source)
+        asset_dir = os.path.join(root_dir, video_service._sanitize_video_asset_id(video_id))
+        relative_dir = normalize_data_relative_path(asset_dir)
+        if relative_dir:
+            persisted["storage_path_relative"] = relative_dir
+            persisted["storage_path_kind"] = "preview_asset_dir"
+    except Exception:
+        pass
+    return persisted
+
+
 def _schedule_video_asset_cache(
     *,
     video_id: str,
@@ -1662,6 +1693,14 @@ def third_party_import():
                 "tag_ids": video_tag_ids,
                 "list_ids": []
             }
+            video_data.update(
+                _build_persisted_video_import_fields(
+                    video_data,
+                    platform_name=platform,
+                    plugin_id=getattr(_manifest, "plugin_id", ""),
+                    source="local",
+                )
+            )
             
             result = video_service.import_video(video_data)
             if result.success:
@@ -1758,6 +1797,14 @@ def third_party_import():
                 "create_time": get_current_time(),
                 "last_access_time": get_current_time()
             }
+            video_data.update(
+                _build_persisted_video_import_fields(
+                    video_data,
+                    platform_name=platform,
+                    plugin_id=getattr(_manifest, "plugin_id", ""),
+                    source="preview",
+                )
+            )
             
             if videos_key not in db_data:
                 db_data[videos_key] = []
