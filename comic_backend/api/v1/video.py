@@ -19,6 +19,7 @@ from application.video_runtime_support import (
 )
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from core.host_platform_fallback import infer_host_video_platform, merge_host_video_display
 from core.utils import get_current_time
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
@@ -993,6 +994,10 @@ def _resolve_protocol_video_platform_name(video_data: dict) -> str:
     if not isinstance(video_data, dict):
         return ""
 
+    host_platform = infer_host_video_platform(video_data)
+    if host_platform:
+        return str(host_platform or "").strip().lower()
+
     platform_name = str(video_data.get("platform") or "").strip().lower()
     video_id = str(video_data.get("id") or "").strip()
     code = str(video_data.get("code") or "").strip()
@@ -1031,13 +1036,20 @@ def _decorate_video_recommendation_item(
         decorated["preview_video"] = _sanitize_preview_video_value(decorated.get("preview_video", ""))
         decorated["preview_video_local"] = _sanitize_preview_video_value(decorated.get("preview_video_local", ""))
 
+    host_display_updates = merge_host_video_display(decorated)
+    if host_display_updates:
+        decorated["display"] = dict(host_display_updates.get("display") or {})
+
     platform_name = _resolve_protocol_video_platform_name(decorated)
     if platform_name:
-        decorated = annotate_item(
+        annotated = annotate_item(
             decorated,
             platform_name=platform_name,
             media_type="video",
         )
+        if host_display_updates and not annotated.get("display"):
+            annotated["display"] = dict(host_display_updates.get("display") or {})
+        decorated = annotated
 
     return decorated
 

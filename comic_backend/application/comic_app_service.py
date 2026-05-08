@@ -13,6 +13,8 @@ from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR
+from core.host_platform_fallback import infer_existing_host_comic_dir
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.enums import ContentType
 from protocol.gateway import get_protocol_gateway
@@ -496,7 +498,7 @@ class ComicAppService:
         stored_kind = str(getattr(comic, "storage_path_kind", "") or "").strip()
         if stored_relative:
             stored_abs = resolve_data_relative_path(stored_relative)
-            if stored_abs:
+            if stored_abs and os.path.isdir(stored_abs):
                 return self._normalize_display_path(stored_abs), stored_kind or "local_dir"
 
         if self._is_soft_ref_storage_mode(getattr(comic, "storage_mode", "")):
@@ -515,12 +517,22 @@ class ComicAppService:
                 return locator_path, "source"
             return "", ""
 
+        payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
+        host_resolved_dir = infer_existing_host_comic_dir(
+            getattr(comic, "id", ""),
+            payload,
+            comic_root=COMIC_DIR,
+            local_root=LOCAL_PICTURES_DIR,
+        )
+        if host_resolved_dir:
+            return self._normalize_display_path(host_resolved_dir), "local_dir"
+
         try:
             from utils.file_parser import file_parser
 
-            comic_dir = self._normalize_display_path(file_parser._get_comic_dir(comic.id))
-            if comic_dir:
-                return comic_dir, "local_dir"
+            comic_dir = file_parser._get_comic_dir(comic.id)
+            if comic_dir and os.path.isdir(comic_dir):
+                return self._normalize_display_path(comic_dir), "local_dir"
         except Exception:
             pass
 

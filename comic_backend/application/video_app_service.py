@@ -31,6 +31,7 @@ from infrastructure.persistence.repositories.actor_repository_impl import ActorJ
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from core.host_platform_fallback import infer_host_video_platform, merge_host_video_display
 from core.utils import get_current_time, generate_id, generate_uuid
 from core.constants import (
     DATA_DIR,
@@ -240,6 +241,10 @@ class VideoAppService(BaseContentAppService):
         return f"{width_value} / {height_value}"
 
     def _build_video_display_from_cover_asset(self, video_payload: Dict[str, Any]) -> Dict[str, Any]:
+        host_display_updates = merge_host_video_display(video_payload)
+        if host_display_updates:
+            return host_display_updates
+
         raw_display = dict((video_payload or {}).get("display") or {})
         cover_display = dict(raw_display.get("cover") or {})
         if str(cover_display.get("aspect_ratio") or "").strip():
@@ -301,6 +306,10 @@ class VideoAppService(BaseContentAppService):
         if explicit_platform and explicit_platform.lower() != "local":
             return explicit_platform
 
+        host_platform = infer_host_video_platform(raw)
+        if host_platform and host_platform.lower() != "local":
+            return host_platform
+
         video_id = str(raw.get("id") or "").strip()
         context = cls._resolve_video_protocol_context(video_id=video_id, platform_name=explicit_platform)
         resolved_platform = str(context.get("platform_name") or "").strip().lower()
@@ -312,10 +321,17 @@ class VideoAppService(BaseContentAppService):
     @classmethod
     def _annotate_video_record(cls, video_data: Dict[str, Any]) -> Dict[str, Any]:
         raw = dict(video_data or {})
+        host_display_updates = merge_host_video_display(raw)
+        if host_display_updates:
+            raw["display"] = dict(host_display_updates.get("display") or {})
+
         platform_name = cls._resolve_video_annotation_platform_name(raw)
         if not platform_name:
             return raw
-        return annotate_item(raw, platform_name=platform_name, media_type="video")
+        annotated = annotate_item(raw, platform_name=platform_name, media_type="video")
+        if host_display_updates and not annotated.get("display"):
+            annotated["display"] = dict(host_display_updates.get("display") or {})
+        return annotated
 
     @classmethod
     def _annotate_video_records(cls, video_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -445,7 +461,7 @@ class VideoAppService(BaseContentAppService):
         stored_relative = str(getattr(video, "storage_path_relative", "") or "").strip()
         if stored_relative:
             stored_abs = resolve_data_relative_path(stored_relative)
-            if stored_abs:
+            if stored_abs and os.path.exists(stored_abs):
                 return stored_abs
 
         source_path = str(getattr(video, "local_source_path", "") or "").strip()

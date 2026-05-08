@@ -1,6 +1,7 @@
 import os
 import re
 from application.persisted_content_metadata import resolve_data_relative_path
+from core.host_platform_fallback import infer_existing_host_comic_dir
 from core.constants import (
     COMIC_DIR,
     LOCAL_PICTURES_DIR,
@@ -9,11 +10,6 @@ from core.constants import (
     RECOMMENDATION_JSON_FILE,
 )
 from infrastructure.logger import app_logger, error_logger
-from protocol.platform_meta import (
-    build_platform_root_dir,
-    resolve_manifest_host_prefix,
-    split_prefixed_id,
-)
 
 
 class FileParser:
@@ -41,53 +37,25 @@ class FileParser:
     def _get_comic_dir(self, comic_id):
         """
         根据漫画 ID 推断其在本地的根目录。
-        优先走插件协议声明的 `storage.comic_dir.resolve`，让目录规则由插件自己决定。
+        优先使用数据库和宿主内建规则推断真实目录，兼容移动端无第三方库场景。
         """
         comic_record = self._find_comic_record(comic_id) or {}
         stored_relative = str((comic_record or {}).get("storage_path_relative", "")).strip()
         if stored_relative:
             stored_abs = resolve_data_relative_path(stored_relative)
-            if stored_abs:
+            if stored_abs and os.path.isdir(stored_abs):
                 return stored_abs
 
-        platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
-        if not original_id:
-            raise ValueError(f"未知的平台类型，漫画ID: {comic_id}")
+        host_resolved_dir = infer_existing_host_comic_dir(
+            comic_id,
+            comic_record,
+            comic_root=COMIC_DIR,
+            local_root=LOCAL_PICTURES_DIR,
+        )
+        if host_resolved_dir:
+            return host_resolved_dir
 
-        local_dir = os.path.join(LOCAL_PICTURES_DIR, original_id)
-        if str(original_id or "").upper().startswith("LOCAL"):
-            stored_dir_name = str((comic_record or {}).get("local_asset_dir_name", "")).strip()
-            if stored_dir_name:
-                named_local_dir = os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
-                if os.path.exists(named_local_dir):
-                    return named_local_dir
-            if os.path.exists(local_dir):
-                return local_dir
-            if stored_dir_name:
-                return os.path.join(LOCAL_PICTURES_DIR, stored_dir_name)
-            return local_dir
-
-        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
-        base_dir = build_platform_root_dir(COMIC_DIR, manifest=manifest, platform_name=platform_key or host_prefix)
-        author = comic_record.get("author") or comic_record.get("creator") or "unknown"
-        title = comic_record.get("title") or f"漫画_{original_id}"
-
-        try:
-            from protocol.platform_service import get_platform_service
-
-            comic_dir = get_platform_service().get_comic_dir(
-                platform_key or host_prefix,
-                original_id,
-                author=author,
-                title=title,
-                base_dir=base_dir,
-            )
-            if comic_dir:
-                return comic_dir
-        except Exception as e:
-            error_logger.error(f"解析协议漫画目录失败，使用默认目录结构: comic_id={comic_id}, error={e}")
-
-        return os.path.join(base_dir, original_id)
+        raise ValueError(f"未知或不存在的漫画目录，漫画ID: {comic_id}")
     
     def _generate_name_variants(self, name):
         """生成名称的变体，用于目录匹配"""
