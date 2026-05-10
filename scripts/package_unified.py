@@ -1328,6 +1328,44 @@ def is_desktop_target(target: str) -> bool:
     return target in {"windows", "linux"}
 
 
+def discover_ffmpeg_runtime_tools(target: str) -> Dict[str, Path]:
+    if not is_desktop_target(target):
+        return {}
+
+    binary_name = "ffmpeg.exe" if target == "windows" else "ffmpeg"
+    candidates: List[Path] = []
+
+    for env_key in ("ULTIMATE_FFMPEG_PATH", "FFMPEG_PATH"):
+        env_value = str(os.environ.get(env_key, "")).strip()
+        if not env_value:
+            continue
+        candidate = Path(env_value).expanduser()
+        if candidate.is_dir():
+            candidate = candidate / binary_name
+        candidates.append(candidate)
+
+    candidates.extend(
+        [
+            ROOT_DIR / "tools" / "ffmpeg" / target / binary_name,
+            ROOT_DIR / "build" / "runtime_tools" / "ffmpeg" / target / binary_name,
+            ROOT_DIR / "runtime_tools" / "ffmpeg" / target / binary_name,
+        ]
+    )
+
+    resolved_from_path = shutil.which("ffmpeg")
+    if resolved_from_path:
+        candidates.append(Path(resolved_from_path))
+
+    for candidate in candidates:
+        try:
+            normalized = candidate.resolve()
+        except Exception:
+            normalized = candidate
+        if normalized.exists() and normalized.is_file():
+            return {binary_name: normalized}
+    return {}
+
+
 def discover_archive_runtime_tools(target: str) -> Dict[str, Path]:
     tools: Dict[str, Path] = {}
 
@@ -1391,6 +1429,27 @@ def copy_archive_runtime_tools(target: str, bundle_dir: Path) -> Optional[Path]:
     return out_dir
 
 
+def copy_ffmpeg_runtime_tools(target: str, bundle_dir: Path) -> Optional[Path]:
+    if not is_desktop_target(target):
+        return None
+
+    tools = discover_ffmpeg_runtime_tools(target)
+    if not tools:
+        return None
+
+    out_dir = bundle_dir / "tools" / "ffmpeg"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for output_name, source_path in tools.items():
+        destination = out_dir / output_name
+        shutil.copy2(source_path, destination)
+        if target != "windows":
+            try:
+                destination.chmod(0o755)
+            except OSError:
+                pass
+    return out_dir
+
+
 def write_desktop_bundle_scripts(
     bundle_dir: Path,
     binary_name: str,
@@ -1407,6 +1466,8 @@ def write_desktop_bundle_scripts(
         "set SCRIPT_DIR=%~dp0\n"
         "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
         "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
+        "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
+        "if exist \"%FFMPEG_TOOLS_DIR%\" set PATH=%FFMPEG_TOOLS_DIR%;%PATH%\n"
         "set BACKEND_DEBUG=false\n"
         "set FRONTEND_DIST_DIR=%SCRIPT_DIR%frontend_dist\n"
         "cd /d \"%SCRIPT_DIR%\"\n"
@@ -1427,6 +1488,10 @@ def write_desktop_bundle_scripts(
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
         "if (Test-Path $archiveTools) {\n"
         "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
+        "}\n"
+        "$ffmpegTools = Join-Path $scriptDir \"tools/ffmpeg\"\n"
+        "if (Test-Path $ffmpegTools) {\n"
+        "    $env:PATH = \"$ffmpegTools;$env:PATH\"\n"
         "}\n"
         "$env:BACKEND_DEBUG = \"false\"\n"
         "$env:FRONTEND_DIST_DIR = Join-Path $scriptDir \"frontend_dist\"\n"
@@ -1451,6 +1516,10 @@ def write_desktop_bundle_scripts(
         "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
         "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
         "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
+        "fi\n"
+        "FFMPEG_TOOLS_DIR=\"$SCRIPT_DIR/tools/ffmpeg\"\n"
+        "if [ -d \"$FFMPEG_TOOLS_DIR\" ]; then\n"
+        "  export PATH=\"$FFMPEG_TOOLS_DIR:$PATH\"\n"
         "fi\n"
         "export BACKEND_DEBUG=\"false\"\n"
         "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/frontend_dist\"\n"
@@ -1555,6 +1624,7 @@ def prepare_desktop_release_bundle(
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
+    ffmpeg_tools_dir = copy_ffmpeg_runtime_tools(target, bundle_dir)
 
     notes = [
         "# Desktop Release Bundle",
@@ -1566,6 +1636,8 @@ def prepare_desktop_release_bundle(
     ]
     if archive_tools_dir is not None:
         notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
+    if ffmpeg_tools_dir is not None:
+        notes.append("- `tools/ffmpeg/`: bundled ffmpeg runtime for local video thumbnail generation")
     notes.extend(
         [
             "",

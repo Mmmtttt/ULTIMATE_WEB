@@ -273,14 +273,24 @@
       <div v-if="preferredThumbnailImages.length > 0" class="thumbnails-section">
         <van-cell-group title="预览图">
           <div class="thumbnail-grid">
-            <van-image 
-              v-for="(img, index) in preferredThumbnailImages" 
+            <div
+              v-for="(img, index) in preferredThumbnailImages"
               :key="index"
-              :src="getCoverUrl(img)"
-              fit="cover"
-              class="thumbnail-item"
+              class="thumbnail-card"
               @click="previewImages(index)"
-            />
+            >
+              <van-image
+                :src="getCoverUrl(img)"
+                fit="cover"
+                class="thumbnail-item"
+              />
+              <span
+                v-if="isCurrentLocalCoverThumbnail(index)"
+                class="thumbnail-cover-badge"
+              >
+                当前封面
+              </span>
+            </div>
           </div>
         </van-cell-group>
       </div>
@@ -298,6 +308,64 @@
       :actions="actions" 
       @select="handleAction"
     />
+
+    <van-popup
+      v-model:show="showThumbnailPicker"
+      position="bottom"
+      round
+      class="thumbnail-picker-popup"
+      :style="thumbnailPickerPopupStyle"
+    >
+      <div class="thumbnail-picker">
+        <van-nav-bar title="选择视频封面">
+          <template #right>
+            <van-button
+              type="primary"
+              size="small"
+              :disabled="!canSubmitThumbnailCover"
+              :loading="savingThumbnailCover"
+              @click="saveThumbnailCoverSelection"
+            >
+              设为封面
+            </van-button>
+          </template>
+        </van-nav-bar>
+
+        <div class="thumbnail-picker-hint">
+          从已生成的本地缩略图里选择一张，作为这个视频的封面。
+        </div>
+
+        <div v-if="localThumbnailImages.length > 0" class="thumbnail-picker-grid">
+          <button
+            v-for="(img, index) in localThumbnailImages"
+            :key="img || index"
+            type="button"
+            class="thumbnail-picker-card"
+            :class="{
+              'is-selected': selectedThumbnailCoverIndex === index,
+              'is-current': currentLocalCoverIndex === index
+            }"
+            @click="selectedThumbnailCoverIndex = index"
+          >
+            <img
+              :src="getCoverUrl(img)"
+              alt=""
+              class="thumbnail-picker-image"
+            />
+            <span v-if="currentLocalCoverIndex === index" class="thumbnail-picker-badge">
+              当前封面
+            </span>
+            <span v-else-if="selectedThumbnailCoverIndex === index" class="thumbnail-picker-badge is-pending">
+              待设为封面
+            </span>
+          </button>
+        </div>
+
+        <div v-else class="thumbnail-picker-empty">
+          还没有可用的本地缩略图，请先在右上角菜单里生成。
+        </div>
+      </div>
+    </van-popup>
 
     <van-popup 
       v-model:show="showEditPopup" 
@@ -437,9 +505,11 @@ const showActions = ref(false)
 const showEditPopup = ref(false)
 const showTagPopup = ref(false)
 const showListPopup = ref(false)
+const showThumbnailPicker = ref(false)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedListIds = ref([])
+const selectedThumbnailCoverIndex = ref(-1)
 const scoreValue = ref(0)
 const subscribingActors = ref([])
 const showMagnets = ref(false)
@@ -465,6 +535,8 @@ const assetRefreshTimer = ref(null)
 const assetRefreshAttempts = ref(0)
 const refreshingPreviewVideo = ref(false)
 const refreshingLocalMetadata = ref(false)
+const generatingLocalThumbnails = ref(false)
+const savingThumbnailCover = ref(false)
 
 const hls = ref(null)
 const previewHls = ref(null)
@@ -483,6 +555,21 @@ const actions = computed(() => {
 
   const menuActions = []
   if (isLocalVideo.value) {
+    if (localThumbnailCapability.value.show_generate_action) {
+      const generateAction = {
+        name: localThumbnailImages.value.length > 0 ? '重新生成缩略图' : '生成缩略图',
+        value: 'generate_local_thumbnails',
+        disabled: !localThumbnailCapability.value.can_generate
+      }
+      const capabilityReason = String(localThumbnailCapability.value.reason || '').trim()
+      if (!localThumbnailCapability.value.can_generate && capabilityReason) {
+        generateAction.subname = capabilityReason
+      }
+      menuActions.push(generateAction)
+    }
+    if (localThumbnailCapability.value.can_select_cover) {
+      menuActions.push({ name: '选择封面', value: 'select_local_thumbnail_cover' })
+    }
     menuActions.push(
       { name: '更新详情信息', value: 'refresh_local_metadata' },
       { name: '编辑信息', value: 'edit' },
@@ -541,6 +628,67 @@ const videoStoragePath = computed(() => {
   const path = String(video.value?.storage_path || video.value?.local_source_path || '').trim()
   return path
 })
+const localThumbnailCapability = computed(() => {
+  const capability = video.value?.local_thumbnail_capability
+  if (!capability || typeof capability !== 'object') {
+    return {
+      supported: false,
+      has_local_source: false,
+      show_generate_action: false,
+      can_generate: false,
+      can_select_cover: false,
+      generated_count: 0,
+      target_count: 20,
+      selected_index: -1,
+      reason: ''
+    }
+  }
+  return capability
+})
+const localThumbnailImages = computed(() => {
+  const thumbnails = Array.isArray(video.value?.thumbnail_images_local) ? video.value.thumbnail_images_local : []
+  return thumbnails.filter((item) => String(item || '').trim())
+})
+const currentLocalCoverIndex = computed(() => {
+  const rawIndex = Number(video.value?.local_cover_thumbnail_index)
+  if (!Number.isInteger(rawIndex) || rawIndex < 0 || rawIndex >= localThumbnailImages.value.length) {
+    return -1
+  }
+  return rawIndex
+})
+const canSubmitThumbnailCover = computed(() => {
+  return (
+    selectedThumbnailCoverIndex.value >= 0 &&
+    selectedThumbnailCoverIndex.value < localThumbnailImages.value.length &&
+    selectedThumbnailCoverIndex.value !== currentLocalCoverIndex.value
+  )
+})
+const thumbnailPickerPopupStyle = computed(() => ({
+  height: isDesktop.value ? '72%' : '78%'
+}))
+
+function syncThumbnailSelectionState(detail = video.value) {
+  const thumbnails = Array.isArray(detail?.thumbnail_images_local) ? detail.thumbnail_images_local : []
+  const rawIndex = Number(detail?.local_cover_thumbnail_index)
+  if (Number.isInteger(rawIndex) && rawIndex >= 0 && rawIndex < thumbnails.length) {
+    selectedThumbnailCoverIndex.value = rawIndex
+    return
+  }
+  selectedThumbnailCoverIndex.value = thumbnails.length > 0 ? 0 : -1
+}
+
+function openThumbnailPicker() {
+  syncThumbnailSelectionState()
+  showThumbnailPicker.value = true
+}
+
+function isCurrentLocalCoverThumbnail(index) {
+  return (
+    index >= 0 &&
+    index < localThumbnailImages.value.length &&
+    currentLocalCoverIndex.value === index
+  )
+}
 
 function clearAssetRefreshTimer() {
   if (assetRefreshTimer.value) {
@@ -797,6 +945,7 @@ async function refreshPreviewVideo() {
 
     video.value = response.data
     showMagnets.value = false
+    syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
       scoreValue.value = response.data.score
     }
@@ -835,6 +984,7 @@ async function refreshLocalMetadata() {
     video.value = response.data
     selectedTagIds.value = [...(response.data?.tag_ids || [])]
     syncEditFormFromVideo(response.data)
+    syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
       scoreValue.value = response.data.score
     }
@@ -848,6 +998,81 @@ async function refreshLocalMetadata() {
     showFailToast(error?.message || '更新详情信息失败')
   } finally {
     refreshingLocalMetadata.value = false
+  }
+}
+
+async function generateLocalThumbnails() {
+  if (!videoId.value || generatingLocalThumbnails.value) {
+    return
+  }
+  if (!localThumbnailCapability.value.can_generate) {
+    showFailToast(localThumbnailCapability.value.reason || '当前环境暂不可生成缩略图')
+    return
+  }
+
+  generatingLocalThumbnails.value = true
+  showLoadingToast({
+    message: '正在生成 20 张缩略图...',
+    forbidClick: true,
+    duration: 0
+  })
+
+  try {
+    const response = await videoApi.generateLocalThumbnails(videoId.value)
+    closeToast()
+
+    if (response?.code !== 200 || !response?.data) {
+      showFailToast(response?.msg || '生成缩略图失败')
+      return
+    }
+
+    video.value = response.data
+    syncThumbnailSelectionState(response.data)
+    showMagnets.value = false
+    showThumbnailPicker.value = true
+    showSuccessToast(response?.msg || '缩略图生成成功')
+  } catch (error) {
+    closeToast()
+    console.error('生成本地缩略图失败:', error)
+    showFailToast(error?.message || '生成缩略图失败')
+  } finally {
+    generatingLocalThumbnails.value = false
+  }
+}
+
+async function saveThumbnailCoverSelection() {
+  if (!videoId.value || savingThumbnailCover.value || !canSubmitThumbnailCover.value) {
+    return
+  }
+
+  savingThumbnailCover.value = true
+  showLoadingToast({
+    message: '正在更新封面...',
+    forbidClick: true
+  })
+
+  try {
+    const response = await videoApi.selectLocalThumbnailCover(
+      videoId.value,
+      selectedThumbnailCoverIndex.value
+    )
+    closeToast()
+
+    if (response?.code !== 200 || !response?.data) {
+      showFailToast(response?.msg || '设置封面失败')
+      return
+    }
+
+    video.value = response.data
+    syncThumbnailSelectionState(response.data)
+    showThumbnailPicker.value = false
+    showSuccessToast(response?.msg || '封面已更新')
+  } catch (error) {
+    closeToast()
+    console.error('设置本地缩略图封面失败:', error)
+    showFailToast(error?.message || '设置封面失败')
+  } finally {
+    savingThumbnailCover.value = false
   }
 }
 
@@ -891,6 +1116,7 @@ async function loadVideo() {
     }
     selectedTagIds.value = [...(data?.tag_ids || [])]
     syncEditFormFromVideo(data)
+    syncThumbnailSelectionState(data)
     scheduleLocalAssetRefresh()
   } finally {
     loading.value = false
@@ -1153,6 +1379,10 @@ async function handleAction(action) {
   if (action.value === 'edit') {
     syncEditFormFromVideo(video.value)
     showEditPopup.value = true
+  } else if (action.value === 'generate_local_thumbnails') {
+    await generateLocalThumbnails()
+  } else if (action.value === 'select_local_thumbnail_cover') {
+    openThumbnailPicker()
   } else if (action.value === 'tags') {
     selectedTagIds.value = [...(video.value?.tag_ids || [])]
     await fetchAllTags()
@@ -1694,10 +1924,28 @@ onUnmounted(() => {
   padding: 12px;
 }
 
+.thumbnail-card {
+  position: relative;
+  cursor: pointer;
+}
+
 .thumbnail-item {
   aspect-ratio: 16/9;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.thumbnail-cover-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(14, 28, 51, 0.78);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
 }
 
 .video-detail-desktop .detail-content {
@@ -1775,12 +2023,98 @@ onUnmounted(() => {
   border-radius: 12px;
 }
 
+.video-detail-desktop .thumbnail-picker-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .edit-popup,
 .tag-popup,
-.list-popup {
+.list-popup,
+.thumbnail-picker {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.thumbnail-picker-popup {
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+}
+
+.thumbnail-picker-hint {
+  padding: 16px 18px 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.thumbnail-picker-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 18px 20px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+
+.thumbnail-picker-card {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(244, 248, 255, 0.92) 100%);
+  padding: 0;
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  transition: transform var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard);
+  box-shadow: 0 10px 20px rgba(17, 27, 45, 0.08);
+}
+
+.thumbnail-picker-card.is-selected,
+.thumbnail-picker-card.is-current {
+  border-color: rgba(30, 110, 255, 0.42);
+  box-shadow: 0 14px 26px rgba(30, 110, 255, 0.14);
+}
+
+.thumbnail-picker-card.is-selected {
+  transform: translateY(-2px);
+}
+
+.thumbnail-picker-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.thumbnail-picker-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(14, 28, 51, 0.78);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+}
+
+.thumbnail-picker-badge.is-pending {
+  background: rgba(24, 96, 220, 0.86);
+}
+
+.thumbnail-picker-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
 }
 
 .tag-select-list {
@@ -1852,6 +2186,16 @@ onUnmounted(() => {
 
   .thumbnail-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .thumbnail-picker-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 10px 12px 18px;
+  }
+
+  .thumbnail-picker-hint {
+    padding: 14px 14px 6px;
   }
 }
 </style>

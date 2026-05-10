@@ -132,3 +132,62 @@ def test_write_pyinstaller_scripts_keeps_third_party_under_backend_layout():
         assert "curl_cffi._wrapper" in hidden_import_args
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_prepare_desktop_release_bundle_copies_ffmpeg_runtime_tool_and_launchers_add_path(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_ffmpeg_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        staged_target_dir = temp_dir / "staged"
+        (staged_target_dir / "comic_backend").mkdir(parents=True, exist_ok=True)
+        (staged_target_dir / "comic_frontend_dist").mkdir(parents=True, exist_ok=True)
+        (staged_target_dir / "runtime.env").write_text("BACKEND_RUNTIME_PROFILE=full\n", encoding="utf-8")
+
+        fake_binary_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+        fake_ffmpeg = temp_dir / fake_binary_name
+        fake_ffmpeg.write_bytes(b"fake-ffmpeg-runtime")
+        monkeypatch.setenv("FFMPEG_PATH", str(fake_ffmpeg))
+
+        bundle_dir = package_unified.prepare_desktop_release_bundle(
+            target="windows" if os.name == "nt" else "linux",
+            target_out_dir=temp_dir / "out",
+            staged_target_dir=staged_target_dir,
+            binary_name="ultimate_backend_test",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+        )
+
+        copied_ffmpeg = bundle_dir / "tools" / "ffmpeg" / fake_binary_name
+        assert copied_ffmpeg.exists()
+
+        bat_text = (bundle_dir / "start_backend.bat").read_text(encoding="utf-8")
+        ps1_text = (bundle_dir / "start_backend.ps1").read_text(encoding="utf-8")
+        sh_text = (bundle_dir / "start_backend.sh").read_text(encoding="utf-8")
+        readme_text = (bundle_dir / "README.md").read_text(encoding="utf-8")
+
+        assert "tools\\ffmpeg" in bat_text
+        assert "tools/ffmpeg" in ps1_text
+        assert "tools/ffmpeg" in sh_text
+        assert "tools/ffmpeg/" in readme_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_copy_ffmpeg_runtime_tools_skips_android_targets():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_ffmpeg_skip_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        result = package_unified.copy_ffmpeg_runtime_tools("android", temp_dir)
+        assert result is None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

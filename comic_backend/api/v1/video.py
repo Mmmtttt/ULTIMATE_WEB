@@ -57,6 +57,17 @@ def error_response(code, msg):
     })
 
 
+def _build_local_video_detail_payload(video_id: str):
+    result = video_service.get_video_detail(video_id)
+    if not result.success:
+        return result
+
+    detail = dict(result.data or {})
+    detail = _ensure_preview_video_detail(detail, source="local")
+    _schedule_local_cover_thumbnail_cache(detail, source="local")
+    return ServiceResult.ok(detail, result.message or "成功")
+
+
 def _get_video_proxy_client():
     """Load a protocol-declared playback proxy client lazily."""
     if not is_third_party_enabled():
@@ -100,12 +111,9 @@ def video_detail():
         if not video_id:
             return error_response(400, "缺少参数")
         
-        result = video_service.get_video_detail(video_id)
+        result = _build_local_video_detail_payload(video_id)
         if result.success:
-            detail = (result.data or {}).copy()
-            detail = _ensure_preview_video_detail(detail, source="local")
-            _schedule_local_cover_thumbnail_cache(detail, source="local")
-            return success_response(detail)
+            return success_response(result.data)
         else:
             return error_response(404, result.message)
     except Exception as e:
@@ -156,6 +164,45 @@ def refresh_local_video_metadata():
         return error_response(400, result.message or "LOCAL 视频详情更新失败")
     except Exception as e:
         error_logger.error(f"refresh local video metadata api failed: {e}")
+        return error_response(500, "internal server error")
+
+
+@video_bp.route('/local-thumbnails/generate', methods=['POST'])
+def generate_local_video_thumbnails():
+    try:
+        data = request.json or {}
+        video_id = str(data.get('video_id') or '').strip()
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+
+        result = video_service.generate_local_video_thumbnails(video_id)
+        if result.success:
+            return success_response(result.data, result.message or "缩略图生成成功")
+        return error_response(400, result.message or "生成缩略图失败")
+    except Exception as e:
+        error_logger.error(f"generate local video thumbnails api failed: {e}")
+        return error_response(500, "internal server error")
+
+
+@video_bp.route('/local-thumbnails/cover', methods=['PUT'])
+def select_local_thumbnail_cover():
+    try:
+        data = request.json or {}
+        video_id = str(data.get('video_id') or '').strip()
+        if not video_id:
+            return error_response(400, "缺少参数: video_id")
+
+        try:
+            thumbnail_index = int(data.get('thumbnail_index'))
+        except Exception:
+            return error_response(400, "缺少参数: thumbnail_index")
+
+        result = video_service.select_local_thumbnail_as_cover(video_id, thumbnail_index)
+        if result.success:
+            return success_response(result.data, result.message or "封面已更新")
+        return error_response(400, result.message or "设置封面失败")
+    except Exception as e:
+        error_logger.error(f"select local thumbnail cover api failed: {e}")
         return error_response(500, "internal server error")
 
 

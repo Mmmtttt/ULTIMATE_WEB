@@ -144,6 +144,21 @@ export const videoApi = {
       video_id: videoId
     })
   },
+
+  generateLocalThumbnails(videoId) {
+    return request.post('/v1/video/local-thumbnails/generate', {
+      video_id: videoId
+    }, {
+      timeout: 0
+    })
+  },
+
+  selectLocalThumbnailCover(videoId, thumbnailIndex) {
+    return request.put('/v1/video/local-thumbnails/cover', {
+      video_id: videoId,
+      thumbnail_index: thumbnailIndex
+    })
+  },
   
   getTags() {
     return request.get('/v1/video/tags')

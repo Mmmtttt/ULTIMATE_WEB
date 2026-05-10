@@ -15,5 +15,11 @@ if (-not $env:BACKEND_ENABLE_THIRD_PARTY) {
     $env:BACKEND_ENABLE_THIRD_PARTY = "true"
 }
 
+$localFfmpeg = Join-Path $rootDir "tools\ffmpeg\windows\ffmpeg.exe"
+if ((-not $env:ULTIMATE_FFMPEG_PATH) -and (Test-Path $localFfmpeg)) {
+    $env:ULTIMATE_FFMPEG_PATH = $localFfmpeg
+    Write-Host "Using local FFmpeg runtime: $localFfmpeg" -ForegroundColor DarkCyan
+}
+
 Write-Host "Starting backend service..." -ForegroundColor Cyan
 python app.py

@@ -31,4 +31,9 @@ echo "Starting backend service..."
 cd "$ROOT_DIR/comic_backend"
 export BACKEND_RUNTIME_PROFILE="${BACKEND_RUNTIME_PROFILE:-full}"
 export BACKEND_ENABLE_THIRD_PARTY="${BACKEND_ENABLE_THIRD_PARTY:-true}"
+LOCAL_FFMPEG="$ROOT_DIR/tools/ffmpeg/linux/ffmpeg"
+if [ -z "${ULTIMATE_FFMPEG_PATH:-}" ] && [ -f "$LOCAL_FFMPEG" ]; then
+    export ULTIMATE_FFMPEG_PATH="$LOCAL_FFMPEG"
+    echo "Using local FFmpeg runtime: $LOCAL_FFMPEG"
+fi
 "$PY_CMD" app.py

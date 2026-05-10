@@ -9,6 +9,7 @@ import math
 import os
 import re
 import shutil
+import tempfile
 import threading
 import requests
 from io import BytesIO
@@ -42,6 +43,12 @@ from core.constants import (
 )
 from core.enums import ContentType
 from application.base.content_app_service import BaseContentAppService
+from application.local_video_thumbnail_service import (
+    DEFAULT_LOCAL_VIDEO_THUMBNAIL_COUNT,
+    DEFAULT_LOCAL_VIDEO_THUMBNAIL_WIDTH,
+    FFmpegLocalVideoThumbnailService,
+    probe_local_video_thumbnail_runtime,
+)
 from application.video_runtime_support import get_preview_request_client
 from protocol.gateway import get_protocol_gateway
 from protocol.platform_meta import (
@@ -145,6 +152,8 @@ class VideoAppService(BaseContentAppService):
     LOCAL_IMPORT_MODE_SOFTLINK_REF = "softlink_ref"
     SOURCE_ORIGIN_LOCAL_IMPORT = "local_import"
     SOURCE_ORIGIN_MAGNET_DOWNLOAD = "magnet_download"
+    LOCAL_THUMBNAIL_TARGET_COUNT = DEFAULT_LOCAL_VIDEO_THUMBNAIL_COUNT
+    LOCAL_THUMBNAIL_WIDTH = DEFAULT_LOCAL_VIDEO_THUMBNAIL_WIDTH
     VIDEO_FILE_EXTENSIONS = (
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
         ".m4v", ".ts", ".m2ts", ".rmvb", ".mpg", ".mpeg",
@@ -449,6 +458,7 @@ class VideoAppService(BaseContentAppService):
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids]
             detail["source"] = "local"
             detail["storage_path"] = self._resolve_video_storage_path(video)
+            detail["local_thumbnail_capability"] = self._build_local_thumbnail_capability(video)
             detail = self._annotate_video_record(detail)
             
             app_logger.info(f"获取视频详情成功: {video_id}")
@@ -456,6 +466,53 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"获取视频详情失败: {e}")
             return ServiceResult.error("获取视频详情失败")
+
+    @staticmethod
+    def _normalize_local_cover_thumbnail_index(raw_index: Any, thumbnail_count: int = 0) -> int:
+        try:
+            normalized = int(raw_index)
+        except Exception:
+            normalized = -1
+
+        if normalized < 0:
+            return -1
+        if thumbnail_count > 0 and normalized >= int(thumbnail_count):
+            return -1
+        return normalized
+
+    def _build_local_thumbnail_capability(self, video: Optional[Video]) -> Dict[str, Any]:
+        local_thumbnails = list(getattr(video, "thumbnail_images_local", []) or []) if isinstance(video, Video) else []
+        generated_count = len([item for item in local_thumbnails if str(item or "").strip()])
+        runtime_capability = probe_local_video_thumbnail_runtime()
+        mobile_core_runtime = str(runtime_capability.get("runtime_profile") or "").strip().lower() == "mobile_core"
+        has_local_source = self._has_video_source_file(video)
+        show_generate_action = (not mobile_core_runtime) and has_local_source
+        can_generate = bool(runtime_capability.get("supported")) and has_local_source
+        can_select_cover = (generated_count > 0) and not mobile_core_runtime
+
+        reason = ""
+        if not runtime_capability.get("supported"):
+            reason = str(runtime_capability.get("reason") or "").strip()
+        elif not has_local_source:
+            reason = "当前视频没有可用的本地源文件"
+
+        return {
+            "supported": bool(runtime_capability.get("supported")),
+            "provider": str(runtime_capability.get("provider") or "").strip(),
+            "platform": str(runtime_capability.get("platform") or "").strip(),
+            "runtime_profile": str(runtime_capability.get("runtime_profile") or "").strip(),
+            "has_local_source": has_local_source,
+            "show_generate_action": show_generate_action,
+            "can_generate": can_generate,
+            "can_select_cover": can_select_cover,
+            "generated_count": generated_count,
+            "target_count": self.LOCAL_THUMBNAIL_TARGET_COUNT,
+            "selected_index": self._normalize_local_cover_thumbnail_index(
+                getattr(video, "local_cover_thumbnail_index", -1),
+                generated_count,
+            ),
+            "reason": reason,
+        }
     
     def _resolve_video_storage_path(self, video: Video) -> str:
         stored_relative = str(getattr(video, "storage_path_relative", "") or "").strip()
@@ -478,6 +535,139 @@ class VideoAppService(BaseContentAppService):
 
         resolved = self.resolve_local_video_file_path(video.id)
         return str(resolved or "")
+
+    def _copy_thumbnail_file_to_cover(self, video_id: str, source_thumb_abs_path: str) -> Tuple[str, str]:
+        cover_abs_path, cover_relative_path = self._build_preview_cover_save_paths(video_id, "local")
+        cover_tmp_path = f"{cover_abs_path}.tmp"
+        shutil.copy2(source_thumb_abs_path, cover_tmp_path)
+        os.replace(cover_tmp_path, cover_abs_path)
+        return cover_abs_path, cover_relative_path
+
+    def generate_local_video_thumbnails(self, video_id: str) -> ServiceResult:
+        try:
+            normalized_video_id = str(video_id or "").strip()
+            if not normalized_video_id:
+                return ServiceResult.error("缺少 video_id")
+
+            video = self._video_repo.get_by_id(normalized_video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+
+            capability = self._build_local_thumbnail_capability(video)
+            if not bool(capability.get("can_generate")):
+                reason = str(capability.get("reason") or "").strip() or "当前视频无法生成缩略图"
+                return ServiceResult.error(reason)
+
+            resolved_video_path = self.resolve_local_video_file_path(normalized_video_id)
+            if not resolved_video_path or not os.path.isfile(resolved_video_path):
+                return ServiceResult.error("未找到可用的本地视频文件")
+
+            asset_dir, relative_dir = self._build_preview_asset_dir(normalized_video_id, "local")
+            temp_root = tempfile.mkdtemp(prefix="thumbs-build-", dir=asset_dir)
+            temp_thumbs_dir = os.path.join(temp_root, "thumbs")
+            os.makedirs(temp_thumbs_dir, exist_ok=True)
+
+            try:
+                generator = FFmpegLocalVideoThumbnailService(
+                    ffmpeg_path=str(probe_local_video_thumbnail_runtime().get("ffmpeg_path") or "").strip()
+                )
+                generation_result = generator.generate_thumbnails(
+                    video_path=resolved_video_path,
+                    output_dir=temp_thumbs_dir,
+                    count=self.LOCAL_THUMBNAIL_TARGET_COUNT,
+                    width=self.LOCAL_THUMBNAIL_WIDTH,
+                )
+
+                final_thumbs_dir = os.path.join(asset_dir, "thumbs")
+                if os.path.isdir(final_thumbs_dir):
+                    shutil.rmtree(final_thumbs_dir, ignore_errors=True)
+                shutil.move(temp_thumbs_dir, final_thumbs_dir)
+
+                thumbnail_urls = [
+                    f"{relative_dir}/thumbs/thumb-{index:04d}.jpg"
+                    for index in range(1, int(generation_result.get("thumbnail_count") or 0) + 1)
+                ]
+                if not thumbnail_urls:
+                    return ServiceResult.error("未生成任何缩略图")
+
+                default_cover_index = self._normalize_local_cover_thumbnail_index(
+                    generation_result.get("default_cover_index", -1),
+                    len(thumbnail_urls),
+                )
+                if default_cover_index < 0:
+                    default_cover_index = 0
+
+                default_cover_url = thumbnail_urls[default_cover_index]
+                default_cover_abs = self._resolve_static_asset_abs_path(default_cover_url)
+                if not default_cover_abs or not os.path.isfile(default_cover_abs):
+                    return ServiceResult.error("生成的缩略图文件不可用")
+
+                _cover_abs, cover_relative_path = self._copy_thumbnail_file_to_cover(
+                    normalized_video_id,
+                    default_cover_abs,
+                )
+
+                video.thumbnail_images_local = thumbnail_urls
+                video.cover_path_local = cover_relative_path
+                video.local_cover_thumbnail_index = default_cover_index
+
+                if not self._video_repo.save(video):
+                    return ServiceResult.error("回写缩略图信息失败")
+
+                detail_result = self.get_video_detail(normalized_video_id)
+                if not detail_result.success:
+                    return detail_result
+                return ServiceResult.ok(detail_result.data, "缩略图生成成功")
+            finally:
+                shutil.rmtree(temp_root, ignore_errors=True)
+        except Exception as e:
+            error_logger.error(f"generate local video thumbnails failed: id={video_id}, error={e}")
+            return ServiceResult.error("生成缩略图失败")
+
+    def select_local_thumbnail_as_cover(self, video_id: str, thumbnail_index: int) -> ServiceResult:
+        try:
+            normalized_video_id = str(video_id or "").strip()
+            if not normalized_video_id:
+                return ServiceResult.error("缺少 video_id")
+
+            video = self._video_repo.get_by_id(normalized_video_id)
+            if not video:
+                return ServiceResult.error("视频不存在")
+
+            thumbnails = [
+                str(item or "").strip()
+                for item in list(getattr(video, "thumbnail_images_local", []) or [])
+                if str(item or "").strip()
+            ]
+            if not thumbnails:
+                return ServiceResult.error("当前视频还没有可用的本地缩略图")
+
+            selected_index = self._normalize_local_cover_thumbnail_index(thumbnail_index, len(thumbnails))
+            if selected_index < 0:
+                return ServiceResult.error("缩略图索引无效")
+
+            selected_thumb_url = thumbnails[selected_index]
+            selected_thumb_abs = self._resolve_static_asset_abs_path(selected_thumb_url)
+            if not selected_thumb_abs or not os.path.isfile(selected_thumb_abs):
+                return ServiceResult.error("目标缩略图文件不存在")
+
+            _cover_abs, cover_relative_path = self._copy_thumbnail_file_to_cover(
+                normalized_video_id,
+                selected_thumb_abs,
+            )
+            video.cover_path_local = cover_relative_path
+            video.local_cover_thumbnail_index = selected_index
+
+            if not self._video_repo.save(video):
+                return ServiceResult.error("回写封面失败")
+
+            detail_result = self.get_video_detail(normalized_video_id)
+            if not detail_result.success:
+                return detail_result
+            return ServiceResult.ok(detail_result.data, "封面已更新")
+        except Exception as e:
+            error_logger.error(f"select local thumbnail as cover failed: id={video_id}, error={e}")
+            return ServiceResult.error("设置封面失败")
 
     def get_video_by_code(self, code: str) -> ServiceResult:
         try:

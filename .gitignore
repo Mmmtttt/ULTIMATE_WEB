@@ -38,3 +38,8 @@ tests/test-results/
 # runtime local config (sensitive / machine-specific)
 server_config.json
 comic_backend/third_party_config.json
+
+# local runtime media tools
+tools/ffmpeg/
+runtime_tools/ffmpeg/
+build/runtime_tools/ffmpeg/
