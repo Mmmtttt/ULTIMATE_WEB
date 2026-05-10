@@ -229,7 +229,7 @@ onUnmounted(() => {
 }
 
 .tasks-container {
-  padding: 12px;
+  padding: 12px 12px 0;
 }
 
 .section {
@@ -390,17 +390,15 @@ onUnmounted(() => {
 }
 
 .footer-tip {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   padding: 12px;
+  margin: 18px 12px 0;
   background: var(--surface-2);
-  border-top: 1px solid var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
   font-size: 12px;
   color: var(--text-tertiary);
   backdrop-filter: blur(10px);

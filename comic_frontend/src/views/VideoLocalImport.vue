@@ -6,21 +6,32 @@
       @click-left="$router.back()"
     />
 
-    <section class="card-surface intro-card">
-      <h2>服务端路径导入</h2>
+    <section class="hero card-surface">
+      <h2>一步导入</h2>
       <p>
         仅支持输入服务端本机“文件夹路径”。系统会递归扫描常见视频文件并导入到本地库。
         你可以选择软连接（保留源文件）或硬链接（移动源文件），系统会自动忽略压缩包与非视频文件。
       </p>
+      <div class="hero-steps">
+        <span>1. 填写路径</span>
+        <span>2. 选择导入策略</span>
+        <span>3. 执行并查看结果</span>
+      </div>
     </section>
 
     <section class="card-surface form-card">
+      <div class="section-title">
+        <h3>导入源</h3>
+        <span class="hint">仅支持服务端本机绝对路径</span>
+      </div>
+
       <van-field
         v-model="sourcePath"
-        label="目录路径"
+        label="本地路径"
         placeholder="例如 D:\\Videos\\LOCAL"
         clearable
       />
+
       <div class="import-mode-switch">
         <div class="switch-main">
           <span class="switch-side" :class="{ active: importMode === 'hardlink_move' }">硬链接</span>
@@ -34,9 +45,19 @@
           {{ importMode === 'softlink_ref' ? '软连接：保留源文件，直接引用源路径播放' : '硬链接：移动源文件到本地库目录' }}
         </div>
       </div>
+
+      <div class="picker-tip">
+        路径模式会递归扫描常见视频文件，并自动忽略非视频文件、压缩包与不支持的目录项。
+      </div>
+
       <div v-if="importMode === 'hardlink_move'" class="mode-tip danger-tip">
         已启用硬链接导入（移动源文件）：将直接移动源目录中的视频文件，请先确认路径和备份。
       </div>
+
+      <div v-else class="mode-tip">
+        已启用软连接导入：源文件会保留在原目录，系统只建立引用关系，适合已有整理好的媒体库。
+      </div>
+
       <van-button
         type="primary"
         block
@@ -192,16 +213,50 @@ async function runImport() {
   box-shadow: var(--shadow-sm);
 }
 
-.intro-card h2 {
+.hero h2 {
   margin: 0;
   font-size: 18px;
   color: var(--text-strong);
 }
 
-.intro-card p {
+.hero p {
   margin: 10px 0 0;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.hero-steps {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hero-steps span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(89, 160, 255, 0.15);
+  color: var(--brand-700);
+  font-size: 12px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-title h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-strong);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .import-mode-switch {
@@ -248,10 +303,11 @@ async function runImport() {
   color: #9a3412;
 }
 
-.section-title h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-strong);
+.picker-tip {
+  margin: 8px 0 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  font-size: 12px;
 }
 
 .summary {

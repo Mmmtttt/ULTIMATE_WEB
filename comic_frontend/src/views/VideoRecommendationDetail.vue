@@ -1273,6 +1273,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .actor-tag {
@@ -1285,14 +1286,23 @@ onUnmounted(() => {
 }
 
 .score-row {
-  align-items: center;
+  align-items: flex-start;
 }
 
 .score-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.score-controls :deep(.van-rate) {
+  --van-rate-icon-size: 18px;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
 }
 
 .score-chip {
@@ -1541,12 +1551,31 @@ onUnmounted(() => {
   }
 
   .action-buttons {
-    position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     padding: 0 2px;
     background: transparent;
     border: none;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .action-buttons .van-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .info-row .label {
+    width: 60px;
+  }
+
+  .score-controls :deep(.van-rate) {
+    --van-rate-icon-size: 16px;
+  }
+
+  .preview-video-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .thumbnail-grid {

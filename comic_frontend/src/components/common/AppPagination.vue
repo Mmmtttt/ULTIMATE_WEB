@@ -5,7 +5,7 @@
       <button type="button" class="jump-trigger" @click="openJumpPopup">跳转</button>
     </div>
 
-    <div class="summary-sub">显示 {{ range.start }}-{{ range.end }}，共 {{ totalItems }} 条</div>
+    <div class="summary-sub">显示 {{ range.start }}-{{ range.end }}，共 {{ totalItemsLabel }} 条</div>
 
     <div class="pager-row">
       <button
@@ -106,6 +106,10 @@ const props = defineProps({
   pageSize: {
     type: Number,
     default: 20
+  },
+  hasMore: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -124,10 +128,10 @@ const safePageSize = computed(() => {
 })
 
 const totalPages = computed(() => {
-  if (props.totalItems <= 0) {
-    return 1
-  }
-  return Math.max(1, Math.ceil(props.totalItems / safePageSize.value))
+  const basePages = props.totalItems <= 0
+    ? 1
+    : Math.max(1, Math.ceil(props.totalItems / safePageSize.value))
+  return basePages + (props.hasMore ? 1 : 0)
 })
 
 const safePage = computed(() => {
@@ -143,8 +147,20 @@ const range = computed(() => {
     return { start: 0, end: 0 }
   }
   const start = (safePage.value - 1) * safePageSize.value + 1
-  const end = Math.min(props.totalItems, start + safePageSize.value - 1)
+  const isProvisionalLastPage = props.hasMore
+    && safePage.value === totalPages.value
+    && start > props.totalItems
+  const end = isProvisionalLastPage
+    ? start + safePageSize.value - 1
+    : Math.min(props.totalItems, start + safePageSize.value - 1)
   return { start, end }
+})
+
+const totalItemsLabel = computed(() => {
+  if (props.totalItems <= 0) {
+    return '0'
+  }
+  return props.hasMore ? `${props.totalItems}+` : String(props.totalItems)
 })
 
 const pageItems = computed(() => {

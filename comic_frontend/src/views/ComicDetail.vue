@@ -14,73 +14,79 @@
     
     <div v-else class="detail-content">
       <div class="cover-section">
-        <div class="cover-wrapper">
-          <van-image 
-            :src="coverUrl" 
-            fit="cover" 
-            class="cover" 
-            lazy-load
-            @click="startReading"
-          >
-            <template #loading>
-              <van-loading class="loading" />
-            </template>
-          </van-image>
-          <van-tag
-            v-if="comic.source === 'preview'"
-            type="primary"
-            size="small"
-            class="source-tag"
-          >预览库</van-tag>
-          <van-tag
-            v-else
-            type="success"
-            size="small"
-            class="source-tag"
-          >本地库</van-tag>
-        </div>
-        <div class="info">
-          <h1 class="title">{{ comic.title }}</h1>
-          <div class="author-row">
-            <p class="author" v-if="comic.author">
-              <span class="author-link" @click="filterByAuthor(comic.author)">{{ comic.author }}</span>
-            </p>
-            <p class="author" v-else>未知作者</p>
-            <van-button 
-              v-if="comic.author && !isSubscribed" 
-              size="mini" 
-              type="primary" 
-              plain
-              @click="subscribeAuthor"
-              :loading="subscribing"
+        <div class="cover-main">
+          <div class="cover-wrapper">
+            <van-image 
+              :src="coverUrl" 
+              fit="cover" 
+              class="cover" 
+              lazy-load
+              @click="startReading"
             >
-              订阅作者
-            </van-button>
-            <van-tag v-else-if="comic.author && isSubscribed" type="success" size="medium">
-              已订阅
-            </van-tag>
+              <template #loading>
+                <van-loading class="loading" />
+              </template>
+            </van-image>
+            <van-tag
+              v-if="comic.source === 'preview'"
+              type="primary"
+              size="small"
+              class="source-tag"
+            >预览库</van-tag>
+            <van-tag
+              v-else
+              type="success"
+              size="small"
+              class="source-tag"
+            >本地库</van-tag>
           </div>
-          
-          <div class="stats">
-            <span class="stat-item">ID: {{ comic.id }}</span>
-            <span class="stat-item">总页数: {{ comic.total_page }}</span>
-            <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
-            <span class="stat-item">{{ progressPercent }}%</span>
-          </div>
-
-          <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
-            <span class="storage-path-label">Path:</span>
-            <span class="storage-path-value">{{ comicStoragePath }}</span>
-          </div>
-          
-          <div class="score-section">
-            <div class="score-display">
-              <span class="score-label">评分:</span>
-              <van-icon name="star" class="score-star" />
-              <span class="score-chip" :class="{ 'is-empty': !comic.score }">
-                {{ comic.score || '未评分' }}
-              </span>
+          <div class="info">
+            <h1 class="title">{{ comic.title }}</h1>
+            <div class="author-row">
+              <p class="author" v-if="comic.author">
+                <span class="author-link" @click="filterByAuthor(comic.author)">{{ comic.author }}</span>
+              </p>
+              <p class="author" v-else>未知作者</p>
+              <van-button 
+                v-if="comic.author && !isSubscribed" 
+                size="mini" 
+                type="primary" 
+                plain
+                @click="subscribeAuthor"
+                :loading="subscribing"
+              >
+                订阅作者
+              </van-button>
+              <van-tag v-else-if="comic.author && isSubscribed" type="success" size="medium">
+                已订阅
+              </van-tag>
             </div>
+            
+            <div class="stats">
+              <span class="stat-item">ID: {{ comic.id }}</span>
+              <span class="stat-item">总页数: {{ comic.total_page }}</span>
+              <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
+              <span class="stat-item">{{ progressPercent }}%</span>
+            </div>
+
+            <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
+              <span class="storage-path-label">Path:</span>
+              <span class="storage-path-value">{{ comicStoragePath }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="score-section">
+          <div class="score-display">
+            <div class="score-summary">
+              <span class="score-label">评分</span>
+              <van-icon name="star" class="score-star" />
+            </div>
+            <span class="score-chip" :class="{ 'is-empty': !comic.score }">
+              {{ comic.score || '未评分' }}
+            </span>
+          </div>
+          <div class="score-rate-wrap">
             <van-rate
               v-model="scoreValue"
               :count="12"
@@ -802,10 +808,16 @@ watch(showListPopup, async (val) => {
 
 .cover-section {
   display: flex;
+  flex-direction: column;
   padding: 16px;
   gap: 16px;
   background: linear-gradient(125deg, #2f74ff 0%, #1c49ad 65%, #12316f 100%);
   color: #fff;
+}
+
+.cover-main {
+  display: flex;
+  gap: 16px;
 }
 
 .cover {
@@ -910,18 +922,24 @@ watch(showListPopup, async (val) => {
 }
 
 .score-section {
-  margin-top: auto;
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px 14px;
 }
 
 .score-display {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 8px;
+}
+
+.score-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .score-label {
@@ -955,8 +973,17 @@ watch(showListPopup, async (val) => {
   box-shadow: none;
 }
 
+.score-rate-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
 .score-rate {
-  margin: 8px 0;
+  --van-rate-icon-size: 20px;
+  margin: 0;
+  width: max-content;
+  white-space: nowrap;
 }
 
 .tags-section,
@@ -1100,6 +1127,10 @@ watch(showListPopup, async (val) => {
     gap: 12px;
   }
 
+  .cover-main {
+    gap: 12px;
+  }
+
   .cover {
     width: 110px;
     height: 148px;
@@ -1110,7 +1141,26 @@ watch(showListPopup, async (val) => {
   }
 
   .score-section {
-    padding: 8px 10px;
+    padding: 10px 12px;
+  }
+
+  .score-display {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .score-rate {
+    --van-rate-icon-size: 17px;
+  }
+
+  .action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .action-buttons .van-button {
+    width: 100%;
+    min-width: 0;
   }
 }
 

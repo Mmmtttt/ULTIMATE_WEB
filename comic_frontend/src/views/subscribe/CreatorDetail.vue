@@ -8,7 +8,7 @@
       </div>
       <div class="info">
         <h1>{{ creatorName }}</h1>
-        <p>共 {{ totalWorks }} 部作品</p>
+        <p>{{ worksCountText }}</p>
       </div>
       <div class="actions">
         <van-button
@@ -75,14 +75,15 @@
         </div>
       </template>
 
-      <AppPagination
-        v-if="totalWorks > 0"
-        :model-value="currentPage"
-        class="works-pagination"
-        :total-items="totalWorks"
-        :page-size="pageSize"
-        @update:model-value="handlePageChange"
-      />
+        <AppPagination
+          v-if="totalWorks > 0"
+          :model-value="currentPage"
+          class="works-pagination"
+          :has-more="hasMoreWorks"
+          :total-items="totalWorks"
+          :page-size="pageSize"
+          @update:model-value="handlePageChange"
+        />
     </div>
 
     <div class="floating-import-bar" v-if="selectedIds.length > 0">
@@ -137,13 +138,26 @@ const { currentPage, setPage, ensureWithinRange } = usePersistentPage(pageStorag
 const loading = ref(false)
 const works = ref([])
 const totalWorks = ref(0)
+const hasMoreWorks = ref(false)
 const selectedIds = ref([])
 const showImportSheet = ref(false)
 const isSubscribed = ref(false)
 const authorSubscriptionId = ref(null)
 const actorId = ref(null)
 const hasRemoteQueried = ref(false)
-const totalPages = computed(() => Math.max(1, Math.ceil((totalWorks.value || 0) / pageSize.value)))
+const totalPages = computed(() => {
+  const loadedPages = Math.max(1, Math.ceil((totalWorks.value || 0) / pageSize.value))
+  return loadedPages + (hasMoreWorks.value ? 1 : 0)
+})
+const worksCountText = computed(() => {
+  if (totalWorks.value <= 0) {
+    return '暂无作品'
+  }
+  if (hasMoreWorks.value) {
+    return `已加载 ${totalWorks.value}+ 部作品`
+  }
+  return `共 ${totalWorks.value} 部作品`
+})
 
 const isAllWorksSelected = computed(() => {
   return isAllSelected(selectedIds.value, works.value, (item) => getItemId(item))
@@ -166,10 +180,11 @@ async function resolveSubscription() {
   authorSubscriptionId.value = author?.id || null
 }
 
-function applyWorksPage(res) {
+function applyWorksPage(res, options = {}) {
   const newWorks = res?.data?.works || []
   works.value = Array.isArray(newWorks) ? newWorks : []
   totalWorks.value = res?.data?.total || works.value.length
+  hasMoreWorks.value = Boolean(options?.allowHasMore && res?.data?.has_more)
   ensureWithinRange(totalPages.value)
 }
 
@@ -193,7 +208,7 @@ async function loadData(page = 1, options = {}) {
         const res = await actorApi.getWorks(actorId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
         if (res.code === 200) {
           const previousPage = currentPage.value
-          applyWorksPage(res)
+          applyWorksPage(res, { allowHasMore: forceQuery || hasRemoteQueried.value })
           if (currentPage.value !== previousPage) {
             await loadData(currentPage.value, { forceQuery })
             return
@@ -206,6 +221,7 @@ async function loadData(page = 1, options = {}) {
         if (!forceQuery) {
           works.value = []
           totalWorks.value = 0
+          hasMoreWorks.value = false
           ensureWithinRange(totalPages.value)
           return
         }
@@ -217,7 +233,7 @@ async function loadData(page = 1, options = {}) {
         )
         if (res.code === 200) {
           const previousPage = currentPage.value
-          applyWorksPage(res)
+          applyWorksPage(res, { allowHasMore: true })
           if (currentPage.value !== previousPage) {
             await loadData(currentPage.value, { forceQuery: true })
             return
@@ -234,7 +250,7 @@ async function loadData(page = 1, options = {}) {
       const res = await authorApi.getWorks(authorSubscriptionId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
       if (res.code === 200) {
         const previousPage = currentPage.value
-        applyWorksPage(res)
+        applyWorksPage(res, { allowHasMore: forceQuery || hasRemoteQueried.value })
         if (currentPage.value !== previousPage) {
           await loadData(currentPage.value, { forceQuery })
           return
@@ -249,6 +265,7 @@ async function loadData(page = 1, options = {}) {
     if (!forceQuery) {
       works.value = []
       totalWorks.value = 0
+      hasMoreWorks.value = false
       ensureWithinRange(totalPages.value)
       return
     }
@@ -256,7 +273,7 @@ async function loadData(page = 1, options = {}) {
     const res = await authorApi.searchWorksByName(creatorName.value, offset, pageSize.value)
     if (res.code === 200) {
       const previousPage = currentPage.value
-      applyWorksPage(res)
+      applyWorksPage(res, { allowHasMore: true })
       if (currentPage.value !== previousPage) {
         await loadData(currentPage.value, { forceQuery: true })
         return
@@ -382,6 +399,7 @@ async function toggleSubscribe() {
 watch(pageStorageKey, async () => {
   selectedIds.value = []
   hasRemoteQueried.value = false
+  hasMoreWorks.value = false
   await loadData(currentPage.value, { forceQuery: false })
 })
 

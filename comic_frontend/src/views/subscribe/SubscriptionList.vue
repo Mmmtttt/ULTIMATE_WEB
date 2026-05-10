@@ -66,45 +66,39 @@
 
       <!-- Comic Mode: Author List -->
       <div v-else class="author-list">
-        <van-cell-group inset>
-          <van-swipe-cell v-for="author in filteredItems" :key="author.id">
-            <van-cell 
-              :title="author.name" 
-              :label="author.last_work_title || '暂无更新'"
-              is-link
-              @click="goToDetail(author)"
+        <div
+          v-for="author in filteredItems"
+          :key="author.id"
+          class="author-card"
+          data-testid="subscription-author-card"
+          @click="goToDetail(author)"
+        >
+          <div class="author-main">
+            <div class="author-name-row">
+              <div class="author-name">{{ author.name }}</div>
+              <van-tag v-if="author.new_work_count > 0" type="danger" round class="author-badge">
+                {{ author.new_work_count }}
+              </van-tag>
+            </div>
+            <div class="author-update">{{ author.last_work_title || '暂无更新' }}</div>
+          </div>
+
+          <div class="author-side">
+            <van-button
+              size="mini"
+              type="danger"
+              plain
+              round
+              class="author-unsubscribe-btn"
+              data-testid="subscription-author-unsubscribe"
+              :loading="unsubscribingIds.has(String(author.id || ''))"
+              @click.stop="unsubscribe(author)"
             >
-              <template #value>
-                <div class="author-actions-inline">
-                  <van-tag v-if="author.new_work_count > 0" type="danger" round>
-                    {{ author.new_work_count }}
-                  </van-tag>
-                  <van-button
-                    size="mini"
-                    type="danger"
-                    plain
-                    round
-                    data-testid="subscription-author-unsubscribe-inline"
-                    :loading="unsubscribingIds.has(String(author.id || ''))"
-                    @click.stop="unsubscribe(author)"
-                  >
-                    取消
-                  </van-button>
-                </div>
-              </template>
-            </van-cell>
-            <template #right>
-              <van-button
-                square
-                type="danger"
-                text="取消订阅"
-                data-testid="subscription-author-unsubscribe"
-                :loading="unsubscribingIds.has(String(author.id || ''))"
-                @click="unsubscribe(author)"
-              />
-            </template>
-          </van-swipe-cell>
-        </van-cell-group>
+              取消订阅
+            </van-button>
+            <van-icon name="arrow" class="author-arrow" />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -271,8 +265,8 @@ onMounted(() => {
 }
 
 .header-actions {
-  display: flex;
-  align-items: center;
+  display: grid;
+  gap: 10px;
   padding: 10px 16px;
   background: var(--surface-2);
   position: sticky;
@@ -284,14 +278,14 @@ onMounted(() => {
 }
 
 .header-actions .van-search {
-  flex: 1;
   padding: 0;
-  margin-right: 12px;
 }
 
 .header-buttons {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -362,13 +356,116 @@ onMounted(() => {
 }
 
 .author-list {
-  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+  padding: 12px 16px 0;
 }
 
-.author-actions-inline {
+.author-card {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  box-shadow: 0 10px 22px rgba(17, 27, 45, 0.08);
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.author-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(47, 116, 255, 0.28);
+  box-shadow: 0 16px 28px rgba(17, 27, 45, 0.12);
+}
+
+.author-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.author-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.author-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.author-badge {
+  flex-shrink: 0;
+}
+
+.author-update {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.author-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.author-arrow {
+  color: var(--text-tertiary);
+  font-size: 16px;
+}
+
+@media (min-width: 768px) {
+  .header-actions {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+}
+
+@media (max-width: 767px) {
+  .header-actions {
+    margin: 8px 8px 0;
+    padding: 10px 12px;
+  }
+
+  .actor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .author-list {
+    padding: 12px 10px 0;
+    gap: 10px;
+  }
+
+  .author-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 14px;
+  }
+
+  .author-side {
+    justify-content: space-between;
+  }
+
+  .author-unsubscribe-btn {
+    min-width: 92px;
+  }
 }
 </style>
 

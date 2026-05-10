@@ -40,30 +40,34 @@
     </van-cell-group>
     
     <div class="about">
-      <p class="version">版本 {{ appVersionLabel }}</p>
-      <p class="copyright">© 2026 Ultimate Web </p>
-      <p><span class="mmmtttt">github@Mmmtttt</span></p>
-      <p><span class="mmmtttt">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB</span></p>
-      <div class="update-card">
-        <div class="update-status">{{ updateStatusText }}</div>
-        <div class="update-meta">上次检查：{{ updateCheckedAtText }}</div>
-        <div class="update-actions">
-          <van-button
-            size="small"
-            type="primary"
-            :loading="updateChecking"
-            @click="handleManualCheckUpdate"
-          >
-            检查更新
-          </van-button>
-          <van-button
-            v-if="hasNewVersion"
-            size="small"
-            plain
-            @click="handleOpenReleasePage"
-          >
-            前往下载
-          </van-button>
+      <div class="about-card">
+        <div class="about-meta">
+          <p class="version">版本 {{ appVersionLabel }}</p>
+          <p class="copyright">© 2026 Ultimate Web</p>
+          <p class="mmmtttt">github@Mmmtttt</p>
+          <p class="mmmtttt link-wrap">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB</p>
+        </div>
+        <div class="update-card">
+          <div class="update-status">{{ updateStatusText }}</div>
+          <div class="update-meta">上次检查：{{ updateCheckedAtText }}</div>
+          <div class="update-actions">
+            <van-button
+              size="small"
+              type="primary"
+              :loading="updateChecking"
+              @click="handleManualCheckUpdate"
+            >
+              检查更新
+            </van-button>
+            <van-button
+              v-if="hasNewVersion"
+              size="small"
+              plain
+              @click="handleOpenReleasePage"
+            >
+              前往下载
+            </van-button>
+          </div>
         </div>
       </div>
     </div>
@@ -121,39 +125,76 @@
     <!-- 导入弹窗 (保持原有逻辑) -->
     <van-popup v-model:show="showImportDialog" round position="center">
       <div class="import-dialog">
-        <h3>{{ isVideoMode ? '导入视频' : '导入漫画' }}</h3>
-        
-        <van-radio-group v-model="importType" class="import-options">
-          <div class="option-group">
-            <div class="option-title">导入方式</div>
-            <van-radio name="by_id">{{ isVideoMode ? '通过 code' : '通过 ID' }}</van-radio>
-            <van-radio name="by_list">批量文件</van-radio>
+        <div class="dialog-header">
+          <h3>{{ isVideoMode ? '导入视频' : '导入漫画' }}</h3>
+          <p>创建在线导入任务，稍后可在“导入任务”里跟进进度。</p>
+        </div>
+
+        <div class="dialog-section">
+          <div class="option-title">导入方式</div>
+          <div class="option-grid option-grid-two">
+            <button
+              type="button"
+              class="option-card"
+              :class="{ active: importType === 'by_id' }"
+              @click="importType = 'by_id'"
+            >
+              <span class="option-card-title">{{ isVideoMode ? '通过 Code' : '通过 ID' }}</span>
+              <span class="option-card-desc">输入单个标识，快速创建任务</span>
+            </button>
+            <button
+              type="button"
+              class="option-card"
+              :class="{ active: importType === 'by_list' }"
+              @click="importType = 'by_list'"
+            >
+              <span class="option-card-title">批量文件</span>
+              <span class="option-card-desc">读取 `.txt` 清单，批量导入</span>
+            </button>
           </div>
-        </van-radio-group>
-        
-        <van-radio-group v-model="importTarget" class="import-options">
-          <div class="option-group">
-            <div class="option-title">导入位置</div>
-            <van-radio name="home">本地库</van-radio>
-            <van-radio name="recommendation">预览库</van-radio>
+        </div>
+
+        <div class="dialog-section">
+          <div class="option-title">导入位置</div>
+          <div class="option-grid option-grid-two">
+            <button
+              type="button"
+              class="option-card compact"
+              :class="{ active: importTarget === 'home' }"
+              @click="importTarget = 'home'"
+            >
+              <span class="option-card-title">本地库</span>
+              <span class="option-card-desc">直接加入当前设备内容库</span>
+            </button>
+            <button
+              type="button"
+              class="option-card compact"
+              :class="{ active: importTarget === 'recommendation' }"
+              @click="importTarget = 'recommendation'"
+            >
+              <span class="option-card-title">预览库</span>
+              <span class="option-card-desc">先进入预览区，再决定是否保留</span>
+            </button>
           </div>
-        </van-radio-group>
-        
-        <van-radio-group v-model="importPlatform" class="import-options">
-          <div class="option-group">
-            <div class="option-title">来源平台</div>
-            <template v-if="currentImportPlatforms.length > 0">
-              <van-radio
-                v-for="platform in currentImportPlatforms"
-                :key="platform.value"
-                :name="platform.value"
-              >
-                {{ platform.label }}
-              </van-radio>
-            </template>
-            <div v-else class="option-empty">当前模式暂无可用平台</div>
+        </div>
+
+        <div class="dialog-section">
+          <div class="option-title">来源平台</div>
+          <div v-if="currentImportPlatforms.length > 0" class="option-grid option-grid-platforms">
+            <button
+              v-for="platform in currentImportPlatforms"
+              :key="platform.value"
+              type="button"
+              class="option-card compact"
+              :class="{ active: importPlatform === platform.value }"
+              @click="importPlatform = platform.value"
+            >
+              <span class="option-card-title">{{ platform.label }}</span>
+              <span class="option-card-desc">{{ isVideoMode ? '按平台视频标识导入' : '按平台作品标识导入' }}</span>
+            </button>
           </div>
-        </van-radio-group>
+          <div v-else class="option-empty">当前模式暂无可用平台</div>
+        </div>
         
         <van-field
           v-if="importType === 'by_id'"
@@ -721,9 +762,22 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 .about {
-  text-align: center;
-  padding: 40px 0;
+  padding: 28px 0 16px;
   color: var(--text-tertiary);
+}
+
+.about-card {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.about-meta {
+  text-align: center;
 }
 
 .version {
@@ -740,13 +794,17 @@ watch(() => modeStore.currentMode, async () => {
   font-size: 12px;
 }
 
+.link-wrap {
+  line-height: 1.6;
+  word-break: break-all;
+}
+
 .update-card {
-  margin: 14px auto 0;
-  max-width: 360px;
+  margin-top: 14px;
   padding: 12px;
-  background: var(--surface-2);
+  background: var(--surface-1);
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
+  border-radius: 12px;
   text-align: left;
 }
 
@@ -766,6 +824,7 @@ watch(() => modeStore.currentMode, async () => {
   margin-top: 10px;
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -792,16 +851,28 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 .import-dialog {
-  width: 300px;
+  width: min(92vw, 420px);
   padding: 20px;
 }
 
-.import-dialog h3 {
-  text-align: center;
-  margin-bottom: 20px;
+.dialog-header {
+  margin-bottom: 18px;
 }
 
-.import-options {
+.dialog-header h3 {
+  margin: 0;
+  text-align: center;
+}
+
+.dialog-header p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.dialog-section {
   margin-bottom: 16px;
 }
 
@@ -809,6 +880,60 @@ watch(() => modeStore.currentMode, async () => {
   font-size: 14px;
   color: var(--text-secondary);
   margin-bottom: 8px;
+}
+
+.option-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.option-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.option-grid-platforms {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.option-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.option-card.compact {
+  min-height: 88px;
+}
+
+.option-card.active {
+  border-color: rgba(47, 116, 255, 0.5);
+  background: rgba(89, 160, 255, 0.14);
+  box-shadow: 0 12px 20px rgba(47, 116, 255, 0.12);
+}
+
+.option-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.option-card-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 
 .option-empty {
@@ -819,8 +944,36 @@ watch(() => modeStore.currentMode, async () => {
 .dialog-buttons {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 20px;
+}
+
+@media (max-width: 767px) {
+  .about {
+    padding: 22px 12px 12px;
+  }
+
+  .update-actions {
+    justify-content: flex-start;
+  }
+
+  .update-actions .van-button {
+    flex: 1;
+  }
+
+  .import-dialog {
+    padding: 16px;
+  }
+
+  .option-grid-two,
+  .option-grid-platforms {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog-buttons .van-button {
+    flex: 1;
+  }
 }
 
 </style>

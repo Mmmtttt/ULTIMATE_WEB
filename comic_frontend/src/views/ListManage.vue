@@ -8,8 +8,12 @@
     >
       <template #right>
         <div class="nav-right">
-          <van-icon name="down" size="18" class="nav-icon" @click="showImportDialog = true" />
-          <van-icon name="plus" size="18" class="nav-icon" @click="showCreateDialog = true" />
+          <van-button size="mini" plain type="primary" round class="nav-action-btn" @click="showImportDialog = true">
+            导入
+          </van-button>
+          <van-button size="mini" type="primary" round class="nav-action-btn" @click="showCreateDialog = true">
+            新建
+          </van-button>
         </div>
       </template>
     </van-nav-bar>
@@ -28,18 +32,26 @@
         >
           <template #value>
             <div class="list-counts">
-              <van-button v-if="list.platform" size="small" type="success" text="同步" class="sync-btn-inline" @click.stop="syncList(list)" />
-              <van-badge v-if="list.content_type === 'comic'" :content="list.comic_count" :show-zero="false" class="count-badge">
-                <van-icon name="photo-o" size="16" />
-              </van-badge>
-              <van-badge v-if="list.content_type === 'video'" :content="list.video_count" :show-zero="false" class="count-badge">
-                <van-icon name="video-o" size="16" />
-              </van-badge>
+              <van-button
+                v-if="list.platform"
+                size="mini"
+                type="success"
+                plain
+                round
+                class="sync-btn-inline"
+                @click.stop="syncList(list)"
+              >
+                同步
+              </van-button>
+              <span v-if="list.content_type === 'comic'" class="count-pill">漫画 {{ list.comic_count }}</span>
+              <span v-if="list.content_type === 'video'" class="count-pill">视频 {{ list.video_count }}</span>
             </div>
           </template>
           <template #icon>
-            <van-icon v-if="list.is_default" name="star" color="#ffd21e" size="16" class="list-icon" />
-            <van-icon v-else name="list-switch" size="16" class="list-icon" />
+            <div class="list-icon-wrap">
+              <van-icon v-if="list.is_default" name="star" color="#ffd21e" size="16" class="list-icon" />
+              <van-icon v-else name="list-switch" size="16" class="list-icon" />
+            </div>
           </template>
         </van-cell>
         <template #right v-if="!list.is_default">
@@ -496,23 +508,36 @@ watch(currentContentType, () => {
 }
 
 .list-icon {
+  color: var(--text-secondary);
+}
+
+.list-icon-wrap {
+  display: flex;
+  align-items: center;
   margin-right: 8px;
 }
 
 .list-counts {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 
-.count-badge {
-  display: flex;
+.count-pill {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(89, 160, 255, 0.12);
+  color: var(--brand-700);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .sync-btn-inline {
-  margin-right: 8px;
+  box-shadow: none;
 }
 
 .edit-btn,
@@ -522,16 +547,16 @@ watch(currentContentType, () => {
 
 .nav-right {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   align-items: center;
 }
 
-.nav-icon {
-  cursor: pointer;
+.nav-action-btn {
+  min-width: 52px;
 }
 
 .dialog-content {
-  width: 300px;
+  width: min(92vw, 360px);
   padding: 20px;
 }
 
@@ -629,5 +654,24 @@ watch(currentContentType, () => {
 .list-section .selected .van-cell__title {
   color: #07c160;
   font-weight: 500;
+}
+
+@media (max-width: 767px) {
+  .list-counts {
+    gap: 6px;
+  }
+
+  .count-pill {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .nav-right {
+    gap: 6px;
+  }
+
+  .nav-action-btn {
+    min-width: 48px;
+  }
 }
 </style>

@@ -104,7 +104,20 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="数据目录配置" :label="runtimeDataDirLabel" />
+      <div class="config-group-header">
+        <div class="config-group-title">数据目录配置</div>
+        <div class="config-group-desc">修改后会重启后端；迁移模式会同时移动当前 `data` 目录内容。</div>
+      </div>
+      <div class="path-summary-grid">
+        <div class="path-summary-card">
+          <span class="path-summary-label">当前运行目录</span>
+          <code class="path-summary-value">{{ runtimeDataDir || '读取中...' }}</code>
+        </div>
+        <div v-if="resolvedDataDir && resolvedDataDir !== runtimeDataDir" class="path-summary-card emphasis">
+          <span class="path-summary-label">待生效目录</span>
+          <code class="path-summary-value">{{ resolvedDataDir }}</code>
+        </div>
+      </div>
       <van-field
         v-model="systemDataDir"
         label="data_dir"
@@ -135,9 +148,25 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="配置文件目录" :label="configDirStatusLabel" />
-      <van-cell title="默认目录" :value="defaultConfigDir || '-'" />
-      <van-cell title="目录来源" :value="configDirSourceLabel" />
+      <div class="config-group-header">
+        <div class="config-group-title">配置文件目录</div>
+        <div class="config-group-desc">会迁移 `server_config.json` 与 `third_party_config.json`，并在保存后自动重启后端。</div>
+      </div>
+      <div class="path-summary-grid">
+        <div class="path-summary-card">
+          <span class="path-summary-label">当前运行目录</span>
+          <code class="path-summary-value">{{ runtimeConfigDir || '读取中...' }}</code>
+        </div>
+        <div v-if="selectedConfigDir" class="path-summary-card" :class="{ emphasis: selectedConfigDir !== runtimeConfigDir }">
+          <span class="path-summary-label">{{ selectedConfigDir === runtimeConfigDir ? '当前选中目录' : '重启后生效目录' }}</span>
+          <code class="path-summary-value">{{ selectedConfigDir }}</code>
+        </div>
+        <div class="path-summary-card">
+          <span class="path-summary-label">默认目录 / 来源</span>
+          <code class="path-summary-value">{{ defaultConfigDir || '-' }}</code>
+          <span class="path-summary-meta">来源：{{ configDirSourceLabel }}</span>
+        </div>
+      </div>
       <van-field
         v-model="configDirInput"
         label="config_dir"
@@ -302,38 +331,12 @@ const displayAdapters = computed(() => {
   return Object.keys(thirdPartyAdapters.value || {})
 })
 
-const runtimeDataDirLabel = computed(() => {
-  if (!runtimeDataDir.value) {
-    return '当前运行目录读取中...'
-  }
-  if (resolvedDataDir.value && resolvedDataDir.value !== runtimeDataDir.value) {
-    return `当前运行目录: ${runtimeDataDir.value}（待生效: ${resolvedDataDir.value}）`
-  }
-  return `当前运行目录: ${runtimeDataDir.value}`
-})
-
 const configDirSourceLabel = computed(() => {
   const source = String(configDirSource.value || '').toLowerCase()
   if (source === 'env') return '环境变量'
   if (source === 'persisted') return '用户设置'
   if (source === 'default') return '系统默认'
   return source || '-'
-})
-
-const configDirStatusLabel = computed(() => {
-  if (!runtimeConfigDir.value) {
-    return '配置目录读取中...'
-  }
-
-  const segments = [`当前运行: ${runtimeConfigDir.value}`]
-  if (selectedConfigDir.value && selectedConfigDir.value !== runtimeConfigDir.value) {
-    segments.push(`重启后生效: ${selectedConfigDir.value}`)
-  }
-  if (defaultConfigDir.value) {
-    segments.push(`默认: ${defaultConfigDir.value}`)
-  }
-  segments.push(`来源: ${configDirSourceLabel.value}`)
-  return segments.join('；')
 })
 
 const thirdPartyPopupStyle = computed(() => ({
@@ -725,7 +728,7 @@ onMounted(async () => {
 .system-config {
   min-height: 100vh;
   background: transparent;
-  padding-bottom: 20px;
+  padding: 0 12px 20px;
 }
 
 @media (min-width: 1024px) {
@@ -736,6 +739,63 @@ onMounted(async () => {
 
 .config-group {
   margin-top: 12px;
+}
+
+.config-group-header {
+  padding: 16px 16px 10px;
+}
+
+.config-group-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.config-group-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-tertiary);
+}
+
+.path-summary-grid {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+.path-summary-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-1);
+}
+
+.path-summary-card.emphasis {
+  border-color: rgba(47, 116, 255, 0.3);
+  background: rgba(89, 160, 255, 0.08);
+}
+
+.path-summary-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.path-summary-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.path-summary-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .inline-actions {
@@ -803,6 +863,12 @@ onMounted(async () => {
 .settings-mode-switch {
   transform: scale(0.78);
   transform-origin: right center;
+}
+
+@media (min-width: 1024px) {
+  .path-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>
 
