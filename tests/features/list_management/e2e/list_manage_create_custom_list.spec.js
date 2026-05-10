@@ -27,7 +27,7 @@ test("list management creates custom comic list", async ({ page }) => {
   await page.getByText("我的清单").click();
   await expect(page).toHaveURL(/\/lists$/);
 
-  await page.locator(".nav-right .van-icon").nth(1).click();
+  await page.getByRole("button", { name: "新建" }).click();
   await page.locator(".van-field").filter({ hasText: "清单名称" }).locator("input").fill(listName);
   await page.locator(".van-field").filter({ hasText: "清单描述" }).locator("input").fill(listDesc);
   await page.getByRole("button", { name: "确定" }).click();

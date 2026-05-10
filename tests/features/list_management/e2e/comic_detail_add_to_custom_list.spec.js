@@ -9,7 +9,7 @@ const COMIC_ID = "JM100001";
 const COMIC_TITLE = "E2E Comic Alpha";
 
 async function createListFromManagePage(page, listName) {
-  await page.locator(".nav-right .van-icon").nth(1).click();
+  await page.getByRole("button", { name: "新建" }).click();
   await page.locator(".van-field").filter({ hasText: "清单名称" }).locator("input").fill(listName);
   await page.locator(".van-field").filter({ hasText: "清单描述" }).locator("input").fill("bind scenario");
   await page.getByRole("button", { name: "确定" }).click();
