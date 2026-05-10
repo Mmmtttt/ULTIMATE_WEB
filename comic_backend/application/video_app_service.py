@@ -11,6 +11,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import requests
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, unquote
@@ -543,6 +544,10 @@ class VideoAppService(BaseContentAppService):
         os.replace(cover_tmp_path, cover_abs_path)
         return cover_abs_path, cover_relative_path
 
+    @staticmethod
+    def _build_local_cover_asset_version() -> str:
+        return str(int(time.time() * 1000))
+
     def generate_local_video_thumbnails(self, video_id: str) -> ServiceResult:
         try:
             normalized_video_id = str(video_id or "").strip()
@@ -610,6 +615,7 @@ class VideoAppService(BaseContentAppService):
                 video.thumbnail_images_local = thumbnail_urls
                 video.cover_path_local = cover_relative_path
                 video.local_cover_thumbnail_index = default_cover_index
+                video.local_cover_asset_version = self._build_local_cover_asset_version()
 
                 if not self._video_repo.save(video):
                     return ServiceResult.error("回写缩略图信息失败")
@@ -657,6 +663,7 @@ class VideoAppService(BaseContentAppService):
             )
             video.cover_path_local = cover_relative_path
             video.local_cover_thumbnail_index = selected_index
+            video.local_cover_asset_version = self._build_local_cover_asset_version()
 
             if not self._video_repo.save(video):
                 return ServiceResult.error("回写封面失败")

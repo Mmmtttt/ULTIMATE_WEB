@@ -100,11 +100,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends p7zip-full unrar-free
 
+      - name: install ffmpeg runtime tools (linux desktop)
+        if: ${{ matrix.build_desktop && matrix.target == 'linux' }}
+        shell: bash
+        run: |
+          bash scripts/setup_ffmpeg_runtime.sh
+
       - name: install archive runtime tools (windows desktop)
         if: ${{ matrix.build_desktop && matrix.target == 'windows' }}
         shell: pwsh
         run: |
           choco install 7zip -y --no-progress
+
+      - name: install ffmpeg runtime tools (windows desktop)
+        if: ${{ matrix.build_desktop && matrix.target == 'windows' }}
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/setup_ffmpeg_runtime.ps1
 
       - name: install backend dependencies (desktop only)
         if: ${{ matrix.build_desktop }}

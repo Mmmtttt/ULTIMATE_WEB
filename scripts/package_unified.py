@@ -21,6 +21,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +36,7 @@ DEFAULT_PACKAGES_DIR = ROOT_DIR / "output" / "packages"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
 DEFAULT_APP_VERSION = "0.0.0"
+DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 
 @dataclass
@@ -1328,6 +1332,28 @@ def is_desktop_target(target: str) -> bool:
     return target in {"windows", "linux"}
 
 
+def _collect_ffmpeg_toolset(primary_binary: Path, target: str) -> Dict[str, Path]:
+    binary_name = "ffmpeg.exe" if target == "windows" else "ffmpeg"
+    ffprobe_name = "ffprobe.exe" if target == "windows" else "ffprobe"
+    tools: Dict[str, Path] = {}
+
+    try:
+        resolved_primary = primary_binary.resolve()
+    except Exception:
+        resolved_primary = primary_binary
+
+    if resolved_primary.exists() and resolved_primary.is_file():
+        tools[binary_name] = resolved_primary
+
+    ffprobe_candidate = resolved_primary.with_name(ffprobe_name)
+    if ffprobe_candidate.exists() and ffprobe_candidate.is_file():
+        try:
+            tools[ffprobe_name] = ffprobe_candidate.resolve()
+        except Exception:
+            tools[ffprobe_name] = ffprobe_candidate
+    return tools
+
+
 def discover_ffmpeg_runtime_tools(target: str) -> Dict[str, Path]:
     if not is_desktop_target(target):
         return {}
@@ -1362,8 +1388,49 @@ def discover_ffmpeg_runtime_tools(target: str) -> Dict[str, Path]:
         except Exception:
             normalized = candidate
         if normalized.exists() and normalized.is_file():
-            return {binary_name: normalized}
+            return _collect_ffmpeg_toolset(normalized, target)
     return {}
+
+
+def provision_windows_ffmpeg_runtime_tools() -> Dict[str, Path]:
+    target = "windows"
+    binary_name = "ffmpeg.exe"
+    output_dir = ROOT_DIR / "build" / "runtime_tools" / "ffmpeg" / target
+    existing_binary = output_dir / binary_name
+    if existing_binary.exists():
+        return _collect_ffmpeg_toolset(existing_binary, target)
+
+    download_url = str(
+        os.environ.get("ULTIMATE_WINDOWS_FFMPEG_DOWNLOAD_URL")
+        or os.environ.get("ULTIMATE_FFMPEG_DOWNLOAD_URL")
+        or DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL
+    ).strip()
+    if not download_url:
+        return {}
+
+    print(f"[ffmpeg] provisioning windows runtime from {download_url}")
+    with tempfile.TemporaryDirectory(prefix="ultimate-ffmpeg-") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        archive_path = temp_dir / "ffmpeg-runtime.zip"
+        extract_dir = temp_dir / "extract"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        urllib.request.urlretrieve(download_url, archive_path)
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            archive.extractall(extract_dir)
+
+        ffmpeg_source = next(extract_dir.rglob(binary_name), None)
+        if ffmpeg_source is None or not ffmpeg_source.exists():
+            raise RuntimeError(f"downloaded ffmpeg archive did not contain {binary_name}")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ffmpeg_source, existing_binary)
+
+        ffprobe_source = next(extract_dir.rglob("ffprobe.exe"), None)
+        if ffprobe_source is not None and ffprobe_source.exists():
+            shutil.copy2(ffprobe_source, output_dir / "ffprobe.exe")
+
+    return _collect_ffmpeg_toolset(existing_binary, target)
 
 
 def discover_archive_runtime_tools(target: str) -> Dict[str, Path]:
@@ -1434,6 +1501,8 @@ def copy_ffmpeg_runtime_tools(target: str, bundle_dir: Path) -> Optional[Path]:
         return None
 
     tools = discover_ffmpeg_runtime_tools(target)
+    if not tools and target == "windows":
+        tools = provision_windows_ffmpeg_runtime_tools()
     if not tools:
         return None
 

@@ -23,6 +23,11 @@ test("local video detail supports generating thumbnails and selecting cover from
     generate: [],
     selectCover: [],
   };
+  const coverRequests = [];
+  const tinyPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlH0iYAAAAASUVORK5CYII=",
+    "base64",
+  );
 
   const buildThumbUrls = () =>
     Array.from({ length: 20 }, (_, index) => `/media/video/LOCAL/thumb-demo/thumbs/thumb-${String(index + 1).padStart(4, "0")}.jpg`);
@@ -38,6 +43,7 @@ test("local video detail supports generating thumbnails and selecting cover from
     thumbnail_images_local: [],
     cover_path: "",
     cover_path_local: "",
+    local_cover_asset_version: "",
     local_cover_thumbnail_index: -1,
     preview_video: "",
     preview_video_local: "",
@@ -75,6 +81,7 @@ test("local video detail supports generating thumbnails and selecting cover from
       ...currentDetail,
       thumbnail_images_local: buildThumbUrls(),
       cover_path_local: "/media/video/LOCAL/thumb-demo/cover.jpg",
+      local_cover_asset_version: "cover-v-1",
       local_cover_thumbnail_index: 10,
       local_thumbnail_capability: {
         ...currentDetail.local_thumbnail_capability,
@@ -92,6 +99,7 @@ test("local video detail supports generating thumbnails and selecting cover from
     routeCalls.selectCover.push(payload);
     currentDetail = {
       ...currentDetail,
+      local_cover_asset_version: "cover-v-2",
       local_cover_thumbnail_index: payload.thumbnail_index,
       local_thumbnail_capability: {
         ...currentDetail.local_thumbnail_capability,
@@ -99,6 +107,15 @@ test("local video detail supports generating thumbnails and selecting cover from
       },
     };
     await route.fulfill(ok(currentDetail, "封面已更新"));
+  });
+
+  await page.route("**://127.0.0.1:5000/media/video/LOCAL/thumb-demo/cover.jpg**", async (route) => {
+    coverRequests.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: tinyPng,
+    });
   });
 
   await page.goto(`/video/${VIDEO_ID}`);
@@ -109,6 +126,7 @@ test("local video detail supports generating thumbnails and selecting cover from
   await page.getByText("生成缩略图").click();
 
   await expect.poll(() => routeCalls.generate.length).toBe(1);
+  await expect.poll(() => coverRequests.some((url) => url.includes("cover-v-1"))).toBe(true);
   await expect(page.getByText("选择视频封面")).toBeVisible();
   await expect(page.locator(".thumbnail-picker-card")).toHaveCount(20);
   await expect(page.locator(".thumbnail-picker-badge", { hasText: "当前封面" })).toHaveCount(1);
@@ -121,6 +139,7 @@ test("local video detail supports generating thumbnails and selecting cover from
     video_id: VIDEO_ID,
     thumbnail_index: 3,
   });
+  await expect.poll(() => coverRequests.some((url) => url.includes("cover-v-2"))).toBe(true);
 
   await expect(page.getByText("选择视频封面")).toBeHidden();
 

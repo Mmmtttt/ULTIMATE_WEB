@@ -124,6 +124,7 @@ def test_generate_local_video_thumbnails_persists_assets_and_cover_selection(tmp
     assert len(payload.get("thumbnail_images_local") or []) == 20
     assert payload.get("local_cover_thumbnail_index") == 10
     assert str(payload.get("cover_path_local") or "").endswith("/cover.jpg")
+    assert str(payload.get("local_cover_asset_version") or "").isdigit()
     assert payload.get("local_thumbnail_capability", {}).get("show_generate_action") is True
     assert payload.get("local_thumbnail_capability", {}).get("can_select_cover") is True
 
@@ -165,6 +166,7 @@ def test_select_local_thumbnail_as_cover_copies_requested_thumbnail_and_updates_
     video.thumbnail_images_local = thumb_urls
     video.cover_path_local = "/media/video/LOCAL/Select Cover Demo/cover.jpg"
     video.local_cover_thumbnail_index = 0
+    video.local_cover_asset_version = "1000"
 
     result = service.select_local_thumbnail_as_cover(video.id, 2)
 
@@ -172,6 +174,8 @@ def test_select_local_thumbnail_as_cover_copies_requested_thumbnail_and_updates_
     payload = dict(result.data or {})
     assert payload.get("local_cover_thumbnail_index") == 2
     assert str(payload.get("cover_path_local") or "").endswith("/cover.jpg")
+    assert str(payload.get("local_cover_asset_version") or "").isdigit()
+    assert str(payload.get("local_cover_asset_version")) != "1000"
     assert cover_path.read_bytes() == (thumbs_dir / "thumb-0003.jpg").read_bytes()
 
 

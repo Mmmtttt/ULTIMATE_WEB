@@ -54,7 +54,7 @@
       <div v-else class="video-preview" @click="loadPlayUrls">
         <div class="cover-container">
           <van-image 
-            :src="getCoverUrl(preferredCoverPath)" 
+            :src="preferredCoverUrl" 
             fit="cover"
             class="cover-image"
           />
@@ -592,6 +592,11 @@ const preferredCoverPath = computed(() => {
   const remotePath = String(video.value?.cover_path || '').trim()
   return localPath || remotePath
 })
+const preferredCoverUrl = computed(() => getCoverUrl({
+  cover_path_local: String(video.value?.cover_path_local || '').trim(),
+  cover_path: String(video.value?.cover_path || '').trim() || preferredCoverPath.value,
+  local_cover_asset_version: String(video.value?.local_cover_asset_version || '').trim()
+}))
 const preferredThumbnailImages = computed(() => {
   const local = Array.isArray(video.value?.thumbnail_images_local) ? video.value.thumbnail_images_local : []
   const remote = Array.isArray(video.value?.thumbnail_images) ? video.value.thumbnail_images : []

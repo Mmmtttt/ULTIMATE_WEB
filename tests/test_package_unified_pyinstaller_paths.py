@@ -191,3 +191,37 @@ def test_copy_ffmpeg_runtime_tools_skips_android_targets():
         assert result is None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_copy_ffmpeg_runtime_tools_auto_provisions_windows_when_missing(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"windows_ffmpeg_auto_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        fake_runtime_root = temp_dir / "fake_runtime"
+        fake_runtime_root.mkdir(parents=True, exist_ok=True)
+        fake_ffmpeg = fake_runtime_root / "ffmpeg.exe"
+        fake_ffmpeg.write_bytes(b"auto-provisioned-ffmpeg")
+        fake_ffprobe = fake_runtime_root / "ffprobe.exe"
+        fake_ffprobe.write_bytes(b"auto-provisioned-ffprobe")
+
+        monkeypatch.setattr(package_unified, "discover_ffmpeg_runtime_tools", lambda target: {})
+        monkeypatch.setattr(
+            package_unified,
+            "provision_windows_ffmpeg_runtime_tools",
+            lambda: {
+                "ffmpeg.exe": fake_ffmpeg,
+                "ffprobe.exe": fake_ffprobe,
+            },
+        )
+
+        result = package_unified.copy_ffmpeg_runtime_tools("windows", temp_dir)
+
+        assert result is not None
+        assert (result / "ffmpeg.exe").exists()
+        assert (result / "ffprobe.exe").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

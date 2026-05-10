@@ -21,6 +21,7 @@ class Video(BaseContent):
     cover_path_local: str = ""
     thumbnail_images_local: List[str] = field(default_factory=list)
     local_cover_thumbnail_index: int = -1
+    local_cover_asset_version: str = ""
     preview_video_local: str = ""
     local_video_path: str = ""
     local_source_path: str = ""
@@ -77,6 +78,7 @@ class Video(BaseContent):
                 if data.get("local_cover_thumbnail_index") is not None
                 else -1
             ),
+            local_cover_asset_version=data.get("local_cover_asset_version", ""),
             preview_video_local=data.get("preview_video_local", ""),
             local_video_path=data.get("local_video_path", ""),
             local_source_path=data.get("local_source_path", ""),
@@ -110,6 +112,7 @@ class Video(BaseContent):
                 if self.local_cover_thumbnail_index is not None
                 else -1
             ),
+            "local_cover_asset_version": self.local_cover_asset_version,
             "preview_video_local": self.preview_video_local,
             "local_video_path": self.local_video_path,
             "local_source_path": self.local_source_path,

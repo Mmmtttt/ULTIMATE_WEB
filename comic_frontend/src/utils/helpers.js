@@ -30,22 +30,28 @@ export function toggleSelectAll(selectedIdsRef, items = [], getId = (item) => it
 
 export function getCoverUrl(coverInput) {
   let coverPath = ''
+  let localCoverAssetVersion = ''
+  let usingLocalCover = false
   if (typeof coverInput === 'string') {
     coverPath = coverInput
   } else if (coverInput && typeof coverInput === 'object') {
-    coverPath = String(
-      coverInput.cover_path_local ||
-      coverInput.cover_path ||
-      coverInput.cover_url ||
-      ''
-    ).trim()
+    const localCoverPath = String(coverInput.cover_path_local || '').trim()
+    const fallbackCoverPath = String(coverInput.cover_path || coverInput.cover_url || '').trim()
+    coverPath = localCoverPath || fallbackCoverPath
+    usingLocalCover = Boolean(localCoverPath) && coverPath === localCoverPath
+    localCoverAssetVersion = String(coverInput.local_cover_asset_version || '').trim()
   } else if (coverInput !== null && coverInput !== undefined) {
     coverPath = String(coverInput)
   }
 
   const normalizedCoverPath = String(coverPath || '').trim()
   if (!normalizedCoverPath) return ''
-  return toBackendUrl(normalizedCoverPath)
+  const resolvedUrl = toBackendUrl(normalizedCoverPath)
+  if (!usingLocalCover || !localCoverAssetVersion) {
+    return resolvedUrl
+  }
+  const separator = resolvedUrl.includes('?') ? '&' : '?'
+  return `${resolvedUrl}${separator}v=${encodeURIComponent(localCoverAssetVersion)}`
 }
 
 export function getDisplayConfig(item) {
