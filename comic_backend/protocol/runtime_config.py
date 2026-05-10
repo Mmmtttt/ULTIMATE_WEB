@@ -87,11 +87,7 @@ class ProtocolConfigStore:
 
         normalized = normalize_to_data_dir(path_value, default_relative)
         try:
-            normalized_abs = os.path.abspath(normalized)
-            data_root = os.path.abspath(DATA_DIR)
-            if os.path.commonpath([data_root, normalized_abs]) == data_root:
-                return default_abs
-            normalized = normalized_abs
+            normalized = os.path.abspath(normalized)
         except Exception:
             pass
         return normalized
@@ -159,6 +155,20 @@ class ProtocolConfigStore:
             existing_config = adapters.get(config_key)
             if not isinstance(existing_config, dict):
                 existing_config = {}
+                adapters[config_key] = existing_config
+                changed = True
+
+            try:
+                gateway = self._get_protocol_gateway()
+                normalized_existing = gateway.provider_manager.normalize_config(
+                    manifest.plugin_id,
+                    existing_config,
+                )
+            except Exception:
+                normalized_existing = dict(existing_config)
+
+            if normalized_existing != existing_config:
+                existing_config = dict(normalized_existing or {})
                 adapters[config_key] = existing_config
                 changed = True
 
@@ -278,6 +288,14 @@ class ProtocolConfigStore:
                 break
 
         if manifest is not None:
+            try:
+                gateway = self._get_protocol_gateway()
+                normalized_config = gateway.provider_manager.normalize_config(
+                    manifest.plugin_id,
+                    normalized_config,
+                )
+            except Exception:
+                normalized_config = dict(normalized_config)
             defaults = self._build_manifest_default_config(manifest)
             merged = dict(defaults)
             merged.update(normalized_config)

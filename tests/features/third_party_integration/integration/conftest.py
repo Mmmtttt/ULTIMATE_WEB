@@ -37,6 +37,7 @@ def _reset_backend_modules() -> None:
         "application.actor_app_service",
         "application.recommendation_app_service",
         "application.video_app_service",
+        "application.video_runtime_support",
         "protocol",
         "protocol.gateway",
         "protocol.provider_manager",

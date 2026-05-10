@@ -13,9 +13,9 @@ if str(BACKEND_ROOT) not in sys.path:
 
 def _load_provider_module(monkeypatch):
     fake_jmcomic_api = types.SimpleNamespace(
+        build_client=lambda **_kwargs: object(),
         download_album=lambda *_args, **_kwargs: ({}, True),
         get_album_detail=lambda *_args, **_kwargs: {},
-        get_client=lambda **_kwargs: object(),
         get_favorite_comics=lambda **_kwargs: {"comics": []},
         get_favorite_comics_full=lambda **_kwargs: {"comics": []},
         search_comics=lambda *_args, **_kwargs: {"results": [], "page_count": 1},
@@ -51,31 +51,88 @@ def test_get_search_client_uses_api_login_and_returns_username(monkeypatch):
     called = {}
     dummy_client = object()
 
-    def fake_get_client(username=None, password=None):
+    def fake_build_client(username=None, password=None, download_dir=None):
         called["username"] = username
         called["password"] = password
+        called["download_dir"] = download_dir
         return dummy_client
 
-    monkeypatch.setattr(module, "get_client", fake_get_client)
+    monkeypatch.setattr(module, "build_jm_client", fake_build_client)
 
-    client, username = provider._get_search_client({"username": "test_user", "password": "test_pass"})
+    client, username = provider._get_search_client(
+        {"username": "test_user", "password": "test_pass", "download_dir": "/tmp/jm"}
+    )
 
     assert client is dummy_client
     assert username == "test_user"
-    assert called == {"username": "test_user", "password": "test_pass"}
+    assert called == {"username": "test_user", "password": "test_pass", "download_dir": "/tmp/jm"}
 
 
 def test_get_search_client_raises_when_api_login_fails(monkeypatch):
     module = _load_provider_module(monkeypatch)
     provider = _build_provider(module)
 
-    def fake_get_client(username=None, password=None):
+    def fake_build_client(username=None, password=None, download_dir=None):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(module, "get_client", fake_get_client)
+    monkeypatch.setattr(module, "build_jm_client", fake_build_client)
 
     with pytest.raises(RuntimeError, match="登录失败"):
         provider._get_search_client({"username": "test_user", "password": "test_pass"})
+
+
+def test_asset_bundle_fetch_uses_explicit_runtime_client_and_download_dir(monkeypatch):
+    module = _load_provider_module(monkeypatch)
+    provider = _build_provider(module)
+    dummy_client = object()
+    captured = {}
+
+    def fake_build_client(username=None, password=None, download_dir=None):
+        captured["client_build"] = {
+            "username": username,
+            "password": password,
+            "download_dir": download_dir,
+        }
+        return dummy_client
+
+    def fake_download_album(album_id, download_dir=None, client=None, show_progress=True, decode_images=True):
+        captured["download"] = {
+            "album_id": album_id,
+            "download_dir": download_dir,
+            "client": client,
+            "show_progress": show_progress,
+            "decode_images": decode_images,
+        }
+        return {"album_id": album_id}, True
+
+    monkeypatch.setattr(module, "build_jm_client", fake_build_client)
+    monkeypatch.setattr(module, "jm_download_album", fake_download_album)
+
+    result = provider.execute(
+        "asset.bundle.fetch",
+        {
+            "album_id": "123456",
+            "download_dir": "D:/runtime/custom/JM-downloads",
+            "show_progress": False,
+            "extra": {"decode_images": False},
+        },
+        {},
+        {"username": "runtime-user", "password": "runtime-pass", "download_dir": "D:/runtime/comic/JM"},
+    )
+
+    assert result["success"] is True
+    assert captured["client_build"] == {
+        "username": "runtime-user",
+        "password": "runtime-pass",
+        "download_dir": "D:/runtime/comic/JM",
+    }
+    assert captured["download"] == {
+        "album_id": 123456,
+        "download_dir": "D:/runtime/custom/JM-downloads",
+        "client": dummy_client,
+        "show_progress": False,
+        "decode_images": False,
+    }
 
 
 def test_provider_bootstraps_local_jmcomic_package_from_plugin_dir():
