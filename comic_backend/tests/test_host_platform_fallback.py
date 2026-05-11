@@ -84,6 +84,8 @@ def test_recommendation_cache_dir_for_pk_uses_same_author_title_layout_as_local_
     cache_root = tmp_path / "recommendation_cache" / "comic"
     existing_dir = cache_root / "PK" / "作者A" / "作品A"
     existing_dir.mkdir(parents=True, exist_ok=True)
+    legacy_dir = cache_root / "PK" / "comics" / "作者B" / "作品B"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
 
     canonical = build_host_recommendation_cache_dir(
         "PKabc123",
@@ -95,9 +97,15 @@ def test_recommendation_cache_dir_for_pk_uses_same_author_title_layout_as_local_
         {"platform": "PK", "author": "作者A", "title": "作品A"},
         cache_root=str(cache_root),
     )
+    resolved_legacy = infer_existing_host_recommendation_cache_dir(
+        "PKdef456",
+        {"platform": "PK", "author": "作者B", "title": "作品B"},
+        cache_root=str(cache_root),
+    )
 
     assert canonical == str(existing_dir)
     assert resolved == str(existing_dir)
+    assert resolved_legacy == str(legacy_dir)
 
 
 def test_recommendation_cache_manager_rebuilds_pk_cache_dir_from_author_title_when_stored_relative_is_invalid(
@@ -195,6 +203,55 @@ def test_recommendation_cache_manager_reads_pk_cached_page_from_author_title_lay
     image_path = manager.get_cached_page_path("PK698e14e13951674692432507", 1)
 
     assert image_path == str(actual_dir / "001.png")
+
+
+def test_recommendation_cache_manager_reads_pk_cached_page_from_legacy_comics_layout(
+    tmp_path,
+    monkeypatch,
+):
+    data_dir = tmp_path / "data"
+    meta_dir = data_dir / "meta_data"
+    cache_root = data_dir / "recommendation_cache" / "comic"
+    legacy_dir = cache_root / "PK" / "comics" / "旧作者" / "旧作品"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "001.png").write_bytes(b"fake-image")
+
+    recommendations_json = meta_dir / "recommendations_database.json"
+    _write_json(
+        recommendations_json,
+        {
+            "recommendations": [
+                {
+                    "id": "PKlegacy0001",
+                    "platform": "PK",
+                    "author": "旧作者",
+                    "title": "旧作品",
+                    "storage_path_relative": "recommendation_cache/comic/PK/legacy0001",
+                    "storage_path_kind": "preview_cache_dir",
+                }
+            ]
+        },
+    )
+
+    monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        recommendation_cache_manager_module,
+        "RECOMMENDATION_JSON_FILE",
+        str(recommendations_json),
+    )
+    monkeypatch.setattr(
+        recommendation_cache_manager_module.RecommendationCacheManager,
+        "_instance",
+        None,
+    )
+    manager = recommendation_cache_manager_module.RecommendationCacheManager(
+        cache_dir=str(cache_root),
+        cache_index_file=str(meta_dir / "recommendation_cache_index.json"),
+    )
+
+    image_path = manager.get_cached_page_path("PKlegacy0001", 1)
+
+    assert image_path == str(legacy_dir / "001.png")
 
 
 def test_file_parser_ignores_invalid_jm_relative_path_and_falls_back_to_host_layout(tmp_path, monkeypatch):

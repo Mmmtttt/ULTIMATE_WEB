@@ -270,28 +270,35 @@ def infer_existing_host_recommendation_cache_dir(
     if platform == "PK":
         author = str(record.get("author") or record.get("creator") or "").strip()
         title = str(record.get("title") or "").strip()
-        root_dir = os.path.join(cache_root, "PK")
-        if not author or not title or not os.path.isdir(root_dir):
+        if not author or not title:
             return ""
 
-        direct_candidates = [
-            os.path.join(root_dir, author, title),
-            os.path.join(root_dir, _normalize_fs_name(author), _normalize_fs_name(title)),
+        root_candidates = [
+            os.path.join(cache_root, "PK"),
+            os.path.join(cache_root, "PK", "comics"),
         ]
-        for candidate in direct_candidates:
-            if os.path.isdir(candidate):
-                return os.path.abspath(candidate)
+        for root_dir in root_candidates:
+            if not os.path.isdir(root_dir):
+                continue
 
-        matched_author = _find_matching_child_dir(root_dir, author)
-        if not matched_author:
-            return ""
-        author_dir = os.path.join(root_dir, matched_author)
-        matched_title = _find_matching_child_dir(author_dir, title)
-        if not matched_title:
-            return ""
-        resolved = os.path.join(author_dir, matched_title)
-        if os.path.isdir(resolved):
-            return os.path.abspath(resolved)
+            direct_candidates = [
+                os.path.join(root_dir, author, title),
+                os.path.join(root_dir, _normalize_fs_name(author), _normalize_fs_name(title)),
+            ]
+            for candidate in direct_candidates:
+                if os.path.isdir(candidate):
+                    return os.path.abspath(candidate)
+
+            matched_author = _find_matching_child_dir(root_dir, author)
+            if not matched_author:
+                continue
+            author_dir = os.path.join(root_dir, matched_author)
+            matched_title = _find_matching_child_dir(author_dir, title)
+            if not matched_title:
+                continue
+            resolved = os.path.join(author_dir, matched_title)
+            if os.path.isdir(resolved):
+                return os.path.abspath(resolved)
         return ""
 
     return ""
