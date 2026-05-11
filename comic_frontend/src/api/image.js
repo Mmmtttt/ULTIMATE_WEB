@@ -53,11 +53,6 @@ export function buildCoverUrl(coverPath) {
   }
 
   if (normalizedPath.startsWith('http')) {
-    const match = normalizedPath.match(/\/(\d+)\.jpg$/)
-    if (match) {
-      const comicId = match[1]
-      return toBackendUrl(`/static/cover/JM/${comicId}.jpg`)
-    }
     return normalizedPath
   }
 

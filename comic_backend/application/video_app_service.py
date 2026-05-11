@@ -320,12 +320,6 @@ class VideoAppService(BaseContentAppService):
         if host_platform and host_platform.lower() != "local":
             return host_platform
 
-        video_id = str(raw.get("id") or "").strip()
-        context = cls._resolve_video_protocol_context(video_id=video_id, platform_name=explicit_platform)
-        resolved_platform = str(context.get("platform_name") or "").strip().lower()
-        if resolved_platform and resolved_platform != "local":
-            return resolved_platform
-
         return ""
 
     @classmethod

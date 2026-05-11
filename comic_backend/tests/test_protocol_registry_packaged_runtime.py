@@ -59,3 +59,124 @@ def test_plugin_registry_scans_backend_root_third_party_in_packaged_layout(monke
         assert any(manifest.plugin_id == "video.demo.packaged" for manifest in manifests)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_plugin_registry_merges_host_overlay_into_manifest(monkeypatch):
+    workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"registry_overlay_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        plugin_dir = temp_dir / "third_party" / "demo_plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "ultimate-plugin.json").write_text(
+            json.dumps(
+                {
+                    "protocol_version": "2.0",
+                    "plugin": {
+                        "id": "video.demo.overlay",
+                        "name": "Demo Overlay",
+                        "version": "1.0.0",
+                        "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
+                        "config_key": "demo_overlay",
+                    },
+                    "media_types": ["video"],
+                    "capabilities": [{"key": "catalog.search"}],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "ultimate-host.json").write_text(
+            json.dumps(
+                {
+                    "plugin": {"id": "video.demo.overlay"},
+                    "identity": {
+                        "platform_label": "DEMO",
+                        "host_id_prefix": "DEMO",
+                    },
+                    "presentation": {
+                        "media_card": {
+                            "cover": {
+                                "aspect_ratio": "16 / 9",
+                                "mobile_aspect_ratio": "3 / 2",
+                            }
+                        }
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        registry = registry_module.PluginRegistry(search_root=str(plugin_dir.parent))
+        manifests = registry.list_manifests()
+        manifest = next(item for item in manifests if item.plugin_id == "video.demo.overlay")
+
+        assert manifest.identity.get("host_id_prefix") == "DEMO"
+        cover = (((manifest.presentation or {}).get("media_card") or {}).get("cover") or {})
+        assert cover.get("aspect_ratio") == "16 / 9"
+        assert cover.get("mobile_aspect_ratio") == "3 / 2"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_plugin_registry_loads_mobile_protocol_snapshot_without_third_party_dirs(monkeypatch):
+    workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"registry_snapshot_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        snapshot_path = temp_dir / "mobile_protocol_snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "manifests": [
+                        {
+                            "protocol_version": "2.0",
+                            "plugin": {
+                                "id": "comic.snapshot.demo",
+                                "name": "Snapshot Demo",
+                                "version": "0.0.0-snapshot",
+                                "config_key": "snapshot_demo",
+                                "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
+                            },
+                            "media_types": ["comic"],
+                            "identity": {
+                                "platform_label": "SNAP",
+                                "host_id_prefix": "SNAP",
+                            },
+                            "storage": {
+                                "host_resolution": {
+                                    "comic_local_dir": {
+                                        "path_templates": ["{host_prefix}/{original_id}"]
+                                    }
+                                }
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("BACKEND_PROTOCOL_SNAPSHOT_PATH", str(snapshot_path))
+        registry = registry_module.PluginRegistry(search_root=str(temp_dir / "missing_third_party"))
+        manifests = registry.list_manifests()
+        manifest = next(item for item in manifests if item.plugin_id == "comic.snapshot.demo")
+
+        assert manifest.entrypoint == "protocol.snapshot_provider:MetadataOnlyProvider"
+        assert manifest.identity.get("host_id_prefix") == "SNAP"
+        assert (
+            (((manifest.storage or {}).get("host_resolution") or {}).get("comic_local_dir") or {}).get("path_templates")
+            == ["{host_prefix}/{original_id}"]
+        )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

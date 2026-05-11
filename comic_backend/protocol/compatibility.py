@@ -177,10 +177,6 @@ def get_video_client(platform_name: str, *args, **kwargs):
     return get_protocol_gateway().get_client(plugin_id, *args, **kwargs)
 
 
-def get_missav_client(*args, **kwargs):
-    return get_playback_proxy_client(*args, **kwargs)
-
-
 def get_playback_proxy_client(*args, **kwargs):
     gateway = get_protocol_gateway()
     for manifest in gateway.list_manifests(media_type="video", capability="playback.proxy.stream"):

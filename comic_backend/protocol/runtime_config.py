@@ -128,7 +128,7 @@ class ProtocolConfigStore:
 
         if manifests:
             return str(getattr(manifests[0], "config_key", "") or "").strip()
-        return "jmcomic"
+        return ""
 
     def _merge_protocol_defaults(self) -> bool:
         changed = False

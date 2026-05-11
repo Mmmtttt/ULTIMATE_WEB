@@ -277,7 +277,7 @@ def test_video_play_urls_routes_forward_code_to_missav_client(third_party_client
     - 用例目的: 看护本地库/推荐库 play-urls 接口与第三方播放器 build_sources 的调用契约，防止 code 传参错误导致在线播放失效。
     - 测试步骤:
       1. 向推荐库写入一条带 code 的测试视频。
-      2. mock _get_missav_client.build_sources 记录入参。
+      2. mock _get_video_proxy_client.build_sources 记录入参。
       3. 分别调用 /api/v1/video/<id>/play-urls 和 /api/v1/video/recommendation/<id>/play-urls。
     - 预期结果:
       1. 两个接口均返回 code=200 与 sources。
@@ -311,7 +311,7 @@ def test_video_play_urls_routes_forward_code_to_missav_client(third_party_client
     )
     save_json(meta_dir / "video_recommendations_database.json", recommendation_payload)
 
-    monkeypatch.setattr(video_api, "_get_missav_client", lambda: FakeMissavClient())
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
 
     local_resp = client.get("/api/v1/video/JAVDB900001/play-urls")
     local_payload = local_resp.get_json()
@@ -336,7 +336,7 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
     用例描述:
     - 用例目的: 看护 /proxy 与 /proxy2 对第三方播放器代理层的参数透传契约，防止 query/body/header 漏传导致播放失败。
     - 测试步骤:
-      1. mock _get_missav_client，提供 proxy_stream/proxy_url 记录入参。
+      1. mock _get_video_proxy_client，提供 proxy_stream/proxy_url 记录入参。
       2. 调用 GET /api/v1/video/proxy/<domain>/<path> 与 POST /api/v1/video/proxy2。
       3. 校验 domain/path/query/referrer/body_url/incoming_headers。
     - 预期结果:
@@ -381,7 +381,7 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
                 headers=[("Content-Type", "application/vnd.apple.mpegurl"), ("X-Proxy", "1")],
             )
 
-    monkeypatch.setattr(video_api, "_get_missav_client", lambda: FakeMissavClient())
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
 
     stream_resp = client.get(
         "/api/v1/video/proxy/javdb/videos/seg.ts?token=abc",

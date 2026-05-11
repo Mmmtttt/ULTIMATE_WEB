@@ -77,13 +77,8 @@ def _get_video_proxy_client():
     return runtime_get_playback_proxy_client(proxy_base_path='/api/v1/video')
 
 
-def _get_missav_client():
-    """Compatibility shim for older tests and callers."""
-    return _get_video_proxy_client()
-
-
 def _build_play_sources(code: str):
-    client = _get_missav_client()
+    client = _get_video_proxy_client()
     return client.build_sources(code)
 
 
@@ -2593,7 +2588,7 @@ def get_video_play_urls(video_id):
 def proxy_video_request(domain, path):
     """代理视频请求，解决跨域问题"""
     try:
-        proxy_result = _get_missav_client().proxy_stream(
+        proxy_result = _get_video_proxy_client().proxy_stream(
             domain=domain,
             path=path,
             query_string=request.query_string.decode(),
@@ -2616,7 +2611,7 @@ def proxy_video_request2():
             data = request.get_json(silent=True) or {}
             body_url = data.get('url', '')
 
-        proxy_result = _get_missav_client().proxy_url(
+        proxy_result = _get_video_proxy_client().proxy_url(
             method=request.method,
             query_string=request.query_string.decode(),
             body_url=body_url,

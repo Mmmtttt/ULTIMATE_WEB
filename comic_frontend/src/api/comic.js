@@ -159,7 +159,7 @@ export const comicApi = {
   /**
    * 第三方平台搜索漫画
    * @param {string} keyword - 搜索关键词
-   * @param {string} platform - 平台（JM/PK/all）
+   * @param {string} platform - 平台标识（例如具体平台或 all）
    * @param {number} page - 页码
    * @param {number} limit - 数量
    * @returns {Promise}

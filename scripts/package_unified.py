@@ -27,7 +27,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -37,6 +37,9 @@ DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
 DEFAULT_APP_VERSION = "0.0.0"
 DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+HOST_OVERLAY_FILENAME = "ultimate-host.json"
+MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
+SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
 
 
 @dataclass
@@ -189,6 +192,10 @@ def choose_android_workspace_dir(target_out_dir: Path, staged_target_dir: Path, 
         else:
             fallback_root = Path.home() / "AppData" / "Local" / "UltimateWebBuild" / "android_workspace"
     return fallback_root / workspace_leaf
+
+
+def get_android_workspace_backend_dir(packager_cfg: Dict) -> str:
+    return str(packager_cfg.get("workspace_backend_dir", "_backend_build_input")).strip() or "_backend_build_input"
 
 
 def get_npm_command() -> str:
@@ -600,6 +607,7 @@ def ensure_android_project_chaquopy_app(
     app_version: str,
 ) -> None:
     workspace_web_dir = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
+    workspace_backend_dir = get_android_workspace_backend_dir(packager_cfg)
     app_build_gradle = android_project_dir / "app" / "build.gradle"
     if not app_build_gradle.exists():
         return
@@ -1066,7 +1074,7 @@ public class MainActivity extends BridgeActivity {{
 
     py_dir = android_project_dir / "app" / "src" / "main" / "python"
     py_dir.mkdir(parents=True, exist_ok=True)
-    source_backend_dir = workspace_dir / workspace_web_dir / "backend_source"
+    source_backend_dir = workspace_dir / workspace_backend_dir
     if source_backend_dir.exists():
         excluded_names = {
             "__pycache__",
@@ -1089,6 +1097,13 @@ public class MainActivity extends BridgeActivity {{
                 shutil.copytree(item, target)
             else:
                 shutil.copy2(item, target)
+
+    protocol_dir = py_dir / "protocol"
+    protocol_dir.mkdir(parents=True, exist_ok=True)
+    third_party_root = source_backend_dir / "third_party"
+    snapshot_payload = build_mobile_protocol_snapshot(third_party_root)
+    snapshot_path = protocol_dir / MOBILE_PROTOCOL_SNAPSHOT_FILENAME
+    write_text(snapshot_path, json.dumps(snapshot_payload, ensure_ascii=False, indent=2) + "\n")
 
     archive_copy_status = copy_android_archive_tools_to_python_source(py_dir, packager_cfg)
     copied_abis = list(archive_copy_status.get("copied") or [])
@@ -1213,6 +1228,9 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
+    snapshot_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "protocol", "__SNAPSHOT_FILENAME__")
+    if os.path.isfile(snapshot_path):
+        os.environ["BACKEND_PROTOCOL_SNAPSHOT_PATH"] = snapshot_path
     archive_tool = _prepare_android_archive_runtime(files_dir, internal_exec_dir=internal_exec_dir)
     if archive_tool:
         os.environ["RAR_BACKEND_MODE"] = "7z"
@@ -1255,6 +1273,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
 """
     py_source = py_source.replace("__BOOTSTRAP_BUILD_ID__", bootstrap_build_id)
     py_source = py_source.replace("__APP_VERSION__", normalize_app_version(app_version) or DEFAULT_APP_VERSION)
+    py_source = py_source.replace("__SNAPSHOT_FILENAME__", MOBILE_PROTOCOL_SNAPSHOT_FILENAME)
     write_text(py_bootstrap, py_source)
 
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
@@ -1735,6 +1754,17 @@ def _normalize_string_list(values: object) -> List[str]:
     return normalized
 
 
+def _deep_merge_dict(base: Any, override: Any) -> Any:
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = {key: json.loads(json.dumps(value)) for key, value in base.items()}
+        for key, value in override.items():
+            merged[key] = _deep_merge_dict(merged.get(key), value)
+        return merged
+    if override is None:
+        return json.loads(json.dumps(base))
+    return json.loads(json.dumps(override))
+
+
 def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
     if not third_party_root.exists():
         return []
@@ -1746,6 +1776,84 @@ def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
         if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
             roots.append(child)
     return roots
+
+
+def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Dict[str, Any]]:
+    payloads: Dict[str, Dict[str, Any]] = {}
+    if not third_party_root.exists():
+        return payloads
+
+    for payload_path in sorted(third_party_root.rglob(filename)):
+        try:
+            payload = load_json(payload_path)
+        except Exception:
+            continue
+        plugin = dict(payload.get("plugin") or {})
+        plugin_id = str(plugin.get("id") or "").strip()
+        if not plugin_id:
+            continue
+        payloads.setdefault(
+            plugin_id,
+            {
+                "payload": dict(payload),
+                "path": str(payload_path),
+            },
+        )
+    return payloads
+
+
+def _derive_snapshot_plugin_defaults(plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    plugin = dict(payload.get("plugin") or {})
+    inferred_name = str(plugin.get("name") or "").strip() or plugin_id
+    inferred_config_key = str(plugin.get("config_key") or "").strip()
+    if not inferred_config_key and "." in plugin_id:
+        inferred_config_key = plugin_id.rsplit(".", 1)[-1]
+    return {
+        "id": plugin_id,
+        "name": inferred_name,
+        "version": str(plugin.get("version") or "").strip() or "0.0.0-snapshot",
+        "config_key": inferred_config_key,
+        "entrypoint": SNAPSHOT_PROVIDER_ENTRYPOINT,
+    }
+
+
+def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
+    manifest_payloads = _scan_plugin_payloads(third_party_root, "ultimate-plugin.json")
+    overlay_payloads = _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME)
+    plugin_ids = sorted(set(manifest_payloads.keys()) | set(overlay_payloads.keys()))
+
+    manifests: List[Dict[str, Any]] = []
+    for plugin_id in plugin_ids:
+        merged_payload: Dict[str, Any] = {}
+        if plugin_id in manifest_payloads:
+            merged_payload = _deep_merge_dict(
+                merged_payload,
+                manifest_payloads[plugin_id].get("payload") or {},
+            )
+        if plugin_id in overlay_payloads:
+            merged_payload = _deep_merge_dict(
+                merged_payload,
+                overlay_payloads[plugin_id].get("payload") or {},
+            )
+
+        plugin = _derive_snapshot_plugin_defaults(plugin_id, merged_payload)
+        merged_payload["plugin"] = plugin
+        merged_payload["protocol_version"] = str(merged_payload.get("protocol_version") or "2.0").strip() or "2.0"
+        media_types = merged_payload.get("media_types") or []
+        if not isinstance(media_types, list):
+            media_types = []
+        merged_payload["media_types"] = [
+            str(item or "").strip()
+            for item in media_types
+            if str(item or "").strip()
+        ]
+        manifests.append(merged_payload)
+
+    return {
+        "version": 1,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "manifests": manifests,
+    }
 
 
 def collect_pyinstaller_plugin_metadata(staged_backend: Path) -> Dict[str, List[str]]:
@@ -1973,6 +2081,7 @@ def write_android_capacitor_plan(
     backend_port = int(packager_cfg.get("backend_port", 5000))
     staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
     workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
+    workspace_backend_dir_name = get_android_workspace_backend_dir(packager_cfg)
     gradle_task = str(packager_cfg.get("gradle_task", "assembleDebug")).strip() or "assembleDebug"
     apk_relative_path = str(
         packager_cfg.get(
@@ -2013,24 +2122,7 @@ def write_android_capacitor_plan(
 
     staged_backend_dir = staged_target_dir / "comic_backend"
     if staged_backend_dir.exists():
-        shutil.copytree(staged_backend_dir, workspace_dir / workspace_web_dir_name / "backend_source")
-        if embed_backend:
-            bootstrap_payload = {
-                "enabled": True,
-                "runtime_profile": "android",
-                "backend_entry": "backend_source/app.py",
-                "backend_port": backend_port,
-                "android_data_env_key": "ANDROID_APP_FILES_DIR",
-                "default_data_subdir": "app_data",
-            }
-            write_text(
-                workspace_dir / workspace_web_dir_name / "backend_bootstrap.json",
-                json.dumps(bootstrap_payload, ensure_ascii=False, indent=2) + "\n",
-            )
-
-    runtime_env = staged_target_dir / "runtime.env"
-    if runtime_env.exists():
-        shutil.copy2(runtime_env, workspace_dir / workspace_web_dir_name / "runtime.env")
+        shutil.copytree(staged_backend_dir, workspace_dir / workspace_backend_dir_name)
 
     package_json = {
         "name": "ultimate-android-shell",
@@ -2097,8 +2189,9 @@ def write_android_capacitor_plan(
     plan.append(f"- workspace dir: `{workspace_dir}`")
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
     if embed_backend:
+        plan.append(f"- backend build input dir: `{workspace_backend_dir_name}`")
         plan.append(f"- embedded backend api base: `http://127.0.0.1:{backend_port}/api`")
-        plan.append("- embedded backend injection: enabled (Chaquopy + MainActivity backend bootstrap)")
+        plan.append("- embedded backend injection: enabled (Chaquopy consumes build-only backend input, not web assets)")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
 

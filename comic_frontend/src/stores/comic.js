@@ -483,7 +483,7 @@ export const useComicStore = defineStore('comic', () => {
   /**
    * 第三方平台搜索漫画
    * @param {string} keyword - 搜索关键词
-   * @param {string} platform - 平台（JM/PK/all）
+   * @param {string} platform - 平台标识（例如具体平台或 all）
    * @returns {Array} 搜索结果
    */
   async function thirdPartySearch(keyword, platform = 'all', page = 1, limit = 20) {
