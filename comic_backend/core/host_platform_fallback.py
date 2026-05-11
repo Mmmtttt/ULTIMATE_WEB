@@ -14,6 +14,12 @@ _HOST_VIDEO_PLUGIN_PLATFORM_MAP = {
     "video.missav": "MISSAV",
 }
 
+_HOST_VIDEO_DEFAULT_DISPLAY = {
+    "aspect_ratio": "16 / 9",
+    "mobile_aspect_ratio": "16 / 9",
+    "fit": "cover",
+}
+
 _HOST_VIDEO_DISPLAY_DEFAULTS = {
     "JAVDB": {
         "aspect_ratio": "16 / 9",
@@ -325,7 +331,7 @@ def infer_host_video_platform(video_data: Dict[str, Any] | None = None) -> str:
 def merge_host_video_display(video_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
     raw = dict(video_data or {})
     platform = infer_host_video_platform(raw)
-    defaults = _HOST_VIDEO_DISPLAY_DEFAULTS.get(platform)
+    defaults = _HOST_VIDEO_DISPLAY_DEFAULTS.get(platform) or _HOST_VIDEO_DEFAULT_DISPLAY
     if not defaults:
         return {}
 

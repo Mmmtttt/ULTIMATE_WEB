@@ -286,11 +286,17 @@ def test_comic_app_service_rebuilds_storage_path_from_existing_host_layout(tmp_p
 def test_merge_host_video_display_uses_builtin_platform_rules_without_manifest():
     javdb_display = merge_host_video_display({"id": "JAVDBabc123"})
     javbus_display = merge_host_video_display({"cover_path": "/static/cover/JAVBUS/xyz.jpg"})
+    local_display = merge_host_video_display({"id": "LOCALV001"})
+    unknown_display = merge_host_video_display({"id": "UNKNOWN001"})
 
     assert (((javdb_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
     assert (((javdb_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "3 / 2"
     assert (((javbus_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "2 / 3"
     assert (((javbus_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "2 / 3"
+    assert (((local_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
+    assert (((local_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "16 / 9"
+    assert (((unknown_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
+    assert (((unknown_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "16 / 9"
 
 
 def test_video_app_service_annotates_local_video_with_builtin_display_when_manifest_missing(monkeypatch):
@@ -307,3 +313,21 @@ def test_video_app_service_annotates_local_video_with_builtin_display_when_manif
 
     assert ((((annotated.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
     assert ((((annotated.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "3 / 2")
+
+
+def test_video_app_service_annotates_local_video_with_landscape_default_when_display_empty(monkeypatch):
+    monkeypatch.setattr(video_app_service_module, "annotate_item", lambda item, **kwargs: dict(item))
+
+    annotated = video_app_service_module.VideoAppService._annotate_video_record(
+        {
+            "id": "LOCALV_DEMO_001",
+            "platform": "",
+            "display": {},
+            "cover_path": "",
+            "local_video_path": "/media/video/LOCAL/demo/source.mp4",
+            "content_type": "video",
+        }
+    )
+
+    assert ((((annotated.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
+    assert ((((annotated.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "16 / 9")

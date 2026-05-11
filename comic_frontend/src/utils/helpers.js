@@ -114,11 +114,44 @@ export function resolveImportPlatform(item) {
   ).trim()
 }
 
+function isVideoDisplayItem(item) {
+  if (!item || typeof item !== 'object') {
+    return false
+  }
+
+  const contentType = String(item.content_type || '').trim().toLowerCase()
+  if (contentType === 'video') {
+    return true
+  }
+
+  const pluginId = String(item.plugin_id || '').trim().toLowerCase()
+  if (pluginId.startsWith('video.')) {
+    return true
+  }
+
+  if (
+    Array.isArray(item.actors) && item.actors.length > 0 ||
+    String(item.video_id || '').trim() ||
+    String(item.preview_video || '').trim() ||
+    String(item.preview_video_local || '').trim() ||
+    String(item.local_video_path || '').trim()
+  ) {
+    return true
+  }
+
+  return false
+}
+
 export function buildDisplayCoverStyle(item, fallbackAspectRatio = '', fallbackMobileAspectRatio = '') {
-  const aspectRatio = resolveDisplayCoverAspectRatio(item) || normalizeAspectRatio(fallbackAspectRatio)
+  const defaultVideoAspectRatio = isVideoDisplayItem(item) ? '16 / 9' : ''
+  const aspectRatio =
+    resolveDisplayCoverAspectRatio(item) ||
+    normalizeAspectRatio(fallbackAspectRatio) ||
+    defaultVideoAspectRatio
   const mobileAspectRatio =
     resolveDisplayMobileCoverAspectRatio(item) ||
     normalizeAspectRatio(fallbackMobileAspectRatio) ||
+    defaultVideoAspectRatio ||
     aspectRatio
 
   const style = {}

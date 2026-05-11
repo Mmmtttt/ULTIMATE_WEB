@@ -118,6 +118,9 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
     source_file = data_dir / "video" / "JAVDB" / "BACKFILL001" / "source.mp4"
     source_file.parent.mkdir(parents=True, exist_ok=True)
     source_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    local_source_file = data_dir / "video" / "LOCAL" / "BACKFILL_LOCAL" / "source.mp4"
+    local_source_file.parent.mkdir(parents=True, exist_ok=True)
+    local_source_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     _write_test_image(data_dir / "static" / "cover" / "JAVDB" / "BACKFILL001.jpg", (160, 90), (40, 40, 220))
 
     try:
@@ -126,7 +129,7 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
             {
                 "collection_name": "Test Videos",
                 "user": "test-user",
-                "total_videos": 1,
+                "total_videos": 2,
                 "last_updated": "2026-05-08",
                 "videos": [
                     {
@@ -143,7 +146,22 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
                         "create_time": "2026-05-08T00:00:00",
                         "last_access_time": "2026-05-08T00:00:00",
                         "is_deleted": False,
-                    }
+                    },
+                    {
+                        "id": "LOCALVBACKFILL001",
+                        "title": "本地回填视频",
+                        "code": "LOCAL-001",
+                        "cover_path": "",
+                        "local_video_path": "/media/video/LOCAL/BACKFILL_LOCAL/source.mp4",
+                        "local_source_path": str(local_source_file),
+                        "preview_video": "",
+                        "thumbnail_images": [],
+                        "tag_ids": [],
+                        "list_ids": [],
+                        "create_time": "2026-05-08T00:00:00",
+                        "last_access_time": "2026-05-08T00:00:00",
+                        "is_deleted": False,
+                    },
                 ],
             },
         )
@@ -164,6 +182,14 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
         assert record.get("storage_path_kind") == "local_file"
         cover_display = ((record.get("display") or {}).get("cover") or {})
         assert cover_display.get("aspect_ratio") == "16 / 9"
+
+        local_record = find_by_id(refreshed, "LOCALVBACKFILL001")
+        assert local_record is not None
+        assert local_record.get("storage_path_relative") == "video/LOCAL/BACKFILL_LOCAL/source.mp4"
+        assert local_record.get("storage_path_kind") == "local_file"
+        local_cover_display = ((local_record.get("display") or {}).get("cover") or {})
+        assert local_cover_display.get("aspect_ratio") == "16 / 9"
+        assert local_cover_display.get("mobile_aspect_ratio") == "16 / 9"
     finally:
         save_json(videos_path, original)
 
