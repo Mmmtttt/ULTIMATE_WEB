@@ -210,6 +210,87 @@ def infer_existing_host_comic_dir(
     return ""
 
 
+def build_host_recommendation_cache_dir(
+    comic_id: str,
+    comic_record: Dict[str, Any] | None = None,
+    *,
+    cache_root: str,
+) -> str:
+    record = dict(comic_record or {})
+    platform = infer_host_comic_platform(comic_id, record)
+    raw_id = str(comic_id or "").strip()
+
+    if platform == "JM":
+        original_id = _strip_known_prefix(raw_id, "JM")
+        if not original_id:
+            return ""
+        return os.path.abspath(os.path.join(cache_root, "JM", original_id))
+
+    if platform == "PK":
+        author = str(record.get("author") or record.get("creator") or "").strip()
+        title = str(record.get("title") or "").strip()
+        if not author or not title:
+            return ""
+        return os.path.abspath(
+            os.path.join(
+                cache_root,
+                "PK",
+                _normalize_fs_name(author),
+                _normalize_fs_name(title),
+            )
+        )
+
+    return ""
+
+
+def infer_existing_host_recommendation_cache_dir(
+    comic_id: str,
+    comic_record: Dict[str, Any] | None = None,
+    *,
+    cache_root: str,
+) -> str:
+    record = dict(comic_record or {})
+    platform = infer_host_comic_platform(comic_id, record)
+    canonical = build_host_recommendation_cache_dir(
+        comic_id,
+        record,
+        cache_root=cache_root,
+    )
+    if platform == "JM":
+        if canonical and os.path.isdir(canonical):
+            return canonical
+        return ""
+
+    if platform == "PK":
+        author = str(record.get("author") or record.get("creator") or "").strip()
+        title = str(record.get("title") or "").strip()
+        root_dir = os.path.join(cache_root, "PK")
+        if not author or not title or not os.path.isdir(root_dir):
+            return ""
+
+        direct_candidates = [
+            os.path.join(root_dir, author, title),
+            os.path.join(root_dir, _normalize_fs_name(author), _normalize_fs_name(title)),
+        ]
+        for candidate in direct_candidates:
+            if os.path.isdir(candidate):
+                return os.path.abspath(candidate)
+
+        matched_author = _find_matching_child_dir(root_dir, author)
+        if not matched_author:
+            return ""
+        author_dir = os.path.join(root_dir, matched_author)
+        matched_title = _find_matching_child_dir(author_dir, title)
+        if not matched_title:
+            return ""
+        resolved = os.path.join(author_dir, matched_title)
+        if os.path.isdir(resolved):
+            return os.path.abspath(resolved)
+        return ""
+
+    return ""
+
+
 def infer_host_video_platform(video_data: Dict[str, Any] | None = None) -> str:
     raw = dict(video_data or {})
 
