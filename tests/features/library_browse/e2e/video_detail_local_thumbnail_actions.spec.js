@@ -28,6 +28,12 @@ test("local video detail supports generating thumbnails and selecting cover from
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlH0iYAAAAASUVORK5CYII=",
     "base64",
   );
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("/media/video/LOCAL/thumb-demo/cover.jpg")) {
+      coverRequests.push(url);
+    }
+  });
 
   const buildThumbUrls = () =>
     Array.from({ length: 20 }, (_, index) => `/media/video/LOCAL/thumb-demo/thumbs/thumb-${String(index + 1).padStart(4, "0")}.jpg`);
@@ -109,8 +115,7 @@ test("local video detail supports generating thumbnails and selecting cover from
     await route.fulfill(ok(currentDetail, "封面已更新"));
   });
 
-  await page.route("**://127.0.0.1:5000/media/video/LOCAL/thumb-demo/cover.jpg**", async (route) => {
-    coverRequests.push(route.request().url());
+  await page.route("**/media/video/LOCAL/thumb-demo/cover.jpg**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "image/png",
