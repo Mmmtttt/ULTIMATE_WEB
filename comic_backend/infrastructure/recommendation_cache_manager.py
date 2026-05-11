@@ -16,6 +16,10 @@ from core.constants import (
     RECOMMENDATION_CACHE_INDEX_FILE,
     RECOMMENDATION_JSON_FILE,
 )
+from core.host_platform_fallback import (
+    build_host_recommendation_cache_dir,
+    infer_existing_host_recommendation_cache_dir,
+)
 from infrastructure.persistence.json_storage import JsonStorage
 from protocol.platform_meta import (
     build_platform_root_dir,
@@ -70,6 +74,8 @@ class RecommendationCacheManager:
     
     def _get_comic_cache_dir(self, comic_id: str) -> str:
         """获取漫画缓存目录"""
+        recommendation = {}
+        stored_abs = ""
         try:
             storage = JsonStorage(RECOMMENDATION_JSON_FILE)
             db_data = storage.read()
@@ -79,10 +85,29 @@ class RecommendationCacheManager:
             stored_kind = str(recommendation.get("storage_path_kind", "")).strip().lower()
             if stored_relative and stored_kind in {"preview_cache_dir", "local_dir"}:
                 stored_abs = resolve_data_relative_path(stored_relative)
-                if stored_abs:
+                if stored_abs and os.path.isdir(stored_abs):
                     return stored_abs
         except Exception:
             recommendation = {}
+
+        host_existing_dir = infer_existing_host_recommendation_cache_dir(
+            comic_id,
+            recommendation,
+            cache_root=self.cache_dir,
+        )
+        if host_existing_dir:
+            return host_existing_dir
+
+        host_target_dir = build_host_recommendation_cache_dir(
+            comic_id,
+            recommendation,
+            cache_root=self.cache_dir,
+        )
+        if host_target_dir:
+            return host_target_dir
+
+        if stored_abs:
+            return stored_abs
 
         platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
         host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)

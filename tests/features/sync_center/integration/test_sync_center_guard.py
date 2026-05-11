@@ -536,26 +536,26 @@ def test_directional_pull_remaps_tag_list_ids_and_verifies_each_transferred_asse
 
     expected_missing_hashes: dict[str, str] = {}
 
-    _write_binary(source_data, "comic/PK/698e14e13951674692432507/001.png", b"source-new-comic-page-1")
-    _write_binary(source_data, "comic/PK/698e14e13951674692432507/002.png", b"source-new-comic-page-2")
+    _write_binary(source_data, "comic/PK/Sync Source/Delta New Comic/001.png", b"source-new-comic-page-1")
+    _write_binary(source_data, "comic/PK/Sync Source/Delta New Comic/002.png", b"source-new-comic-page-2")
     _write_binary(source_data, "static/cover/PK/698e14e13951674692432507.jpg", b"source-new-comic-cover")
     _write_binary(source_data, "video/JAVDB/ABF-311/preview.mp4", b"source-video-preview")
     _write_binary(source_data, "static/cover/JAVDB/ABF-311.jpg", b"source-video-cover")
     _write_binary(source_data, "cache/comic/sync_guard_from_source.bin", b"source-cache-payload")
-    _write_binary(source_data, "recommendation_cache/comic/PK/698e14e13951674692432507/thumb_001.png", b"source-rec-cache-thumb")
+    _write_binary(source_data, "recommendation_cache/comic/PK/Sync Source/Delta New Comic/thumb_001.png", b"source-rec-cache-thumb")
     _write_binary(source_data, "comic/JM/SYNC_PAGE_DIFF/001.png", b"source-page-diff-001")
     _write_binary(source_data, "comic/JM/SYNC_PAGE_DIFF/002.png", b"source-page-diff-002")
 
     _write_binary(target_data, "comic/JM/SYNC_PAGE_DIFF/001.png", b"target-page-diff-001")
 
     expected_missing_paths = [
-        "comic/PK/698e14e13951674692432507/001.png",
-        "comic/PK/698e14e13951674692432507/002.png",
+        "comic/PK/Sync Source/Delta New Comic/001.png",
+        "comic/PK/Sync Source/Delta New Comic/002.png",
         "static/cover/PK/698e14e13951674692432507.jpg",
         "video/JAVDB/ABF-311/preview.mp4",
         "static/cover/JAVDB/ABF-311.jpg",
         "cache/comic/sync_guard_from_source.bin",
-        "recommendation_cache/comic/PK/698e14e13951674692432507/thumb_001.png",
+        "recommendation_cache/comic/PK/Sync Source/Delta New Comic/thumb_001.png",
         "comic/JM/SYNC_PAGE_DIFF/002.png",
     ]
     for rel in expected_missing_paths:
