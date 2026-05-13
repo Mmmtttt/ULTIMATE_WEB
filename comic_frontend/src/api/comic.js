@@ -18,6 +18,7 @@ export const comicApi = {
    * 获取漫画列表
    * @param {object} params - 查询参数
    * @param {string} params.sort_type - 排序类型（create_time/score/read_time）
+   * @param {string} params.sort_order - 排序方向（asc/desc）
    * @param {number} params.min_score - 最低评分
    * @param {number} params.max_score - 最高评分
    * @returns {Promise}
@@ -26,6 +27,9 @@ export const comicApi = {
     const queryParams = new URLSearchParams()
     if (params.sort_type) {
       queryParams.append('sort_type', params.sort_type)
+    }
+    if (params.sort_order) {
+      queryParams.append('sort_order', params.sort_order)
     }
     if (params.min_score !== undefined) {
       queryParams.append('min_score', params.min_score)
@@ -200,9 +204,9 @@ export const comicApi = {
    * @param {string} sortType - 排序类型（create_time/score/read_time）
    * @returns {Promise}
    */
-  getListBySort: (sortType) => {
+  getListBySort: (sortType, sortOrder = 'desc') => {
     return request.get('/v1/comic/list', {
-      params: { sort_type: sortType }
+      params: { sort_type: sortType, sort_order: sortOrder }
     })
   },
   

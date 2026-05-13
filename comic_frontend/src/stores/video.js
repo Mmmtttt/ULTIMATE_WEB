@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '../api/video'
-import { filterItemsByMinScore, normalizeMinScore } from '@/utils'
+import { filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
 
 export const useVideoStore = defineStore('video', () => {
   const videos = ref([])
@@ -11,6 +11,8 @@ export const useVideoStore = defineStore('video', () => {
   const error = ref(null)
   const filteredVideos = ref([])
   const isFiltering = ref(false)
+  const currentSort = ref(null)
+  const currentSortOrder = ref('desc')
   
   const videoCount = computed(() => videos.value.length)
   const trashCount = computed(() => trashList.value.length)
@@ -20,7 +22,16 @@ export const useVideoStore = defineStore('video', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await videoApi.getList(params)
+      const queryParams = { ...params }
+      const sortTypeToUse = params.sort_type || currentSort.value
+      if (sortTypeToUse) {
+        queryParams.sort_type = sortTypeToUse
+      }
+      const sortOrderToUse = params.sort_order || currentSortOrder.value
+      if (sortTypeToUse && sortOrderToUse) {
+        queryParams.sort_order = sortOrderToUse
+      }
+      const res = await videoApi.getList(queryParams)
       if (res.code === 200) {
         videos.value = res.data || []
       }
@@ -234,7 +245,7 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, sortType = currentSort.value, sortOrder = currentSortOrder.value) {
     const scoreThreshold = normalizeMinScore(minScore)
     const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
     const hasScoreFilter = scoreThreshold > 0
@@ -260,7 +271,11 @@ export const useVideoStore = defineStore('video', () => {
         result = videos.value
       }
 
-      filteredVideos.value = filterItemsByMinScore(result, scoreThreshold)
+      filteredVideos.value = sortContentItems(
+        filterItemsByMinScore(result, scoreThreshold),
+        sortType,
+        sortOrder
+      )
       isFiltering.value = true
       return filteredVideos.value
     } catch (err) {
@@ -271,10 +286,17 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
-  async function sortVideos(sortType) {
+  async function sortVideos(sortType, sortOrder = 'desc') {
     loading.value = true
+    currentSort.value = sortType || null
+    currentSortOrder.value = sortOrder || 'desc'
     try {
-      const res = await videoApi.getList({ sort_type: sortType })
+      const params = {}
+      if (sortType) {
+        params.sort_type = sortType
+        params.sort_order = sortOrder
+      }
+      const res = await videoApi.getList(params)
       if (res.code === 200) {
         videos.value = res.data || []
       }
@@ -289,6 +311,11 @@ export const useVideoStore = defineStore('video', () => {
     isFiltering.value = false
     filteredVideos.value = []
   }
+
+  function setSortState(sortType = null, sortOrder = 'desc') {
+    currentSort.value = sortType || null
+    currentSortOrder.value = sortOrder || 'desc'
+  }
   
   function clearCurrentVideo() {
     currentVideo.value = null
@@ -300,6 +327,8 @@ export const useVideoStore = defineStore('video', () => {
     trashList,
     loading,
     error,
+    currentSort,
+    currentSortOrder,
     filteredVideos,
     isFiltering,
     videoCount,
@@ -324,6 +353,7 @@ export const useVideoStore = defineStore('video', () => {
     filterByTags,
     filterMulti,
     sortVideos,
+    setSortState,
     clearFilter,
     clearCurrentVideo
   }

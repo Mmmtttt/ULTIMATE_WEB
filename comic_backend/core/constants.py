@@ -552,6 +552,7 @@ LISTS_JSON_FILE = os.path.join(META_DIR, "lists_database.json")
 USER_CONFIG_JSON_FILE = os.path.join(META_DIR, "user_config.json")
 IMPORT_TASKS_JSON_FILE = os.path.join(META_DIR, "import_tasks.json")
 RECOMMENDATION_CACHE_INDEX_FILE = os.path.join(META_DIR, "recommendation_cache_index.json")
+UI_STATE_JSON_FILE = os.path.join(META_DIR, "ui_state_database.json")
 BACKUP_SUFFIX = ".bkp"
 
 DEFAULT_PAGE_MODE = "up_down"

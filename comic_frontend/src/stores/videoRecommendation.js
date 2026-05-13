@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '@/api/video'
 import { showSuccessToast, showFailToast } from 'vant'
-import { filterItemsByMinScore, normalizeMinScore } from '@/utils'
+import { filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
 
 export const useVideoRecommendationStore = defineStore('videoRecommendation', () => {
   // State
@@ -10,7 +10,8 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   const currentRecommendation = ref(null)
   const loading = ref(false)
   const error = ref(null)
-  const currentSort = ref('create_time')
+  const currentSort = ref(null)
+  const currentSortOrder = ref('desc')
   const filters = ref({})
   const filteredRecommendations = ref([])
   const isFiltering = ref(false)
@@ -31,9 +32,16 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     
     try {
       const queryParams = {
-        sort_type: params.sortType || currentSort.value,
         ...filters.value,
         ...params
+      }
+      const sortTypeToUse = params.sortType || currentSort.value
+      if (sortTypeToUse) {
+        queryParams.sort_type = sortTypeToUse
+      }
+      const sortOrderToUse = params.sortOrder || currentSortOrder.value
+      if (sortTypeToUse && sortOrderToUse) {
+        queryParams.sort_order = sortOrderToUse
       }
       
       const res = await videoApi.getVideoRecommendationList(queryParams)
@@ -234,7 +242,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, sortType = currentSort.value, sortOrder = currentSortOrder.value) {
     const scoreThreshold = normalizeMinScore(minScore)
     const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
     const hasScoreFilter = scoreThreshold > 0
@@ -263,7 +271,11 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
         result = recommendations.value
       }
       
-      filteredRecommendations.value = filterItemsByMinScore(result, scoreThreshold)
+      filteredRecommendations.value = sortContentItems(
+        filterItemsByMinScore(result, scoreThreshold),
+        sortType,
+        sortOrder
+      )
       isFiltering.value = true
       return filteredRecommendations.value
     } catch (err) {
@@ -282,8 +294,9 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     filters.value = {}
   }
 
-  function setSortType(type) {
-    currentSort.value = type
+  function setSortType(type, order = 'desc') {
+    currentSort.value = type || null
+    currentSortOrder.value = order || 'desc'
   }
 
   function setFilter(key, value) {
@@ -291,7 +304,8 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   }
 
   function clearSort() {
-    currentSort.value = 'create_time'
+    currentSort.value = null
+    currentSortOrder.value = 'desc'
   }
 
   return {
@@ -300,6 +314,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     loading,
     error,
     currentSort,
+    currentSortOrder,
     filters,
     filteredRecommendations,
     isFiltering,

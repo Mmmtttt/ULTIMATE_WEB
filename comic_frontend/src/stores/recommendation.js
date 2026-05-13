@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { recommendationApi } from '@/api'
 import { useCacheStore } from './cache'
-import { SORT_TYPE, filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore } from '@/utils'
+import { filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
 
 /**
  * 推荐漫画管理 Store
@@ -29,6 +29,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
   // 当前排序方式
   const currentSort = ref(null)
+  const currentSortOrder = ref('desc')
 
   // 筛选结果
   const filteredRecommendations = ref([])
@@ -112,6 +113,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       const sortTypeToUse = options.sortType || currentSort.value
       if (sortTypeToUse) {
         params.sort_type = sortTypeToUse
+      }
+      const sortOrderToUse = options.sortOrder || currentSortOrder.value
+      if (sortTypeToUse && sortOrderToUse) {
+        params.sort_order = sortOrderToUse
       }
       if (options.minScore !== undefined) {
         params.min_score = options.minScore
@@ -350,7 +355,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    * @param {boolean} unreadOnly - 仅未读
    * @returns {Array} 筛选结果
    */
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, unreadOnly = false) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, unreadOnly = false, sortType = currentSort.value, sortOrder = currentSortOrder.value) {
     const scoreThreshold = normalizeMinScore(minScore)
     const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
     const hasScoreFilter = scoreThreshold > 0
@@ -381,7 +386,11 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       }
       
       result = filterItemsByMinScore(result, scoreThreshold)
-      filteredRecommendations.value = filterItemsByUnread(result, hasUnreadFilter)
+      filteredRecommendations.value = sortContentItems(
+        filterItemsByUnread(result, hasUnreadFilter),
+        sortType,
+        sortOrder
+      )
       isFiltering.value = true
       return filteredRecommendations.value
     } catch (err) {
@@ -406,9 +415,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    * 设置排序方式
    * @param {string} sortType - 排序类型
    */
-  function setSortType(sortType) {
-    console.log('[Recommendation] setSortType called:', sortType)
+  function setSortType(sortType, sortOrder = 'desc') {
+    console.log('[Recommendation] setSortType called:', sortType, sortOrder)
     currentSort.value = sortType
+    currentSortOrder.value = sortOrder
   }
 
   /**
@@ -417,6 +427,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
   function clearSort() {
     console.log('[Recommendation] clearSort called')
     currentSort.value = null
+    currentSortOrder.value = 'desc'
   }
 
   /**
@@ -498,6 +509,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     loading,
     error,
     currentSort,
+    currentSortOrder,
     filteredRecommendations,
     isFiltering,
 

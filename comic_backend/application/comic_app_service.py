@@ -91,11 +91,12 @@ class ComicAppService:
     def get_comic_list(
         self,
         sort_type: str = None,
+        sort_order: str = "desc",
         min_score: float = None,
         max_score: float = None
     ) -> ServiceResult:
         try:
-            app_logger.info(f"[get_comic_list] sort_type={sort_type}, min_score={min_score}, max_score={max_score}")
+            app_logger.info(f"[get_comic_list] sort_type={sort_type}, sort_order={sort_order}, min_score={min_score}, max_score={max_score}")
             comics = self._comic_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -111,18 +112,20 @@ class ComicAppService:
             app_logger.info(f"[get_comic_list] 排序前漫画数量: {len(comics)}")
             if sort_type:
                 app_logger.info(f"[get_comic_list] 执行排序: {sort_type}")
+
+            reverse = str(sort_order or "desc").strip().lower() != "asc"
             
             if sort_type == "create_time":
-                comics = sorted(comics, key=lambda c: c.create_time or "", reverse=True)
+                comics = sorted(comics, key=lambda c: c.create_time or "", reverse=reverse)
             elif sort_type == "score":
-                comics = sorted(comics, key=lambda c: c.score or 0, reverse=True)
+                comics = sorted(comics, key=lambda c: c.score or 0, reverse=reverse)
             elif sort_type == "read_time":
-                comics = sorted(comics, key=lambda c: c.last_read_time or "", reverse=True)
+                comics = sorted(comics, key=lambda c: c.last_read_time or "", reverse=reverse)
             elif sort_type == "read_status":
                 def read_status_sort_key(c):
                     is_read = c.current_page >= c.total_page if c.total_page > 0 else False
                     return (is_read, -(c.score or 0))
-                comics = sorted(comics, key=read_status_sort_key)
+                comics = sorted(comics, key=read_status_sort_key, reverse=reverse)
             
             app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
             

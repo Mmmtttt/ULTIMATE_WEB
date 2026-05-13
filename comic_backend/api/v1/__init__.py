@@ -10,3 +10,4 @@ from .actor import actor_bp
 from .sync import sync_bp
 from .feed import feed_bp
 from .organize import organize_bp
+from .ui_state import ui_state_bp

@@ -86,10 +86,11 @@ def _build_play_sources(code: str):
 def video_list():
     try:
         sort_type = request.args.get('sort_type')
+        sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
         max_score = request.args.get('max_score', type=float)
         
-        result = video_service.get_video_list(sort_type, min_score, max_score)
+        result = video_service.get_video_list(sort_type, sort_order, min_score, max_score)
         if result.success:
             return success_response(result.data)
         else:
@@ -1975,6 +1976,7 @@ def get_video_recommendation_list():
         from domain.tag.entity import ContentType
         
         sort_type = request.args.get('sort_type')
+        sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
         
         storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
@@ -1996,12 +1998,14 @@ def get_video_recommendation_list():
                 _decorate_video_recommendation_item(video, tag_map=tag_map)
             )
         
+        reverse = str(sort_order or 'desc').strip().lower() != 'asc'
+
         if sort_type == 'score':
-            filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=True)
+            filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=reverse)
         elif sort_type == 'date':
-            filtered_videos.sort(key=lambda x: (x.get('date') or ''), reverse=True)
+            filtered_videos.sort(key=lambda x: (x.get('date') or ''), reverse=reverse)
         else:
-            filtered_videos.sort(key=lambda x: (x.get('create_time') or ''), reverse=True)
+            filtered_videos.sort(key=lambda x: (x.get('create_time') or ''), reverse=reverse)
         
         return success_response(filtered_videos)
     except Exception as e:

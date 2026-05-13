@@ -21,6 +21,9 @@ export * from './storage'
 // 协议平台工具
 export * from './protocol'
 
+// 页面状态工具
+export * from './viewState'
+
 // 批量任务工具
 export * from './batchTasks'
 

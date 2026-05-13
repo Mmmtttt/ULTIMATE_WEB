@@ -199,12 +199,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useImportTaskStore } from '@/stores'
-import { videoApi } from '@/api'
+import { uiStateApi, videoApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import {
+  buildUiStateScope,
   buildDisplayCoverStyle,
   fetchProtocolPlatformOptions,
+  getOrCreateUiStateClientId,
   getCoverUrl,
   isAllSelected,
   resolveDisplayCoverFit,
@@ -243,6 +245,7 @@ const hasMore = ref(false)
 const paginationInfo = ref(null)
 
 const showImportSheet = ref(false)
+const uiStateClientId = getOrCreateUiStateClientId()
 
 const currentPlatformOption = computed(() => {
   return availablePlatforms.value.find(item => item.platform === selectedPlatform.value) || availablePlatforms.value[0] || null
@@ -252,6 +255,38 @@ const currentPlatformLabel = computed(() => currentPlatformOption.value?.label |
 const platformConfigMessage = computed(() => {
   return platformStatusMessage.value || `请先在系统配置中完成 ${currentPlatformLabel.value} 所需配置后再使用标签搜索`
 })
+
+function getUiStateScope() {
+  return buildUiStateScope('video_tag_search', true)
+}
+
+function buildPersistedStatePayload() {
+  const normalizedPlatform = String(selectedPlatform.value || '').trim().toLowerCase()
+  const tagIds = Array.isArray(selectedTagIds.value) ? [...selectedTagIds.value] : []
+  if (!normalizedPlatform && tagIds.length === 0) {
+    return null
+  }
+  return {
+    selectedPlatform: normalizedPlatform,
+    selectedTagIds: tagIds,
+    activeCategory: String(activeCategory.value || 'all').trim() || 'all'
+  }
+}
+
+async function persistViewState() {
+  const payload = buildPersistedStatePayload()
+  if (!payload) {
+    await uiStateApi.clear(getUiStateScope(), uiStateClientId)
+    return
+  }
+  await uiStateApi.save(getUiStateScope(), payload, uiStateClientId)
+}
+
+async function restoreViewState() {
+  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
+  const state = response?.data?.state
+  return state && typeof state === 'object' ? state : null
+}
 
 const categoryTabs = computed(() => {
   return [
@@ -368,20 +403,23 @@ async function switchToVideoMode() {
   await loadAvailablePlatforms()
 }
 
-function toggleTag(tagId) {
+async function toggleTag(tagId) {
   if (selectedTagIds.value.includes(tagId)) {
     selectedTagIds.value = selectedTagIds.value.filter(id => id !== tagId)
   } else {
     selectedTagIds.value.push(tagId)
   }
+  await persistViewState()
 }
 
-function clearSelectedTags() {
+async function clearSelectedTags() {
   selectedTagIds.value = []
+  await persistViewState()
 }
 
-function removeSelectedTag(tagId) {
+async function removeSelectedTag(tagId) {
   selectedTagIds.value = selectedTagIds.value.filter(id => id !== tagId)
+  await persistViewState()
 }
 
 function getItemId(item) {
@@ -431,7 +469,7 @@ function toggleSelectAllResults() {
   toggleSelectAll(selectedResultIds, normalizedResults.value, item => getItemId(item))
 }
 
-async function activateSelectedPlatform() {
+async function activateSelectedPlatform(restoredState = null) {
   platformStatusChecked.value = false
   platformConfigured.value = false
   platformStatusMessage.value = ''
@@ -439,10 +477,11 @@ async function activateSelectedPlatform() {
   await syncSelectedPlatformToRoute()
   const configured = await ensurePlatformConfigured()
   if (!configured) return
-  await loadTags()
+  await loadTags(restoredState)
+  await persistViewState()
 }
 
-async function loadAvailablePlatforms() {
+async function loadAvailablePlatforms(restoredState = null) {
   platformsLoaded.value = false
   try {
     const options = await fetchProtocolPlatformOptions({
@@ -451,14 +490,14 @@ async function loadAvailablePlatforms() {
     })
     availablePlatforms.value = options
 
-    const requestedPlatform = String(route.query.platform || '').trim().toLowerCase()
+    const requestedPlatform = String(route.query.platform || restoredState?.selectedPlatform || '').trim().toLowerCase()
     const resolvedPlatform = options.some(item => item.platform === requestedPlatform)
       ? requestedPlatform
       : (options[0]?.platform || '')
 
     selectedPlatform.value = resolvedPlatform
     platformsLoaded.value = true
-    await activateSelectedPlatform()
+    await activateSelectedPlatform(restoredState)
   } catch (error) {
     availablePlatforms.value = []
     selectedPlatform.value = ''
@@ -479,7 +518,7 @@ async function selectPlatform(platform) {
   await activateSelectedPlatform()
 }
 
-async function loadTags() {
+async function loadTags(restoredState = null) {
   if (!isVideoMode.value || !platformConfigured.value || !platformStatusChecked.value) return
 
   loadingTags.value = true
@@ -503,11 +542,19 @@ async function loadTags() {
       allTags.value = res.data.tags || []
       categories.value = res.data.categories || []
 
-      if (categories.value.length > 0) {
+      const restoredCategory = String(restoredState?.activeCategory || '').trim()
+      const categoryKeys = new Set(categories.value.map(item => item.key))
+      if (restoredCategory === 'all' || categoryKeys.has(restoredCategory)) {
+        activeCategory.value = restoredCategory || 'all'
+      } else if (categories.value.length > 0) {
         activeCategory.value = categories.value[0].key
       } else {
         activeCategory.value = 'all'
       }
+
+      const availableTagIds = new Set(allTags.value.map(item => item.id))
+      const restoredTagIds = Array.isArray(restoredState?.selectedTagIds) ? restoredState.selectedTagIds : []
+      selectedTagIds.value = restoredTagIds.filter(tagId => availableTagIds.has(tagId))
     } else {
       allTags.value = []
       categories.value = []
@@ -562,6 +609,7 @@ async function handleSearch() {
   } finally {
     loading.value = false
   }
+  await persistViewState()
 }
 
 async function loadMore() {
@@ -632,7 +680,11 @@ async function confirmImport(target) {
 }
 
 onMounted(async () => {
-  await loadAvailablePlatforms()
+  const restoredState = await restoreViewState()
+  await loadAvailablePlatforms(restoredState)
+  if (Array.isArray(selectedTagIds.value) && selectedTagIds.value.length > 0) {
+    await handleSearch()
+  }
 })
 </script>
 

@@ -85,12 +85,13 @@ class RecommendationAppService:
     def get_recommendation_list(
         self,
         sort_type: str = None,
+        sort_order: str = "desc",
         min_score: float = None,
         max_score: float = None
     ) -> ServiceResult:
         """获取推荐漫画列表 - 支持排序和评分筛选"""
         try:
-            app_logger.info(f"[get_recommendation_list] sort_type={sort_type}, min_score={min_score}, max_score={max_score}")
+            app_logger.info(f"[get_recommendation_list] sort_type={sort_type}, sort_order={sort_order}, min_score={min_score}, max_score={max_score}")
             recommendations = self._recommendation_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -105,19 +106,20 @@ class RecommendationAppService:
                 recommendations = [r for r in recommendations if r.score is not None and r.score <= max_score]
             
             app_logger.info(f"[get_recommendation_list] 排序前数量: {len(recommendations)}")
+            reverse = str(sort_order or "desc").strip().lower() != "asc"
             
             # 排序
             if sort_type == "create_time":
-                recommendations = sorted(recommendations, key=lambda r: r.create_time or "", reverse=True)
+                recommendations = sorted(recommendations, key=lambda r: r.create_time or "", reverse=reverse)
             elif sort_type == "score":
-                recommendations = sorted(recommendations, key=lambda r: r.score or 0, reverse=True)
+                recommendations = sorted(recommendations, key=lambda r: r.score or 0, reverse=reverse)
             elif sort_type == "read_time":
-                recommendations = sorted(recommendations, key=lambda r: r.last_read_time or "", reverse=True)
+                recommendations = sorted(recommendations, key=lambda r: r.last_read_time or "", reverse=reverse)
             elif sort_type == "read_status":
                 def read_status_sort_key(r):
                     is_read = r.current_page >= r.total_page if r.total_page > 0 else False
                     return (is_read, -(r.score or 0))
-                recommendations = sorted(recommendations, key=read_status_sort_key)
+                recommendations = sorted(recommendations, key=read_status_sort_key, reverse=reverse)
             
             app_logger.info(f"[get_recommendation_list] 排序后数量: {len(recommendations)}")
             

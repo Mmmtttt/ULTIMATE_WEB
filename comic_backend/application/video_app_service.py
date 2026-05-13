@@ -401,6 +401,7 @@ class VideoAppService(BaseContentAppService):
     def get_video_list(
         self,
         sort_type: str = "create_time",
+        sort_order: str = "desc",
         min_score: float = None,
         max_score: float = None,
         include_deleted: bool = False
@@ -418,14 +419,16 @@ class VideoAppService(BaseContentAppService):
             if max_score is not None:
                 videos = [v for v in videos if v.score is not None and v.score <= max_score]
             
+            reverse = str(sort_order or "desc").strip().lower() != "asc"
+
             if sort_type == "create_time":
-                videos = sorted(videos, key=lambda v: v.create_time or "", reverse=True)
+                videos = sorted(videos, key=lambda v: v.create_time or "", reverse=reverse)
             elif sort_type == "score":
-                videos = sorted(videos, key=lambda v: v.score or 0, reverse=True)
+                videos = sorted(videos, key=lambda v: v.score or 0, reverse=reverse)
             elif sort_type == "access_time":
-                videos = sorted(videos, key=lambda v: v.last_access_time or "", reverse=True)
+                videos = sorted(videos, key=lambda v: v.last_access_time or "", reverse=reverse)
             elif sort_type == "date":
-                videos = sorted(videos, key=lambda v: v.date or "", reverse=True)
+                videos = sorted(videos, key=lambda v: v.date or "", reverse=reverse)
             
             video_list = []
             for v in videos:

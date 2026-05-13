@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { comicApi } from '@/api'
 import { useCacheStore } from './cache'
-import { SORT_TYPE, filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore } from '@/utils'
+import { filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
 
 /**
  * 漫画管理 Store
@@ -28,6 +28,7 @@ export const useComicStore = defineStore('comic', () => {
   
   // 当前排序方式
   const currentSort = ref(null)
+  const currentSortOrder = ref('desc')
   
   // 筛选结果
   const filteredComics = ref([])
@@ -108,7 +109,16 @@ export const useComicStore = defineStore('comic', () => {
     
     try {
       console.log('[Comic] 获取漫画列表, options:', options)
-      const response = await comicApi.getList(options)
+      const params = { ...options }
+      const sortTypeToUse = options.sortType || currentSort.value
+      if (sortTypeToUse) {
+        params.sort_type = sortTypeToUse
+      }
+      const sortOrderToUse = options.sortOrder || currentSortOrder.value
+      if (sortTypeToUse && sortOrderToUse) {
+        params.sort_order = sortOrderToUse
+      }
+      const response = await comicApi.getList(params)
       console.log('[Comic] API响应:', response)
       comics.value = response.data || []
       
@@ -385,7 +395,7 @@ export const useComicStore = defineStore('comic', () => {
    * @param {boolean} unreadOnly - 仅未读
    * @returns {Array} 筛选结果
    */
-  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, unreadOnly = false) {
+  async function filterMulti(includeTags = [], excludeTags = [], authors = [], listIds = [], minScore = 0, unreadOnly = false, sortType = currentSort.value, sortOrder = currentSortOrder.value) {
     const scoreThreshold = normalizeMinScore(minScore)
     const hasMultiFilter = includeTags.length > 0 || excludeTags.length > 0 || authors.length > 0 || listIds.length > 0
     const hasScoreFilter = scoreThreshold > 0
@@ -410,7 +420,11 @@ export const useComicStore = defineStore('comic', () => {
       }
 
       result = filterItemsByMinScore(result, scoreThreshold)
-      filteredComics.value = filterItemsByUnread(result, hasUnreadFilter)
+      filteredComics.value = sortContentItems(
+        filterItemsByUnread(result, hasUnreadFilter),
+        sortType,
+        sortOrder
+      )
       isFiltering.value = true
       return filteredComics.value
     } catch (err) {
@@ -426,14 +440,15 @@ export const useComicStore = defineStore('comic', () => {
    * @param {string} sortType - 排序类型
    * @returns {Array} 排序后的列表
    */
-  async function sortComics(sortType) {
+  async function sortComics(sortType, sortOrder = 'desc') {
     currentSort.value = sortType
+    currentSortOrder.value = sortOrder
     
     loading.value = true
     
     try {
       console.log('[Comic] 按排序获取列表:', sortType)
-      const response = await comicApi.getListBySort(sortType)
+      const response = await comicApi.getListBySort(sortType, sortOrder)
       comics.value = response.data || []
       
       // 更新缓存
@@ -454,6 +469,11 @@ export const useComicStore = defineStore('comic', () => {
   function clearFilter() {
     isFiltering.value = false
     filteredComics.value = []
+  }
+
+  function setSortState(sortType = null, sortOrder = 'desc') {
+    currentSort.value = sortType || null
+    currentSortOrder.value = sortOrder || 'desc'
   }
   
   /**
@@ -538,6 +558,7 @@ export const useComicStore = defineStore('comic', () => {
     loading,
     error,
     currentSort,
+    currentSortOrder,
     filteredComics,
     isFiltering,
     
@@ -562,6 +583,7 @@ export const useComicStore = defineStore('comic', () => {
     filterByTags,
     filterMulti,
     sortComics,
+    setSortState,
     clearFilter,
     setCurrentComic,
     clearCurrentComic,

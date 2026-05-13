@@ -15,6 +15,7 @@ export { imageApi, buildImageUrl, buildCoverUrl, buildThumbnailUrl } from './ima
 export { syncApi } from './sync'
 export { feedApi } from './feed'
 export { organizeApi } from './organize'
+export { uiStateApi } from './uiState'
 
 import { comicApi } from './comic'
 export default comicApi

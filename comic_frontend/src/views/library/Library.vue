@@ -211,7 +211,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore, useImportTaskStore, useRuntimeStore } from '@/stores'
-import { comicApi } from '@/api'
+import { comicApi, uiStateApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
@@ -219,7 +219,18 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { useDevice } from '@/composables/useDevice'
 import { useClientPagination } from '@/composables/useClientPagination'
-import { buildBatchTaskActions, extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
+import {
+  buildBatchTaskActions,
+  buildSortOptions,
+  buildUiStateScope,
+  decodeSortSelection,
+  extractAuthors,
+  getOrCreateUiStateClientId,
+  isAllSelected,
+  isDefaultSortState,
+  normalizeSortOrder,
+  toggleSelectAll,
+} from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -248,8 +259,11 @@ const selectedAuthors = ref([])
 const selectedListIds = ref([])
 const minScore = ref(0)
 const unreadOnly = ref(false)
+const currentSortField = ref('')
+const currentSortOrder = ref('desc')
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const initVersion = ref(0)
+const uiStateClientId = getOrCreateUiStateClientId()
 const viewModeOptions = [
   { value: 'large', label: '大图' },
   { value: 'medium', label: '中图' },
@@ -257,11 +271,22 @@ const viewModeOptions = [
   { value: 'list', label: '列表' }
 ]
 
-function getFilterStorageKey() {
-  return makeFilterStorageKey('library_filters', isVideoMode.value)
+function getUiStateScope() {
+  return buildUiStateScope('library_state', isVideoMode.value)
 }
 
-function saveFilterState() {
+function isSortFieldSupported(sortField) {
+  const normalized = String(sortField || '').trim()
+  if (!normalized) {
+    return true
+  }
+  if (normalized === 'date') {
+    return isVideoMode.value
+  }
+  return normalized === 'create_time' || normalized === 'score'
+}
+
+function buildPersistedStatePayload() {
   const payload = {
     includeTags: includeTags.value,
     excludeTags: excludeTags.value,
@@ -270,12 +295,39 @@ function saveFilterState() {
     minScore: minScore.value,
     unreadOnly: unreadOnly.value
   }
-  saveToSession(getFilterStorageKey(), payload)
+  if (!isDefaultSortState(currentSortField.value, currentSortOrder.value)) {
+    payload.sortField = currentSortField.value
+    payload.sortOrder = currentSortOrder.value
+  }
+  if (
+    payload.includeTags.length === 0 &&
+    payload.excludeTags.length === 0 &&
+    payload.selectedAuthors.length === 0 &&
+    payload.selectedListIds.length === 0 &&
+    Number(payload.minScore) <= 0 &&
+    !payload.unreadOnly &&
+    !payload.sortField
+  ) {
+    return null
+  }
+  return payload
 }
 
-function restoreFilterState() {
-  const parsed = loadFromSession(getFilterStorageKey())
+async function persistViewState() {
+  const payload = buildPersistedStatePayload()
+  if (!payload) {
+    await uiStateApi.clear(getUiStateScope(), uiStateClientId)
+    return
+  }
+  await uiStateApi.save(getUiStateScope(), payload, uiStateClientId)
+}
+
+async function restoreViewState() {
+  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
+  const parsed = response?.data?.state
   if (!parsed) {
+    currentSortField.value = ''
+    currentSortOrder.value = 'desc'
     return false
   }
   includeTags.value = parsed.includeTags || []
@@ -284,7 +336,20 @@ function restoreFilterState() {
   selectedListIds.value = parsed.selectedListIds || []
   minScore.value = Number(parsed.minScore) > 0 ? Number(parsed.minScore) : 0
   unreadOnly.value = Boolean(parsed.unreadOnly)
-  return includeTags.value.length > 0 || excludeTags.value.length > 0 || selectedAuthors.value.length > 0 || selectedListIds.value.length > 0 || minScore.value > 0 || unreadOnly.value
+  currentSortField.value = isSortFieldSupported(parsed.sortField) ? String(parsed.sortField || '').trim() : ''
+  currentSortOrder.value = normalizeSortOrder(parsed.sortOrder)
+  currentStore.value.setSortState?.(currentSortField.value || null, currentSortOrder.value)
+  return true
+}
+
+function buildSortParams() {
+  if (!String(currentSortField.value || '').trim()) {
+    return {}
+  }
+  return {
+    sortType: currentSortField.value,
+    sortOrder: currentSortOrder.value,
+  }
 }
 
 // Computed
@@ -307,13 +372,16 @@ const {
 async function applyFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
   const shouldClosePanel = options.closePanel !== false
+  const shouldPersistState = options.persist !== false
   if (isVideoMode.value) {
     await videoStore.filterMulti(
       includeTags.value,
       excludeTags.value,
       selectedAuthors.value,
       selectedListIds.value,
-      minScore.value
+      minScore.value,
+      currentSortField.value || null,
+      currentSortOrder.value
     )
   } else {
     await comicStore.filterMulti(
@@ -322,13 +390,17 @@ async function applyFilters(options = {}) {
       selectedAuthors.value,
       selectedListIds.value,
       minScore.value,
-      unreadOnly.value
+      unreadOnly.value,
+      currentSortField.value || null,
+      currentSortOrder.value
     )
   }
   if (shouldResetPage) {
     goFirst()
   }
-  saveFilterState()
+  if (shouldPersistState) {
+    await persistViewState()
+  }
   if (shouldClosePanel) {
     showFilterPanel.value = false
   }
@@ -366,23 +438,23 @@ const batchTaskActions = computed(() => {
   }))
 })
 
-const sortOptions = computed(() => [
-  { text: '最近导入', value: 'create_time' },
-  { text: '评分最高', value: 'score' },
-  { text: '最新发布', value: 'date' }
-])
+const sortOptions = computed(() => buildSortOptions(isVideoMode.value))
 
 async function onSortConfirm({ selectedOptions }) {
   showSortPanel.value = false
   try {
-    const selectedValue = selectedOptions?.[0]?.value
-    if (!selectedValue) return
-    
-    if (isVideoMode.value) {
-      await videoStore.sortVideos(selectedValue)
+    const selectedValue = selectedOptions?.[0]?.value || 'default'
+    const nextSort = decodeSortSelection(selectedValue)
+    currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
+    currentSortOrder.value = nextSort.sortOrder
+    currentStore.value.setSortState?.(currentSortField.value || null, currentSortOrder.value)
+
+    if (hasActiveFilterState()) {
+      await applyFilters({ persist: false })
     } else {
-      await comicStore.sortComics(selectedValue)
+      await loadData(true)
     }
+    await persistViewState()
     goFirst()
   } catch (e) {
     console.error('排序失败:', e)
@@ -656,7 +728,7 @@ function clearAllFilters() {
   unreadOnly.value = false
   currentStore.value.clearFilter()
   goFirst()
-  saveFilterState()
+  persistViewState()
 }
 
 async function removeFilter(filter) {
@@ -683,10 +755,15 @@ async function loadData(force = false) {
   }
   if (isVideoMode.value) {
     if (force || tagStore.videoTags.length === 0) await tagStore.fetchTags('video', force)
-    await videoStore.fetchList()
+    const params = {}
+    if (currentSortField.value) {
+      params.sort_type = currentSortField.value
+      params.sort_order = currentSortOrder.value
+    }
+    await videoStore.fetchList(params)
   } else {
     if (force || tagStore.tags.length === 0) await tagStore.fetchTags('comic', force)
-    await comicStore.fetchComics(force)
+    await comicStore.fetchComics(force, buildSortParams())
   }
 }
 
@@ -701,12 +778,7 @@ function hasActiveFilterState() {
 
 async function initializePage(force = false) {
   const currentVersion = ++initVersion.value
-  await loadData(force)
-  if (currentVersion !== initVersion.value) {
-    return
-  }
-
-  const restored = restoreFilterState()
+  await restoreViewState()
   if (route.query.author) {
     selectedAuthors.value = [route.query.author]
   }
@@ -714,8 +786,13 @@ async function initializePage(force = false) {
     includeTags.value = [route.query.tagId]
   }
 
-  if (restored || hasActiveFilterState()) {
-    await applyFilters({ resetPage: false, closePanel: false })
+  await loadData(force)
+  if (currentVersion !== initVersion.value) {
+    return
+  }
+
+  if (hasActiveFilterState()) {
+    await applyFilters({ resetPage: false, closePanel: false, persist: false })
   } else {
     currentStore.value.clearFilter()
   }

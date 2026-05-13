@@ -38,10 +38,11 @@ def get_recommendation_list():
     """获取推荐漫画列表 - 支持排序和评分筛选"""
     try:
         sort_type = request.args.get('sort_type')
+        sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
         max_score = request.args.get('max_score', type=float)
         
-        result = recommendation_service.get_recommendation_list(sort_type, min_score, max_score)
+        result = recommendation_service.get_recommendation_list(sort_type, sort_order, min_score, max_score)
         if result.success:
             return success_response(result.data)
         else:

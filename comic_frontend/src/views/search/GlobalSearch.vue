@@ -124,13 +124,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useImportTaskStore } from '@/stores'
-import { videoApi } from '@/api'
+import { uiStateApi, videoApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import {
+  buildUiStateScope,
   buildDisplayCoverStyle,
   fetchProtocolPlatformOptions,
+  getOrCreateUiStateClientId,
   getCoverUrl,
   isAllSelected,
   resolveDisplayCoverFit,
@@ -160,6 +162,7 @@ const currentPage = ref(0) // offset for some APIs
 const selectedIds = ref([])
 const showImportSheet = ref(false)
 const paginationInfo = ref(null) // 分页信息：{ platform, page, total_pages, has_next }
+const uiStateClientId = getOrCreateUiStateClientId()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -171,6 +174,41 @@ const emptyDescription = computed(() => {
   if (!keyword.value) return '请输入关键词开始搜索'
   return '尝试切换其他来源看看？'
 })
+
+function getUiStateScope() {
+  return buildUiStateScope('global_search', isVideoMode.value)
+}
+
+function buildPersistedStatePayload() {
+  const normalizedKeyword = String(keyword.value || '').trim()
+  if (!normalizedKeyword && activeTab.value === 'local') {
+    return null
+  }
+  return {
+    keyword: normalizedKeyword,
+    activeTab: String(activeTab.value || 'local').trim() || 'local'
+  }
+}
+
+async function persistViewState() {
+  const payload = buildPersistedStatePayload()
+  if (!payload) {
+    await uiStateApi.clear(getUiStateScope(), uiStateClientId)
+    return
+  }
+  await uiStateApi.save(getUiStateScope(), payload, uiStateClientId)
+}
+
+async function restoreViewState() {
+  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
+  const state = response?.data?.state
+  if (!state || typeof state !== 'object') {
+    return false
+  }
+  keyword.value = String(state.keyword || '').trim()
+  activeTab.value = String(state.activeTab || 'local').trim() || 'local'
+  return Boolean(keyword.value)
+}
 
 const normalizedResults = computed(() => {
   return results.value.map(item => {
@@ -323,7 +361,13 @@ async function confirmImport(target) {
 }
 
 async function handleSearch() {
-  if (!keyword.value.trim()) return
+  if (!keyword.value.trim()) {
+    results.value = []
+    hasMore.value = false
+    paginationInfo.value = null
+    await persistViewState()
+    return
+  }
   
   loading.value = true
   results.value = []
@@ -345,6 +389,7 @@ async function handleSearch() {
   } finally {
     loading.value = false
   }
+  await persistViewState()
 }
 
 async function searchLocal() {
@@ -462,13 +507,17 @@ async function toggleFavorite(item) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  let shouldSearch = await restoreViewState()
   if (route.query.keyword) {
     keyword.value = route.query.keyword
-    handleSearch()
+    shouldSearch = true
   }
   if (route.query.source === 'preview') {
     activeTab.value = 'preview'
+  }
+  if (shouldSearch && keyword.value.trim()) {
+    await handleSearch()
   }
 })
 </script>
