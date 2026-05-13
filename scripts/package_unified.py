@@ -2364,21 +2364,6 @@ def package_android(
     logs: List[str] = []
     for idx, cmd in enumerate(commands, start=1):
         cwd = workspace_dir
-        if embed_backend and idx == 4:
-            try:
-                inject_android_embedded_backend(workspace_dir, packager_cfg, app_version)
-                logs.append("$ [internal] inject android embedded backend\n[ok] chaquopy + backend launcher injected\n")
-            except Exception as ex:
-                log_path = target_out_dir / "android_build.log"
-                logs.append(f"$ [internal] inject android embedded backend\n[error] {ex}\n")
-                write_text(log_path, "\n".join(logs))
-                return PackageResult(
-                    target=target,
-                    status="failed",
-                    message=f"android embedded backend injection failed before step {idx}; see {log_path}",
-                    output_dir=str(target_out_dir),
-                    command=["inject_android_embedded_backend"],
-                )
         if idx == len(commands):
             cwd = workspace_dir / "android"
             if not cwd.exists():
@@ -2429,6 +2414,21 @@ def package_android(
                     message=f"android launcher icon apply failed after step {idx}; see {log_path}",
                     output_dir=str(target_out_dir),
                     command=["apply_android_launcher_icon"],
+                )
+        if embed_backend and idx == 4:
+            try:
+                inject_android_embedded_backend(workspace_dir, packager_cfg, app_version)
+                logs.append("$ [internal] inject android embedded backend\n[ok] chaquopy + backend launcher injected after cap sync\n")
+            except Exception as ex:
+                log_path = target_out_dir / "android_build.log"
+                logs.append(f"$ [internal] inject android embedded backend\n[error] {ex}\n")
+                write_text(log_path, "\n".join(logs))
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android embedded backend injection failed after step {idx}; see {log_path}",
+                    output_dir=str(target_out_dir),
+                    command=["inject_android_embedded_backend"],
                 )
 
     expected_apk = workspace_dir / apk_relative_path
