@@ -1116,7 +1116,8 @@ public class MainActivity extends BridgeActivity {{
 
     py_bootstrap = py_dir / "ultimate_android_backend.py"
     bootstrap_build_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    py_source = """import os
+    py_source = """import json
+import os
 import sys
 import platform
 import shutil
@@ -1141,6 +1142,59 @@ def _write_boot_log(files_dir, message):
             fp.write(f"{datetime.utcnow().isoformat()}Z {message}\\n")
     except Exception:
         pass
+
+
+def _extract_snapshot_templates(raw_values):
+    templates = []
+    for item in (raw_values or []):
+        if isinstance(item, dict):
+            value = str(item.get("path") or "").strip()
+        else:
+            value = str(item or "").strip()
+        if value:
+            templates.append(value)
+    return templates
+
+
+def _log_protocol_snapshot_summary(files_dir, snapshot_path):
+    try:
+        if not snapshot_path or not os.path.isfile(snapshot_path):
+            _write_boot_log(files_dir, f"protocol snapshot missing path={snapshot_path!r}")
+            return
+
+        with open(snapshot_path, "r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+
+        manifests = payload.get("manifests") or payload.get("plugins") or []
+        plugin_ids = []
+        _write_boot_log(
+            files_dir,
+            f"protocol snapshot found path={snapshot_path!r} manifest_count={len(manifests)}",
+        )
+        for item in manifests:
+            plugin = dict(item.get("plugin") or {})
+            identity = dict(item.get("identity") or {})
+            storage = dict(item.get("storage") or {})
+            comic_dir = dict(storage.get("comic_dir") or {})
+            host_resolution = dict(storage.get("host_resolution") or {})
+            plugin_id = str(plugin.get("id") or "").strip()
+            if plugin_id:
+                plugin_ids.append(plugin_id)
+            _write_boot_log(
+                files_dir,
+                "protocol snapshot manifest "
+                + (
+                    f"plugin_id={plugin_id!r} "
+                    f"host_prefix={str(identity.get('host_id_prefix') or '').strip()!r} "
+                    f"media_types={item.get('media_types')!r} "
+                    f"comic_dir_template={str(comic_dir.get('template') or '').strip()!r} "
+                    f"comic_dir_fallbacks={_extract_snapshot_templates(comic_dir.get('fallback_templates') or [])!r} "
+                    f"host_resolution_keys={list(host_resolution.keys())!r}"
+                ),
+            )
+        _write_boot_log(files_dir, f"protocol snapshot plugin_ids={plugin_ids!r}")
+    except Exception as ex:
+        _write_boot_log(files_dir, f"protocol snapshot inspect failed: {ex!r}")
 
 
 def _detect_android_abi():
@@ -1231,6 +1285,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     snapshot_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "protocol", "__SNAPSHOT_FILENAME__")
     if os.path.isfile(snapshot_path):
         os.environ["BACKEND_PROTOCOL_SNAPSHOT_PATH"] = snapshot_path
+    _log_protocol_snapshot_summary(files_dir, snapshot_path)
     archive_tool = _prepare_android_archive_runtime(files_dir, internal_exec_dir=internal_exec_dir)
     if archive_tool:
         os.environ["RAR_BACKEND_MODE"] = "7z"
@@ -1817,6 +1872,44 @@ def _derive_snapshot_plugin_defaults(plugin_id: str, payload: Dict[str, Any]) ->
     }
 
 
+def _stringify_snapshot_template_list(raw_values: Any) -> List[str]:
+    templates: List[str] = []
+    for item in (raw_values or []):
+        if isinstance(item, dict):
+            value = str(item.get("path") or "").strip()
+        else:
+            value = str(item or "").strip()
+        if value:
+            templates.append(value)
+    return templates
+
+
+def _format_mobile_snapshot_manifest_debug(payload: Dict[str, Any]) -> str:
+    plugin = dict(payload.get("plugin") or {})
+    identity = dict(payload.get("identity") or {})
+    storage = dict(payload.get("storage") or {})
+    media_types = [str(item or "").strip() for item in (payload.get("media_types") or []) if str(item or "").strip()]
+    comic_dir = dict(storage.get("comic_dir") or {})
+    host_resolution = dict(storage.get("host_resolution") or {})
+    comic_local_dir = dict(host_resolution.get("comic_local_dir") or {})
+    comic_preview_cache_dir = dict(host_resolution.get("comic_preview_cache_dir") or {})
+
+    comic_dir_template = str(comic_dir.get("template") or "").strip()
+    comic_dir_fallbacks = _stringify_snapshot_template_list(comic_dir.get("fallback_templates") or [])
+    local_templates = _stringify_snapshot_template_list(comic_local_dir.get("path_templates") or [])
+    preview_templates = _stringify_snapshot_template_list(comic_preview_cache_dir.get("path_templates") or [])
+
+    return (
+        f"plugin_id={str(plugin.get('id') or '').strip()!r} "
+        f"media_types={media_types!r} "
+        f"host_prefix={str(identity.get('host_id_prefix') or '').strip()!r} "
+        f"comic_dir_template={comic_dir_template!r} "
+        f"comic_dir_fallbacks={comic_dir_fallbacks!r} "
+        f"comic_local_templates={local_templates!r} "
+        f"comic_preview_templates={preview_templates!r}"
+    )
+
+
 def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
     manifest_payloads = _scan_plugin_payloads(third_party_root, "ultimate-plugin.json")
     overlay_payloads = _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME)
@@ -1848,6 +1941,10 @@ def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
             if str(item or "").strip()
         ]
         manifests.append(merged_payload)
+
+    print(f"[mobile-snapshot] source={third_party_root} manifests={len(manifests)}")
+    for manifest_payload in manifests:
+        print(f"[mobile-snapshot] {_format_mobile_snapshot_manifest_debug(manifest_payload)}")
 
     return {
         "version": 1,

@@ -106,21 +106,26 @@ class RecommendationCacheManager:
         if host_target_dir:
             return host_target_dir
 
-        if stored_abs:
-            return stored_abs
-
         platform_key, original_id, manifest = split_prefixed_id(comic_id, media_type="comic")
-        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
+        if manifest is None:
+            error_logger.warning(
+                f"无法从协议快照解析推荐缓存目录: comic_id={comic_id}, "
+                f"reason=missing_manifest_or_snapshot, stored_relative={recommendation.get('storage_path_relative', '')!r}"
+            )
+            return ""
         if not original_id:
-            error_logger.warning(f"未知的平台类型，漫画ID: {comic_id}，将使用缓存根目录兜底")
-            return os.path.join(self.cache_dir, str(comic_id or "").strip())
+            error_logger.warning(
+                f"无法从协议快照解析推荐缓存目录: comic_id={comic_id}, "
+                f"reason=missing_original_id, plugin_id={getattr(manifest, 'plugin_id', '')!r}"
+            )
+            return ""
 
+        host_prefix = resolve_manifest_host_prefix(manifest, fallback=platform_key)
         base_dir = build_platform_root_dir(self.cache_dir, manifest=manifest, platform_name=platform_key)
+        author = recommendation.get("author") or ""
+        title = recommendation.get("title") or ""
 
         try:
-            author = recommendation.get("author") or "unknown"
-            title = recommendation.get("title") or f"漫画_{original_id}"
-
             from protocol.platform_service import get_platform_service
 
             comic_dir = get_platform_service().get_comic_dir(
@@ -133,9 +138,14 @@ class RecommendationCacheManager:
             if comic_dir:
                 return comic_dir
         except Exception as e:
-            error_logger.error(f"解析协议推荐缓存目录失败，使用默认目录结构: comic_id={comic_id}, error={e}")
+            error_logger.error(f"解析协议推荐缓存目录失败: comic_id={comic_id}, error={e}")
 
-        return os.path.join(base_dir, original_id)
+        error_logger.warning(
+            f"推荐缓存目录未解析成功，拒绝生成假路径: comic_id={comic_id}, "
+            f"plugin_id={getattr(manifest, 'plugin_id', '')!r}, platform={platform_key!r}, "
+            f"author={author!r}, title={title!r}, cache_root={base_dir!r}"
+        )
+        return ""
     
     def _load_cache_index(self):
         """加载缓存索引"""

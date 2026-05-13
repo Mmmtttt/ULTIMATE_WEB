@@ -355,6 +355,127 @@ def test_recommendation_cache_manager_reads_pk_cached_page_from_protocol_legacy_
     assert image_path == str(legacy_dir / "001.png")
 
 
+def test_infer_existing_host_comic_dir_for_pk_works_from_snapshot_only_registry(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "mobile_protocol_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "manifests": [
+                    {
+                        "protocol_version": "2.0",
+                        "plugin": {
+                            "id": "comic.picacomic",
+                            "name": "Picacomic",
+                            "version": "0.0.0-snapshot",
+                            "config_key": "picacomic",
+                            "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
+                        },
+                        "media_types": ["comic"],
+                        "identity": {
+                            "platform_label": "PK",
+                            "host_id_prefix": "PK",
+                        },
+                        "storage": {
+                            "comic_dir": {
+                                "template": "{author}/{title}",
+                                "fallback_templates": [
+                                    "comics/{author}/{title}",
+                                    "{album_id}",
+                                ],
+                            }
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("BACKEND_PROTOCOL_SNAPSHOT_PATH", str(snapshot_path))
+    registry = registry_module.PluginRegistry(search_root=str(tmp_path / "missing_third_party"))
+    gateway = gateway_module.ProtocolGateway(registry=registry)
+    monkeypatch.setattr(registry_module, "_registry_singleton", registry)
+    monkeypatch.setattr(gateway_module, "_gateway_singleton", gateway)
+    registry.refresh()
+
+    comic_root = tmp_path / "comic"
+    local_root = comic_root / "local"
+    new_dir = comic_root / "PK" / "作者A" / "作品A"
+    new_dir.mkdir(parents=True, exist_ok=True)
+    legacy_dir = comic_root / "PK" / "comics" / "作者B" / "作品B"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    resolved_new = infer_existing_host_comic_dir(
+        "PKnew001",
+        {"author": "作者A", "title": "作品A"},
+        comic_root=str(comic_root),
+        local_root=str(local_root),
+    )
+    resolved_legacy = infer_existing_host_comic_dir(
+        "PKlegacy001",
+        {"author": "作者B", "title": "作品B"},
+        comic_root=str(comic_root),
+        local_root=str(local_root),
+    )
+
+    assert resolved_new == str(new_dir)
+    assert resolved_legacy == str(legacy_dir)
+
+
+def test_recommendation_cache_manager_does_not_fabricate_album_id_cache_dir_without_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv("BACKEND_PROTOCOL_SNAPSHOT_PATH", raising=False)
+    registry = registry_module.PluginRegistry(search_root=str(tmp_path / "missing_third_party"))
+    gateway = gateway_module.ProtocolGateway(registry=registry)
+    monkeypatch.setattr(registry_module, "_registry_singleton", registry)
+    monkeypatch.setattr(gateway_module, "_gateway_singleton", gateway)
+    registry.refresh()
+
+    data_dir = tmp_path / "data"
+    meta_dir = data_dir / "meta_data"
+    cache_root = data_dir / "recommendation_cache" / "comic"
+    recommendations_json = meta_dir / "recommendations_database.json"
+    _write_json(
+        recommendations_json,
+        {
+            "recommendations": [
+                {
+                    "id": "PKmissing0001",
+                    "author": "缺失作者",
+                    "title": "缺失作品",
+                    "storage_path_relative": "",
+                    "storage_path_kind": "",
+                }
+            ]
+        },
+    )
+
+    monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(
+        recommendation_cache_manager_module,
+        "RECOMMENDATION_JSON_FILE",
+        str(recommendations_json),
+    )
+    monkeypatch.setattr(
+        recommendation_cache_manager_module.RecommendationCacheManager,
+        "_instance",
+        None,
+    )
+    manager = recommendation_cache_manager_module.RecommendationCacheManager(
+        cache_dir=str(cache_root),
+        cache_index_file=str(meta_dir / "recommendation_cache_index.json"),
+    )
+
+    resolved = manager._get_comic_cache_dir("PKmissing0001")
+
+    assert resolved == ""
+
+
 def test_file_parser_ignores_invalid_relative_path_and_falls_back_to_protocol_template(tmp_path, monkeypatch):
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
     comic_root = tmp_path / "comic"

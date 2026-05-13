@@ -49,6 +49,15 @@ def test_build_mobile_protocol_snapshot_merges_manifest_and_overlay_and_keeps_ov
                     "config_key": "demo_snapshot",
                 },
                 "media_types": ["video"],
+                "storage": {
+                    "comic_dir": {
+                        "template": "{author}/{title}",
+                        "fallback_templates": [
+                            "comics/{author}/{title}",
+                            "{album_id}",
+                        ],
+                    }
+                },
             },
         )
         _write_json(
@@ -100,6 +109,11 @@ def test_build_mobile_protocol_snapshot_merges_manifest_and_overlay_and_keeps_ov
 
         assert merged_manifest["plugin"]["entrypoint"] == package_unified.SNAPSHOT_PROVIDER_ENTRYPOINT
         assert merged_manifest["identity"]["host_id_prefix"] == "DEMO"
+        assert (((merged_manifest.get("storage") or {}).get("comic_dir") or {}).get("template")) == "{author}/{title}"
+        assert (
+            (((merged_manifest.get("storage") or {}).get("comic_dir") or {}).get("fallback_templates") or [])
+            == ["comics/{author}/{title}", "{album_id}"]
+        )
         assert (
             (((merged_manifest.get("presentation") or {}).get("media_card") or {}).get("cover") or {}).get("mobile_aspect_ratio")
             == "3 / 2"
