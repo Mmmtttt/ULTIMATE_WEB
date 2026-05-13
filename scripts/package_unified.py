@@ -1156,10 +1156,37 @@ def _extract_snapshot_templates(raw_values):
     return templates
 
 
+def _discover_snapshot_candidates(module_dir, snapshot_filename):
+    matches = []
+    try:
+        for root, _dirs, files in os.walk(module_dir):
+            if snapshot_filename in files:
+                matches.append(os.path.join(root, snapshot_filename))
+                if len(matches) >= 10:
+                    break
+    except Exception:
+        pass
+    return matches
+
+
 def _log_protocol_snapshot_summary(files_dir, snapshot_path):
     try:
         if not snapshot_path or not os.path.isfile(snapshot_path):
-            _write_boot_log(files_dir, f"protocol snapshot missing path={snapshot_path!r}")
+            module_dir = os.path.abspath(os.path.dirname(__file__))
+            protocol_dir = os.path.join(module_dir, "protocol")
+            protocol_entries = []
+            if os.path.isdir(protocol_dir):
+                try:
+                    protocol_entries = sorted(os.listdir(protocol_dir))[:40]
+                except Exception as list_ex:
+                    protocol_entries = [f"<list_failed:{list_ex!r}>"]
+            discovered = _discover_snapshot_candidates(module_dir, "__SNAPSHOT_FILENAME__")
+            _write_boot_log(
+                files_dir,
+                f"protocol snapshot missing path={snapshot_path!r} "
+                f"module_dir={module_dir!r} protocol_dir_exists={os.path.isdir(protocol_dir)!r} "
+                f"protocol_entries={protocol_entries!r} discovered={discovered!r}",
+            )
             return
 
         with open(snapshot_path, "r", encoding="utf-8") as fp:
@@ -1910,6 +1937,53 @@ def _format_mobile_snapshot_manifest_debug(payload: Dict[str, Any]) -> str:
     )
 
 
+def summarize_mobile_protocol_snapshot_file(snapshot_path: Path) -> str:
+    try:
+        if not snapshot_path.exists():
+            return f"missing path={snapshot_path}"
+        payload = load_json(snapshot_path)
+        manifests = payload.get("manifests") or payload.get("plugins") or []
+        plugin_ids = []
+        host_prefixes = []
+        for item in manifests:
+            plugin = dict(item.get("plugin") or {})
+            identity = dict(item.get("identity") or {})
+            plugin_id = str(plugin.get("id") or "").strip()
+            host_prefix = str(identity.get("host_id_prefix") or "").strip()
+            if plugin_id:
+                plugin_ids.append(plugin_id)
+            if host_prefix:
+                host_prefixes.append(host_prefix)
+        return (
+            f"exists path={snapshot_path} size={snapshot_path.stat().st_size} "
+            f"manifest_count={len(manifests)} plugin_ids={plugin_ids!r} host_prefixes={host_prefixes!r}"
+        )
+    except Exception as exc:
+        return f"inspect_failed path={snapshot_path} error={exc!r}"
+
+
+def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
+    try:
+        if not apk_path.exists():
+            return f"apk_missing path={apk_path}"
+        matches: List[str] = []
+        protocol_matches: List[str] = []
+        with zipfile.ZipFile(apk_path, "r") as archive:
+            names = archive.namelist()
+            for name in names:
+                normalized = str(name or "").replace("\\", "/")
+                if normalized.endswith(f"/{MOBILE_PROTOCOL_SNAPSHOT_FILENAME}") or normalized.endswith(MOBILE_PROTOCOL_SNAPSHOT_FILENAME):
+                    matches.append(normalized)
+                if "/protocol/" in normalized and normalized.endswith(".json"):
+                    protocol_matches.append(normalized)
+        return (
+            f"apk_path={apk_path} snapshot_matches={matches!r} "
+            f"protocol_json_entries={protocol_matches[:20]!r}"
+        )
+    except Exception as exc:
+        return f"apk_inspect_failed path={apk_path} error={exc!r}"
+
+
 def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
     manifest_payloads = _scan_plugin_payloads(third_party_root, "ultimate-plugin.json")
     overlay_payloads = _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME)
@@ -2419,6 +2493,21 @@ def package_android(
             try:
                 inject_android_embedded_backend(workspace_dir, packager_cfg, app_version)
                 logs.append("$ [internal] inject android embedded backend\n[ok] chaquopy + backend launcher injected after cap sync\n")
+                snapshot_source_path = (
+                    workspace_dir
+                    / "android"
+                    / "app"
+                    / "src"
+                    / "main"
+                    / "python"
+                    / "protocol"
+                    / MOBILE_PROTOCOL_SNAPSHOT_FILENAME
+                )
+                logs.append(
+                    "$ [internal] inspect android snapshot source\n"
+                    + summarize_mobile_protocol_snapshot_file(snapshot_source_path)
+                    + "\n"
+                )
             except Exception as ex:
                 log_path = target_out_dir / "android_build.log"
                 logs.append(f"$ [internal] inject android embedded backend\n[error] {ex}\n")
@@ -2452,6 +2541,11 @@ def package_android(
     apk_out_dir.mkdir(parents=True, exist_ok=True)
     apk_target = apk_out_dir / expected_apk.name
     shutil.copy2(expected_apk, apk_target)
+    logs.append(
+        "$ [internal] inspect android apk snapshot\n"
+        + inspect_android_apk_for_snapshot(apk_target)
+        + "\n"
+    )
 
     log_path = target_out_dir / "android_build.log"
     write_text(log_path, "\n".join(logs))
