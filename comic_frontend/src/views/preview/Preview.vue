@@ -698,7 +698,7 @@ onMounted(async () => {
   }
 
   .toolbar {
-    top: 8px;
+    top: calc(var(--mobile-header-offset, 0px) + 8px);
     padding: 8px;
     gap: 8px;
   }

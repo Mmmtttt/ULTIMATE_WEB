@@ -438,6 +438,7 @@ onMounted(() => {
 
 @media (max-width: 767px) {
   .header-actions {
+    top: calc(var(--mobile-header-offset, 0px) + 8px);
     margin: 8px 8px 0;
     padding: 10px 12px;
   }

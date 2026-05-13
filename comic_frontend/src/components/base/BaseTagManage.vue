@@ -15,10 +15,12 @@
           <van-button type="primary" @click="showAddPopup = true">添加标签</van-button>
         </div>
         
-        <div v-else class="tag-list">
-          <van-swipe-cell v-for="tag in getTagList(tab.key)" :key="tag.id">
-            <van-cell 
-              :title="tag.name" 
+        <div v-else class="tag-list" :class="{ 'tag-list-desktop': isDesktop }">
+          <template v-for="tag in getTagList(tab.key)" :key="tag.id">
+            <van-cell
+              v-if="isDesktop"
+              class="tag-cell-desktop"
+              :title="tag.name"
               :label="getTagLabel(tag, tab.key)"
               is-link
               @click="goToTagDetail(tag.id, tab.key)"
@@ -26,12 +28,52 @@
               <template #icon>
                 <van-icon name="label-o" class="tag-icon" />
               </template>
+              <template #right-icon>
+                <div class="desktop-tag-actions" @click.stop>
+                  <van-button
+                    size="small"
+                    plain
+                    round
+                    type="primary"
+                    class="tag-action-btn edit-btn"
+                    data-testid="tag-edit-inline"
+                    @click.stop="openEditPopup(tag)"
+                  >
+                    编辑
+                  </van-button>
+                  <van-button
+                    size="small"
+                    plain
+                    round
+                    type="danger"
+                    class="tag-action-btn delete-btn"
+                    data-testid="tag-delete-inline"
+                    @click.stop="confirmDelete(tag)"
+                  >
+                    删除
+                  </van-button>
+                  <van-icon name="arrow" class="desktop-tag-arrow" />
+                </div>
+              </template>
             </van-cell>
-            <template #right>
-              <van-button square type="primary" text="编辑" class="swipe-btn" @click="openEditPopup(tag)" />
-              <van-button square type="danger" text="删除" class="swipe-btn" @click="confirmDelete(tag)" />
-            </template>
-          </van-swipe-cell>
+
+            <van-swipe-cell v-else>
+              <van-cell 
+                :title="tag.name" 
+                :label="getTagLabel(tag, tab.key)"
+                is-link
+                @click="goToTagDetail(tag.id, tab.key)"
+              >
+                <template #icon>
+                  <van-icon name="label-o" class="tag-icon" />
+                </template>
+              </van-cell>
+              <template #right>
+                <van-button square type="primary" text="编辑" class="swipe-btn edit-btn" @click="openEditPopup(tag)" />
+                <van-button square type="danger" text="删除" class="swipe-btn delete-btn" @click="confirmDelete(tag)" />
+              </template>
+            </van-swipe-cell>
+          </template>
         </div>
       </van-tab>
       
@@ -195,6 +237,7 @@ import { useImportTaskStore, useRuntimeStore } from '@/stores'
 import { buildBatchTaskActions, getCoverUrl, isAllSelected, keepSelectionWithinItems, toggleSelection } from '@/utils'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { useClientPagination } from '@/composables/useClientPagination'
+import { useDevice } from '@/composables/useDevice'
 
 const props = defineProps({
   contentType: {
@@ -221,6 +264,7 @@ const emit = defineEmits(['tab-change'])
 const router = useRouter()
 const importTaskStore = useImportTaskStore()
 const runtimeStore = useRuntimeStore()
+const { isDesktop } = useDevice()
 
 const active = ref(1)
 const activeTab = ref(0)
@@ -584,6 +628,11 @@ watch(contentList, (nextItems) => {
   margin-top: 10px;
 }
 
+.tag-list-desktop {
+  display: grid;
+  gap: 12px;
+}
+
 .tag-icon {
   margin-right: 8px;
   color: #1989fa;
@@ -591,6 +640,43 @@ watch(contentList, (nextItems) => {
 
 .swipe-btn {
   height: 100%;
+}
+
+.tag-cell-desktop {
+  border-radius: 16px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  box-shadow: 0 10px 24px rgba(12, 24, 43, 0.08);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.tag-cell-desktop:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 116, 255, 0.26);
+  box-shadow: 0 16px 32px rgba(12, 24, 43, 0.12);
+}
+
+.tag-cell-desktop :deep(.van-cell__right-icon) {
+  display: flex;
+  align-items: center;
+}
+
+.desktop-tag-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-action-btn {
+  min-width: 68px;
+}
+
+.desktop-tag-arrow {
+  color: var(--text-tertiary);
+  font-size: 15px;
 }
 
 .empty {
@@ -723,6 +809,12 @@ watch(contentList, (nextItems) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+@media (max-width: 767px) {
+  .tag-list {
+    margin-top: 8px;
+  }
 }
 </style>
 

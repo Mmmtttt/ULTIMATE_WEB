@@ -100,6 +100,9 @@ const pageTitle = computed(() => {
 
 <style scoped>
 .main-layout {
+  --mobile-safe-top: 0px;
+  --mobile-header-height: 0px;
+  --mobile-header-offset: 0px;
   min-height: 100vh;
   background: transparent;
   display: flex;
@@ -212,15 +215,16 @@ const pageTitle = computed(() => {
   border-bottom: 1px solid var(--border-soft);
   z-index: 99;
   box-shadow: var(--layout-header-shadow);
-  height: 58px;
+  min-height: var(--mobile-header-offset);
+  padding-top: var(--mobile-safe-top);
 }
 
 .header-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
-  height: 100%;
+  padding: 0 calc(14px + env(safe-area-inset-right, 0px)) 0 calc(14px + env(safe-area-inset-left, 0px));
+  min-height: var(--mobile-header-height);
 }
 
 .page-title {
@@ -256,11 +260,11 @@ const pageTitle = computed(() => {
 }
 
 .with-header {
-  padding-top: 58px;
+  padding-top: var(--mobile-header-offset);
 }
 
 .with-tabbar {
-  padding-bottom: 54px;
+  padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
 }
 
 .fade-enter-active,
@@ -288,6 +292,9 @@ const pageTitle = computed(() => {
 
 @media (max-width: 1023px) {
   .main-layout {
+    --mobile-safe-top: env(safe-area-inset-top, 0px);
+    --mobile-header-height: 58px;
+    --mobile-header-offset: calc(var(--mobile-header-height) + var(--mobile-safe-top));
     display: block;
   }
 
