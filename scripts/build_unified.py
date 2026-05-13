@@ -45,9 +45,10 @@ BASE_BACKEND_EXCLUDE_FILES = {
     ".DS_Store",
 }
 
-ANDROID_BACKEND_EXCLUDE_DIRS = {
-    "third_party",
-}
+# Android staging keeps `third_party` as build-only input so the packaging step
+# can compile a mobile protocol snapshot from real plugin manifests. The final
+# APK still excludes plugin code when Chaquopy source is assembled.
+ANDROID_BACKEND_EXCLUDE_DIRS: Set[str] = set()
 ANDROID_BACKEND_EXCLUDE_FILES = {
     "third_party_config.json",
 }

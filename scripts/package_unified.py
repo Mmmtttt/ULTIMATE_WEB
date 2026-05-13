@@ -1104,6 +1104,12 @@ public class MainActivity extends BridgeActivity {{
     snapshot_payload = build_mobile_protocol_snapshot(third_party_root)
     snapshot_path = protocol_dir / MOBILE_PROTOCOL_SNAPSHOT_FILENAME
     write_text(snapshot_path, json.dumps(snapshot_payload, ensure_ascii=False, indent=2) + "\n")
+    embedded_snapshot_json = json.dumps(
+        snapshot_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
     archive_copy_status = copy_android_archive_tools_to_python_source(py_dir, packager_cfg)
     copied_abis = list(archive_copy_status.get("copied") or [])
@@ -1131,6 +1137,7 @@ from datetime import datetime
 _started = False
 _lock = threading.Lock()
 BOOTSTRAP_BUILD_ID = "__BOOTSTRAP_BUILD_ID__"
+EMBEDDED_PROTOCOL_SNAPSHOT_JSON = __EMBEDDED_SNAPSHOT_JSON__
 
 
 def _write_boot_log(files_dir, message):
@@ -1169,6 +1176,53 @@ def _discover_snapshot_candidates(module_dir, snapshot_filename):
     return matches
 
 
+def _load_embedded_protocol_snapshot_payload():
+    try:
+        raw = str(EMBEDDED_PROTOCOL_SNAPSHOT_JSON or "").strip()
+        if not raw:
+            return {}
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _materialize_protocol_snapshot(files_dir, internal_exec_dir=""):
+    try:
+        payload = _load_embedded_protocol_snapshot_payload()
+        manifests = payload.get("manifests") or payload.get("plugins") or []
+        target_root = (
+            str(internal_exec_dir or "").strip()
+            or str(files_dir or "").strip()
+            or os.path.abspath(os.path.dirname(__file__))
+        )
+        protocol_dir = os.path.join(target_root, "protocol_runtime")
+        os.makedirs(protocol_dir, exist_ok=True)
+        snapshot_path = os.path.join(protocol_dir, "__SNAPSHOT_FILENAME__")
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\\n"
+        should_write = True
+        if os.path.isfile(snapshot_path):
+            try:
+                with open(snapshot_path, "r", encoding="utf-8") as existing_fp:
+                    should_write = existing_fp.read() != serialized
+            except Exception:
+                should_write = True
+        if should_write:
+            with open(snapshot_path, "w", encoding="utf-8") as fp:
+                fp.write(serialized)
+        _write_boot_log(
+            files_dir,
+            f"protocol snapshot materialized path={snapshot_path!r} manifest_count={len(manifests)} "
+            f"target_root={target_root!r}",
+        )
+        return snapshot_path
+    except Exception as ex:
+        _write_boot_log(files_dir, f"protocol snapshot materialize failed: {ex!r}")
+        return ""
+
+
 def _log_protocol_snapshot_summary(files_dir, snapshot_path):
     try:
         if not snapshot_path or not os.path.isfile(snapshot_path):
@@ -1185,7 +1239,8 @@ def _log_protocol_snapshot_summary(files_dir, snapshot_path):
                 files_dir,
                 f"protocol snapshot missing path={snapshot_path!r} "
                 f"module_dir={module_dir!r} protocol_dir_exists={os.path.isdir(protocol_dir)!r} "
-                f"protocol_entries={protocol_entries!r} discovered={discovered!r}",
+                f"protocol_entries={protocol_entries!r} discovered={discovered!r} "
+                f"embedded_snapshot_present={bool(str(EMBEDDED_PROTOCOL_SNAPSHOT_JSON or '').strip())!r}",
             )
             return
 
@@ -1309,7 +1364,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
-    snapshot_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "protocol", "__SNAPSHOT_FILENAME__")
+    snapshot_path = _materialize_protocol_snapshot(files_dir, internal_exec_dir=internal_exec_dir)
     if os.path.isfile(snapshot_path):
         os.environ["BACKEND_PROTOCOL_SNAPSHOT_PATH"] = snapshot_path
     _log_protocol_snapshot_summary(files_dir, snapshot_path)
@@ -1356,6 +1411,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     py_source = py_source.replace("__BOOTSTRAP_BUILD_ID__", bootstrap_build_id)
     py_source = py_source.replace("__APP_VERSION__", normalize_app_version(app_version) or DEFAULT_APP_VERSION)
     py_source = py_source.replace("__SNAPSHOT_FILENAME__", MOBILE_PROTOCOL_SNAPSHOT_FILENAME)
+    py_source = py_source.replace("__EMBEDDED_SNAPSHOT_JSON__", repr(embedded_snapshot_json))
     write_text(py_bootstrap, py_source)
 
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
@@ -1968,6 +2024,8 @@ def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
             return f"apk_missing path={apk_path}"
         matches: List[str] = []
         protocol_matches: List[str] = []
+        bootstrap_matches: List[str] = []
+        embedded_snapshot_bootstraps: List[str] = []
         with zipfile.ZipFile(apk_path, "r") as archive:
             names = archive.namelist()
             for name in names:
@@ -1976,9 +2034,19 @@ def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
                     matches.append(normalized)
                 if "/protocol/" in normalized and normalized.endswith(".json"):
                     protocol_matches.append(normalized)
+                if normalized.endswith("/ultimate_android_backend.py") or normalized.endswith("ultimate_android_backend.py"):
+                    bootstrap_matches.append(normalized)
+                    try:
+                        payload = archive.read(name).decode("utf-8", errors="replace")
+                        if "EMBEDDED_PROTOCOL_SNAPSHOT_JSON =" in payload:
+                            embedded_snapshot_bootstraps.append(normalized)
+                    except Exception:
+                        pass
         return (
             f"apk_path={apk_path} snapshot_matches={matches!r} "
-            f"protocol_json_entries={protocol_matches[:20]!r}"
+            f"protocol_json_entries={protocol_matches[:20]!r} "
+            f"bootstrap_matches={bootstrap_matches!r} "
+            f"embedded_snapshot_bootstraps={embedded_snapshot_bootstraps!r}"
         )
     except Exception as exc:
         return f"apk_inspect_failed path={apk_path} error={exc!r}"
