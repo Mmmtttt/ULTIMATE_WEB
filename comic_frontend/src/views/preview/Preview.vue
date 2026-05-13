@@ -317,7 +317,7 @@ const sortOptions = computed(() => [
 ])
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, pagedItems.value, (item) => item.id)
+  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
 })
 
 // Methods
@@ -351,7 +351,7 @@ function toggleSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, pagedItems.value, (item) => item.id)
+  toggleSelectAll(selectedIds, items.value, (item) => item.id)
 }
 
 function setViewMode(mode) {
@@ -398,7 +398,7 @@ async function batchImportToLocal() {
 
   await importTaskStore.fetchTasks()
   importTaskStore.startPolling()
-  showToast('导入任务已创建，请到“我的-导入任务”查看进度')
+  showToast('任务已创建，请到“我的-任务中心”查看进度')
 
   selectedIds.value = []
   isManageMode.value = false
@@ -565,6 +565,13 @@ watch(() => route.query.tagId, async (newTagId) => {
     await applyCurrentFilters({ resetPage: true })
   }
 })
+
+watch(
+  () => items.value.map((item) => item.id),
+  () => {
+    selectedIds.value = []
+  }
+)
 
 onMounted(async () => {
   await initializePage(false)

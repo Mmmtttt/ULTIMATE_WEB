@@ -226,11 +226,11 @@ function toggleItemSelection(tabKey, id) {
 }
 
 function isAllTabSelected(tabKey) {
-  return isAllSelected(getSelectedIds(tabKey), getPagedTrashList(tabKey), (item) => item.id)
+  return isAllSelected(getSelectedIds(tabKey), getTrashList(tabKey), (item) => item.id)
 }
 
 function toggleTabSelectAll(tabKey) {
-  const list = getPagedTrashList(tabKey)
+  const list = getTrashList(tabKey)
   if (isAllTabSelected(tabKey)) {
     selectedIds.value[tabKey] = []
     return

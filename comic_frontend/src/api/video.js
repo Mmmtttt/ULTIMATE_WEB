@@ -145,9 +145,23 @@ export const videoApi = {
     })
   },
 
+  refreshLocalMetadataBatch(videoIds) {
+    return request.post('/v1/video/local-metadata/refresh/batch', {
+      video_ids: videoIds
+    })
+  },
+
   generateLocalThumbnails(videoId) {
     return request.post('/v1/video/local-thumbnails/generate', {
       video_id: videoId
+    }, {
+      timeout: 0
+    })
+  },
+
+  generateLocalThumbnailsBatch(videoIds) {
+    return request.post('/v1/video/local-thumbnails/generate/batch', {
+      video_ids: videoIds
     }, {
       timeout: 0
     })

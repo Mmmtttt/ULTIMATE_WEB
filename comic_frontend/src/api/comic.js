@@ -243,6 +243,12 @@ export const comicApi = {
     })
   },
 
+  refreshLocalMetadataBatch: (comicIds) => {
+    return request.post('/v1/comic/local-metadata/refresh/batch', {
+      comic_ids: comicIds
+    })
+  },
+
   /**
    * 检查漫画是否有可下载更新
    * @param {string} comicId - 漫画ID

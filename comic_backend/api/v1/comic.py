@@ -1600,6 +1600,39 @@ def refresh_local_comic_metadata():
         return error_response(500, "internal server error")
 
 
+@comic_bp.route('/local-metadata/refresh/batch', methods=['POST'])
+@require_third_party(error_response)
+def refresh_local_comic_metadata_batch():
+    try:
+        data = request.json or {}
+        comic_ids = [
+            str(item or "").strip()
+            for item in (data.get('comic_ids') or [])
+            if str(item or "").strip()
+        ]
+        if not comic_ids:
+            return error_response(400, "missing parameter: comic_ids")
+
+        from infrastructure.task_manager import task_manager
+
+        task_id = task_manager.create_batch_task(
+            task_type=task_manager.TASK_TYPE_COMIC_LOCAL_METADATA_REFRESH,
+            content_type="comic",
+            item_ids=comic_ids,
+            title=f"批量补全本地漫画信息（{len(comic_ids)} 项）",
+        )
+        return success_response({
+            "task_id": task_id,
+            "count": len(comic_ids),
+            "task_type": task_manager.TASK_TYPE_COMIC_LOCAL_METADATA_REFRESH,
+        }, "批量补全任务已创建")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"create batch local comic metadata task failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @comic_bp.route('/update/check', methods=['POST'])
 def check_comic_update():
     """Check whether a comic has online updates."""

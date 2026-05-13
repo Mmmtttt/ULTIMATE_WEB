@@ -162,6 +162,39 @@ def refresh_local_video_metadata():
         return error_response(500, "internal server error")
 
 
+@video_bp.route('/local-metadata/refresh/batch', methods=['POST'])
+@require_third_party(error_response)
+def refresh_local_video_metadata_batch():
+    try:
+        data = request.json or {}
+        video_ids = [
+            str(item or "").strip()
+            for item in (data.get('video_ids') or [])
+            if str(item or "").strip()
+        ]
+        if not video_ids:
+            return error_response(400, "missing parameter: video_ids")
+
+        from infrastructure.task_manager import task_manager
+
+        task_id = task_manager.create_batch_task(
+            task_type=task_manager.TASK_TYPE_VIDEO_LOCAL_METADATA_REFRESH,
+            content_type="video",
+            item_ids=video_ids,
+            title=f"批量补全本地视频信息（{len(video_ids)} 项）",
+        )
+        return success_response({
+            "task_id": task_id,
+            "count": len(video_ids),
+            "task_type": task_manager.TASK_TYPE_VIDEO_LOCAL_METADATA_REFRESH,
+        }, "批量补全任务已创建")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"create batch local video metadata task failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @video_bp.route('/local-thumbnails/generate', methods=['POST'])
 def generate_local_video_thumbnails():
     try:
@@ -176,6 +209,38 @@ def generate_local_video_thumbnails():
         return error_response(400, result.message or "生成缩略图失败")
     except Exception as e:
         error_logger.error(f"generate local video thumbnails api failed: {e}")
+        return error_response(500, "internal server error")
+
+
+@video_bp.route('/local-thumbnails/generate/batch', methods=['POST'])
+def generate_local_video_thumbnails_batch():
+    try:
+        data = request.json or {}
+        video_ids = [
+            str(item or "").strip()
+            for item in (data.get('video_ids') or [])
+            if str(item or "").strip()
+        ]
+        if not video_ids:
+            return error_response(400, "missing parameter: video_ids")
+
+        from infrastructure.task_manager import task_manager
+
+        task_id = task_manager.create_batch_task(
+            task_type=task_manager.TASK_TYPE_VIDEO_LOCAL_THUMBNAIL_GENERATE,
+            content_type="video",
+            item_ids=video_ids,
+            title=f"批量生成视频缩略图（{len(video_ids)} 项）",
+        )
+        return success_response({
+            "task_id": task_id,
+            "count": len(video_ids),
+            "task_type": task_manager.TASK_TYPE_VIDEO_LOCAL_THUMBNAIL_GENERATE,
+        }, "批量缩略图任务已创建")
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"create batch local video thumbnail task failed: {e}")
         return error_response(500, "internal server error")
 
 

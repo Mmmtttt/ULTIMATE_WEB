@@ -28,6 +28,10 @@ export const useImportTaskStore = defineStore('importTask', () => {
   const completedTasks = computed(() => 
     tasks.value.filter(t => ['completed', 'failed', 'cancelled'].includes(t.status))
   )
+
+  const activeTasks = computed(() =>
+    tasks.value.filter(t => ['pending', 'processing'].includes(t.status))
+  )
   
   const hasActiveTasks = computed(() => 
     pendingTasks.value.length > 0 || processingTasks.value.length > 0
@@ -54,18 +58,18 @@ export const useImportTaskStore = defineStore('importTask', () => {
           lastFetchSuccess.value = false
           // 如果连续失败3次，停止轮询
           stopPolling()
-          showFailToast('后端服务异常，已停止轮询')
+          showFailToast('后端服务异常，已停止任务轮询')
         }
       }
     } catch (error) {
-      console.error('获取导入任务失败:', error)
+      console.error('获取任务失败:', error)
       // 网络错误或后端不可用
       consecutiveFailures.value++
       if (consecutiveFailures.value >= 3) {
         lastFetchSuccess.value = false
         // 如果连续失败3次，停止轮询
         stopPolling()
-        showFailToast('后端服务不可用，已停止轮询')
+        showFailToast('后端服务不可用，已停止任务轮询')
       }
     }
     return []
@@ -107,7 +111,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
         })
 
         if (response && response.code === 200) {
-          showSuccessToast('导入任务已创建')
+          showSuccessToast('任务已创建')
           await fetchTasks()
           startPolling()
           return response.data
@@ -123,7 +127,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
 
       const response = await request.post('/v1/comic/import/async', payload)
       if (response && response.code === 200) {
-        showSuccessToast('导入任务已创建')
+        showSuccessToast('任务已创建')
         // 立即刷新任务列表
         await fetchTasks()
         // 开始轮询
@@ -140,12 +144,62 @@ export const useImportTaskStore = defineStore('importTask', () => {
     }
   }
 
+  const createContentTask = async ({ taskType, itemIds = [] } = {}) => {
+    const normalizedIds = Array.isArray(itemIds)
+      ? itemIds.map((item) => String(item || '').trim()).filter(Boolean)
+      : []
+
+    if (!taskType || normalizedIds.length === 0) {
+      showFailToast('缺少任务参数')
+      return null
+    }
+
+    const endpointMap = {
+      comic_local_metadata_refresh: {
+        url: '/v1/comic/local-metadata/refresh/batch',
+        payloadKey: 'comic_ids',
+      },
+      video_local_metadata_refresh: {
+        url: '/v1/video/local-metadata/refresh/batch',
+        payloadKey: 'video_ids',
+      },
+      video_local_thumbnail_generate: {
+        url: '/v1/video/local-thumbnails/generate/batch',
+        payloadKey: 'video_ids',
+      },
+    }
+
+    const endpoint = endpointMap[String(taskType || '').trim()]
+    if (!endpoint) {
+      showFailToast('不支持的任务类型')
+      return null
+    }
+
+    try {
+      const response = await request.post(endpoint.url, {
+        [endpoint.payloadKey]: normalizedIds
+      })
+      if (response && response.code === 200) {
+        showSuccessToast('任务已创建')
+        await fetchTasks()
+        startPolling()
+        return response.data
+      }
+      showFailToast(response?.msg || '创建任务失败')
+      return null
+    } catch (error) {
+      console.error('创建批量任务失败:', error)
+      showFailToast('创建任务失败')
+      return null
+    }
+  }
+
   // 取消任务
   const cancelTask = async (taskId) => {
     try {
       const response = await request.post(`/v1/comic/import/task/${taskId}/cancel`)
       if (response && response.code === 200) {
-        showSuccessToast('任务已取消')
+        showSuccessToast('已提交取消请求')
         await fetchTasks()
         return true
       } else {
@@ -178,15 +232,13 @@ export const useImportTaskStore = defineStore('importTask', () => {
   // 开始轮询任务状态
   const startPolling = () => {
     if (pollingInterval.value) return
-    
-    let hadActiveTasks = hasActiveTasks.value
-    
+
     pollingInterval.value = setInterval(async () => {
       const prevActiveCount = activeTaskCount.value
       await fetchTasks()
       
       if (!hasActiveTasks.value && prevActiveCount > 0) {
-        await refreshTagsAfterImport()
+        await refreshDataAfterTasks()
       }
       
       if (!hasActiveTasks.value) {
@@ -195,16 +247,16 @@ export const useImportTaskStore = defineStore('importTask', () => {
     }, 2000)
   }
 
-  const refreshTagsAfterImport = async () => {
+  const refreshDataAfterTasks = async () => {
     try {
       cacheStore.clearCache('tags')
       cacheStore.clearCache('video-tags')
       cacheStore.clearCache('list')
       await tagStore.fetchTags('comic', true)
       await tagStore.fetchTags('video', true)
-      console.log('[ImportTask] 标签列表已刷新')
+      console.log('[TaskCenter] 标签列表已刷新')
     } catch (error) {
-      console.error('[ImportTask] 刷新标签列表失败:', error)
+      console.error('[TaskCenter] 刷新标签列表失败:', error)
     }
   }
 
@@ -249,11 +301,13 @@ export const useImportTaskStore = defineStore('importTask', () => {
     pendingTasks,
     processingTasks,
     completedTasks,
+    activeTasks,
     hasActiveTasks,
     activeTaskCount,
     fetchTasks,
     fetchTaskDetail,
     createImportTask,
+    createContentTask,
     cancelTask,
     clearCompletedTasks,
     startPolling,

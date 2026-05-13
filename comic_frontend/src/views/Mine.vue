@@ -18,7 +18,7 @@
 
     <van-cell-group class="mine-menu" inset>
       <van-cell title="通过ID导入" icon="add-o" @click="showImportDialog = true" is-link />
-      <van-cell title="导入任务" icon="clock-o" to="/import-tasks" is-link>
+      <van-cell title="任务中心" icon="clock-o" to="/import-tasks" is-link>
         <template #value>
           <van-tag v-if="activeTaskCount > 0" type="primary" round>
             {{ activeTaskCount }}
@@ -127,7 +127,7 @@
       <div class="import-dialog">
         <div class="dialog-header">
           <h3>{{ isVideoMode ? '导入视频' : '导入漫画' }}</h3>
-          <p>创建在线导入任务，稍后可在“导入任务”里跟进进度。</p>
+          <p>创建在线任务后，可在“任务中心”里持续跟进进度。</p>
         </div>
 
         <div class="dialog-section">

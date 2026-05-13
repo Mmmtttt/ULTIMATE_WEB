@@ -10,22 +10,72 @@ export function toggleSelection(selectedIds, id) {
   }
 }
 
-export function isAllSelected(selectedIds = [], items = [], getId = (item) => item.id) {
+function collectScopeIds(items = [], getId = (item) => item.id) {
   if (!Array.isArray(items) || items.length === 0) {
+    return []
+  }
+  return items
+    .map((item) => getId(item))
+    .filter((id) => Boolean(id))
+}
+
+export function isAllSelected(selectedIds = [], items = [], getId = (item) => item.id) {
+  const scopeIds = collectScopeIds(items, getId)
+  if (scopeIds.length === 0) {
     return false
   }
-  return items.every(item => selectedIds.includes(getId(item)))
+  const selectedSet = new Set(Array.isArray(selectedIds) ? selectedIds : [])
+  return scopeIds.every((id) => selectedSet.has(id))
 }
 
 export function toggleSelectAll(selectedIdsRef, items = [], getId = (item) => item.id) {
-  if (!selectedIdsRef || !Array.isArray(items) || items.length === 0) {
+  if (!selectedIdsRef) {
     return
   }
-  if (isAllSelected(selectedIdsRef.value, items, getId)) {
-    selectedIdsRef.value = []
-  } else {
-    selectedIdsRef.value = items.map(item => getId(item)).filter(Boolean)
+
+  const scopeIds = collectScopeIds(items, getId)
+  if (scopeIds.length === 0) {
+    return
   }
+
+  const currentSelected = Array.isArray(selectedIdsRef.value) ? selectedIdsRef.value : []
+  const scopeIdSet = new Set(scopeIds)
+
+  if (isAllSelected(currentSelected, items, getId)) {
+    selectedIdsRef.value = currentSelected.filter((id) => !scopeIdSet.has(id))
+    return
+  }
+
+  selectedIdsRef.value = [...new Set([...currentSelected, ...scopeIds])]
+}
+
+export function keepSelectionWithinItems(selectedIds = [], items = [], getId = (item) => item.id) {
+  const scopeIdSet = new Set(collectScopeIds(items, getId))
+  if (scopeIdSet.size === 0) {
+    return []
+  }
+  return (Array.isArray(selectedIds) ? selectedIds : []).filter((id) => scopeIdSet.has(id))
+}
+
+function normalizeLocalIdentifier(input) {
+  return String(input || '').trim().toUpperCase()
+}
+
+export function isLocalComicCandidateId(comicId) {
+  const normalized = normalizeLocalIdentifier(comicId)
+  if (!normalized) {
+    return false
+  }
+  if (normalized.startsWith('LOCAL')) {
+    return true
+  }
+  const parts = normalized.split(/[^A-Z0-9]+/).filter(Boolean)
+  return parts.some((part) => part.startsWith('LOCAL'))
+}
+
+export function isLocalVideoCandidateId(videoId) {
+  const normalized = normalizeLocalIdentifier(videoId)
+  return normalized.startsWith('LOCAL')
 }
 
 export function getCoverUrl(coverInput) {

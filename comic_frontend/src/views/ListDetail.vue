@@ -86,6 +86,15 @@
             type="primary"
             plain
             :disabled="selectedCount === 0"
+            @click="openBatchTaskSheet"
+          >
+            批量处理
+          </van-button>
+          <van-button
+            size="small"
+            type="primary"
+            plain
+            :disabled="selectedCount === 0"
             :loading="downloadLoading"
             @click="handleManageBatchDownload"
           >
@@ -347,13 +356,21 @@
         />
       </div>
     </van-popup>
+
+    <van-action-sheet
+      v-model:show="showBatchTaskSheet"
+      title="批量处理"
+      :actions="batchTaskActions"
+      close-on-click-action
+      @select="handleBatchTaskAction"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useListStore, useTagStore, useImportTaskStore } from '@/stores'
+import { useListStore, useTagStore, useImportTaskStore, useRuntimeStore } from '@/stores'
 import { buildCoverUrl } from '@/api/image'
 import { comicApi } from '@/api/comic'
 import { recommendationApi, videoApi } from '@/api'
@@ -362,13 +379,14 @@ import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { useClientPagination } from '@/composables/useClientPagination'
 import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
-import { extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
+import { buildBatchTaskActions, extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
 const listStore = useListStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
+const runtimeStore = useRuntimeStore()
 
 const loading = ref(false)
 const listInfo = ref(null)
@@ -377,6 +395,7 @@ const activeContentType = computed(() => listInfo.value?.content_type || 'comic'
 
 const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
+const showBatchTaskSheet = ref(false)
 const currentSortType = ref('')
 const minScore = ref(null)
 const includeTags = ref([])
@@ -639,13 +658,24 @@ const pagedVideos = computed(() => activeContentType.value === 'video' ? pagedIt
 const currentPageItems = computed(() => activeContentType.value === 'video' ? pagedVideos.value : pagedComics.value)
 const selectedCount = computed(() => selectedItems.value.length)
 const allCurrentSelected = computed(() => {
-  if (currentPageItems.value.length === 0) {
+  if (currentFilteredItems.value.length === 0) {
     return false
   }
   const keySet = new Set(selectedItemKeys.value)
-  return currentPageItems.value.every(item => keySet.has(getItemSelectionKey(item)))
+  return currentFilteredItems.value.every(item => keySet.has(getItemSelectionKey(item)))
 })
 const canMoveToLocal = computed(() => selectedItems.value.some(item => item.source === 'preview'))
+const batchTaskActions = computed(() => {
+  return buildBatchTaskActions({
+    contentType: activeContentType.value,
+    selectedItems: selectedItems.value,
+    thirdPartyEnabled: runtimeStore.thirdPartyEnabled,
+    supportsVideoThumbnailBatch: runtimeStore.supportsLocalVideoThumbnailBatch,
+  }).map((action) => ({
+    ...action,
+    subname: action.reason || '',
+  }))
+})
 
 function getCoverUrl(coverSource) {
   return buildCoverUrl(coverSource)
@@ -816,7 +846,7 @@ function toggleItemSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  const currentKeys = currentPageItems.value.map(getItemSelectionKey).filter(Boolean)
+  const currentKeys = currentFilteredItems.value.map(getItemSelectionKey).filter(Boolean)
   if (currentKeys.length === 0) {
     return
   }
@@ -828,6 +858,48 @@ function toggleSelectAllItems() {
   }
 
   selectedItemKeys.value = [...new Set([...selectedItemKeys.value, ...currentKeys])]
+}
+
+async function openBatchTaskSheet() {
+  if (selectedCount.value === 0) {
+    return
+  }
+  await runtimeStore.fetchRuntime()
+  showBatchTaskSheet.value = true
+}
+
+async function handleBatchTaskAction(action) {
+  if (!action || action.disabled) {
+    if (action?.reason) {
+      showFailToast(action.reason)
+    }
+    return
+  }
+
+  const eligibleIds = Array.isArray(action.eligibleIds) ? action.eligibleIds : []
+  if (eligibleIds.length === 0) {
+    showFailToast('当前没有可执行的内容')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: action.name,
+      message: `确定对 ${eligibleIds.length} 项内容执行“${action.name}”吗？`
+    })
+  } catch {
+    return
+  }
+
+  const created = await importTaskStore.createContentTask({
+    taskType: action.taskType,
+    itemIds: eligibleIds
+  })
+  if (created) {
+    showBatchTaskSheet.value = false
+    selectedItemKeys.value = []
+    manageMode.value = false
+  }
 }
 
 function handleComicCardClick(comic) {
@@ -1025,7 +1097,7 @@ async function handleBatchMoveToLocal() {
     if (localSkipped > 0) {
       showSuccessToast(`已创建移动任务，本地已存在 ${localSkipped} 项已跳过`)
     } else {
-      showSuccessToast('已创建移动任务，请到“我的-导入任务”查看进度')
+      showSuccessToast('已创建移动任务，请到“我的-任务中心”查看进度')
     }
 
     selectedItemKeys.value = []
@@ -1059,6 +1131,13 @@ watch(activeContentType, async (newContentType) => {
 watch(currentItems, () => {
   selectedItemKeys.value = normalizeSelectedItemKeys(selectedItemKeys.value)
 })
+
+watch(
+  () => currentFilteredItems.value.map((item) => getItemSelectionKey(item)),
+  () => {
+    selectedItemKeys.value = []
+  }
+)
 
 onMounted(async () => {
   if (listStore.lists.length === 0) {

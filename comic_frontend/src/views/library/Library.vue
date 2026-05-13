@@ -88,6 +88,9 @@
           <van-button size="small" plain @click="toggleSelectAllItems">
             {{ isAllItemsSelected ? '取消全选' : '全选' }}
           </van-button>
+          <van-button size="small" type="primary" plain :disabled="selectedIds.length === 0" @click="openBatchTaskSheet">
+            批量处理
+          </van-button>
           <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="showBatchListPopup = true">
             加入清单
           </van-button>
@@ -124,6 +127,14 @@
         </van-cell>
       </div>
     </van-action-sheet>
+
+    <van-action-sheet
+      v-model:show="showBatchTaskSheet"
+      title="批量处理"
+      :actions="batchTaskActions"
+      close-on-click-action
+      @select="handleBatchTaskAction"
+    />
 
     <van-popup
       v-model:show="showFilterPanel"
@@ -199,7 +210,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore } from '@/stores'
+import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore, useImportTaskStore, useRuntimeStore } from '@/stores'
 import { comicApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -208,7 +219,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { useDevice } from '@/composables/useDevice'
 import { useClientPagination } from '@/composables/useClientPagination'
-import { extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
+import { buildBatchTaskActions, extractAuthors, getFilterStorageKey as makeFilterStorageKey, isAllSelected, loadFromSession, saveToSession, toggleSelectAll } from '@/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -217,6 +228,8 @@ const comicStore = useComicStore()
 const videoStore = useVideoStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
+const importTaskStore = useImportTaskStore()
+const runtimeStore = useRuntimeStore()
 const { isDesktop } = useDevice()
 
 // State
@@ -224,6 +237,7 @@ const showSortPanel = ref(false)
 const showFilterPanel = ref(false)
 const showMenu = ref(false)
 const showViewModeSheet = ref(false)
+const showBatchTaskSheet = ref(false)
 const showBatchListPopup = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
@@ -335,6 +349,23 @@ const menuActions = [
   { text: '刷新列表', icon: 'replay' }
 ]
 
+const selectedItems = computed(() => {
+  const selectedIdSet = new Set(selectedIds.value)
+  return items.value.filter((item) => selectedIdSet.has(item.id))
+})
+
+const batchTaskActions = computed(() => {
+  return buildBatchTaskActions({
+    contentType: isVideoMode.value ? 'video' : 'comic',
+    selectedItems: selectedItems.value,
+    thirdPartyEnabled: runtimeStore.thirdPartyEnabled,
+    supportsVideoThumbnailBatch: runtimeStore.supportsLocalVideoThumbnailBatch,
+  }).map((action) => ({
+    ...action,
+    subname: action.reason || '',
+  }))
+})
+
 const sortOptions = computed(() => [
   { text: '最近导入', value: 'create_time' },
   { text: '评分最高', value: 'score' },
@@ -439,7 +470,7 @@ const activeFilters = computed(() => {
 })
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, pagedItems.value, (item) => item.id)
+  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
 })
 
 // Methods
@@ -473,7 +504,49 @@ function toggleSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, pagedItems.value, (item) => item.id)
+  toggleSelectAll(selectedIds, items.value, (item) => item.id)
+}
+
+async function openBatchTaskSheet() {
+  if (selectedIds.value.length === 0) {
+    return
+  }
+  await runtimeStore.fetchRuntime()
+  showBatchTaskSheet.value = true
+}
+
+async function handleBatchTaskAction(action) {
+  if (!action || action.disabled) {
+    if (action?.reason) {
+      showToast(action.reason)
+    }
+    return
+  }
+
+  const eligibleIds = Array.isArray(action.eligibleIds) ? action.eligibleIds : []
+  if (eligibleIds.length === 0) {
+    showToast('当前没有可执行的内容')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: action.name,
+      message: `确定对 ${eligibleIds.length} 项内容执行“${action.name}”吗？`
+    })
+  } catch {
+    return
+  }
+
+  const created = await importTaskStore.createContentTask({
+    taskType: action.taskType,
+    itemIds: eligibleIds
+  })
+  if (created) {
+    showBatchTaskSheet.value = false
+    selectedIds.value = []
+    isManageMode.value = false
+  }
 }
 
 function setViewMode(mode) {
@@ -668,6 +741,13 @@ watch(() => route.query.tagId, async (newTagId) => {
     await applyFilters({ closePanel: false })
   }
 })
+
+watch(
+  () => items.value.map((item) => item.id),
+  () => {
+    selectedIds.value = []
+  }
+)
 
 onMounted(async () => {
   await initializePage(false)

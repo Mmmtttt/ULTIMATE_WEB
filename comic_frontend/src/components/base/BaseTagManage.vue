@@ -104,6 +104,15 @@
             >
               批量添加标签
             </van-button>
+            <van-button
+              type="primary"
+              plain
+              block
+              :disabled="selectedContentIds.length === 0"
+              @click="openBatchTaskSheet"
+            >
+              批量处理
+            </van-button>
             <van-button 
               type="danger" 
               block 
@@ -167,14 +176,23 @@
       <van-tabbar-item icon="home-o" :to="homePath">首页</van-tabbar-item>
       <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
     </van-tabbar>
+
+    <van-action-sheet
+      v-model:show="showBatchTaskSheet"
+      title="批量处理"
+      :actions="batchTaskActions"
+      close-on-click-action
+      @select="handleBatchTaskAction"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { getCoverUrl, isAllSelected, toggleSelection } from '@/utils/helpers'
+import { useImportTaskStore, useRuntimeStore } from '@/stores'
+import { buildBatchTaskActions, getCoverUrl, isAllSelected, keepSelectionWithinItems, toggleSelection } from '@/utils'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { useClientPagination } from '@/composables/useClientPagination'
 
@@ -201,6 +219,8 @@ const props = defineProps({
 const emit = defineEmits(['tab-change'])
 
 const router = useRouter()
+const importTaskStore = useImportTaskStore()
+const runtimeStore = useRuntimeStore()
 
 const active = ref(1)
 const activeTab = ref(0)
@@ -213,6 +233,7 @@ const editTagName = ref('')
 const editingTag = ref(null)
 const selectedContentIds = ref([])
 const selectedTagIds = ref([])
+const showBatchTaskSheet = ref(false)
 
 const isVideo = computed(() => props.contentType === 'video')
 
@@ -256,8 +277,25 @@ const canBatchRemove = computed(() => {
   return selectedContentIds.value.length > 0 && selectedTagIds.value.length > 0
 })
 
+const selectedContentItems = computed(() => {
+  const selectedIdSet = new Set(selectedContentIds.value)
+  return contentList.value.filter((item) => selectedIdSet.has(item.id))
+})
+
 const isAllContentSelected = computed(() => {
-  return isAllSelected(selectedContentIds.value, pagedContentList.value, (item) => item.id)
+  return isAllSelected(selectedContentIds.value, contentList.value, (item) => item.id)
+})
+
+const batchTaskActions = computed(() => {
+  return buildBatchTaskActions({
+    contentType: props.contentType,
+    selectedItems: selectedContentItems.value,
+    thirdPartyEnabled: runtimeStore.thirdPartyEnabled,
+    supportsVideoThumbnailBatch: runtimeStore.supportsLocalVideoThumbnailBatch,
+  }).map((action) => ({
+    ...action,
+    subname: action.reason || '',
+  }))
 })
 
 function getTagList(tabKey) {
@@ -415,11 +453,52 @@ function toggleSelectAllContent() {
     selectedContentIds.value = []
     return
   }
-  selectedContentIds.value = pagedContentList.value.map(item => item.id)
+  selectedContentIds.value = contentList.value.map(item => item.id)
 }
 
 function toggleTagSelection(id) {
   toggleSelection(selectedTagIds, id)
+}
+
+async function openBatchTaskSheet() {
+  if (selectedContentIds.value.length === 0) {
+    return
+  }
+  await runtimeStore.fetchRuntime()
+  showBatchTaskSheet.value = true
+}
+
+async function handleBatchTaskAction(action) {
+  if (!action || action.disabled) {
+    if (action?.reason) {
+      showFailToast(action.reason)
+    }
+    return
+  }
+
+  const eligibleIds = Array.isArray(action.eligibleIds) ? action.eligibleIds : []
+  if (eligibleIds.length === 0) {
+    showFailToast('当前没有可执行的内容')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: action.name,
+      message: `确定对 ${eligibleIds.length} 项内容执行“${action.name}”吗？`
+    })
+  } catch {
+    return
+  }
+
+  const created = await importTaskStore.createContentTask({
+    taskType: action.taskType,
+    itemIds: eligibleIds,
+  })
+  if (created) {
+    showBatchTaskSheet.value = false
+    selectedContentIds.value = []
+  }
 }
 
 async function batchAddTags() {
@@ -483,6 +562,14 @@ async function batchRemoveTags() {
 onMounted(async () => {
   await fetchTagList()
   await fetchContentList()
+})
+
+watch(contentList, (nextItems) => {
+  selectedContentIds.value = keepSelectionWithinItems(
+    selectedContentIds.value,
+    nextItems,
+    (item) => item.id
+  )
 })
 </script>
 

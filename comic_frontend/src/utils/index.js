@@ -21,6 +21,9 @@ export * from './storage'
 // 协议平台工具
 export * from './protocol'
 
+// 批量任务工具
+export * from './batchTasks'
+
 /**
  * 防抖函数
  * @param {Function} fn - 要执行的函数

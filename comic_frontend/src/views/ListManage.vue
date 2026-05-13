@@ -436,7 +436,7 @@ async function doImport() {
     })
 
     if (created) {
-      showSuccessToast('导入任务已创建')
+      showSuccessToast('任务已创建')
       showImportDialog.value = false
     } else {
       showFailToast('创建导入任务失败')

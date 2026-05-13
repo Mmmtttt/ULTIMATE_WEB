@@ -51,6 +51,7 @@ class ImportTask:
     result: Optional[Dict]  # 导入结果
     content_type: str = "comic"  # comic, video
     extra_data: Optional[Dict[str, Any]] = None  # 扩展参数（如平台清单导入）
+    cancel_requested: bool = False
 
     def to_dict(self) -> Dict:
         """转换为字典"""
@@ -64,6 +65,14 @@ class TaskManager:
     
     _instance = None
     _lock = threading.Lock()
+    TASK_TYPE_COMIC_LOCAL_METADATA_REFRESH = "comic_local_metadata_refresh"
+    TASK_TYPE_VIDEO_LOCAL_METADATA_REFRESH = "video_local_metadata_refresh"
+    TASK_TYPE_VIDEO_LOCAL_THUMBNAIL_GENERATE = "video_local_thumbnail_generate"
+    BATCH_TASK_TYPES = {
+        TASK_TYPE_COMIC_LOCAL_METADATA_REFRESH,
+        TASK_TYPE_VIDEO_LOCAL_METADATA_REFRESH,
+        TASK_TYPE_VIDEO_LOCAL_THUMBNAIL_GENERATE,
+    }
     COMIC_RECENT_IMPORT_TAG_ID = "tag_recent_import"
     COMIC_RECENT_IMPORT_TAG_NAME = "最近导入"
     
@@ -80,7 +89,7 @@ class TaskManager:
         
         self.task_file = task_file or IMPORT_TASKS_JSON_FILE
         self._tasks: Dict[str, ImportTask] = {}
-        self._task_lock = threading.Lock()
+        self._task_lock = threading.RLock()
         self._worker_thread: Optional[threading.Thread] = None
         self._running = False
         
@@ -126,7 +135,8 @@ class TaskManager:
                                 task_data.get('content_type', ''),
                                 platform=task_data.get('platform', '')
                             ),
-                            extra_data=task_data.get('extra_data') or {}
+                            extra_data=task_data.get('extra_data') or {},
+                            cancel_requested=bool(task_data.get('cancel_requested', False)),
                         )
                         self._tasks[task.task_id] = task
                 app_logger.info(f"加载任务完成，共 {len(self._tasks)} 个任务")
@@ -216,25 +226,32 @@ class TaskManager:
         # 更新任务状态
         task.status = TaskStatus.PROCESSING
         task.start_time = time.strftime("%Y-%m-%dT%H:%M:%S")
-        task.message = "正在导入..."
+        task.cancel_requested = False
+        task.message = "正在处理中..." if self._is_batch_task_type(task.import_type) else "正在导入..."
         self._save_tasks()
         
         try:
             # 执行导入
             result = self._execute_import(task)
-            
-            if result.get('success'):
+
+            if result.get('cancelled'):
+                task.status = TaskStatus.CANCELLED
+                task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
+                task.result = result
+                task.message = result.get('message', '任务已取消')
+                app_logger.info(f"任务取消完成: {task.task_id}")
+            elif result.get('success'):
                 task.status = TaskStatus.COMPLETED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.progress = 100
-                task.message = "导入完成"
+                task.message = result.get('message', "任务完成" if self._is_batch_task_type(task.import_type) else "导入完成")
                 task.result = result
                 app_logger.info(f"任务完成: {task.task_id}")
             else:
                 task.status = TaskStatus.FAILED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.error_msg = result.get('error', '导入失败')
-                task.message = f"导入失败: {task.error_msg}"
+                task.message = f"{'任务失败' if self._is_batch_task_type(task.import_type) else '导入失败'}: {task.error_msg}"
                 error_logger.error(f"任务失败: {task.task_id}, 错误: {task.error_msg}")
                 
         except Exception as e:
@@ -248,6 +265,8 @@ class TaskManager:
     
     def _execute_import(self, task: ImportTask) -> Dict:
         """执行导入操作"""
+        if self._is_batch_task_type(task.import_type):
+            return self._execute_batch_content_task(task)
         content_type = self._normalize_content_type(task.content_type, platform=task.platform)
         if task.import_type == "migrate_to_local":
             return self._execute_migrate_to_local(task)
@@ -256,6 +275,154 @@ class TaskManager:
         if content_type == "video":
             return self._execute_video_import(task)
         return self._execute_comic_import(task)
+
+    @classmethod
+    def _is_batch_task_type(cls, import_type: str) -> bool:
+        return str(import_type or "").strip() in cls.BATCH_TASK_TYPES
+
+    @staticmethod
+    def _extract_task_item_ids(task: ImportTask) -> List[str]:
+        item_ids = [str(item or "").strip() for item in (task.comic_ids or []) if str(item or "").strip()]
+        if not item_ids and str(task.comic_id or "").strip():
+            item_ids = [str(task.comic_id).strip()]
+        return item_ids
+
+    @staticmethod
+    def _is_skip_error_message(message: str) -> bool:
+        normalized = str(message or "").strip().lower()
+        if not normalized:
+            return False
+        skip_markers = (
+            "only local comics support metadata refresh",
+            "only local videos support metadata refresh",
+            "comic not found",
+            "video not found",
+            "comic is deleted",
+            "video is deleted",
+            "当前视频没有可用的本地源文件",
+            "当前视频无法生成缩略图",
+            "未找到可用的本地视频文件",
+        )
+        return any(marker in normalized for marker in skip_markers)
+
+    def _is_cancel_requested(self, task: ImportTask) -> bool:
+        current = self._tasks.get(task.task_id)
+        if current is not None:
+            return bool(getattr(current, "cancel_requested", False))
+        return bool(getattr(task, "cancel_requested", False))
+
+    def _update_batch_progress(self, task: ImportTask, completed_count: int, total_count: int, status_text: str) -> None:
+        total = max(0, int(total_count or 0))
+        completed = max(0, int(completed_count or 0))
+        task.total_pages = total
+        task.downloaded_pages = completed
+        task.progress = int((completed / total) * 100) if total > 0 else 100
+        task.message = f"{status_text} {completed} / {total}"
+        self._save_tasks()
+
+    def _execute_batch_content_task(self, task: ImportTask) -> Dict:
+        item_ids = self._extract_task_item_ids(task)
+        if not item_ids:
+            return {"success": False, "error": "缺少待处理内容"}
+
+        total_count = len(item_ids)
+        self._update_batch_progress(task, 0, total_count, "正在处理")
+
+        if task.import_type == self.TASK_TYPE_COMIC_LOCAL_METADATA_REFRESH:
+            from core.runtime_profile import is_third_party_enabled
+            from application.comic_app_service import ComicAppService
+
+            if not is_third_party_enabled():
+                return {"success": False, "error": "当前运行配置未启用第三方能力，无法批量补全本地漫画信息"}
+
+            service = ComicAppService()
+            processor = service.refresh_local_comic_metadata
+        elif task.import_type == self.TASK_TYPE_VIDEO_LOCAL_METADATA_REFRESH:
+            from core.runtime_profile import is_third_party_enabled
+            from application.video_app_service import VideoAppService
+
+            if not is_third_party_enabled():
+                return {"success": False, "error": "当前运行配置未启用第三方能力，无法批量补全本地视频信息"}
+
+            service = VideoAppService()
+            processor = service.refresh_local_video_metadata
+        elif task.import_type == self.TASK_TYPE_VIDEO_LOCAL_THUMBNAIL_GENERATE:
+            from application.video_app_service import VideoAppService, probe_local_video_thumbnail_runtime
+
+            runtime_capability = probe_local_video_thumbnail_runtime()
+            if not bool(runtime_capability.get("supported")):
+                reason = str(runtime_capability.get("reason") or "").strip() or "当前运行时不支持本地视频缩略图"
+                return {"success": False, "error": reason}
+
+            service = VideoAppService()
+            processor = service.generate_local_video_thumbnails
+        else:
+            return {"success": False, "error": f"不支持的批量任务类型: {task.import_type}"}
+
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        failed_items = []
+        skipped_items = []
+
+        for index, item_id in enumerate(item_ids, start=1):
+            if self._is_cancel_requested(task):
+                return {
+                    "cancelled": True,
+                    "task_type": task.import_type,
+                    "content_type": task.content_type,
+                    "processed_count": success_count + failed_count + skipped_count,
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "skipped_count": skipped_count,
+                    "failed_items": failed_items,
+                    "skipped_items": skipped_items,
+                    "message": f"已取消（已完成 {success_count + failed_count + skipped_count} / {total_count}）",
+                }
+
+            try:
+                result = processor(item_id)
+            except Exception as exc:
+                error_message = str(exc).strip() or "处理失败"
+                failed_count += 1
+                failed_items.append({
+                    "id": item_id,
+                    "error": error_message,
+                })
+                completed_count = index
+                self._update_batch_progress(task, completed_count, total_count, "已完成")
+                error_logger.exception("批量任务处理单项失败: task=%s item=%s", task.task_id, item_id)
+                continue
+
+            if getattr(result, "success", False):
+                success_count += 1
+            else:
+                error_message = str(getattr(result, "message", "") or "").strip() or "处理失败"
+                target_collection = skipped_items if self._is_skip_error_message(error_message) else failed_items
+                if target_collection is skipped_items:
+                    skipped_count += 1
+                else:
+                    failed_count += 1
+                target_collection.append({
+                    "id": item_id,
+                    "error": error_message,
+                })
+
+            completed_count = index
+            self._update_batch_progress(task, completed_count, total_count, "已完成")
+
+        return {
+            "success": True,
+            "task_type": task.import_type,
+            "content_type": task.content_type,
+            "processed_count": total_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "failed_items": failed_items,
+            "skipped_items": skipped_items,
+            "message": f"已完成 {total_count} / {total_count}",
+        }
 
     def _execute_migrate_to_local(self, task: ImportTask) -> Dict:
         """执行预览库迁移到本地库"""
@@ -1124,7 +1291,8 @@ class TaskManager:
             error_msg=None,
             result=None,
             content_type=self._normalize_content_type(content_type, platform=platform),
-            extra_data=extra_data or {}
+            extra_data=extra_data or {},
+            cancel_requested=False,
         )
         
         with self._task_lock:
@@ -1133,6 +1301,52 @@ class TaskManager:
         self._save_tasks()
         app_logger.info(f"创建任务: {task_id}")
         
+        return task_id
+
+    def create_batch_task(
+        self,
+        *,
+        task_type: str,
+        content_type: str,
+        item_ids: List[str],
+        title: str,
+        platform: str = "LOCAL",
+        extra_data: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        normalized_ids = [str(item or "").strip() for item in (item_ids or []) if str(item or "").strip()]
+        if not normalized_ids:
+            raise ValueError("缺少待处理内容")
+
+        task_id = str(uuid.uuid4())[:8]
+        task = ImportTask(
+            task_id=task_id,
+            status=TaskStatus.PENDING,
+            platform=str(platform or "LOCAL").strip().upper() or "LOCAL",
+            import_type=str(task_type or "").strip(),
+            target="local",
+            comic_id=None,
+            keyword=None,
+            comic_ids=normalized_ids,
+            title=str(title or "").strip() or "后台任务",
+            progress=0,
+            total_pages=len(normalized_ids),
+            downloaded_pages=0,
+            message="等待处理...",
+            create_time=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            start_time=None,
+            complete_time=None,
+            error_msg=None,
+            result=None,
+            content_type=self._normalize_content_type(content_type, platform=platform),
+            extra_data=extra_data or {},
+            cancel_requested=False,
+        )
+
+        with self._task_lock:
+            self._tasks[task_id] = task
+
+        self._save_tasks()
+        app_logger.info(f"创建批量任务: {task_id}, type={task_type}, content_type={content_type}, count={len(normalized_ids)}")
         return task_id
     
     def get_task(self, task_id: str) -> Optional[ImportTask]:
@@ -1158,12 +1372,23 @@ class TaskManager:
     def cancel_task(self, task_id: str) -> bool:
         """取消任务"""
         task = self._tasks.get(task_id)
-        if task and task.status == TaskStatus.PENDING:
+        if not task:
+            return False
+
+        if task.status == TaskStatus.PENDING:
             task.status = TaskStatus.CANCELLED
             task.message = "已取消"
             task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
+            task.cancel_requested = False
             self._save_tasks()
             return True
+
+        if task.status == TaskStatus.PROCESSING:
+            task.cancel_requested = True
+            task.message = "正在取消..."
+            self._save_tasks()
+            return True
+
         return False
     
     def delete_task(self, task_id: str) -> bool:

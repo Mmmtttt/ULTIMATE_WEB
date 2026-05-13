@@ -12,6 +12,9 @@ export { useCacheStore } from './cache'
 // 配置管理
 export { useConfigStore } from './config'
 
+// 运行时能力
+export { useRuntimeStore } from './runtime'
+
 // 阅读器
 export { useReaderStore } from './reader'
 
