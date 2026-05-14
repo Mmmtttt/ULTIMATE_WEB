@@ -32,6 +32,19 @@
       </div>
     </div>
 
+    <div v-if="activeFilters.length > 0" class="active-filters">
+      <van-tag
+        v-for="filter in activeFilters"
+        :key="filter.id"
+        closeable
+        type="primary"
+        @close="removeFilter(filter)"
+      >
+        {{ filter.label }}
+      </van-tag>
+      <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
+    </div>
+
     <!-- Content Area -->
     <div class="content-area">
       <van-loading v-if="isLoading" class="loading-center" />
@@ -359,6 +372,69 @@ const availableLists = computed(() => {
   }))
 })
 
+const activeFilters = computed(() => {
+  const filters = []
+
+  tempIncludeTags.value.forEach(tagId => {
+    const tag = availableTags.value.find(item => item.id === tagId)
+    filters.push({
+      id: `include-${tagId}`,
+      type: 'includeTag',
+      value: tagId,
+      label: `包含: ${tag?.name || tagId}`
+    })
+  })
+
+  tempExcludeTags.value.forEach(tagId => {
+    const tag = availableTags.value.find(item => item.id === tagId)
+    filters.push({
+      id: `exclude-${tagId}`,
+      type: 'excludeTag',
+      value: tagId,
+      label: `排除: ${tag?.name || tagId}`
+    })
+  })
+
+  tempSelectedAuthors.value.forEach(author => {
+    filters.push({
+      id: `author-${author}`,
+      type: 'author',
+      value: author,
+      label: `作者: ${author}`
+    })
+  })
+
+  tempSelectedListIds.value.forEach(listId => {
+    const list = availableLists.value.find(item => item.id === listId)
+    filters.push({
+      id: `list-${listId}`,
+      type: 'list',
+      value: listId,
+      label: `清单: ${list?.name || listId}`
+    })
+  })
+
+  if (tempMinScore.value > 0) {
+    filters.push({
+      id: 'min-score',
+      type: 'minScore',
+      value: tempMinScore.value,
+      label: `评分 >= ${tempMinScore.value}`
+    })
+  }
+
+  if (!isVideoMode.value && tempUnreadOnly.value) {
+    filters.push({
+      id: 'unread-only',
+      type: 'unreadOnly',
+      value: true,
+      label: '仅未读'
+    })
+  }
+
+  return filters
+})
+
 const menuActions = [
   { text: '批量管理', icon: 'setting-o' },
   { text: '刷新列表', icon: 'replay' }
@@ -521,6 +597,36 @@ async function batchAddToLists() {
   }
 }
 
+function clearAllFilters() {
+  tempIncludeTags.value = []
+  tempExcludeTags.value = []
+  tempSelectedAuthors.value = []
+  tempSelectedListIds.value = []
+  tempMinScore.value = 0
+  tempUnreadOnly.value = false
+  currentStore.value.clearFilter()
+  goFirst()
+  persistViewState()
+}
+
+async function removeFilter(filter) {
+  if (filter.type === 'includeTag') {
+    tempIncludeTags.value = tempIncludeTags.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'excludeTag') {
+    tempExcludeTags.value = tempExcludeTags.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'author') {
+    tempSelectedAuthors.value = tempSelectedAuthors.value.filter(author => author !== filter.value)
+  } else if (filter.type === 'list') {
+    tempSelectedListIds.value = tempSelectedListIds.value.filter(id => id !== filter.value)
+  } else if (filter.type === 'minScore') {
+    tempMinScore.value = 0
+  } else if (filter.type === 'unreadOnly') {
+    tempUnreadOnly.value = false
+  }
+
+  await applyCurrentFilters()
+}
+
 async function onSortConfirm({ selectedOptions }) {
   const nextSort = decodeSortSelection(selectedOptions?.[0]?.value || 'default')
   currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
@@ -659,6 +765,21 @@ onMounted(async () => {
 <style scoped>
 .preview-page {
   padding-bottom: 96px;
+}
+
+.active-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 2px 10px;
+}
+
+.active-filters :deep(.van-tag) {
+  border-radius: 999px;
+  border: 1px solid rgba(47, 116, 255, 0.24);
+  background: rgba(47, 116, 255, 0.08);
+  color: var(--brand-700);
 }
 
 .toolbar {

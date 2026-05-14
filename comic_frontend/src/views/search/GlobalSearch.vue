@@ -405,11 +405,9 @@ async function searchLocal() {
 
 async function searchPreview() {
   if (isVideoMode.value) {
-    await videoRecStore.searchRecommendations(keyword.value)
-    results.value = videoRecStore.recommendations
+    results.value = await videoRecStore.searchRecommendations(keyword.value)
   } else {
-    await comicRecStore.searchRecommendations(keyword.value)
-    results.value = comicRecStore.recommendations
+    results.value = await comicRecStore.searchRecommendations(keyword.value)
   }
 }
 

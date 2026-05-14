@@ -208,9 +208,12 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       if (res.code === 200) {
         filteredRecommendations.value = res.data || []
         isFiltering.value = true
+        return filteredRecommendations.value
       }
+      return []
     } catch (e) {
       console.error('搜索视频推荐失败:', e)
+      return []
     } finally {
       loading.value = false
     }
