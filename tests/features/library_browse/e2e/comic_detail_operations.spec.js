@@ -8,6 +8,8 @@ const {
 
 const TRASH_TEST_COMIC_ID = "JM100005";
 const TRASH_TEST_COMIC_TITLE = "E2E Comic Epsilon";
+const CHAPTER_COMIC_ID = "JM100001";
+const CHAPTER_COMIC_TITLE = "E2E Comic Alpha";
 
 /**
  * 用例描述:
@@ -179,4 +181,32 @@ test("comic detail page starts reading and navigates to reader", async ({ page }
   await readButton.click();
 
   await expect(page).toHaveURL(/\/reader\//);
+});
+
+/**
+ * 用例描述:
+ * - 用例目的: 强看护漫画详情页章节跳转链路，确保章节入口只在详情页体现且能跳到正确全局页码。
+ * - 测试步骤:
+ *   1. 打开 `/comic/JM100001` 详情页。
+ *   2. 校验章节区与章节卡片已渲染。
+ *   3. 点击第二个章节卡片。
+ *   4. 校验路由跳转到 `/reader/JM100001?page=3`。
+ * - 预期结果:
+ *   1. 章节区显示两张章节卡片。
+ *   2. 点击章节后直接跳到对应起始页。
+ * - 历史变更:
+ *   - 2026-05-14: 初始创建，覆盖漫画分章节详情跳转主链路。
+ */
+test("comic detail page jumps to chapter start page from chapter cards", async ({ page }) => {
+  await page.goto(`/comic/${CHAPTER_COMIC_ID}`);
+  await expect(page.locator(".title")).toContainText(CHAPTER_COMIC_TITLE);
+
+  const chapterCards = page.locator(".chapter-card");
+  await expect(chapterCards).toHaveCount(2);
+  await expect(chapterCards.first()).toContainText("第1章");
+  await expect(chapterCards.nth(1)).toContainText("第2章");
+
+  await chapterCards.nth(1).click();
+
+  await expect(page).toHaveURL(new RegExp(`/reader/${CHAPTER_COMIC_ID}\\?page=3$`));
 });

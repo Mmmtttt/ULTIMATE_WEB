@@ -394,6 +394,10 @@ def _seed_meta_data(meta_dir: Path) -> None:
 
 
 def _seed_media(data_dir: Path) -> None:
+    chapter_seed_layout = {
+        PRIMARY_COMIC_ORIGINAL_ID: ("1/001.png", "1/002.png", "2/001.png"),
+    }
+
     for original_id, page_count in (
         (PRIMARY_COMIC_ORIGINAL_ID, 3),
         (SECONDARY_COMIC_ORIGINAL_ID, 2),
@@ -402,8 +406,13 @@ def _seed_media(data_dir: Path) -> None:
         (FIFTH_COMIC_ORIGINAL_ID, 3),
     ):
         comic_dir = data_dir / "comic" / "JM" / original_id
-        for page in range(1, page_count + 1):
-            _write_png(comic_dir / f"{page:03d}.png")
+        chapter_layout = chapter_seed_layout.get(original_id)
+        if chapter_layout:
+            for relative_path in chapter_layout:
+                _write_png(comic_dir / relative_path)
+        else:
+            for page in range(1, page_count + 1):
+                _write_png(comic_dir / f"{page:03d}.png")
         _write_png(data_dir / "static" / "cover" / "JM" / f"{original_id}.png")
         _write_jpg(data_dir / "static" / "cover" / "JM" / f"{original_id}.jpg")
 

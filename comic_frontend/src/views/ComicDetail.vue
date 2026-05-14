@@ -126,6 +126,44 @@
         <h2 class="section-title">简介</h2>
         <p class="desc">{{ comic.desc }}</p>
       </div>
+
+      <div v-if="hasChapters" class="chapter-section">
+        <div class="section-heading">
+          <h2 class="section-title">章节</h2>
+          <span class="section-hint">共 {{ chapterCards.length }} 个章节</span>
+        </div>
+        <div class="chapter-list">
+          <button
+            v-for="chapter in chapterCards"
+            :key="chapter.key"
+            type="button"
+            class="chapter-card"
+            :class="{ 'is-current': chapter.isCurrent }"
+            @click="openChapter(chapter)"
+          >
+            <span class="chapter-order">{{ chapter.displayIndex }}</span>
+            <span class="chapter-main">
+              <span class="chapter-title-row">
+                <span class="chapter-name">{{ chapter.title }}</span>
+                <van-tag
+                  v-if="chapter.isCurrent"
+                  size="medium"
+                  type="primary"
+                  plain
+                  class="chapter-current-tag"
+                >
+                  当前
+                </van-tag>
+              </span>
+              <span class="chapter-meta">{{ chapter.pageRangeLabel }} · 共 {{ chapter.pageCountLabel }}</span>
+            </span>
+            <span class="chapter-side">
+              <span class="chapter-state">{{ chapter.statusText }}</span>
+              <van-icon name="arrow" class="chapter-arrow" />
+            </span>
+          </button>
+        </div>
+      </div>
       
       <div class="preview-section" v-if="comic.preview_pages && comic.preview_pages.length > 0">
         <h2 class="section-title">内容预览</h2>
@@ -384,6 +422,33 @@ const comicStoragePath = computed(() => {
   return path
 })
 
+const hasChapters = computed(() => {
+  return Array.isArray(comic.value?.chapters) && comic.value.chapters.length > 1
+})
+
+const chapterCards = computed(() => {
+  if (!hasChapters.value) return []
+  const currentPage = Number(comic.value?.current_page || 1)
+  return comic.value.chapters.map((chapter, index) => {
+    const startPage = Number(chapter?.start_page || 1)
+    const endPage = Number(chapter?.end_page || startPage)
+    const pageCount = Number(chapter?.page_count || Math.max(1, endPage - startPage + 1))
+    const isCurrent = currentPage >= startPage && currentPage <= endPage
+    return {
+      key: chapter?.key || `${startPage}-${index}`,
+      title: chapter?.title || `第${index + 1}章`,
+      displayIndex: String(index + 1).padStart(2, '0'),
+      start_page: startPage,
+      end_page: endPage,
+      page_count: pageCount,
+      pageRangeLabel: startPage === endPage ? `第 ${startPage} 页` : `第 ${startPage}-${endPage} 页`,
+      pageCountLabel: `${pageCount} 页`,
+      isCurrent,
+      statusText: isCurrent ? `阅读至第 ${currentPage} 页` : `从第 ${startPage} 页开始`
+    }
+  })
+})
+
 // 方法
 function getImageUrl(comicId, pageNum) {
   return buildImageUrl(comicId, pageNum)
@@ -465,6 +530,12 @@ function startReading() {
 
 function goToPage(page) {
   router.push(`/reader/${comic.value.id}?page=${page}`)
+}
+
+function openChapter(chapter) {
+  const startPage = Number(chapter?.start_page || 0)
+  if (!Number.isFinite(startPage) || startPage < 1) return
+  goToPage(startPage)
 }
 
 function previewImage(index) {
@@ -988,16 +1059,36 @@ watch(showListPopup, async (val) => {
 
 .tags-section,
 .desc-section,
+.chapter-section,
 .preview-section {
   padding: 16px;
   border-bottom: 1px solid rgba(73, 98, 146, 0.15);
 }
 
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .section-title {
   font-size: 16px;
   font-weight: 600;
-  margin: 0 0 12px 0;
+  margin: 0;
   color: var(--text-strong);
+}
+
+.tags-section > .section-title,
+.desc-section > .section-title,
+.preview-section > .section-title {
+  margin-bottom: 12px;
+}
+
+.section-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .tags-container {
@@ -1016,6 +1107,127 @@ watch(showListPopup, async (val) => {
   color: var(--text-secondary);
   margin: 0;
   white-space: pre-wrap;
+}
+
+.chapter-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.chapter-card {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  color: var(--text-primary);
+  width: 100%;
+  font: inherit;
+  padding: 14px 16px;
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+  box-shadow: 0 10px 22px rgba(17, 27, 45, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.chapter-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  box-shadow: 0 14px 28px rgba(17, 27, 45, 0.1);
+}
+
+.chapter-card.is-current {
+  border-color: rgba(56, 118, 255, 0.32);
+  background:
+    linear-gradient(180deg, rgba(71, 124, 255, 0.08) 0%, var(--surface-2) 100%);
+  box-shadow: 0 14px 30px rgba(38, 86, 189, 0.12);
+}
+
+.chapter-card.is-current::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #5f9bff 0%, #2f74ff 100%);
+}
+
+.chapter-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(47, 116, 255, 0.09);
+  border: 1px solid rgba(47, 116, 255, 0.12);
+  color: #2f74ff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
+.chapter-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chapter-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chapter-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chapter-current-tag {
+  flex-shrink: 0;
+}
+
+.chapter-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.chapter-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  min-width: 0;
+}
+
+.chapter-state {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.chapter-arrow {
+  color: var(--text-tertiary);
+  font-size: 15px;
 }
 
 .preview-grid {
@@ -1161,6 +1373,26 @@ watch(showListPopup, async (val) => {
   .action-buttons .van-button {
     width: 100%;
     min-width: 0;
+  }
+
+  .section-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .chapter-list {
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .chapter-side {
+    grid-column: 2;
+    justify-self: start;
+    padding-left: 0;
   }
 }
 

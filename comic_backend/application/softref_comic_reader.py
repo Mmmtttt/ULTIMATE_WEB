@@ -421,6 +421,18 @@ class SoftRefComicReader:
         entries = self._get_or_build_page_index(context)
         return len(entries)
 
+    def get_page_entries(self, comic_id: str) -> List[Dict[str, Any]]:
+        context = self._resolve_context(comic_id)
+        entries = self._get_or_build_page_index(context)
+        return [dict(entry) for entry in entries]
+
+    def get_chapter_outline(self, comic_id: str) -> List[Dict[str, Any]]:
+        from utils.file_parser import file_parser
+
+        entries = self.get_page_entries(comic_id)
+        sort_paths = [str(entry.get("sort_path", "")).strip() for entry in entries]
+        return file_parser.build_chapter_outline(sort_paths)
+
     def get_password_required_payload(self, comic_id: str, exc: SoftRefPasswordRequiredError) -> Dict[str, Any]:
         return {
             "type": "softref_password_required",

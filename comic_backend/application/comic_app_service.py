@@ -78,6 +78,29 @@ class ComicAppService:
             persisted["storage_path_kind"] = storage_kind
         return persisted
 
+    def _resolve_comic_chapters(self, comic: Comic) -> List[Dict[str, Any]]:
+        from utils.file_parser import file_parser
+
+        comic_id = str(getattr(comic, "id", "") or "").strip()
+        if not comic_id:
+            return []
+
+        try:
+            if str(getattr(comic, "storage_mode", "") or "").strip().lower() == "soft_ref":
+                from application.softref_reader_protocol import require_softref_reader
+
+                softref_comic_reader = require_softref_reader("comic")
+                chapter_builder = getattr(softref_comic_reader, "get_chapter_outline", None)
+                if callable(chapter_builder):
+                    chapters = chapter_builder(comic_id)
+                    return chapters if isinstance(chapters, list) else []
+
+            chapters = file_parser.parse_comic_chapters(comic_id)
+            return chapters if isinstance(chapters, list) else []
+        except Exception as e:
+            error_logger.warning(f"解析漫画章节失败: {comic_id}, {e}")
+            return []
+
     @staticmethod
     def _comic_to_summary_dict(comic: Comic, tag_map: Dict[str, str], *, include_progress: bool = True) -> Dict[str, Any]:
         payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
@@ -173,6 +196,7 @@ class ComicAppService:
             detail["source"] = "local"
             detail["storage_path"] = storage_path
             detail["storage_path_kind"] = storage_path_kind or str(detail.get("storage_path_kind", "")).strip()
+            detail["chapters"] = self._resolve_comic_chapters(comic)
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")
             return ServiceResult.ok(detail)

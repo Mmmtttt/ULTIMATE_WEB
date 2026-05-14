@@ -296,6 +296,22 @@ def test_comic_detail_returns_full_info(integration_runtime):
     assert "author" in data
     assert "score" in data
     assert "tags" in data or "tag_ids" in data
+    assert data["chapters"] == [
+        {
+            "key": "1",
+            "title": "第1章",
+            "start_page": 1,
+            "end_page": 2,
+            "page_count": 2,
+        },
+        {
+            "key": "2",
+            "title": "第2章",
+            "start_page": 3,
+            "end_page": 3,
+            "page_count": 1,
+        },
+    ]
 
 
 @pytest.mark.integration

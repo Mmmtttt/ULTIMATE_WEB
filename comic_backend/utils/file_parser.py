@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Any, Dict, List, Optional
 from application.persisted_content_metadata import resolve_data_relative_path
 from core.host_platform_fallback import infer_existing_host_comic_dir
 from core.constants import (
@@ -15,6 +16,15 @@ from infrastructure.logger import app_logger, error_logger
 class FileParser:
     def __init__(self):
         self.supported_formats = SUPPORTED_FORMATS
+
+    _chapter_numeric_pattern = re.compile(
+        r"^(?:第)?(?:\d{1,4}|[a-z]{1,2}|[ivxlcdm]{1,6}|[一二三四五六七八九十百千零〇两]{1,6})(?:话|章|回|节|卷|集|部)?$",
+        re.IGNORECASE,
+    )
+    _chapter_english_pattern = re.compile(
+        r"^(?:ch|chap|chapter|ep|episode|vol|volume)[\s._-]*[\divxlcdm一二三四五六七八九十百千零〇两-]{1,12}$",
+        re.IGNORECASE,
+    )
 
     @staticmethod
     def _find_comic_record(comic_id):
@@ -164,6 +174,172 @@ class FileParser:
             return alphanum_key(rel)
         
         return sorted(paths, key=sort_key)
+
+    @classmethod
+    def _normalize_sort_path(cls, path: str) -> str:
+        normalized = str(path or "").replace("\\", "/").strip()
+        return normalized.lstrip("./")
+
+    @classmethod
+    def _split_parent_segments(cls, sort_path: str) -> List[str]:
+        normalized = cls._normalize_sort_path(sort_path)
+        if not normalized:
+            return []
+        parts = normalized.split("/")
+        if len(parts) <= 1:
+            return []
+        return [segment.strip() for segment in parts[:-1] if str(segment or "").strip()]
+
+    @classmethod
+    def _score_chapter_label(cls, label: str) -> int:
+        compact = re.sub(r"\s+", "", str(label or "")).strip()
+        if not compact:
+            return 0
+        if cls._chapter_numeric_pattern.fullmatch(compact):
+            return 5
+        if cls._chapter_english_pattern.fullmatch(compact):
+            return 5
+        if any(char.isdigit() for char in compact):
+            return 3
+        return 1
+
+    @classmethod
+    def _choose_chapter_level(cls, parent_segments_list: List[List[str]]) -> Optional[int]:
+        if not parent_segments_list:
+            return None
+
+        max_depth = max((len(segments) for segments in parent_segments_list), default=0)
+        best_level: Optional[int] = None
+        best_score: Optional[tuple] = None
+
+        for level in range(max_depth):
+            if not all(len(segments) > level for segments in parent_segments_list):
+                continue
+
+            prefixes = ["/".join(segments[: level + 1]) for segments in parent_segments_list]
+            unique_prefixes = list(dict.fromkeys(prefixes))
+            if len(unique_prefixes) < 2:
+                continue
+
+            labels = [segments[level] for segments in parent_segments_list]
+            label_scores = [cls._score_chapter_label(label) for label in labels]
+            chapter_like_ratio = (
+                sum(1 for score in label_scores if score >= 4) / len(label_scores)
+                if label_scores
+                else 0
+            )
+            average_label_score = sum(label_scores) / len(label_scores) if label_scores else 0
+            candidate_score = (
+                chapter_like_ratio,
+                average_label_score,
+                level,
+                len(unique_prefixes),
+            )
+            if best_score is None or candidate_score > best_score:
+                best_level = level
+                best_score = candidate_score
+
+        return best_level
+
+    @classmethod
+    def _format_chapter_title(cls, raw_label: str, fallback_index: int) -> str:
+        label = str(raw_label or "").strip()
+        if not label:
+            return f"第{fallback_index}章"
+
+        compact = re.sub(r"\s+", "", label)
+        if re.fullmatch(r"\d{1,4}", compact):
+            return f"第{int(compact)}章"
+        if re.fullmatch(r"[ivxlcdm]{1,6}", compact, re.IGNORECASE):
+            return f"第{compact.upper()}章"
+        if re.fullmatch(r"[一二三四五六七八九十百千零〇两]{1,6}", compact):
+            return f"第{compact}章"
+        return label
+
+    @classmethod
+    def _format_prefixed_title(cls, prefix_segments: List[str], fallback_index: int) -> str:
+        cleaned = [str(segment or "").strip() for segment in prefix_segments if str(segment or "").strip()]
+        if not cleaned:
+            return f"第{fallback_index}章"
+        if len(cleaned) == 1:
+            return cls._format_chapter_title(cleaned[0], fallback_index)
+        head = cleaned[:-1]
+        tail = cls._format_chapter_title(cleaned[-1], fallback_index)
+        return " / ".join([*head, tail])
+
+    @classmethod
+    def build_chapter_outline(cls, sort_paths: List[str]) -> List[Dict[str, Any]]:
+        normalized_paths = [cls._normalize_sort_path(path) for path in (sort_paths or []) if cls._normalize_sort_path(path)]
+        if len(normalized_paths) < 2:
+            return []
+
+        parent_segments_list = [cls._split_parent_segments(path) for path in normalized_paths]
+        if not any(parent_segments_list):
+            return []
+
+        level = cls._choose_chapter_level(parent_segments_list)
+        if level is None:
+            return []
+
+        groups: List[Dict[str, Any]] = []
+        current_group: Optional[Dict[str, Any]] = None
+
+        for page_num, segments in enumerate(parent_segments_list, start=1):
+            prefix_segments = segments[: level + 1]
+            group_key = "/".join(prefix_segments)
+            if current_group is None or current_group["key"] != group_key:
+                current_group = {
+                    "key": group_key,
+                    "prefix_segments": prefix_segments,
+                    "start_page": page_num,
+                    "end_page": page_num,
+                    "page_count": 1,
+                }
+                groups.append(current_group)
+                continue
+
+            current_group["end_page"] = page_num
+            current_group["page_count"] += 1
+
+        if len(groups) <= 1:
+            return []
+
+        provisional_titles = [
+            cls._format_chapter_title(group["prefix_segments"][-1], index)
+            for index, group in enumerate(groups, start=1)
+        ]
+        title_counts: Dict[str, int] = {}
+        for title in provisional_titles:
+            title_counts[title] = title_counts.get(title, 0) + 1
+
+        chapters: List[Dict[str, Any]] = []
+        for index, group in enumerate(groups, start=1):
+            title = provisional_titles[index - 1]
+            if title_counts.get(title, 0) > 1:
+                title = cls._format_prefixed_title(group["prefix_segments"], index)
+            chapters.append(
+                {
+                    "key": group["key"],
+                    "title": title,
+                    "start_page": group["start_page"],
+                    "end_page": group["end_page"],
+                    "page_count": group["page_count"],
+                }
+            )
+
+        return chapters
+
+    def parse_comic_chapters(self, comic_id) -> List[Dict[str, Any]]:
+        try:
+            comic_dir = self._get_comic_dir(comic_id)
+            image_paths = self.parse_comic_images(comic_id)
+            if not comic_dir or not image_paths:
+                return []
+            relative_paths = [os.path.relpath(path, comic_dir).replace("\\", "/") for path in image_paths]
+            return self.build_chapter_outline(relative_paths)
+        except Exception as e:
+            error_logger.error(f"解析漫画章节失败: {e}")
+            return []
 
 
 file_parser = FileParser()
