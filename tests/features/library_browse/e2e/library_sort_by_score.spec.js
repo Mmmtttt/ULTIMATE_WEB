@@ -11,10 +11,10 @@ const {
  * - 测试步骤:
  *   1. 打开 `/library` 并确认测试数据已渲染。
  *   2. 点击排序按钮，在排序面板选择"评分最高"并确认。
- *   3. 记录并校验 `/api/v1/comic/list?sort_type=score` 请求。
+ *   3. 记录并校验 `/api/v1/comic/list?sort_type=score&sort_order=desc` 请求。
  *   4. 获取页面卡片评分，校验顺序为降序。
  * - 预期结果:
- *   1. 至少出现一次携带 `sort_type=score` 的漫画列表请求。
+ *   1. 至少出现一次携带 `sort_type=score&sort_order=desc` 的漫画列表请求。
  *   2. 前端展示的漫画评分顺序为降序。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，用于守护排序入口请求参数。
@@ -29,9 +29,9 @@ test("library sort by score keeps UI order consistent with backend sorting", asy
   await expect(page.getByText("E2E Comic Alpha")).toBeVisible();
 
   await page.locator(".toolbar .toolbar-action-btn").first().click();
-  const pickerItems = page.locator(".van-picker-column__item");
-  await expect(pickerItems.nth(1)).toBeVisible();
-  await pickerItems.nth(1).click();
+  const scoreOption = page.locator(".van-picker-column__item", { hasText: "评分最高" });
+  await expect(scoreOption.first()).toBeVisible();
+  await scoreOption.first().click();
   await page.locator(".van-picker__confirm").first().click();
 
   await expect
@@ -41,7 +41,8 @@ test("library sort by score keeps UI order consistent with backend sorting", asy
           apiRequests,
           (item) =>
             item.url.includes("/api/v1/comic/list") &&
-            item.url.includes("sort_type=score"),
+            item.url.includes("sort_type=score") &&
+            item.url.includes("sort_order=desc"),
         ),
       { timeout: 5000 },
     )

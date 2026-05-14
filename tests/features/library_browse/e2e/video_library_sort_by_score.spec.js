@@ -13,10 +13,10 @@ const VIDEO_TITLE = "Seed Video";
  * - 测试步骤:
  *   1. 打开 `/library` 并切换到视频模式。
  *   2. 点击排序按钮，在排序面板选择"评分最高"并确认。
- *   3. 记录并校验 `/api/v1/video/list?sort_type=score` 请求。
+ *   3. 记录并校验 `/api/v1/video/list?sort_type=score&sort_order=desc` 请求。
  *   4. 获取页面卡片评分，校验顺序为降序。
  * - 预期结果:
- *   1. 至少出现一次携带 `sort_type=score` 的视频列表请求。
+ *   1. 至少出现一次携带 `sort_type=score&sort_order=desc` 的视频列表请求。
  *   2. 前端展示的视频评分顺序为降序。
  * - 历史变更:
  *   - 2026-03-25: 初始创建，覆盖视频排序强看护。
@@ -31,9 +31,9 @@ test("video library sort by score keeps UI order consistent with backend sorting
   await expect(page.getByText("搜索视频...")).toBeVisible();
 
   await page.locator(".toolbar .toolbar-action-btn").first().click();
-  const pickerItems = page.locator(".van-picker-column__item");
-  await expect(pickerItems.nth(1)).toBeVisible();
-  await pickerItems.nth(1).click();
+  const scoreOption = page.locator(".van-picker-column__item", { hasText: "评分最高" });
+  await expect(scoreOption.first()).toBeVisible();
+  await scoreOption.first().click();
   await page.locator(".van-picker__confirm").first().click();
 
   await expect
@@ -43,7 +43,8 @@ test("video library sort by score keeps UI order consistent with backend sorting
           apiRequests,
           (item) =>
             item.url.includes("/api/v1/video/list") &&
-            item.url.includes("sort_type=score"),
+            item.url.includes("sort_type=score") &&
+            item.url.includes("sort_order=desc"),
         ),
       { timeout: 5000 },
     )
