@@ -414,3 +414,72 @@ def directional_task_status(task_id):
     except Exception as exc:
         error_logger.exception(f"sync directional task status failed: {exc}")
         return error_response(500, f"directional task status failed: {exc}")
+
+
+@sync_bp.route("/list-scope/preview", methods=["POST"])
+def list_scope_preview():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        list_id = str(payload.get("list_id", "")).strip()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if not list_id:
+            return error_response(400, "list_id is required")
+        result = directional_service.estimate_list_scope_push(peer_id, list_id)
+        return success_response(result)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope preview failed: {exc}")
+        return error_response(500, f"list scope preview failed: {exc}")
+
+
+@sync_bp.route("/list-scope/push", methods=["POST"])
+def list_scope_push():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        list_id = str(payload.get("list_id", "")).strip()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if not list_id:
+            return error_response(400, "list_id is required")
+        result = directional_service.push_list_scope_to_peer(peer_id, list_id)
+        return success_response(result)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope push failed: {exc}")
+        return error_response(500, f"list scope push failed: {exc}")
+
+
+@sync_bp.route("/list-scope/task/start", methods=["POST"])
+def list_scope_task_start():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        list_id = str(payload.get("list_id", "")).strip()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if not list_id:
+            return error_response(400, "list_id is required")
+        task = directional_service.start_list_scope_push_task(peer_id, list_id)
+        return success_response(task)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope task start failed: {exc}")
+        return error_response(500, f"list scope task start failed: {exc}")
+
+
+@sync_bp.route("/list-scope/task/<task_id>", methods=["GET"])
+def list_scope_task_status(task_id):
+    try:
+        task = directional_service.get_directional_task(str(task_id or "").strip())
+        if not isinstance(task, dict):
+            return error_response(404, "task not found")
+        return success_response(task)
+    except Exception as exc:
+        error_logger.exception(f"sync list scope task status failed: {exc}")
+        return error_response(500, f"list scope task status failed: {exc}")

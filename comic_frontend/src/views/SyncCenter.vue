@@ -72,6 +72,9 @@
             <van-button size="small" type="success" :loading="isPeerActionLoading(peer.peer_id, 'pull')" @click="pullFromPeer(peer)">
               拉取
             </van-button>
+            <van-button size="small" type="warning" plain :loading="isPeerActionLoading(peer.peer_id, 'list_scope')" @click="openListScopeDialog(peer)">
+              按清单同步
+            </van-button>
             <van-button size="small" type="danger" plain :loading="isPeerActionLoading(peer.peer_id, 'remove')" @click="removePeer(peer)">
               移除
             </van-button>
@@ -92,15 +95,80 @@
         </div>
       </div>
     </van-cell-group>
+
+    <van-popup v-model:show="showListScopePopup" round position="bottom" class="list-scope-popup">
+      <div class="list-scope-popup-head">
+        <div>
+          <div class="list-scope-popup-title">按清单同步</div>
+          <div class="list-scope-popup-subtitle">
+            仅同步对端缺失的内容，并保留当前清单和标签信息。
+          </div>
+          <div v-if="listScopePeer" class="list-scope-popup-peer">
+            目标设备：{{ listScopePeer.display_name || listScopePeer.peer_id }}
+          </div>
+        </div>
+      </div>
+
+      <van-search
+        v-model.trim="listScopeKeyword"
+        placeholder="搜索清单名称"
+        shape="round"
+        class="list-scope-search"
+      />
+
+      <div class="list-scope-popup-body">
+        <van-loading v-if="loadingListScopeOptions" size="22px" class="list-scope-loading" />
+        <template v-else>
+          <van-radio-group v-if="filteredListScopeOptions.length > 0" v-model="selectedListScopeId">
+            <van-cell
+              v-for="item in filteredListScopeOptions"
+              :key="item.id"
+              clickable
+              class="list-scope-cell"
+              @click="selectedListScopeId = item.id"
+            >
+              <template #title>
+                <div class="list-scope-cell-title">{{ item.name }}</div>
+                <div class="list-scope-cell-meta">
+                  漫画 {{ Number(item.comic_count || 0) }} · 视频 {{ Number(item.video_count || 0) }}
+                </div>
+                <div v-if="item.desc" class="list-scope-cell-desc">{{ item.desc }}</div>
+              </template>
+              <template #right-icon>
+                <van-radio :name="item.id" />
+              </template>
+            </van-cell>
+          </van-radio-group>
+          <van-empty v-else description="暂无可选清单" />
+        </template>
+      </div>
+
+      <div class="list-scope-popup-actions">
+        <van-button round plain block @click="closeListScopeDialog">
+          取消
+        </van-button>
+        <van-button
+          round
+          type="primary"
+          block
+          :disabled="!selectedListScopeId"
+          :loading="listScopePreviewing"
+          @click="previewSelectedListScope"
+        >
+          预览并同步
+        </van-button>
+      </div>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { syncApi } from '@/api'
 import { resolveBackendOrigin } from '@/runtime/endpoint'
+import { useListStore } from '@/stores/list'
 
 const inviteTtlMinutes = ref(10)
 const creatingInvite = ref(false)
@@ -114,6 +182,13 @@ const peerActionLoading = ref({})
 const peerTaskMap = ref({})
 const taskPollingTokens = ref({})
 const pageAlive = ref(true)
+const listStore = useListStore()
+const showListScopePopup = ref(false)
+const listScopePeer = ref(null)
+const loadingListScopeOptions = ref(false)
+const listScopePreviewing = ref(false)
+const selectedListScopeId = ref('')
+const listScopeKeyword = ref('')
 
 const connectForm = reactive({
   remoteBaseUrl: '',
@@ -121,6 +196,27 @@ const connectForm = reactive({
 })
 
 const autoRequesterBaseUrl = ref('')
+
+const filteredListScopeOptions = computed(() => {
+  const keyword = String(listScopeKeyword.value || '').trim().toLowerCase()
+  const items = Array.isArray(listStore.lists) ? listStore.lists : []
+  const filtered = items.filter((item) => {
+    const total = Number(item?.comic_count || 0) + Number(item?.video_count || 0)
+    if (total <= 0) {
+      return false
+    }
+    if (!keyword) {
+      return true
+    }
+    return String(item?.name || '').toLowerCase().includes(keyword)
+      || String(item?.desc || '').toLowerCase().includes(keyword)
+  })
+  return filtered.sort((a, b) => {
+    const aTotal = Number(a?.comic_count || 0) + Number(a?.video_count || 0)
+    const bTotal = Number(b?.comic_count || 0) + Number(b?.video_count || 0)
+    return bTotal - aTotal
+  })
+})
 
 function resolveAutoRequesterBaseUrl() {
   const backendOrigin = String(resolveBackendOrigin() || '').trim()
@@ -167,6 +263,10 @@ function getPeerTask(peerId) {
 }
 
 function formatTaskTitle(task) {
+  const taskKind = String(task?.task_kind || '').trim().toLowerCase()
+  if (taskKind === 'list_scope_push') {
+    return '清单同步任务'
+  }
   const direction = String(task?.direction || '').toUpperCase()
   if (!direction) {
     return '同步任务'
@@ -182,6 +282,12 @@ function formatTaskExtra(task) {
   const parts = []
   if (Number(extra.record_count || 0) > 0) {
     parts.push(`records=${Number(extra.record_count || 0)}`)
+  }
+  if (extra.list_name) {
+    parts.unshift(`list=${extra.list_name}`)
+  }
+  if (Number(extra.pending_content_count || 0) > 0) {
+    parts.push(`contents=${Number(extra.pending_content_count || 0)}`)
   }
   if (Number(extra.file_count || 0) > 0) {
     parts.push(`files=${Number(extra.file_count || 0)}`)
@@ -282,6 +388,29 @@ function formatEstimateMessage(peer, direction, estimate) {
   return lines.join('\n')
 }
 
+function formatListScopeEstimateMessage(peer, estimate) {
+  const scope = estimate?.list_scope || {}
+  const dataSync = estimate?.data_sync || {}
+  const assetSync = estimate?.asset_sync || {}
+  const datasetCounts = dataSync?.dataset_counts || {}
+  const datasetLines = Object.keys(datasetCounts)
+    .filter((key) => Number(datasetCounts[key] || 0) > 0)
+    .map((key) => `${key}: ${datasetCounts[key]}`)
+  const assetStatus = assetSync?.status || 'unknown'
+  const fileCount = Number(assetSync?.file_count || 0)
+  const totalMb = Number(assetSync?.total_mb || 0)
+
+  return [
+    `设备: ${peer.display_name || peer.peer_id}`,
+    `清单: ${scope?.list_name || scope?.list_id || '-'}`,
+    `原始内容数: ${Number(scope?.source_content_count || 0)}`,
+    `待同步内容数: ${Number(scope?.pending_content_count || 0)}`,
+    `对端已存在: ${Number(scope?.skipped_existing_content_count || 0)}`,
+    datasetLines.length > 0 ? `数据详情: ${datasetLines.join(', ')}` : '数据详情: 无变化',
+    `资源: 状态=${assetStatus}, 文件数=${fileCount}, 大小=${totalMb} MB`,
+  ].join('\n')
+}
+
 async function previewAndConfirm(peer, direction) {
   const peerId = peer.peer_id
   const loadingKey = direction === 'push' ? 'preview_push' : 'preview_pull'
@@ -310,6 +439,78 @@ async function previewAndConfirm(peer, direction) {
     }
   } finally {
     setPeerActionLoading(peerId, loadingKey, false)
+  }
+}
+
+async function openListScopeDialog(peer) {
+  const peerId = String(peer?.peer_id || '').trim()
+  if (!peerId) {
+    showFailToast('无效的设备')
+    return
+  }
+  setPeerActionLoading(peerId, 'list_scope', true)
+  loadingListScopeOptions.value = true
+  try {
+    await listStore.fetchLists()
+    listScopePeer.value = peer
+    listScopeKeyword.value = ''
+    const firstOption = filteredListScopeOptions.value[0]
+    selectedListScopeId.value = firstOption?.id || ''
+    showListScopePopup.value = true
+  } catch (error) {
+    showFailToast(error?.message || '加载清单失败')
+  } finally {
+    loadingListScopeOptions.value = false
+    setPeerActionLoading(peerId, 'list_scope', false)
+  }
+}
+
+function closeListScopeDialog() {
+  showListScopePopup.value = false
+  listScopePeer.value = null
+  selectedListScopeId.value = ''
+  listScopeKeyword.value = ''
+}
+
+async function previewSelectedListScope() {
+  const peer = listScopePeer.value
+  const peerId = String(peer?.peer_id || '').trim()
+  const listId = String(selectedListScopeId.value || '').trim()
+  if (!peerId || !listId) {
+    showFailToast('请选择目标设备和清单')
+    return
+  }
+
+  listScopePreviewing.value = true
+  try {
+    const res = await syncApi.previewListScope(peerId, listId)
+    const estimate = res?.data || {}
+    const scope = estimate?.list_scope || {}
+    const totalRecords = Number(estimate?.data_sync?.total_records || 0)
+    const assetFiles = Number(estimate?.asset_sync?.file_count || 0)
+    appendLog(`预览清单同步 ${peerId}: 清单=${scope?.list_name || listId}, 数据=${totalRecords}, 资源=${assetFiles}`)
+
+    if (totalRecords <= 0 && assetFiles <= 0) {
+      showSuccessToast('该清单暂无需要同步的新内容')
+      return
+    }
+
+    await showConfirmDialog({
+      title: '预览清单同步',
+      message: formatListScopeEstimateMessage(peer, estimate),
+      confirmButtonText: '确认同步',
+      cancelButtonText: '取消'
+    })
+
+    showListScopePopup.value = false
+    await runListScopeTask(peer, listId, String(scope?.list_name || '').trim())
+  } catch (error) {
+    const msg = String(error?.message || '')
+    if (msg && !msg.includes('cancel')) {
+      showFailToast(msg || '预览失败')
+    }
+  } finally {
+    listScopePreviewing.value = false
   }
 }
 
@@ -376,6 +577,70 @@ async function runDirectionalTask(peer, direction) {
     delete current[tokenKey]
     taskPollingTokens.value = current
     setPeerActionLoading(peerId, actionKey, false)
+  }
+}
+
+async function runListScopeTask(peer, listId, listName = '') {
+  const peerId = String(peer?.peer_id || '').trim()
+  if (!peerId || !listId) {
+    showFailToast('缺少同步参数')
+    return
+  }
+  if (isPeerActionLoading(peerId, 'list_scope')) {
+    return
+  }
+
+  const tokenKey = `${peerId}_list_scope`
+  const token = `${Date.now()}_${Math.random()}`
+  taskPollingTokens.value = {
+    ...taskPollingTokens.value,
+    [tokenKey]: token
+  }
+
+  setPeerActionLoading(peerId, 'list_scope', true)
+  try {
+    const startRes = await syncApi.startListScopeTask(peerId, listId)
+    const task = startRes?.data || {}
+    const taskId = String(task?.task_id || '').trim()
+    if (!taskId) {
+      throw new Error('任务启动失败：缺少任务ID')
+    }
+
+    setPeerTask(peerId, task)
+    appendLog(`清单同步任务已启动: 设备=${peerId}, 清单=${listName || listId}, 任务=${taskId}`)
+
+    while (pageAlive.value) {
+      if (taskPollingTokens.value[tokenKey] !== token) {
+        break
+      }
+      await sleep(900)
+      const taskRes = await syncApi.getListScopeTask(taskId)
+      const latestTask = taskRes?.data || {}
+      setPeerTask(peerId, latestTask)
+      const status = String(latestTask?.status || '').toLowerCase()
+
+      if (status === 'completed') {
+        const result = latestTask?.result || {}
+        const assetCount = Number(result?.asset_sync?.file_count || 0)
+        appendLog(`清单同步 ${peerId}: 已完成, 清单=${result?.list_scope?.list_name || listName || listId}, 资源数=${assetCount}`)
+        showSuccessToast('清单同步完成')
+        await loadPeers()
+        break
+      }
+      if (status === 'failed') {
+        const failedMsg = latestTask?.error?.message || latestTask?.message || '清单同步失败'
+        appendLog(`清单同步 ${peerId}: 失败, 消息=${failedMsg}`)
+        showFailToast(failedMsg)
+        break
+      }
+    }
+  } catch (error) {
+    showFailToast(error?.message || '清单同步失败')
+  } finally {
+    const current = { ...taskPollingTokens.value }
+    delete current[tokenKey]
+    taskPollingTokens.value = current
+    setPeerActionLoading(peerId, 'list_scope', false)
   }
 }
 
@@ -482,6 +747,7 @@ onUnmounted(() => {
 
 .peer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -513,5 +779,77 @@ onUnmounted(() => {
   color: var(--text-primary);
   margin-top: 3px;
   word-break: break-word;
+}
+
+.list-scope-popup {
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  max-height: min(78vh, 720px);
+  overflow: hidden;
+}
+
+.list-scope-popup-head {
+  margin-bottom: 12px;
+}
+
+.list-scope-popup-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.list-scope-popup-subtitle,
+.list-scope-popup-peer {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.list-scope-search {
+  margin-bottom: 10px;
+  padding: 0;
+}
+
+.list-scope-popup-body {
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.list-scope-loading {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0;
+}
+
+.list-scope-cell {
+  border-radius: 12px;
+  margin-bottom: 8px;
+  background: var(--surface-1);
+}
+
+.list-scope-cell-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.list-scope-cell-meta,
+.list-scope-cell-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.list-scope-popup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .list-scope-popup-actions {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

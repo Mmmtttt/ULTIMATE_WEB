@@ -73,6 +73,13 @@ export const syncApi = {
     })
   },
 
+  previewListScope(peerId, listId) {
+    return request.post('/v1/sync/list-scope/preview', {
+      peer_id: peerId,
+      list_id: listId
+    })
+  },
+
   pullDirectional(peerId) {
     return request.post('/v1/sync/directional/pull', { peer_id: peerId })
   },
@@ -86,6 +93,24 @@ export const syncApi = {
 
   getDirectionalTask(taskId) {
     return request.get(`/v1/sync/directional/task/${encodeURIComponent(taskId)}`)
+  },
+
+  pushListScope(peerId, listId) {
+    return request.post('/v1/sync/list-scope/push', {
+      peer_id: peerId,
+      list_id: listId
+    })
+  },
+
+  startListScopeTask(peerId, listId) {
+    return request.post('/v1/sync/list-scope/task/start', {
+      peer_id: peerId,
+      list_id: listId
+    })
+  },
+
+  getListScopeTask(taskId) {
+    return request.get(`/v1/sync/list-scope/task/${encodeURIComponent(taskId)}`)
   }
 }
 
