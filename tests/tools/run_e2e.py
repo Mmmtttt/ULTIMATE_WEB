@@ -23,7 +23,7 @@ from tests.shared.test_constants import E2E_BACKEND_PORT, E2E_FRONTEND_PORT, E2E
 from tests.tools.prepare_test_env import prepare_profile
 
 PARALLEL_SAFE_SPECS = [
-    "tests/features/global_search/e2e/global_search_local_comic_open_detail.spec.js",
+    "tests/features/global_search/e2e/global_search_remote_only_reset_state.spec.js",
     "tests/features/library_browse/e2e/library_open_detail.spec.js",
     "tests/features/library_browse/e2e/library_open_video_detail.spec.js",
     "tests/features/library_browse/e2e/library_sort_by_score.spec.js",
