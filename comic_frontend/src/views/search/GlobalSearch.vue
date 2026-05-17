@@ -3,22 +3,23 @@
     <div class="search-header">
       <div class="search-input-wrapper">
         <van-icon name="arrow-left" class="back-icon" @click="$router.back()" />
-        <van-search 
-          v-model="keyword" 
-          :placeholder="searchPlaceholder" 
+        <van-search
+          v-model="keyword"
+          :placeholder="searchPlaceholder"
           shape="round"
           autofocus
+          show-action
           @search="handleSearch"
-        />
+        >
+          <template #action>
+            <button class="search-action-btn" type="button" @click="handleSearch">搜索</button>
+          </template>
+        </van-search>
       </div>
-      
-      <van-tabs v-model:active="activeTab" @change="handleSearch">
-        <van-tab title="本地库" name="local" />
-        <van-tab title="预览库" name="preview" />
-        <van-tab title="全网搜" name="remote" />
-      </van-tabs>
 
-      <div v-if="isVideoMode && activeTab === 'remote'" class="tag-search-entry">
+      <div class="search-subtitle">仅搜索全网内容，输入关键词后点击搜索或按回车触发。</div>
+
+      <div v-if="isVideoMode" class="tag-search-entry">
         <van-button size="small" plain type="primary" icon="filter-o" @click="goToVideoTagSearch">
           标签搜索
         </van-button>
@@ -27,68 +28,55 @@
 
     <div class="search-content">
       <van-loading v-if="loading" class="loading-center" />
-      
-      <EmptyState 
-        v-else-if="results.length === 0 && !loading" 
-        title="未找到结果" 
+
+      <EmptyState
+        v-else-if="results.length === 0"
+        :title="emptyTitle"
         :description="emptyDescription"
       />
 
       <div v-else class="results-container">
-        <template v-if="activeTab === 'remote'">
-          <div v-if="normalizedResults.length > 0" class="remote-select-bar">
-            <span class="selected-count">已选 {{ selectedIds.length }} 项</span>
-            <van-button size="small" plain type="primary" @click="toggleSelectAllRemote">
-              {{ isAllRemoteSelected ? '取消全选' : '全选' }}
-            </van-button>
-          </div>
+        <div class="remote-select-bar">
+          <span class="selected-count">已选 {{ selectedIds.length }} 项</span>
+          <van-button size="small" plain type="primary" @click="toggleSelectAllRemote">
+            {{ isAllRemoteSelected ? '取消全选' : '全选' }}
+          </van-button>
+        </div>
 
-          <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
-            <div
-              v-for="item in normalizedResults"
-              :key="getItemId(item)"
-              class="remote-result-card"
-              :class="{ selected: isSelected(item) }"
-              @click="toggleSelection(item)"
-            >
-              <div class="card-cover" :style="getRemoteCoverStyle(item)">
-                <van-image 
-                  :src="getCoverUrl(item)" 
-                  :fit="getCoverFit(item)"
-                  class="cover-image"
-                  lazy-load
-                />
-                <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
-                <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
-                <div v-if="isSelected(item)" class="select-overlay">
-                  <van-icon name="success" class="select-icon" />
-                </div>
-              </div>
-              <div class="card-info">
-                <div class="card-title">{{ item.title }}</div>
-                <div v-if="item.author" class="card-author">{{ item.author }}</div>
+        <div class="remote-results-grid" :class="{ 'video-mode': isVideoMode }">
+          <div
+            v-for="item in normalizedResults"
+            :key="getItemId(item)"
+            class="remote-result-card"
+            :class="{ selected: isSelected(item) }"
+            @click="toggleSelection(item)"
+          >
+            <div class="card-cover" :style="getRemoteCoverStyle(item)">
+              <van-image
+                :src="getCoverUrl(item)"
+                :fit="getCoverFit(item)"
+                class="cover-image"
+                lazy-load
+              />
+              <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
+              <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
+              <div v-if="isSelected(item)" class="select-overlay">
+                <van-icon name="success" class="select-icon" />
               </div>
             </div>
+            <div class="card-info">
+              <div class="card-title">{{ item.title }}</div>
+              <div v-if="item.author" class="card-author">{{ item.author }}</div>
+            </div>
           </div>
-          
-          <div class="floating-import-bar" v-if="selectedIds.length > 0">
-            <span class="floating-selection-info">已选 {{ selectedIds.length }} 项</span>
-            <van-button type="primary" @click="handleImport">导入选中</van-button>
-          </div>
-        </template>
-        
-        <template v-else>
-          <MediaGrid 
-            :items="normalizedResults" 
-            :show-favorite="true"
-            :is-favorited="isFavorited"
-            :show-progress="!isVideoMode"
-            @click="onItemClick"
-            @toggle-favorite="toggleFavorite"
-          />
-        </template>
-        
-        <div v-if="hasMore && activeTab === 'remote'" class="load-more">
+        </div>
+
+        <div v-if="selectedIds.length > 0" class="floating-import-bar">
+          <span class="floating-selection-info">已选 {{ selectedIds.length }} 项</span>
+          <van-button type="primary" @click="handleImport">导入选中</van-button>
+        </div>
+
+        <div v-if="hasMore" class="load-more">
           <div v-if="paginationInfo" class="pagination-info">
             <template v-if="isVideoMode">
               <span class="platform-info">平台: {{ paginationInfo.platform.toUpperCase() }}</span>
@@ -110,7 +98,6 @@
       </div>
     </div>
 
-    <!-- Import Options -->
     <van-action-sheet v-model:show="showImportSheet" title="导入位置">
       <div class="sheet-content">
         <van-button block type="primary" @click="confirmImport('home')">导入到主页</van-button>
@@ -122,17 +109,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useModeStore, useComicStore, useVideoStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useImportTaskStore } from '@/stores'
-import { uiStateApi, videoApi } from '@/api'
-import MediaGrid from '@/components/common/MediaGrid.vue'
+import { useRouter } from 'vue-router'
+import { useModeStore, useComicStore, useImportTaskStore } from '@/stores'
+import { videoApi } from '@/api'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import {
-  buildUiStateScope,
   buildDisplayCoverStyle,
   fetchProtocolPlatformOptions,
-  getOrCreateUiStateClientId,
   getCoverUrl,
   isAllSelected,
   resolveDisplayCoverFit,
@@ -143,85 +127,53 @@ import {
 } from '@/utils'
 
 const router = useRouter()
-const route = useRoute()
 const modeStore = useModeStore()
 const comicStore = useComicStore()
-const videoStore = useVideoStore()
-const comicRecStore = useRecommendationStore()
-const videoRecStore = useVideoRecommendationStore()
-const listStore = useListStore()
 const importTaskStore = useImportTaskStore()
 
 const keyword = ref('')
-const activeTab = ref('local')
 const loading = ref(false)
 const loadingMore = ref(false)
 const results = ref([])
 const hasMore = ref(false)
-const currentPage = ref(0) // offset for some APIs
+const currentPage = ref(0)
 const selectedIds = ref([])
 const showImportSheet = ref(false)
-const paginationInfo = ref(null) // 分页信息：{ platform, page, total_pages, has_next }
-const uiStateClientId = getOrCreateUiStateClientId()
+const paginationInfo = ref(null)
+const searchExecuted = ref(false)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
-const searchPlaceholder = computed(() => 
-  isVideoMode.value ? '搜索视频...' : '搜索漫画...'
+const searchPlaceholder = computed(() =>
+  isVideoMode.value ? '搜索全网视频...' : '搜索全网漫画...'
 )
 
-const emptyDescription = computed(() => {
-  if (!keyword.value) return '请输入关键词开始搜索'
-  return '尝试切换其他来源看看？'
+const emptyTitle = computed(() => {
+  return searchExecuted.value ? '未找到结果' : '开始全网搜索'
 })
 
-function getUiStateScope() {
-  return buildUiStateScope('global_search', isVideoMode.value)
-}
-
-function buildPersistedStatePayload() {
-  const normalizedKeyword = String(keyword.value || '').trim()
-  if (!normalizedKeyword && activeTab.value === 'local') {
-    return null
+const emptyDescription = computed(() => {
+  if (!searchExecuted.value) {
+    return '输入关键词后点击搜索或按回车'
   }
-  return {
-    keyword: normalizedKeyword,
-    activeTab: String(activeTab.value || 'local').trim() || 'local'
+  if (!String(keyword.value || '').trim()) {
+    return '请输入关键词开始搜索'
   }
-}
-
-async function persistViewState() {
-  const payload = buildPersistedStatePayload()
-  if (!payload) {
-    await uiStateApi.clear(getUiStateScope(), uiStateClientId)
-    return
-  }
-  await uiStateApi.save(getUiStateScope(), payload, uiStateClientId)
-}
-
-async function restoreViewState() {
-  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
-  const state = response?.data?.state
-  if (!state || typeof state !== 'object') {
-    return false
-  }
-  keyword.value = String(state.keyword || '').trim()
-  activeTab.value = String(state.activeTab || 'local').trim() || 'local'
-  return Boolean(keyword.value)
-}
+  return '尝试调整关键词后重新搜索'
+})
 
 const normalizedResults = computed(() => {
-  return results.value.map(item => {
+  return results.value.map((item) => {
     const normalized = { ...item }
-    
+
     if (normalized.cover_url && !normalized.cover_path) {
       normalized.cover_path = normalized.cover_url
     }
-    
+
     if (!normalized.id) {
       normalized.id = normalized.video_id || normalized.album_id || normalized.comic_id
     }
-    
+
     return normalized
   })
 })
@@ -266,7 +218,7 @@ function isSelected(item) {
 function toggleSelection(item) {
   const id = getItemId(item)
   if (selectedIds.value.includes(id)) {
-    selectedIds.value = selectedIds.value.filter(i => i !== id)
+    selectedIds.value = selectedIds.value.filter((itemId) => itemId !== id)
   } else {
     selectedIds.value.push(id)
   }
@@ -319,13 +271,13 @@ function handleImport() {
 
 async function confirmImport(target) {
   showImportSheet.value = false
-  const selectedItems = normalizedResults.value.filter(item => 
+  const selectedItems = normalizedResults.value.filter((item) =>
     selectedIds.value.includes(getItemId(item))
   )
-  
+
   try {
     const itemsByPlatform = {}
-    selectedItems.forEach(item => {
+    selectedItems.forEach((item) => {
       const platform = resolveImportPlatform(item)
       if (!platform) {
         return
@@ -355,65 +307,37 @@ async function confirmImport(target) {
     }
     showToast(`已创建 ${taskCount} 个导入任务`)
     selectedIds.value = []
-  } catch (e) {
+  } catch {
     showToast('导入失败')
   }
 }
 
 async function handleSearch() {
-  if (!keyword.value.trim()) {
-    results.value = []
-    hasMore.value = false
-    paginationInfo.value = null
-    await persistViewState()
-    return
-  }
-  
-  loading.value = true
+  const normalizedKeyword = String(keyword.value || '').trim()
+  searchExecuted.value = true
   results.value = []
   currentPage.value = 0
   hasMore.value = false
   selectedIds.value = []
   paginationInfo.value = null
-  
+
+  if (!normalizedKeyword) {
+    return
+  }
+
+  loading.value = true
   try {
-    if (activeTab.value === 'local') {
-      await searchLocal()
-    } else if (activeTab.value === 'preview') {
-      await searchPreview()
-    } else {
-      await searchRemote()
-    }
-  } catch (e) {
+    await searchRemote(normalizedKeyword)
+  } catch {
     showToast('搜索失败')
   } finally {
     loading.value = false
   }
-  await persistViewState()
 }
 
-async function searchLocal() {
+async function searchRemote(searchKeyword) {
   if (isVideoMode.value) {
-    const res = await videoStore.search(keyword.value)
-    results.value = res || []
-  } else {
-    // comicStore.searchComics modifies store state, doesn't return
-    await comicStore.searchComics(keyword.value)
-    results.value = comicStore.comicList
-  }
-}
-
-async function searchPreview() {
-  if (isVideoMode.value) {
-    results.value = await videoRecStore.searchRecommendations(keyword.value)
-  } else {
-    results.value = await comicRecStore.searchRecommendations(keyword.value)
-  }
-}
-
-async function searchRemote() {
-  if (isVideoMode.value) {
-    const res = await videoApi.thirdPartySearch(keyword.value, 1)
+    const res = await videoApi.thirdPartySearch(searchKeyword, 1)
     if (res.code === 200 && res.data) {
       results.value = res.data.videos || []
       paginationInfo.value = {
@@ -423,30 +347,32 @@ async function searchRemote() {
         has_next: res.data.has_next
       }
       hasMore.value = res.data.has_next
-    } else {
-      results.value = []
-      paginationInfo.value = null
-      hasMore.value = false
     }
-  } else {
-    const res = await comicStore.thirdPartySearch(keyword.value, 'all', 1, 40)
-    if (res.results) {
-      results.value = res.results
-      currentPage.value = res.page
-      hasMore.value = res.has_more
-      paginationInfo.value = res.platform_info || {}
-    }
+    return
+  }
+
+  const res = await comicStore.thirdPartySearch(searchKeyword, 'all', 1, 40)
+  if (res.results) {
+    results.value = res.results
+    currentPage.value = res.page
+    hasMore.value = res.has_more
+    paginationInfo.value = res.platform_info || {}
   }
 }
 
 async function loadMore() {
   if (!hasMore.value) return
   loadingMore.value = true
-  
+
   try {
+    const normalizedKeyword = String(keyword.value || '').trim()
+    if (!normalizedKeyword) {
+      return
+    }
+
     if (isVideoMode.value) {
       const nextPage = paginationInfo.value ? paginationInfo.value.page + 1 : 2
-      const res = await videoApi.thirdPartySearch(keyword.value, nextPage)
+      const res = await videoApi.thirdPartySearch(normalizedKeyword, nextPage)
       if (res.code === 200 && res.data) {
         results.value = [...results.value, ...(res.data.videos || [])]
         paginationInfo.value = {
@@ -457,66 +383,30 @@ async function loadMore() {
         }
         hasMore.value = res.data.has_next
       }
-    } else {
-      const nextPage = currentPage.value + 1
-      const res = await comicStore.thirdPartySearch(keyword.value, 'all', nextPage, 40)
-      if (res.results) {
-        results.value = [...results.value, ...res.results]
-        currentPage.value = res.page
-        hasMore.value = res.has_more
-        paginationInfo.value = res.platform_info || {}
-      }
+      return
+    }
+
+    const nextPage = currentPage.value + 1
+    const res = await comicStore.thirdPartySearch(normalizedKeyword, 'all', nextPage, 40)
+    if (res.results) {
+      results.value = [...results.value, ...res.results]
+      currentPage.value = res.page
+      hasMore.value = res.has_more
+      paginationInfo.value = res.platform_info || {}
     }
   } finally {
     loadingMore.value = false
   }
 }
 
-function onItemClick(item) {
-  // Navigation logic
-  if (activeTab.value === 'local') {
-    const routeName = isVideoMode.value ? 'VideoDetail' : 'ComicDetail'
-    router.push({ name: routeName, params: { id: item.id } })
-  } else if (activeTab.value === 'preview') {
-    const routeName = isVideoMode.value ? 'VideoRecommendationDetail' : 'RecommendationDetail'
-    router.push({ name: routeName, params: { id: item.id } })
-  } else {
-    // Remote item click - maybe show import dialog or detail
-    // For now, assume import logic
-    // Or navigate to a temp detail page
-    showToast('第三方内容需先导入')
-  }
-}
-
-function isFavorited(item) {
-  if (isVideoMode.value) {
-    return listStore.isFavoritedVideo(item)
-  } else {
-    return listStore.isFavorited(item)
-  }
-}
-
-async function toggleFavorite(item) {
-  const source = activeTab.value === 'local' ? 'local' : 'preview'
-  if (isVideoMode.value) {
-    await listStore.toggleFavoriteVideo(item.id, source)
-  } else {
-    await listStore.toggleFavorite(item.id, source)
-  }
-}
-
-onMounted(async () => {
-  let shouldSearch = await restoreViewState()
-  if (route.query.keyword) {
-    keyword.value = route.query.keyword
-    shouldSearch = true
-  }
-  if (route.query.source === 'preview') {
-    activeTab.value = 'preview'
-  }
-  if (shouldSearch && keyword.value.trim()) {
-    await handleSearch()
-  }
+onMounted(() => {
+  keyword.value = ''
+  results.value = []
+  hasMore.value = false
+  currentPage.value = 0
+  selectedIds.value = []
+  paginationInfo.value = null
+  searchExecuted.value = false
 })
 </script>
 
@@ -554,9 +444,25 @@ onMounted(async () => {
   color: var(--text-primary);
 }
 
-.search-input-wrapper .van-search {
+.search-input-wrapper :deep(.van-search) {
   flex: 1;
   padding: 0;
+  background: transparent;
+}
+
+.search-action-btn {
+  border: 0;
+  background: transparent;
+  color: var(--brand-600);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.search-subtitle {
+  padding: 0 14px 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .tag-search-entry {

@@ -34,7 +34,7 @@
       <div class="sidebar-footer">  
         <router-link to="/search" class="nav-item search-btn">
           <van-icon name="search" />
-          <span>全局搜索</span>
+          <span>全网搜索</span>
         </router-link>
       </div>
     </aside>
@@ -93,6 +93,7 @@ const pageTitle = computed(() => {
     case '/subscribe': return '订阅'
     case '/mine': return '我的'
     case '/sync': return '数据同步'
+    case '/search': return '全网搜索'
     default: return 'Ultimate'
   }
 })

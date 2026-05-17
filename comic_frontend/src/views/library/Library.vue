@@ -3,12 +3,24 @@
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
       <van-search
-        v-model.trim="searchKeyword"
+        v-model="searchKeyword"
         class="toolbar-search"
+        type="text"
         shape="round"
-        clearable
         :placeholder="searchPlaceholder"
-      />
+      >
+        <template #right-icon>
+          <button
+            v-if="searchKeyword"
+            type="button"
+            class="toolbar-search-clear"
+            aria-label="清空搜索"
+            @click.stop="clearSearchKeyword"
+          >
+            <van-icon name="cross" />
+          </button>
+        </template>
+      </van-search>
       
       <div class="actions">
         <van-button size="small" plain class="toolbar-action-btn" @click="showSortPanel = true">
@@ -481,7 +493,7 @@ const emptyDescription = computed(() => {
 })
 
 const menuActions = [
-  { text: '搜索中心', icon: 'search' },
+  { text: '全网搜索', icon: 'search' },
   { text: '批量管理', icon: 'setting-o' },
   { text: '刷新列表', icon: 'replay' }
 ]
@@ -616,7 +628,7 @@ function goToSearch() {
 }
 
 async function onMenuSelect(action) {
-  if (action.text === '搜索中心') {
+  if (action.text === '全网搜索') {
     goToSearch()
     return
   }
@@ -800,6 +812,10 @@ function clearAllFilters() {
   persistViewState()
 }
 
+function clearSearchKeyword() {
+  searchKeyword.value = ''
+}
+
 async function removeFilter(filter) {
   if (filter.type === 'includeTag') {
     includeTags.value = includeTags.value.filter(id => id !== filter.value)
@@ -937,23 +953,60 @@ onMounted(async () => {
 .toolbar-search {
   flex: 1;
   min-width: 0;
-}
-
-.toolbar-search :deep(.van-search) {
   padding: 0;
   background: transparent;
+  --van-search-background: transparent;
+  --van-search-content-background: transparent;
+  --van-field-input-text-color: var(--text-primary);
 }
 
 .toolbar-search :deep(.van-search__content) {
   height: 40px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
-  background: var(--surface-2);
+  background: var(--surface-3);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.toolbar-search :deep(.van-cell),
+.toolbar-search :deep(.van-field),
+.toolbar-search :deep(.van-field__body) {
+  background: transparent;
 }
 
 .toolbar-search :deep(.van-field__control) {
   color: var(--text-primary);
+}
+
+.toolbar-search :deep(.van-field__control::placeholder) {
+  color: var(--text-tertiary);
+}
+
+.toolbar-search :deep(.van-field__left-icon),
+.toolbar-search :deep(.van-field__right-icon) {
+  color: var(--text-tertiary);
+}
+
+.toolbar-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.toolbar-search-clear:hover {
+  background: rgba(89, 160, 255, 0.1);
+  color: var(--text-secondary);
 }
 
 .actions {

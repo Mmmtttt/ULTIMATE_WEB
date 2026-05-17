@@ -139,7 +139,8 @@ async function assertRealtimeSearch(page, options) {
   await expect(page.locator(".media-card", { hasText: "Harbor" })).toHaveCount(1);
   await expect(page.locator(".media-card", { hasText: "Aurora" })).toHaveCount(0);
 
-  await searchInput.clear();
+  await page.locator(".toolbar-search .toolbar-search-clear").click();
+  await expect(searchInput).toHaveValue("");
   await expect(page.locator(".media-card")).toHaveCount(items.length);
 }
 

@@ -45,7 +45,7 @@ const routes = [
     path: '/search',
     name: 'GlobalSearch',
     component: () => import('@/views/search/GlobalSearch.vue'),
-    meta: { title: '搜索' }
+    meta: { title: '全网搜索' }
   },
   {
     path: '/video-tag-search',

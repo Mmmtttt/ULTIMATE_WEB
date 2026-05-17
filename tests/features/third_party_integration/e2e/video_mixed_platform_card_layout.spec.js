@@ -6,7 +6,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  *   防止横图卡片被强制拉高到竖图高度导致大片留白。
  * - 测试步骤:
  *   1. mock `/api/v1/video/third-party/search` 返回一条 javdb 与一条 javbus 结果。
- *   2. 进入 `/search`，切换视频模式并在“全网搜”发起搜索。
+ *   2. 进入 `/search`，在视频模式下直接发起全网搜索。
  *   3. 校验结果区同时出现 landscape/portrait 两类封面容器。
  *   4. 断言两类封面容器高度显著不同（横图更矮），避免同高拉伸。
  * - 预期结果:
@@ -91,7 +91,6 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
   await searchInput.fill("mixed-layout");
   await searchInput.press("Enter");
 
-  await page.locator(".van-tab").nth(2).click();
   await expect(page.locator(".remote-result-card")).toHaveCount(2);
 
   const dimensions = await page.evaluate(() => {
