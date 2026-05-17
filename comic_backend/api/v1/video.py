@@ -1178,6 +1178,18 @@ def _decorate_video_recommendation_items(
         if isinstance(video, dict)
     ]
 
+
+def _refresh_preview_video_persisted_fields(video_data: dict) -> bool:
+    if not isinstance(video_data, dict):
+        return False
+    if str(video_data.get("storage_path_relative", "") or "").strip() and str(video_data.get("storage_path_kind", "") or "").strip():
+        return False
+    try:
+        return bool(video_service._refresh_video_persisted_metadata(video_data, source="preview"))
+    except Exception as exc:
+        error_logger.error(f"回填预览视频存储路径失败: {video_data.get('id')}, {exc}")
+        return False
+
 def _get_preview_import_auto_download_enabled() -> bool:
     try:
         result = config_service.get_config()
@@ -1988,15 +2000,22 @@ def get_video_recommendation_list():
         tag_map = {t["id"]: t["name"] for t in tags}
         
         filtered_videos = []
+        persisted_changed = False
         for video in videos:
             if video.get('is_deleted'):
                 continue
             if min_score is not None and (video.get('score') or 0) < min_score:
                 continue
 
+            if _refresh_preview_video_persisted_fields(video):
+                persisted_changed = True
+
             filtered_videos.append(
                 _decorate_video_recommendation_item(video, tag_map=tag_map)
             )
+
+        if persisted_changed:
+            storage.write(db_data)
         
         reverse = str(sort_order or 'desc').strip().lower() != 'asc'
 
@@ -2036,6 +2055,8 @@ def get_video_recommendation_detail():
         
         for video in videos:
             if video.get('id') == video_id:
+                if _refresh_preview_video_persisted_fields(video):
+                    storage.write(db_data)
                 detail = _decorate_video_recommendation_item(
                     video,
                     tag_map=tag_map,

@@ -562,6 +562,7 @@ class TaskManager:
         
         from protocol.platform_service import get_platform_service
         from infrastructure.persistence.json_storage import JsonStorage
+        from application.comic_app_service import ComicAppService
         from core.constants import TAGS_JSON_FILE
         from core.utils import normalize_total_page
         
@@ -576,6 +577,7 @@ class TaskManager:
             if manifest is not None:
                 platform = resolve_manifest_platform_label(manifest, fallback=platform)
             platform_service = get_platform_service()
+            comic_service = ComicAppService()
             
             # 从独立的标签数据库读取tag
             tag_storage = JsonStorage(TAGS_JSON_FILE)
@@ -673,6 +675,15 @@ class TaskManager:
                         
                     except Exception as e:
                         error_logger.error(f"下载漫画失败: {e}")
+
+            comic_source = 'local' if task.target == 'home' else 'preview'
+            for comic in converted_data.get('comics', []):
+                if not isinstance(comic, dict):
+                    continue
+                try:
+                    comic_service._refresh_comic_persisted_metadata(comic, source=comic_source)
+                except Exception as persisted_error:
+                    error_logger.error(f"刷新漫画存储路径元数据失败: {comic.get('id')}, 错误: {persisted_error}")
             
             # 保存到数据库
             actual_imported_count = self._save_to_database(converted_data, task.target)
@@ -854,6 +865,13 @@ class TaskManager:
                         "tag_ids": tag_ids,
                         "list_ids": [],
                     }
+                    try:
+                        video_service._refresh_video_persisted_metadata(
+                            video_data,
+                            source="local" if task.target == "home" else "preview",
+                        )
+                    except Exception as persisted_error:
+                        error_logger.error(f"刷新视频存储路径元数据失败: {video_id_full}, 错误: {persisted_error}")
 
                     if task.target == "home":
                         import_result = video_service.import_video(video_data)

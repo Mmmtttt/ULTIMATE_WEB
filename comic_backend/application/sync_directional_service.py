@@ -18,10 +18,12 @@ from core.constants import (
     ACTOR_JSON_FILE,
     AUTHOR_JSON_FILE,
     CACHE_ROOT_DIR,
+    COMIC_RECOMMENDATION_CACHE_DIR,
     COMIC_DIR,
     DATA_DIR,
     JSON_FILE,
     LISTS_JSON_FILE,
+    LOCAL_PICTURES_DIR,
     META_DIR,
     RECOMMENDATION_JSON_FILE,
     RECOMMENDATION_CACHE_DIR,
@@ -31,6 +33,10 @@ from core.constants import (
     VIDEO_DIR,
     VIDEO_JSON_FILE,
     VIDEO_RECOMMENDATION_JSON_FILE,
+)
+from core.host_platform_fallback import (
+    infer_existing_host_comic_dir,
+    infer_existing_host_recommendation_cache_dir,
 )
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
@@ -1454,6 +1460,7 @@ class DirectionalSyncService:
         list_key = str(list_row.get("id", "")).strip()
         source_counts = self._empty_scope_counts()
         pending_counts = self._empty_scope_counts()
+        asset_scope_rows: Dict[str, List[Dict[str, Any]]] = {}
         outgoing: Dict[str, List[Dict[str, Any]]] = {}
         pending_total = 0
         source_total = 0
@@ -1464,6 +1471,7 @@ class DirectionalSyncService:
                 continue
             known_ids = self._known_dataset_ids(known_inventory, dataset_name)
             filtered_rows: List[Dict[str, Any]] = []
+            matched_rows_for_assets: List[Dict[str, Any]] = []
             matched_count = 0
             for row in payload:
                 if not isinstance(row, dict):
@@ -1477,6 +1485,7 @@ class DirectionalSyncService:
                 if not isinstance(list_ids, list) or list_key not in list_ids:
                     continue
                 matched_count += 1
+                matched_rows_for_assets.append(dict(row))
                 if row_id in known_ids:
                     continue
                 filtered_rows.append(self._sanitize_list_scope_content_row(row, list_key))
@@ -1485,6 +1494,8 @@ class DirectionalSyncService:
             pending_counts[dataset_name] = len(filtered_rows)
             source_total += matched_count
             pending_total += len(filtered_rows)
+            if matched_rows_for_assets:
+                asset_scope_rows[dataset_name] = matched_rows_for_assets
             if filtered_rows:
                 outgoing[dataset_name] = filtered_rows
 
@@ -1498,11 +1509,13 @@ class DirectionalSyncService:
             "pending_content_count": pending_total,
             "skipped_existing_content_count": max(source_total - pending_total, 0),
         }
+        asset_paths = self._collect_list_scope_asset_paths(asset_scope_rows)
+        scope["asset_file_count"] = len(asset_paths)
         if pending_total <= 0:
             return {
                 "scope": scope,
                 "datasets": {},
-                "asset_paths": [],
+                "asset_paths": asset_paths,
             }
 
         tags_payload = self._read_dataset(self.DATASETS["tags"])
@@ -1541,9 +1554,7 @@ class DirectionalSyncService:
             if rows:
                 datasets[dataset_name] = rows
 
-        asset_paths = self._collect_list_scope_asset_paths(datasets)
         scope["tag_count"] = len(scoped_tags)
-        scope["asset_file_count"] = len(asset_paths)
         return {
             "scope": scope,
             "datasets": datasets,
@@ -1656,7 +1667,7 @@ class DirectionalSyncService:
             if not isinstance(rows, list):
                 continue
             for row in rows:
-                for rel in self._collect_asset_paths_for_row(row):
+                for rel in self._collect_asset_paths_for_row(row, dataset_name=dataset_name):
                     if rel in seen:
                         continue
                     seen.add(rel)
@@ -1664,7 +1675,7 @@ class DirectionalSyncService:
         collected.sort()
         return collected
 
-    def _collect_asset_paths_for_row(self, row: Any) -> List[str]:
+    def _collect_asset_paths_for_row(self, row: Any, dataset_name: str = "") -> List[str]:
         if not isinstance(row, dict):
             return []
 
@@ -1687,6 +1698,13 @@ class DirectionalSyncService:
             for item in values:
                 candidates.extend(self._expand_asset_candidate_to_files(item))
 
+        inferred_dir_candidates = self._infer_list_scope_asset_dir_candidates(
+            row,
+            dataset_name=dataset_name,
+        )
+        for candidate in inferred_dir_candidates:
+            candidates.extend(self._expand_asset_candidate_to_files(candidate))
+
         seen: Set[str] = set()
         ordered: List[str] = []
         for rel in candidates:
@@ -1696,6 +1714,41 @@ class DirectionalSyncService:
             seen.add(normalized)
             ordered.append(normalized)
         return ordered
+
+    def _infer_list_scope_asset_dir_candidates(self, row: Dict[str, Any], dataset_name: str = "") -> List[str]:
+        dataset_key = str(dataset_name or "").strip().lower()
+        if dataset_key == "comics":
+            return self._infer_list_scope_comic_dir_candidates(row)
+        if dataset_key == "recommendations":
+            return self._infer_list_scope_recommendation_dir_candidates(row)
+        return []
+
+    def _infer_list_scope_comic_dir_candidates(self, row: Dict[str, Any]) -> List[str]:
+        comic_id = str((row or {}).get("id", "")).strip()
+        if not comic_id:
+            return []
+
+        inferred_dir = infer_existing_host_comic_dir(
+            comic_id,
+            row,
+            comic_root=COMIC_DIR,
+            local_root=LOCAL_PICTURES_DIR,
+        )
+        relative_dir = normalize_data_relative_path(inferred_dir)
+        return [relative_dir] if relative_dir else []
+
+    def _infer_list_scope_recommendation_dir_candidates(self, row: Dict[str, Any]) -> List[str]:
+        comic_id = str((row or {}).get("id", "")).strip()
+        if not comic_id:
+            return []
+
+        inferred_dir = infer_existing_host_recommendation_cache_dir(
+            comic_id,
+            row,
+            cache_root=COMIC_RECOMMENDATION_CACHE_DIR,
+        )
+        relative_dir = normalize_data_relative_path(inferred_dir)
+        return [relative_dir] if relative_dir else []
 
     def _expand_asset_candidate_to_files(self, raw_value: Any) -> List[str]:
         rel = self._normalize_asset_candidate(raw_value)

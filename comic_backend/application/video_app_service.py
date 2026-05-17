@@ -432,6 +432,13 @@ class VideoAppService(BaseContentAppService):
             
             video_list = []
             for v in videos:
+                try:
+                    if (not str(getattr(v, "storage_path_relative", "") or "").strip()) or (not str(getattr(v, "storage_path_kind", "") or "").strip()):
+                        if self._refresh_video_persisted_metadata(v, source="local"):
+                            self._video_repo.save(v)
+                except Exception as persisted_error:
+                    error_logger.error(f"回填视频存储路径失败（列表）: {v.id}, {persisted_error}")
+
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 video_list.append(video_info)
@@ -448,6 +455,13 @@ class VideoAppService(BaseContentAppService):
             video = self._video_repo.get_by_id(video_id)
             if not video:
                 return ServiceResult.error("视频不存在")
+
+            try:
+                if (not str(getattr(video, "storage_path_relative", "") or "").strip()) or (not str(getattr(video, "storage_path_kind", "") or "").strip()):
+                    if self._refresh_video_persisted_metadata(video, source="local"):
+                        self._video_repo.save(video)
+            except Exception as persisted_error:
+                error_logger.error(f"回填视频存储路径失败（详情）: {video_id}, {persisted_error}")
             
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}

@@ -81,6 +81,43 @@ class RecommendationAppService:
         from protocol.platform_service import get_platform_service
         self._platform_service = get_platform_service()
         return self._platform_service
+
+    def _refresh_recommendation_persisted_metadata(self, recommendation: Any) -> bool:
+        if not recommendation:
+            return False
+
+        payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else dict(recommendation or {})
+        recommendation_id = str(payload.get("id") or "").strip()
+        if not recommendation_id:
+            return False
+
+        platform_name = str(payload.get("platform") or "").strip()
+        plugin_id = str(payload.get("plugin_id") or "").strip()
+        storage_kind = str(payload.get("storage_path_kind") or "").strip() or "preview_cache_dir"
+
+        try:
+            storage_path = recommendation_cache_manager._get_comic_cache_dir(recommendation_id)
+        except Exception:
+            storage_path = ""
+
+        updates = self._build_recommendation_persisted_metadata(
+            payload,
+            storage_path=storage_path,
+            storage_kind=storage_kind,
+            platform_name=platform_name,
+            plugin_id=plugin_id,
+        )
+        changed = False
+        for key, value in updates.items():
+            if hasattr(recommendation, key):
+                if getattr(recommendation, key, None) != value:
+                    setattr(recommendation, key, value)
+                    changed = True
+            elif isinstance(recommendation, dict):
+                if recommendation.get(key) != value:
+                    recommendation[key] = value
+                    changed = True
+        return changed
     
     def get_recommendation_list(
         self,
@@ -126,6 +163,13 @@ class RecommendationAppService:
             # 构建返回数据
             recommendation_list = []
             for r in recommendations:
+                try:
+                    if (not str(getattr(r, "storage_path_relative", "") or "").strip()) or (not str(getattr(r, "storage_path_kind", "") or "").strip()):
+                        if self._refresh_recommendation_persisted_metadata(r):
+                            self._recommendation_repo.save(r)
+                except Exception as persisted_error:
+                    error_logger.error(f"回填推荐漫画存储路径失败（列表）: {r.id}, {persisted_error}")
+
                 rec_info = self._recommendation_to_summary_dict(r, tag_map)
                 rec_info["total_page"] = normalize_total_page(r.total_page)
                 recommendation_list.append(rec_info)
@@ -142,6 +186,13 @@ class RecommendationAppService:
             recommendation = self._recommendation_repo.get_by_id(recommendation_id)
             if not recommendation:
                 return ServiceResult.error("推荐漫画不存在")
+
+            try:
+                if (not str(getattr(recommendation, "storage_path_relative", "") or "").strip()) or (not str(getattr(recommendation, "storage_path_kind", "") or "").strip()):
+                    if self._refresh_recommendation_persisted_metadata(recommendation):
+                        self._recommendation_repo.save(recommendation)
+            except Exception as persisted_error:
+                error_logger.error(f"回填推荐漫画存储路径失败（详情）: {recommendation_id}, {persisted_error}")
 
             normalized_total_page = normalize_total_page(recommendation.total_page)
             if normalized_total_page != recommendation.total_page:

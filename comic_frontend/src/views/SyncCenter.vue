@@ -96,7 +96,13 @@
       </div>
     </van-cell-group>
 
-    <van-popup v-model:show="showListScopePopup" round position="bottom" class="list-scope-popup">
+    <van-popup
+      v-model:show="showListScopePopup"
+      round
+      :position="isDesktopListScopePopup ? 'center' : 'bottom'"
+      :class="['list-scope-popup', { 'list-scope-popup-desktop': isDesktopListScopePopup }]"
+      :style="listScopePopupStyle"
+    >
       <div class="list-scope-popup-head">
         <div>
           <div class="list-scope-popup-title">按清单同步</div>
@@ -182,6 +188,7 @@ const peerActionLoading = ref({})
 const peerTaskMap = ref({})
 const taskPollingTokens = ref({})
 const pageAlive = ref(true)
+const isDesktopListScopePopup = ref(false)
 const listStore = useListStore()
 const showListScopePopup = ref(false)
 const listScopePeer = ref(null)
@@ -196,6 +203,16 @@ const connectForm = reactive({
 })
 
 const autoRequesterBaseUrl = ref('')
+
+const listScopePopupStyle = computed(() => {
+  if (!isDesktopListScopePopup.value) {
+    return {}
+  }
+  return {
+    width: 'min(680px, calc(100vw - 32px))',
+    maxHeight: 'min(82vh, 760px)'
+  }
+})
 
 const filteredListScopeOptions = computed(() => {
   const keyword = String(listScopeKeyword.value || '').trim().toLowerCase()
@@ -227,6 +244,14 @@ function resolveAutoRequesterBaseUrl() {
     return String(window.location.origin || '').trim()
   }
   return ''
+}
+
+function updateListScopePopupLayout() {
+  if (typeof window === 'undefined') {
+    isDesktopListScopePopup.value = false
+    return
+  }
+  isDesktopListScopePopup.value = window.innerWidth >= 768
 }
 
 function appendLog(text) {
@@ -679,12 +704,19 @@ async function removePeer(peer) {
 onMounted(async () => {
   pageAlive.value = true
   autoRequesterBaseUrl.value = resolveAutoRequesterBaseUrl()
+  updateListScopePopupLayout()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateListScopePopupLayout)
+  }
   await loadPeers()
 })
 
 onUnmounted(() => {
   pageAlive.value = false
   taskPollingTokens.value = {}
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateListScopePopupLayout)
+  }
 })
 </script>
 
@@ -782,9 +814,18 @@ onUnmounted(() => {
 }
 
 .list-scope-popup {
+  display: flex;
+  flex-direction: column;
   padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
   max-height: min(78vh, 720px);
   overflow: hidden;
+  box-sizing: border-box;
+}
+
+.list-scope-popup-desktop {
+  padding: 20px 20px 18px;
+  border-radius: 24px;
+  box-shadow: 0 22px 64px rgba(5, 10, 24, 0.32);
 }
 
 .list-scope-popup-head {
@@ -810,6 +851,8 @@ onUnmounted(() => {
 }
 
 .list-scope-popup-body {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: min(48vh, 420px);
   overflow-y: auto;
   padding-right: 2px;
@@ -845,11 +888,22 @@ onUnmounted(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 14px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 640px) {
   .list-scope-popup-actions {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 768px) {
+  .list-scope-popup {
+    max-height: min(82vh, 760px);
+  }
+
+  .list-scope-popup-body {
+    max-height: none;
   }
 }
 </style>

@@ -1404,6 +1404,10 @@ class ListAppService:
                     "create_time": get_current_time(),
                     "last_access_time": get_current_time()
                 }
+                try:
+                    video_service._refresh_video_persisted_metadata(video_data, source=source)
+                except Exception as persisted_error:
+                    app_logger.warning(f"刷新平台视频存储路径元数据失败: {prefixed_id}, {persisted_error}")
                 
                 score = 8.0
                 rating_text = str(work.get("rating", "") or "")
@@ -1538,11 +1542,13 @@ class ListAppService:
         """
         try:
             from application.tag_app_service import TagAppService
+            from application.comic_app_service import ComicAppService
             from domain.tag.entity import ContentType
             from domain.comic import Comic
             from core.constants import COVER_DIR
             
             repo = self._comic_repo if source == "local" else self._rec_repo
+            comic_service = ComicAppService()
             
             tag_service = TagAppService()
             existing_tags = tag_service.get_tag_list(ContentType.COMIC).data or []
@@ -1716,6 +1722,10 @@ class ListAppService:
                     "create_time": get_current_time(),
                     "last_access_time": get_current_time()
                 }
+                try:
+                    comic_service._refresh_comic_persisted_metadata(comic_data, source=source)
+                except Exception as persisted_error:
+                    app_logger.warning(f"刷新平台漫画存储路径元数据失败: {prefixed_id}, {persisted_error}")
                 
                 if source == "local":
                     comic = Comic.from_dict(comic_data)

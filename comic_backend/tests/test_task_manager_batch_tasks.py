@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -169,3 +170,153 @@ def test_execute_batch_task_continues_after_single_item_exception(tmp_path, monk
     assert result["failed_items"] == [{"id": "LOCALV_BROKEN", "error": "ffmpeg crashed"}]
     assert task.downloaded_pages == 3
     assert task.progress == 100
+
+
+def test_execute_comic_import_backfills_storage_fields_before_save(tmp_path, monkeypatch):
+    manager = _build_manager(tmp_path, monkeypatch)
+
+    json_file = tmp_path / "comics_database.json"
+    recommendation_file = tmp_path / "recommendations_database.json"
+    tags_file = tmp_path / "tags_database.json"
+    json_file.write_text(json.dumps({"comics": [], "total_comics": 0}, ensure_ascii=False), encoding="utf-8")
+    recommendation_file.write_text(json.dumps({"recommendations": [], "total_recommendations": 0}, ensure_ascii=False), encoding="utf-8")
+    tags_file.write_text(json.dumps({"tags": []}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(task_manager_module, "JSON_FILE", str(json_file))
+    monkeypatch.setattr(task_manager_module, "RECOMMENDATION_JSON_FILE", str(recommendation_file))
+    constants_module = importlib.import_module("core.constants")
+    monkeypatch.setattr(constants_module, "TAGS_JSON_FILE", str(tags_file))
+
+    monkeypatch.setattr(manager, "_resolve_comic_manifest", lambda platform: None)
+    monkeypatch.setattr(manager, "_resolve_comic_download_dir", lambda platform: str(tmp_path / "downloads"))
+    monkeypatch.setattr(
+        manager,
+        "_convert_to_standard_format",
+        lambda albums, existing_tags, platform: {
+            "comics": [
+                {
+                    "id": "JMTEST001",
+                    "title": "Task Import Comic",
+                    "title_jp": "",
+                    "author": "Tester",
+                    "desc": "",
+                    "cover_path": "",
+                    "total_page": 12,
+                    "current_page": 1,
+                    "score": 8.0,
+                    "tag_ids": [],
+                    "list_ids": [],
+                    "create_time": "2026-05-15T00:00:00",
+                    "last_read_time": "2026-05-15T00:00:00",
+                    "is_deleted": False,
+                    "storage_path_relative": "",
+                    "storage_path_kind": "",
+                }
+            ],
+            "tags": [],
+        },
+    )
+
+    platform_service_module = importlib.import_module("protocol.platform_service")
+    platform_meta_module = importlib.import_module("protocol.platform_meta")
+    comic_app_module = importlib.import_module("application.comic_app_service")
+
+    class _FakePlatformService:
+        def get_album_by_id(self, platform, comic_id):
+            return {"albums": [{"album_id": "TEST001", "title": "Task Import Comic", "pages": 12}]}
+
+        def download_album(self, platform, original_id, download_dir=None, show_progress=False):
+            return ({"local_pages": 12}, True)
+
+    class _FakeComicService:
+        def _refresh_comic_persisted_metadata(self, comic, *, source: str):
+            comic["storage_path_relative"] = "comic/JM/TEST001"
+            comic["storage_path_kind"] = "local_dir"
+            comic["platform"] = "JM"
+            return True
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: _FakePlatformService())
+    monkeypatch.setattr(platform_meta_module, "split_prefixed_id", lambda comic_id, media_type="comic": ("JM", "TEST001", None))
+    monkeypatch.setattr(comic_app_module, "ComicAppService", _FakeComicService)
+
+    task_id = manager.create_task(platform="JM", import_type="by_id", target="home", comic_id="TEST001")
+    task = manager.get_task(task_id)
+
+    result = manager._execute_import(task)
+
+    assert result["success"] is True
+    saved = json.loads(json_file.read_text(encoding="utf-8"))
+    assert saved["comics"][0]["storage_path_relative"] == "comic/JM/TEST001"
+    assert saved["comics"][0]["storage_path_kind"] == "local_dir"
+
+
+def test_execute_video_import_backfills_storage_fields_for_preview_records(tmp_path, monkeypatch):
+    manager = _build_manager(tmp_path, monkeypatch)
+
+    preview_json = tmp_path / "video_recommendations_database.json"
+    preview_json.write_text(json.dumps({"video_recommendations": []}, ensure_ascii=False), encoding="utf-8")
+
+    constants_module = importlib.import_module("core.constants")
+    monkeypatch.setattr(constants_module, "VIDEO_RECOMMENDATION_JSON_FILE", str(preview_json))
+
+    video_runtime_module = importlib.import_module("application.video_runtime_support")
+    video_app_module = importlib.import_module("application.video_app_service")
+    tag_app_module = importlib.import_module("application.tag_app_service")
+
+    class _FakeAdapter:
+        def get_video_detail(self, lookup):
+            return {
+                "code": "ABP-123",
+                "title": "Preview Video",
+                "date": "2026-05-15",
+                "series": "Series",
+                "actors": ["Actor A"],
+                "magnets": [],
+                "thumbnail_images": [],
+                "preview_video": "",
+                "cover_url": "",
+                "tags": [],
+            }
+
+    class _FakeVideoService:
+        def _refresh_video_persisted_metadata(self, video, *, source: str):
+            video["storage_path_relative"] = "recommendation_cache/video/JAVDB/JAVDBTEST001"
+            video["storage_path_kind"] = "preview_asset_dir"
+            video["platform"] = "JAVDB"
+            return True
+
+        def get_video_by_code(self, code):
+            return _ServiceResult(False, "not found", None)
+
+        def import_video(self, video_data):
+            return _ServiceResult(True, "ok", video_data)
+
+        def apply_recent_import_tags(self, video_ids, source="local", clear_previous=True):
+            return _ServiceResult(True, "ok", {})
+
+    class _FakeTagService:
+        def get_tag_list(self, content_type):
+            return _ServiceResult(True, "ok", [])
+
+        def create_tag(self, name, content_type):
+            return _ServiceResult(True, "ok", {"id": f"tag_{name}"})
+
+    monkeypatch.setattr(video_runtime_module, "resolve_video_lookup_context", lambda video_id="", platform_name="": ("javdb", video_id or "TEST001", None))
+    monkeypatch.setattr(video_runtime_module, "build_video_host_id", lambda platform, lookup: "JAVDBTEST001")
+    monkeypatch.setattr(video_runtime_module, "get_video_adapter", lambda platform, existing_tags: _FakeAdapter())
+    monkeypatch.setattr(video_runtime_module, "platform_allows_preview_video_download", lambda **kwargs: False)
+    monkeypatch.setattr(video_runtime_module, "sanitize_preview_video_value", lambda value: str(value or "").strip())
+    monkeypatch.setattr(video_runtime_module, "schedule_video_asset_cache", lambda **kwargs: None)
+    monkeypatch.setattr(video_runtime_module, "to_proxy_image_url", lambda *args, **kwargs: "")
+    monkeypatch.setattr(video_app_module, "VideoAppService", _FakeVideoService)
+    monkeypatch.setattr(tag_app_module, "TagAppService", _FakeTagService)
+
+    task_id = manager.create_task(platform="javdb", import_type="by_id", target="recommendation", comic_id="TEST001", content_type="video")
+    task = manager.get_task(task_id)
+
+    result = manager._execute_import(task)
+
+    assert result["success"] is True
+    saved = json.loads(preview_json.read_text(encoding="utf-8"))
+    assert saved["video_recommendations"][0]["storage_path_relative"] == "recommendation_cache/video/JAVDB/JAVDBTEST001"
+    assert saved["video_recommendations"][0]["storage_path_kind"] == "preview_asset_dir"

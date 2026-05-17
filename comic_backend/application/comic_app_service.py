@@ -154,6 +154,13 @@ class ComicAppService:
             
             comic_list = []
             for c in comics:
+                try:
+                    if (not str(getattr(c, "storage_path_relative", "") or "").strip()) or (not str(getattr(c, "storage_path_kind", "") or "").strip()):
+                        if self._refresh_comic_persisted_metadata(c, source="local"):
+                            self._comic_repo.save(c)
+                except Exception as persisted_error:
+                    error_logger.error(f"回填漫画存储路径失败（列表）: {c.id}, {persisted_error}")
+
                 # 确保封面存在（对未落地封面的内容，必要时用第 1 张图片生成）
                 try:
                     self._ensure_cover(c)
@@ -173,6 +180,13 @@ class ComicAppService:
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
                 return ServiceResult.error("漫画不存在")
+
+            try:
+                if (not str(getattr(comic, "storage_path_relative", "") or "").strip()) or (not str(getattr(comic, "storage_path_kind", "") or "").strip()):
+                    if self._refresh_comic_persisted_metadata(comic, source="local"):
+                        self._comic_repo.save(comic)
+            except Exception as persisted_error:
+                error_logger.error(f"回填漫画存储路径失败（详情）: {comic_id}, {persisted_error}")
             
             # 确保封面存在（如果缺失或文件不存在，用第 1 张图片生成）
             try:

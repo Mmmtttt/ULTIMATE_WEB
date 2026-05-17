@@ -1126,8 +1126,9 @@ def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_members
             "create_time": now,
             "last_read_time": now,
             "is_deleted": False,
-            "storage_path_relative": f"comic/JM/{local_comic_id}",
-            "storage_path_kind": "local_dir",
+            # Keep the stored path empty to cover host-manifest fallback resolution during scoped asset collection.
+            "storage_path_relative": "",
+            "storage_path_kind": "",
         },
     )
     _upsert_by_id(
@@ -1287,9 +1288,11 @@ def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_members
     _update_total(target_comics, "comics", "total_comics")
     save_json(target_comics_path, target_comics)
 
+    local_comic_page_rel = f"comic/JM/{local_comic_id}/001.png"
+
     expected_hashes: dict[str, str] = {}
     for rel_path, content in {
-        f"comic/JM/{local_comic_id}/001.png": f"scope-comic-page-{suffix}".encode("utf-8"),
+        local_comic_page_rel: f"scope-comic-page-{suffix}".encode("utf-8"),
         f"static/cover/JM/{local_comic_id}.jpg": f"scope-comic-cover-{suffix}".encode("utf-8"),
         f"video/LOCAL/{local_video_id}/source.mp4": f"scope-video-source-{suffix}".encode("utf-8"),
         f"video/LOCAL/{local_video_id}/cover.jpg": f"scope-video-cover-{suffix}".encode("utf-8"),
@@ -1409,6 +1412,30 @@ def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_members
         target_file = target_data / rel.replace("/", os.sep)
         assert target_file.exists(), f"missing synced scoped asset: {rel}"
         assert _sha256(target_file) == expected_hash, f"hash mismatch for scoped asset: {rel}"
+
+    synced_local_comic_images = _request_ok(
+        "GET",
+        f"{target_base}/api/v1/comic/images?comic_id={local_comic_id}",
+        timeout=20,
+    )
+    assert len(synced_local_comic_images) == 1
+
+    removed_target_asset = target_data / local_comic_page_rel.replace("/", os.sep)
+    removed_target_asset.unlink()
+    assert not removed_target_asset.exists()
+
+    asset_repair = _request_ok(
+        "POST",
+        f"{source_base}/api/v1/sync/list-scope/push",
+        json_body={"peer_id": peer_id, "list_id": selected_list_id},
+        timeout=180,
+    )
+    assert asset_repair.get("status") == "completed"
+    remote_apply = asset_repair.get("remote_apply")
+    assert remote_apply in (None, {})
+    assert int(asset_repair.get("asset_sync", {}).get("file_count", 0)) >= 1
+    assert removed_target_asset.exists()
+    assert _sha256(removed_target_asset) == expected_hashes[local_comic_page_rel]
 
     push_again = _request_ok(
         "POST",
