@@ -350,8 +350,15 @@ async function restoreViewState() {
     parsed = response?.data?.state
   }
   if (!parsed) {
+    includeTags.value = []
+    excludeTags.value = []
+    selectedAuthors.value = []
+    selectedListIds.value = []
+    minScore.value = 0
+    unreadOnly.value = false
     currentSortField.value = ''
     currentSortOrder.value = 'desc'
+    currentStore.value.setSortState?.(null, currentSortOrder.value)
     return false
   }
   includeTags.value = parsed.includeTags || []
@@ -367,6 +374,12 @@ async function restoreViewState() {
   }
   currentStore.value.setSortState?.(currentSortField.value || null, currentSortOrder.value)
   return true
+}
+
+function sanitizeFilterStateForCurrentMode() {
+  const availableTagIds = new Set(availableTags.value.map((item) => item.id))
+  includeTags.value = includeTags.value.filter((tagId) => availableTagIds.has(tagId))
+  excludeTags.value = excludeTags.value.filter((tagId) => availableTagIds.has(tagId))
 }
 
 function buildSortParams() {
@@ -814,6 +827,7 @@ async function initializePage(force = false) {
   }
 
   await loadData(force)
+  sanitizeFilterStateForCurrentMode()
   if (currentVersion !== initVersion.value) {
     return
   }

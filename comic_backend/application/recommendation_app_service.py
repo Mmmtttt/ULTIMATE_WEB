@@ -16,6 +16,8 @@ from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.constants import COMIC_DIR, COMIC_RECOMMENDATION_CACHE_DIR
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from utils.file_parser import file_parser
+from core.enums import ContentType
+from application.tag_content_type_guard import validate_tag_ids_for_content_type
 from protocol.platform_meta import (
     build_platform_root_dir,
     get_capability_default_params,
@@ -559,15 +561,23 @@ class RecommendationAppService:
     def bind_tags(self, recommendation_id: str, tag_id_list: List[str]) -> ServiceResult:
         """绑定标签"""
         try:
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_id_list,
+                ContentType.COMIC,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
+
             recommendation = self._recommendation_repo.get_by_id(recommendation_id)
             if not recommendation:
                 return ServiceResult.error("推荐漫画不存在")
             
-            recommendation.tag_ids = tag_id_list
+            recommendation.tag_ids = validated_tag_ids
             
             if self._recommendation_repo.save(recommendation):
-                app_logger.info(f"绑定标签成功: {recommendation_id}, 标签: {tag_id_list}")
-                return ServiceResult.ok({"tag_ids": tag_id_list})
+                app_logger.info(f"绑定标签成功: {recommendation_id}, 标签: {validated_tag_ids}")
+                return ServiceResult.ok({"tag_ids": validated_tag_ids})
             else:
                 return ServiceResult.error("保存失败")
         except Exception as e:
@@ -691,11 +701,19 @@ class RecommendationAppService:
     def batch_add_tags(self, recommendation_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         """批量添加标签"""
         try:
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.COMIC,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
+
             success_count = 0
             for rec_id in recommendation_ids:
                 recommendation = self._recommendation_repo.get_by_id(rec_id)
                 if recommendation:
-                    for tag_id in tag_ids:
+                    for tag_id in validated_tag_ids:
                         if tag_id not in recommendation.tag_ids:
                             recommendation.tag_ids.append(tag_id)
                     if self._recommendation_repo.save(recommendation):

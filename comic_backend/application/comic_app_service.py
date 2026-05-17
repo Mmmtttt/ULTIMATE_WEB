@@ -17,6 +17,7 @@ from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR
 from core.host_platform_fallback import infer_existing_host_comic_dir
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.enums import ContentType
+from application.tag_content_type_guard import validate_tag_ids_for_content_type
 from protocol.gateway import get_protocol_gateway
 from protocol.platform_meta import (
     build_platform_root_dir,
@@ -256,21 +257,25 @@ class ComicAppService:
     
     def bind_tags(self, comic_id: str, tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.COMIC,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
                 return ServiceResult.error("漫画不存在")
             
-            comic.bind_tags(tag_ids)
+            comic.bind_tags(validated_tag_ids)
             
             if not self._comic_repo.save(comic):
                 return ServiceResult.error("绑定标签失败")
             
-            app_logger.info(f"绑定漫画标签成功: {comic_id}, 标签: {tag_ids}")
-            return ServiceResult.ok({"comic_id": comic_id, "tag_ids": tag_ids}, "标签绑定成功")
+            app_logger.info(f"绑定漫画标签成功: {comic_id}, 标签: {validated_tag_ids}")
+            return ServiceResult.ok({"comic_id": comic_id, "tag_ids": validated_tag_ids}, "标签绑定成功")
         except Exception as e:
             error_logger.error(f"绑定漫画标签失败: {e}")
             return ServiceResult.error("绑定标签失败")
@@ -343,23 +348,27 @@ class ComicAppService:
     
     def batch_add_tags(self, comic_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.COMIC,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             updated_count = 0
             for comic_id in comic_ids:
                 comic = self._comic_repo.get_by_id(comic_id)
                 if comic:
-                    comic.add_tags(tag_ids)
+                    comic.add_tags(validated_tag_ids)
                     if self._comic_repo.save(comic):
                         updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
             
-            app_logger.info(f"批量添加标签成功: {updated_count}个漫画, 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为{updated_count}个漫画添加标签")
+            app_logger.info(f"批量添加标签成功: {updated_count}个漫画, 标签: {validated_tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": validated_tag_ids}, f"成功为{updated_count}个漫画添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
             return ServiceResult.error("批量添加标签失败")

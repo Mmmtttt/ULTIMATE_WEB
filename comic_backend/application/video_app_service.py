@@ -43,6 +43,7 @@ from core.constants import (
     VIDEO_RECOMMENDATION_CACHE_DIR,
 )
 from core.enums import ContentType
+from application.tag_content_type_guard import validate_tag_ids_for_content_type
 from application.base.content_app_service import BaseContentAppService
 from application.local_video_thumbnail_service import (
     DEFAULT_LOCAL_VIDEO_THUMBNAIL_COUNT,
@@ -2408,21 +2409,25 @@ class VideoAppService(BaseContentAppService):
     
     def bind_tags(self, video_id: str, tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.VIDEO,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             video = self._video_repo.get_by_id(video_id)
             if not video:
                 return ServiceResult.error("视频不存在")
             
-            video.bind_tags(tag_ids)
+            video.bind_tags(validated_tag_ids)
             
             if not self._video_repo.save(video):
                 return ServiceResult.error("绑定标签失败")
             
-            app_logger.info(f"绑定视频标签成功: {video_id}, 标签: {tag_ids}")
-            return ServiceResult.ok({"video_id": video_id, "tag_ids": tag_ids}, "标签绑定成功")
+            app_logger.info(f"绑定视频标签成功: {video_id}, 标签: {validated_tag_ids}")
+            return ServiceResult.ok({"video_id": video_id, "tag_ids": validated_tag_ids}, "标签绑定成功")
         except Exception as e:
             error_logger.error(f"绑定视频标签失败: {e}")
             return ServiceResult.error("绑定标签失败")
@@ -2530,23 +2535,27 @@ class VideoAppService(BaseContentAppService):
     
     def batch_add_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.VIDEO,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             updated_count = 0
             for video_id in video_ids:
                 video = self._video_repo.get_by_id(video_id)
                 if video:
-                    video.add_tags(tag_ids)
+                    video.add_tags(validated_tag_ids)
                     if self._video_repo.save(video):
                         updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
             
-            app_logger.info(f"批量添加标签成功: {updated_count}个视频, 标签: {tag_ids}")
-            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": tag_ids}, f"成功为 {updated_count} 个视频添加标签")
+            app_logger.info(f"批量添加标签成功: {updated_count}个视频, 标签: {validated_tag_ids}")
+            return ServiceResult.ok({"updated_count": updated_count, "tag_ids": validated_tag_ids}, f"成功为 {updated_count} 个视频添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
             return ServiceResult.error("批量添加标签失败")

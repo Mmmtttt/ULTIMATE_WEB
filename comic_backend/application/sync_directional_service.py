@@ -38,8 +38,10 @@ from core.host_platform_fallback import (
     infer_existing_host_comic_dir,
     infer_existing_host_recommendation_cache_dir,
 )
+from core.enums import ContentType
 from infrastructure.logger import app_logger
 from infrastructure.persistence.json_storage import JsonStorage
+from application.tag_content_type_guard import filter_tag_ids_by_type_lookup, normalize_tag_content_type
 
 
 def _utc_now() -> datetime:
@@ -79,6 +81,12 @@ class DirectionalSyncService:
         "user_config": {"file": USER_CONFIG_JSON_FILE, "root_key": "user_config", "kind": "dict"},
     }
     LIST_SCOPE_CONTENT_DATASETS: tuple = ("comics", "recommendations", "videos", "video_recommendations")
+    CONTENT_DATASET_TAG_TYPES: Dict[str, ContentType] = {
+        "comics": ContentType.COMIC,
+        "recommendations": ContentType.COMIC,
+        "videos": ContentType.VIDEO,
+        "video_recommendations": ContentType.VIDEO,
+    }
 
     UNION_LIST_FIELDS: Set[str] = {"tag_ids", "list_ids", "actors"}
     ASSET_ROOT_DIRS: List[str] = [COMIC_DIR, VIDEO_DIR, STATIC_DIR, CACHE_ROOT_DIR, RECOMMENDATION_CACHE_DIR]
@@ -559,6 +567,35 @@ class DirectionalSyncService:
                 datasets[name]["keys"] = sorted(set(semantic_keys))
         return {"generated_at": _iso(_utc_now()), "device": self._load_store().get("device", {}), "datasets": datasets}
 
+    def _build_tag_content_type_index(self, tags_payload: Any = None) -> Dict[str, ContentType]:
+        payload = tags_payload if tags_payload is not None else self._read_dataset(self.DATASETS["tags"])
+        result: Dict[str, ContentType] = {}
+        for row in payload if isinstance(payload, list) else []:
+            if not isinstance(row, dict):
+                continue
+            tag_id = str(row.get("id", "")).strip()
+            if not tag_id:
+                continue
+            result[tag_id] = normalize_tag_content_type(row.get("content_type"))
+        return result
+
+    def _sanitize_content_row_tag_ids(
+        self,
+        dataset_name: str,
+        row: Dict[str, Any],
+        tag_type_index: Dict[str, ContentType],
+    ) -> Dict[str, Any]:
+        expected_type = self.CONTENT_DATASET_TAG_TYPES.get(str(dataset_name or "").strip())
+        if expected_type is None or not isinstance(row, dict):
+            return row
+        row["tag_ids"] = filter_tag_ids_by_type_lookup(
+            row.get("tag_ids", []),
+            expected_type,
+            tag_type_index,
+            drop_unknown=True,
+        )
+        return row
+
     def asset_inventory(self) -> Dict[str, Any]:
         files = self._collect_asset_index()
         return {
@@ -570,6 +607,7 @@ class DirectionalSyncService:
     def delta_from_known(self, known_inventory: Dict[str, Any]) -> Dict[str, Any]:
         known = known_inventory.get("datasets", {}) if isinstance(known_inventory, dict) else {}
         out = {}
+        tag_type_index = self._build_tag_content_type_index()
         for name, cfg in self.DATASETS.items():
             payload = self._read_dataset(cfg)
             if cfg.get("kind") == "dict":
@@ -610,7 +648,12 @@ class DirectionalSyncService:
                 if record_key in emitted_keys:
                     continue
                 emitted_keys.add(record_key)
-                rows.append(item)
+                if name in self.CONTENT_DATASET_TAG_TYPES:
+                    row_copy = dict(item)
+                    self._sanitize_content_row_tag_ids(name, row_copy, tag_type_index)
+                    rows.append(row_copy)
+                else:
+                    rows.append(item)
             if rows:
                 out[name] = rows
         return {"generated_at": _iso(_utc_now()), "datasets": out}
@@ -627,10 +670,18 @@ class DirectionalSyncService:
             remap.get("list_id_map", {}) if isinstance(remap, dict) else {},
         )
         summary = {"applied_at": _iso(_utc_now()), "dataset_stats": {}, "total_added": 0, "total_updated": 0, "total_skipped": 0}
-        for name, incoming_payload in incoming_copy.items():
+        ordered_names = [name for name in ("tags", "lists") if name in incoming_copy]
+        ordered_names.extend(name for name in incoming_copy.keys() if name not in {"tags", "lists"})
+        for name in ordered_names:
+            incoming_payload = incoming_copy.get(name)
             cfg = self.DATASETS.get(name)
             if not cfg:
                 continue
+            if name in self.CONTENT_DATASET_TAG_TYPES:
+                tag_type_index = self._build_tag_content_type_index()
+                for row in incoming_payload if isinstance(incoming_payload, list) else []:
+                    if isinstance(row, dict):
+                        self._sanitize_content_row_tag_ids(name, row, tag_type_index)
             stats = self._apply_dataset(cfg, incoming_payload)
             summary["dataset_stats"][name] = stats
             summary["total_added"] += int(stats.get("added", 0))
@@ -1531,15 +1582,20 @@ class DirectionalSyncService:
                 tag_index[tag_id] = dict(row)
                 tag_order.append(tag_id)
 
+        tag_content_type_index = {
+            tag_id: tag_index[tag_id].get("content_type")
+            for tag_id in tag_index.keys()
+        }
         referenced_tag_ids: Set[str] = set()
         for dataset_name in self.LIST_SCOPE_CONTENT_DATASETS:
             for row in outgoing.get(dataset_name, []):
-                valid_tag_ids = []
-                for raw_tag_id in row.get("tag_ids", []):
-                    tag_id = str(raw_tag_id or "").strip()
-                    if not tag_id or tag_id not in tag_index:
-                        continue
-                    valid_tag_ids.append(tag_id)
+                valid_tag_ids = filter_tag_ids_by_type_lookup(
+                    row.get("tag_ids", []),
+                    self.CONTENT_DATASET_TAG_TYPES[dataset_name],
+                    tag_content_type_index,
+                    drop_unknown=True,
+                )
+                for tag_id in valid_tag_ids:
                     referenced_tag_ids.add(tag_id)
                 row["tag_ids"] = valid_tag_ids
 

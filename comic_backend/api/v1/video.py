@@ -31,6 +31,8 @@ import mimetypes
 from .runtime_guard import require_third_party
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_item, annotate_items
+from application.tag_content_type_guard import validate_tag_ids_for_content_type
+from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 
 video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
@@ -2181,6 +2183,13 @@ def bind_video_recommendation_tags():
         
         video_id = data['video_id']
         tag_id_list = data['tag_id_list']
+        validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+            TagJsonRepository(),
+            tag_id_list,
+            ContentType.VIDEO,
+        )
+        if validation_error:
+            return error_response(400, validation_error)
         
         storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
         db_data = storage.read()
@@ -2189,7 +2198,7 @@ def bind_video_recommendation_tags():
         found = False
         for video in videos:
             if video.get('id') == video_id:
-                video['tag_ids'] = tag_id_list
+                video['tag_ids'] = validated_tag_ids
                 found = True
                 break
         
@@ -2199,7 +2208,7 @@ def bind_video_recommendation_tags():
         if not storage.write(db_data):
             return error_response(500, "数据写入失败")
         
-        app_logger.info(f"绑定推荐视频标签成功: {video_id}, 标签: {tag_id_list}")
+        app_logger.info(f"绑定推荐视频标签成功: {video_id}, 标签: {validated_tag_ids}")
         return success_response({"message": "标签绑定成功"})
     except Exception as e:
         error_logger.error(f"绑定推荐视频标签失败: {e}")

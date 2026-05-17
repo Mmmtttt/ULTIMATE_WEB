@@ -339,8 +339,15 @@ async function restoreViewState() {
     parsed = response?.data?.state
   }
   if (!parsed) {
+    tempIncludeTags.value = []
+    tempExcludeTags.value = []
+    tempSelectedAuthors.value = []
+    tempSelectedListIds.value = []
+    tempMinScore.value = 0
+    tempUnreadOnly.value = false
     currentSortField.value = ''
     currentSortOrder.value = 'desc'
+    currentStore.value.setSortType?.(null, currentSortOrder.value)
     return false
   }
   tempIncludeTags.value = parsed.includeTags || []
@@ -356,6 +363,12 @@ async function restoreViewState() {
   }
   currentStore.value.setSortType?.(currentSortField.value || null, currentSortOrder.value)
   return true
+}
+
+function sanitizeFilterStateForCurrentMode() {
+  const availableTagIds = new Set(availableTags.value.map((item) => item.id))
+  tempIncludeTags.value = tempIncludeTags.value.filter((tagId) => availableTagIds.has(tagId))
+  tempExcludeTags.value = tempExcludeTags.value.filter((tagId) => availableTagIds.has(tagId))
 }
 
 // Computed
@@ -745,6 +758,7 @@ async function initializePage(force = false) {
   }
 
   await loadData(force)
+  sanitizeFilterStateForCurrentMode()
   if (currentVersion !== initVersion.value) {
     return
   }

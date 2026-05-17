@@ -8,6 +8,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
 from core.enums import ContentType
+from application.tag_content_type_guard import validate_tag_ids_for_content_type
 
 
 class TagAppService:
@@ -350,9 +351,13 @@ class TagAppService:
 
     def batch_add_tags(self, comic_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.COMIC,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             home_updated = 0
             rec_updated = 0
@@ -364,13 +369,13 @@ class TagAppService:
                 if source == 'home':
                     comic = self._comic_repo.get_by_id(comic_id)
                     if comic:
-                        comic.add_tags(tag_ids)
+                        comic.add_tags(validated_tag_ids)
                         if self._comic_repo.save(comic):
                             home_updated += 1
                 elif source == 'recommendation':
                     recommendation = self._recommendation_repo.get_by_id(comic_id)
                     if recommendation:
-                        recommendation.add_tags(tag_ids)
+                        recommendation.add_tags(validated_tag_ids)
                         if self._recommendation_repo.save(recommendation):
                             rec_updated += 1
             
@@ -378,12 +383,12 @@ class TagAppService:
             if total_updated == 0:
                 return ServiceResult.error("没有找到有效的漫画")
             
-            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
+            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {validated_tag_ids}")
             return ServiceResult.ok({
                 "home_updated": home_updated,
                 "recommendation_updated": rec_updated,
                 "total_updated": total_updated,
-                "tag_ids": tag_ids
+                "tag_ids": validated_tag_ids
             }, f"成功为{total_updated}个漫画添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
@@ -428,9 +433,13 @@ class TagAppService:
     
     def batch_add_tags_to_videos(self, video_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
-            for tag_id in tag_ids:
-                if not self._tag_repo.get_by_id(tag_id):
-                    return ServiceResult.error(f"标签不存在: {tag_id}")
+            validated_tag_ids, validation_error = validate_tag_ids_for_content_type(
+                self._tag_repo,
+                tag_ids,
+                ContentType.VIDEO,
+            )
+            if validation_error:
+                return ServiceResult.error(validation_error)
             
             home_updated = 0
             rec_updated = 0
@@ -442,13 +451,13 @@ class TagAppService:
                 if source == 'home':
                     video = self._video_repo.get_by_id(video_id)
                     if video:
-                        video.add_tags(tag_ids)
+                        video.add_tags(validated_tag_ids)
                         if self._video_repo.save(video):
                             home_updated += 1
                 elif source == 'recommendation':
                     recommendation = self._video_recommendation_repo.get_by_id(video_id)
                     if recommendation:
-                        recommendation.add_tags(tag_ids)
+                        recommendation.add_tags(validated_tag_ids)
                         if self._video_recommendation_repo.save(recommendation):
                             rec_updated += 1
             
@@ -456,12 +465,12 @@ class TagAppService:
             if total_updated == 0:
                 return ServiceResult.error("没有找到有效的视频")
             
-            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {tag_ids}")
+            app_logger.info(f"批量添加标签成功: 主页{home_updated}个, 推荐{rec_updated}个, 标签: {validated_tag_ids}")
             return ServiceResult.ok({
                 "home_updated": home_updated,
                 "recommendation_updated": rec_updated,
                 "total_updated": total_updated,
-                "tag_ids": tag_ids
+                "tag_ids": validated_tag_ids
             }, f"成功为{total_updated}个视频添加标签")
         except Exception as e:
             error_logger.error(f"批量添加标签失败: {e}")
