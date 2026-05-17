@@ -247,7 +247,11 @@ def directional_assets_delta_download():
             return error_response(401, "invalid sync token")
 
         known_files = payload.get("known_files", {})
-        delta = directional_service.build_asset_delta_zip(known_files if isinstance(known_files, dict) else {})
+        rel_paths = payload.get("rel_paths")
+        delta = directional_service.build_asset_delta_zip(
+            known_files if isinstance(known_files, dict) else {},
+            rel_paths=rel_paths if isinstance(rel_paths, list) else None,
+        )
         zip_path = str(delta.get("zip_path", "")).strip()
         file_count = int(delta.get("file_count", 0))
         if not zip_path or file_count <= 0:
@@ -422,17 +426,67 @@ def list_scope_preview():
         payload = request.get_json(silent=True) or {}
         peer_id = str(payload.get("peer_id", "")).strip()
         list_id = str(payload.get("list_id", "")).strip()
+        direction = str(payload.get("direction", "push") or "push").strip().lower()
         if not peer_id:
             return error_response(400, "peer_id is required")
         if not list_id:
             return error_response(400, "list_id is required")
-        result = directional_service.estimate_list_scope_push(peer_id, list_id)
+        if direction not in {"push", "pull"}:
+            return error_response(400, "direction must be push or pull")
+        result = (
+            directional_service.estimate_list_scope_push(peer_id, list_id)
+            if direction == "push"
+            else directional_service.estimate_list_scope_pull(peer_id, list_id)
+        )
         return success_response(result)
     except ValueError as exc:
         return error_response(400, str(exc))
     except Exception as exc:
         error_logger.exception(f"sync list scope preview failed: {exc}")
         return error_response(500, f"list scope preview failed: {exc}")
+
+
+@sync_bp.route("/list-scope/options", methods=["GET"])
+def list_scope_options():
+    try:
+        token = _extract_sync_token()
+        if token:
+            peer = directional_service.verify_token(token)
+            if not peer:
+                return error_response(401, "invalid sync token")
+            return success_response(directional_service.list_scope_options())
+
+        peer_id = str(request.args.get("peer_id", "")).strip()
+        if peer_id:
+            return success_response(directional_service.fetch_list_scope_options_from_peer(peer_id))
+
+        return success_response(directional_service.list_scope_options())
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope options failed: {exc}")
+        return error_response(500, f"list scope options failed: {exc}")
+
+
+@sync_bp.route("/list-scope/delta", methods=["POST"])
+def list_scope_delta():
+    try:
+        payload = request.get_json(silent=True) or {}
+        token = _extract_sync_token(payload)
+        peer = directional_service.verify_token(token)
+        if not peer:
+            return error_response(401, "invalid sync token")
+        list_id = str(payload.get("list_id", "")).strip()
+        if not list_id:
+            return error_response(400, "list_id is required")
+        known_inventory = payload.get("known_inventory", {})
+        result = directional_service.list_scope_delta_from_known(list_id, known_inventory)
+        return success_response(result)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope delta failed: {exc}")
+        return error_response(500, f"list scope delta failed: {exc}")
 
 
 @sync_bp.route("/list-scope/push", methods=["POST"])
@@ -454,8 +508,8 @@ def list_scope_push():
         return error_response(500, f"list scope push failed: {exc}")
 
 
-@sync_bp.route("/list-scope/task/start", methods=["POST"])
-def list_scope_task_start():
+@sync_bp.route("/list-scope/pull", methods=["POST"])
+def list_scope_pull():
     try:
         payload = request.get_json(silent=True) or {}
         peer_id = str(payload.get("peer_id", "")).strip()
@@ -464,7 +518,29 @@ def list_scope_task_start():
             return error_response(400, "peer_id is required")
         if not list_id:
             return error_response(400, "list_id is required")
-        task = directional_service.start_list_scope_push_task(peer_id, list_id)
+        result = directional_service.pull_list_scope_from_peer(peer_id, list_id)
+        return success_response(result)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+    except Exception as exc:
+        error_logger.exception(f"sync list scope pull failed: {exc}")
+        return error_response(500, f"list scope pull failed: {exc}")
+
+
+@sync_bp.route("/list-scope/task/start", methods=["POST"])
+def list_scope_task_start():
+    try:
+        payload = request.get_json(silent=True) or {}
+        peer_id = str(payload.get("peer_id", "")).strip()
+        list_id = str(payload.get("list_id", "")).strip()
+        direction = str(payload.get("direction", "push") or "push").strip().lower()
+        if not peer_id:
+            return error_response(400, "peer_id is required")
+        if not list_id:
+            return error_response(400, "list_id is required")
+        if direction not in {"push", "pull"}:
+            return error_response(400, "direction must be push or pull")
+        task = directional_service.start_list_scope_task(peer_id, list_id, direction)
         return success_response(task)
     except ValueError as exc:
         return error_response(400, str(exc))

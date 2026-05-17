@@ -76,7 +76,16 @@ export const syncApi = {
   previewListScope(peerId, listId) {
     return request.post('/v1/sync/list-scope/preview', {
       peer_id: peerId,
-      list_id: listId
+      list_id: listId,
+      direction: 'push',
+    })
+  },
+
+  previewListScopeWithDirection(peerId, listId, direction) {
+    return request.post('/v1/sync/list-scope/preview', {
+      peer_id: peerId,
+      list_id: listId,
+      direction,
     })
   },
 
@@ -102,15 +111,29 @@ export const syncApi = {
     })
   },
 
-  startListScopeTask(peerId, listId) {
-    return request.post('/v1/sync/list-scope/task/start', {
+  pullListScope(peerId, listId) {
+    return request.post('/v1/sync/list-scope/pull', {
       peer_id: peerId,
       list_id: listId
     })
   },
 
+  startListScopeTask(peerId, listId, direction = 'push') {
+    return request.post('/v1/sync/list-scope/task/start', {
+      peer_id: peerId,
+      list_id: listId,
+      direction,
+    })
+  },
+
   getListScopeTask(taskId) {
     return request.get(`/v1/sync/list-scope/task/${encodeURIComponent(taskId)}`)
+  },
+
+  getListScopeOptions(peerId = '') {
+    return request.get('/v1/sync/list-scope/options', {
+      params: peerId ? { peer_id: peerId } : undefined,
+    })
   }
 }
 

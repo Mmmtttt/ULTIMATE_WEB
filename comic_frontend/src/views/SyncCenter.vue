@@ -59,21 +59,18 @@
           </div>
           <div class="peer-actions">
             <van-button size="small" plain type="primary" :loading="isPeerActionLoading(peer.peer_id, 'preview_push')" @click="previewAndConfirm(peer, 'push')">
-              预览推送
+              预览并推送
             </van-button>
             <van-button size="small" plain type="success" :loading="isPeerActionLoading(peer.peer_id, 'preview_pull')" @click="previewAndConfirm(peer, 'pull')">
-              预览拉取
+              预览并拉取
             </van-button>
           </div>
           <div class="peer-actions peer-actions-second">
-            <van-button size="small" type="primary" :loading="isPeerActionLoading(peer.peer_id, 'push')" @click="pushToPeer(peer)">
-              推送
-            </van-button>
-            <van-button size="small" type="success" :loading="isPeerActionLoading(peer.peer_id, 'pull')" @click="pullFromPeer(peer)">
-              拉取
-            </van-button>
             <van-button size="small" type="warning" plain :loading="isPeerActionLoading(peer.peer_id, 'list_scope')" @click="openListScopeDialog(peer)">
-              按清单同步
+              按清单推送
+            </van-button>
+            <van-button size="small" type="primary" plain :loading="isPeerActionLoading(peer.peer_id, 'list_scope_pull')" @click="openListScopeDialog(peer, 'pull')">
+              按清单拉取
             </van-button>
             <van-button size="small" type="danger" plain :loading="isPeerActionLoading(peer.peer_id, 'remove')" @click="removePeer(peer)">
               移除
@@ -105,19 +102,21 @@
     >
       <div class="list-scope-popup-head">
         <div>
-          <div class="list-scope-popup-title">按清单同步</div>
+          <div class="list-scope-popup-title">{{ listScopeDirection === 'pull' ? '按清单拉取' : '按清单推送' }}</div>
           <div class="list-scope-popup-subtitle">
-            仅同步对端缺失的内容，并保留当前清单和标签信息。
+            {{ listScopeDirection === 'pull'
+              ? '从远端选择清单，仅拉取本机缺失的内容，并保留当前清单和标签信息。'
+              : '从本机选择清单，仅推送对端缺失的内容，并保留当前清单和标签信息。' }}
           </div>
           <div v-if="listScopePeer" class="list-scope-popup-peer">
-            目标设备：{{ listScopePeer.display_name || listScopePeer.peer_id }}
+            {{ listScopeDirection === 'pull' ? '来源设备' : '目标设备' }}：{{ listScopePeer.display_name || listScopePeer.peer_id }}
           </div>
         </div>
       </div>
 
       <van-search
         v-model.trim="listScopeKeyword"
-        placeholder="搜索清单名称"
+        :placeholder="listScopeDirection === 'pull' ? '搜索远端清单名称' : '搜索本机清单名称'"
         shape="round"
         class="list-scope-search"
       />
@@ -145,7 +144,7 @@
               </template>
             </van-cell>
           </van-radio-group>
-          <van-empty v-else description="暂无可选清单" />
+          <van-empty v-else :description="listScopeDirection === 'pull' ? '远端暂无可拉取清单' : '暂无可推送清单'" />
         </template>
       </div>
 
@@ -161,7 +160,7 @@
           :loading="listScopePreviewing"
           @click="previewSelectedListScope"
         >
-          预览并同步
+          {{ listScopeDirection === 'pull' ? '预览并拉取' : '预览并推送' }}
         </van-button>
       </div>
     </van-popup>
@@ -196,6 +195,8 @@ const loadingListScopeOptions = ref(false)
 const listScopePreviewing = ref(false)
 const selectedListScopeId = ref('')
 const listScopeKeyword = ref('')
+const listScopeDirection = ref('push')
+const listScopeOptions = ref([])
 
 const connectForm = reactive({
   remoteBaseUrl: '',
@@ -216,7 +217,7 @@ const listScopePopupStyle = computed(() => {
 
 const filteredListScopeOptions = computed(() => {
   const keyword = String(listScopeKeyword.value || '').trim().toLowerCase()
-  const items = Array.isArray(listStore.lists) ? listStore.lists : []
+  const items = Array.isArray(listScopeOptions.value) ? listScopeOptions.value : []
   const filtered = items.filter((item) => {
     const total = Number(item?.comic_count || 0) + Number(item?.video_count || 0)
     if (total <= 0) {
@@ -290,7 +291,10 @@ function getPeerTask(peerId) {
 function formatTaskTitle(task) {
   const taskKind = String(task?.task_kind || '').trim().toLowerCase()
   if (taskKind === 'list_scope_push') {
-    return '清单同步任务'
+    return '清单推送任务'
+  }
+  if (taskKind === 'list_scope_pull') {
+    return '清单拉取任务'
   }
   const direction = String(task?.direction || '').toUpperCase()
   if (!direction) {
@@ -413,7 +417,7 @@ function formatEstimateMessage(peer, direction, estimate) {
   return lines.join('\n')
 }
 
-function formatListScopeEstimateMessage(peer, estimate) {
+function formatListScopeEstimateMessage(peer, estimate, direction = 'push') {
   const scope = estimate?.list_scope || {}
   const dataSync = estimate?.data_sync || {}
   const assetSync = estimate?.asset_sync || {}
@@ -424,13 +428,15 @@ function formatListScopeEstimateMessage(peer, estimate) {
   const assetStatus = assetSync?.status || 'unknown'
   const fileCount = Number(assetSync?.file_count || 0)
   const totalMb = Number(assetSync?.total_mb || 0)
+  const actionLabel = direction === 'pull' ? '拉取' : '推送'
+  const existingLabel = direction === 'pull' ? '本机已存在' : '对端已存在'
 
   return [
     `设备: ${peer.display_name || peer.peer_id}`,
     `清单: ${scope?.list_name || scope?.list_id || '-'}`,
     `原始内容数: ${Number(scope?.source_content_count || 0)}`,
-    `待同步内容数: ${Number(scope?.pending_content_count || 0)}`,
-    `对端已存在: ${Number(scope?.skipped_existing_content_count || 0)}`,
+    `待${actionLabel}内容数: ${Number(scope?.pending_content_count || 0)}`,
+    `${existingLabel}: ${Number(scope?.skipped_existing_content_count || 0)}`,
     datasetLines.length > 0 ? `数据详情: ${datasetLines.join(', ')}` : '数据详情: 无变化',
     `资源: 状态=${assetStatus}, 文件数=${fileCount}, 大小=${totalMb} MB`,
   ].join('\n')
@@ -443,12 +449,13 @@ async function previewAndConfirm(peer, direction) {
   try {
     const res = await syncApi.previewDirectional(peerId, direction)
     const estimate = res?.data || {}
-    appendLog(`预览 ${direction} ${peerId}: 数据=${estimate?.data_sync?.total_records || 0}, 资源=${estimate?.asset_sync?.file_count || 0}`)
+    const actionLabel = direction === 'pull' ? '拉取' : '推送'
+    appendLog(`预览并${actionLabel} ${peerId}: 数据=${estimate?.data_sync?.total_records || 0}, 资源=${estimate?.asset_sync?.file_count || 0}`)
 
     await showConfirmDialog({
-      title: `预览 ${direction.toUpperCase()}`,
+      title: `预览并${actionLabel}`,
       message: formatEstimateMessage(peer, direction, estimate),
-      confirmButtonText: '确认同步',
+      confirmButtonText: `确认${actionLabel}`,
       cancelButtonText: '取消'
     })
 
@@ -467,16 +474,25 @@ async function previewAndConfirm(peer, direction) {
   }
 }
 
-async function openListScopeDialog(peer) {
+async function openListScopeDialog(peer, direction = 'push') {
   const peerId = String(peer?.peer_id || '').trim()
   if (!peerId) {
     showFailToast('无效的设备')
     return
   }
-  setPeerActionLoading(peerId, 'list_scope', true)
+  const directionKey = direction === 'pull' ? 'pull' : 'push'
+  const loadingKey = directionKey === 'pull' ? 'list_scope_pull' : 'list_scope'
+  setPeerActionLoading(peerId, loadingKey, true)
   loadingListScopeOptions.value = true
   try {
-    await listStore.fetchLists()
+    listScopeDirection.value = directionKey
+    if (directionKey === 'pull') {
+      const res = await syncApi.getListScopeOptions(peerId)
+      listScopeOptions.value = Array.isArray(res?.data) ? res.data : []
+    } else {
+      await listStore.fetchLists()
+      listScopeOptions.value = Array.isArray(listStore.lists) ? listStore.lists : []
+    }
     listScopePeer.value = peer
     listScopeKeyword.value = ''
     const firstOption = filteredListScopeOptions.value[0]
@@ -486,7 +502,7 @@ async function openListScopeDialog(peer) {
     showFailToast(error?.message || '加载清单失败')
   } finally {
     loadingListScopeOptions.value = false
-    setPeerActionLoading(peerId, 'list_scope', false)
+    setPeerActionLoading(peerId, loadingKey, false)
   }
 }
 
@@ -495,40 +511,50 @@ function closeListScopeDialog() {
   listScopePeer.value = null
   selectedListScopeId.value = ''
   listScopeKeyword.value = ''
+  listScopeDirection.value = 'push'
+  listScopeOptions.value = []
 }
 
 async function previewSelectedListScope() {
   const peer = listScopePeer.value
   const peerId = String(peer?.peer_id || '').trim()
   const listId = String(selectedListScopeId.value || '').trim()
+  const direction = listScopeDirection.value === 'pull' ? 'pull' : 'push'
+  const actionLabel = direction === 'pull' ? '拉取' : '推送'
   if (!peerId || !listId) {
-    showFailToast('请选择目标设备和清单')
+    showFailToast(`请选择${direction === 'pull' ? '来源设备和远端清单' : '目标设备和清单'}`)
     return
   }
 
   listScopePreviewing.value = true
   try {
-    const res = await syncApi.previewListScope(peerId, listId)
+    const res = await syncApi.previewListScopeWithDirection(peerId, listId, direction)
     const estimate = res?.data || {}
     const scope = estimate?.list_scope || {}
     const totalRecords = Number(estimate?.data_sync?.total_records || 0)
     const assetFiles = Number(estimate?.asset_sync?.file_count || 0)
-    appendLog(`预览清单同步 ${peerId}: 清单=${scope?.list_name || listId}, 数据=${totalRecords}, 资源=${assetFiles}`)
+    const sourceCount = Number(scope?.source_content_count || 0)
+    const pendingCount = Number(scope?.pending_content_count || 0)
+    const skippedCount = Number(scope?.skipped_existing_content_count || 0)
+    const existingLabel = direction === 'pull' ? '本机已存在' : '对端已存在'
+    appendLog(
+      `预览清单${actionLabel} ${peerId}: 清单=${scope?.list_name || listId}, 原始=${sourceCount}, 待${actionLabel}=${pendingCount}, ${existingLabel}=${skippedCount}, 数据=${totalRecords}, 资源=${assetFiles}`
+    )
 
     if (totalRecords <= 0 && assetFiles <= 0) {
-      showSuccessToast('该清单暂无需要同步的新内容')
+      showSuccessToast(`该清单暂无需要${actionLabel}的新内容`)
       return
     }
 
     await showConfirmDialog({
-      title: '预览清单同步',
-      message: formatListScopeEstimateMessage(peer, estimate),
-      confirmButtonText: '确认同步',
+      title: `预览清单${actionLabel}`,
+      message: formatListScopeEstimateMessage(peer, estimate, direction),
+      confirmButtonText: `确认${actionLabel}`,
       cancelButtonText: '取消'
     })
 
     showListScopePopup.value = false
-    await runListScopeTask(peer, listId, String(scope?.list_name || '').trim())
+    await runListScopeTask(peer, listId, direction, String(scope?.list_name || '').trim())
   } catch (error) {
     const msg = String(error?.message || '')
     if (msg && !msg.includes('cancel')) {
@@ -605,26 +631,29 @@ async function runDirectionalTask(peer, direction) {
   }
 }
 
-async function runListScopeTask(peer, listId, listName = '') {
+async function runListScopeTask(peer, listId, direction = 'push', listName = '') {
   const peerId = String(peer?.peer_id || '').trim()
+  const directionKey = direction === 'pull' ? 'pull' : 'push'
+  const actionLabel = directionKey === 'pull' ? '拉取' : '推送'
   if (!peerId || !listId) {
     showFailToast('缺少同步参数')
     return
   }
-  if (isPeerActionLoading(peerId, 'list_scope')) {
+  const loadingKey = directionKey === 'pull' ? 'list_scope_pull' : 'list_scope'
+  if (isPeerActionLoading(peerId, loadingKey)) {
     return
   }
 
-  const tokenKey = `${peerId}_list_scope`
+  const tokenKey = `${peerId}_list_scope_${directionKey}`
   const token = `${Date.now()}_${Math.random()}`
   taskPollingTokens.value = {
     ...taskPollingTokens.value,
     [tokenKey]: token
   }
 
-  setPeerActionLoading(peerId, 'list_scope', true)
+  setPeerActionLoading(peerId, loadingKey, true)
   try {
-    const startRes = await syncApi.startListScopeTask(peerId, listId)
+    const startRes = await syncApi.startListScopeTask(peerId, listId, directionKey)
     const task = startRes?.data || {}
     const taskId = String(task?.task_id || '').trim()
     if (!taskId) {
@@ -632,7 +661,7 @@ async function runListScopeTask(peer, listId, listName = '') {
     }
 
     setPeerTask(peerId, task)
-    appendLog(`清单同步任务已启动: 设备=${peerId}, 清单=${listName || listId}, 任务=${taskId}`)
+    appendLog(`清单${actionLabel}任务已启动: 设备=${peerId}, 清单=${listName || listId}, 任务=${taskId}`)
 
     while (pageAlive.value) {
       if (taskPollingTokens.value[tokenKey] !== token) {
@@ -647,25 +676,26 @@ async function runListScopeTask(peer, listId, listName = '') {
       if (status === 'completed') {
         const result = latestTask?.result || {}
         const assetCount = Number(result?.asset_sync?.file_count || 0)
-        appendLog(`清单同步 ${peerId}: 已完成, 清单=${result?.list_scope?.list_name || listName || listId}, 资源数=${assetCount}`)
-        showSuccessToast('清单同步完成')
+        const resultStatus = String(result?.status || '').trim().toLowerCase()
+        appendLog(`清单${actionLabel} ${peerId}: 已完成, 清单=${result?.list_scope?.list_name || listName || listId}, 资源数=${assetCount}`)
+        showSuccessToast(resultStatus === 'no_change' ? `清单${actionLabel}无变化` : `清单${actionLabel}完成`)
         await loadPeers()
         break
       }
       if (status === 'failed') {
-        const failedMsg = latestTask?.error?.message || latestTask?.message || '清单同步失败'
-        appendLog(`清单同步 ${peerId}: 失败, 消息=${failedMsg}`)
+        const failedMsg = latestTask?.error?.message || latestTask?.message || `清单${actionLabel}失败`
+        appendLog(`清单${actionLabel} ${peerId}: 失败, 消息=${failedMsg}`)
         showFailToast(failedMsg)
         break
       }
     }
   } catch (error) {
-    showFailToast(error?.message || '清单同步失败')
+    showFailToast(error?.message || `清单${actionLabel}失败`)
   } finally {
     const current = { ...taskPollingTokens.value }
     delete current[tokenKey]
     taskPollingTokens.value = current
-    setPeerActionLoading(peerId, 'list_scope', false)
+    setPeerActionLoading(peerId, loadingKey, false)
   }
 }
 

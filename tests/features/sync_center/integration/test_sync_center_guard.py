@@ -1017,13 +1017,13 @@ def test_directional_push_task_flow_syncs_data_and_assets(dual_sync_runtime):
 def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_memberships(dual_sync_runtime):
     """
     用例描述:
-    - 用例目的: 看护“按清单同步”独立链路，确保它只推送当前清单中对端缺失的内容，并只保留当前清单与正确标签。
+    - 用例目的: 看护“按清单推送”独立链路，确保它只推送当前清单中对端缺失的内容，并只保留当前清单与正确标签。
     - 测试步骤:
       1. 在 source 构造一个带平台元信息的清单，塞入本地漫画/本地视频/预览漫画/预览视频，以及一个对端已存在的重复内容和一个不在清单内的无关内容。
       2. 为 4 个待同步内容写入真实资源文件，并给内容挂上“当前清单 + 其他清单”的双清单归属。
       3. 建立 pairing，让 source 对 target 发起 list-scope preview 与异步 task push。
       4. 校验 target 仅收到缺失的 4 个内容、正确 tag、清单字段已裁成仅当前清单，且清单平台跟踪字段被清空。
-      5. 校验重复内容没有被更新绑定，且二次按清单同步返回 no_change。
+      5. 校验重复内容没有被更新绑定，且二次按清单推送返回 no_change。
     - 预期结果:
       1. 预览中 pending_content_count=4，skipped_existing_content_count=1。
       2. target 只新增当前清单缺失内容，不会导入无关内容，也不会把“其他清单”顺带同步过去。
@@ -1092,7 +1092,7 @@ def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_members
         {
             "id": extra_list_id,
             "name": f"额外清单 {suffix}",
-            "desc": "不应该被按清单同步带过去",
+            "desc": "不应该被按清单推送带过去",
             "content_type": "comic",
             "is_default": False,
             "create_time": now,
@@ -1445,3 +1445,423 @@ def test_list_scope_push_syncs_only_missing_list_members_and_trims_other_members
     )
     assert push_again.get("status") == "no_change"
     assert int(push_again.get("asset_sync", {}).get("file_count", 0)) == 0
+
+
+@pytest.mark.integration
+def test_list_scope_pull_fetches_remote_lists_and_pulls_only_missing_members(dual_sync_runtime):
+    """
+    用例描述:
+    - 用例目的: 看护“按清单拉取”独立链路，确保本机能先看到远端清单，再只拉取当前清单中本机缺失的内容与资源。
+    - 测试步骤:
+      1. 在 source 构造一个带平台元信息的清单，塞入本地漫画/本地视频/预览漫画/预览视频，以及一个 target 已存在的重复内容。
+      2. target 对 source 建立 pairing，并通过 list-scope/options 拉取远端清单列表。
+      3. target 发起 list-scope preview(direction=pull) 与异步 task pull。
+      4. 校验 target 仅收到缺失的 4 个内容、正确 tag、清单字段被裁成仅当前清单，且清单平台跟踪字段被清空。
+      5. 手动删除一个已拉取资源，再走一次直连 list-scope/pull，校验资源可修复且二次拉取 no_change。
+    - 预期结果:
+      1. 远端清单列表可被发现，且返回内容数量统计。
+      2. 预览中 pending_content_count=4，skipped_existing_content_count=1。
+      3. target 只新增当前清单缺失内容，不会把“其他清单”顺带同步过去。
+      4. 每个资源文件落地且 sha256 与 source 一致。
+      5. 二次拉取 no_change，asset file_count=0。
+    """
+    source = dual_sync_runtime["source"]
+    target = dual_sync_runtime["target"]
+    source_base = source["base_url"]
+    target_base = target["base_url"]
+    source_data: Path = source["data_dir"]
+    target_data: Path = target["data_dir"]
+
+    source_meta = source["meta_dir"]
+    target_meta = target["meta_dir"]
+
+    source_lists_path = source_meta / "lists_database.json"
+    source_tags_path = source_meta / "tags_database.json"
+    source_comics_path = source_meta / "comics_database.json"
+    source_recs_path = source_meta / "recommendations_database.json"
+    source_videos_path = source_meta / "videos_database.json"
+    source_video_recs_path = source_meta / "video_recommendations_database.json"
+
+    target_lists_path = target_meta / "lists_database.json"
+    target_tags_path = target_meta / "tags_database.json"
+    target_comics_path = target_meta / "comics_database.json"
+    target_recs_path = target_meta / "recommendations_database.json"
+    target_videos_path = target_meta / "videos_database.json"
+    target_video_recs_path = target_meta / "video_recommendations_database.json"
+
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    suffix = uuid4().hex[:8]
+
+    selected_list_id = f"list_scope_pull_{suffix}"
+    extra_list_id = f"list_scope_pull_extra_{suffix}"
+    comic_tag_id = f"tag_scope_pull_comic_{suffix}"
+    video_tag_id = f"tag_scope_pull_video_{suffix}"
+    unused_tag_id = f"tag_scope_pull_unused_{suffix}"
+
+    local_comic_id = f"JM_LIST_PULL_LOCAL_{suffix.upper()}"
+    duplicate_comic_id = f"JM_LIST_PULL_DUP_{suffix.upper()}"
+    preview_comic_id = f"PK_LIST_PULL_PREVIEW_{suffix.upper()}"
+    local_video_id = f"LOCAL_LIST_PULL_VIDEO_{suffix.upper()}"
+    preview_video_id = f"JAVDB_LIST_PULL_PREVIEW_{suffix.upper()}"
+
+    source_lists = load_json(source_lists_path)
+    _upsert_by_id(
+        source_lists.setdefault("lists", []),
+        {
+            "id": selected_list_id,
+            "name": f"远端拉取清单 {suffix}",
+            "desc": "供按清单拉取测试使用",
+            "content_type": "comic",
+            "is_default": False,
+            "create_time": now,
+            "platform": "PK",
+            "platform_list_id": f"pull_remote_{suffix}",
+            "import_source": "sync://pull-remote-list-source",
+            "last_sync_time": now,
+        },
+    )
+    _upsert_by_id(
+        source_lists.setdefault("lists", []),
+        {
+            "id": extra_list_id,
+            "name": f"拉取额外清单 {suffix}",
+            "desc": "不应该被按清单拉取顺带带过去",
+            "content_type": "video",
+            "is_default": False,
+            "create_time": now,
+        },
+    )
+    source_lists["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(source_lists_path, source_lists)
+
+    source_tags = load_json(source_tags_path)
+    _upsert_by_id(source_tags.setdefault("tags", []), {"id": comic_tag_id, "name": f"拉取漫画标签 {suffix}", "content_type": "comic", "create_time": now})
+    _upsert_by_id(source_tags.setdefault("tags", []), {"id": video_tag_id, "name": f"拉取视频标签 {suffix}", "content_type": "video", "create_time": now})
+    _upsert_by_id(source_tags.setdefault("tags", []), {"id": unused_tag_id, "name": f"拉取未使用标签 {suffix}", "content_type": "comic", "create_time": now})
+    source_tags["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(source_tags_path, source_tags)
+
+    source_comics = load_json(source_comics_path)
+    _upsert_by_id(
+        source_comics.setdefault("comics", []),
+        {
+            "id": local_comic_id,
+            "title": f"Pull Local Comic {suffix}",
+            "title_jp": "",
+            "author": "Pull Tester",
+            "desc": "Local comic for list-scope pull.",
+            "cover_path": f"/static/cover/JM/{local_comic_id}.jpg",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 8.4,
+            "tag_ids": [comic_tag_id],
+            "list_ids": [selected_list_id, extra_list_id],
+            "create_time": now,
+            "last_read_time": now,
+            "is_deleted": False,
+            "storage_path_relative": "",
+            "storage_path_kind": "",
+        },
+    )
+    _upsert_by_id(
+        source_comics.setdefault("comics", []),
+        {
+            "id": duplicate_comic_id,
+            "title": f"Pull Duplicate Comic {suffix}",
+            "title_jp": "",
+            "author": "Pull Tester",
+            "desc": "Target already has same ID, so this row should not be re-pulled.",
+            "cover_path": f"/static/cover/JM/{duplicate_comic_id}.jpg",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 7.2,
+            "tag_ids": [comic_tag_id],
+            "list_ids": [selected_list_id],
+            "create_time": now,
+            "last_read_time": now,
+            "is_deleted": False,
+            "storage_path_relative": f"comic/JM/{duplicate_comic_id}",
+            "storage_path_kind": "local_dir",
+        },
+    )
+    _update_total(source_comics, "comics", "total_comics")
+    save_json(source_comics_path, source_comics)
+
+    source_recs = load_json(source_recs_path)
+    _upsert_by_id(
+        source_recs.setdefault("recommendations", []),
+        {
+            "id": preview_comic_id,
+            "title": f"Pull Preview Comic {suffix}",
+            "title_jp": "",
+            "author": "Pull Tester",
+            "desc": "Preview comic for list-scope pull.",
+            "cover_path": f"/media/recommendation_cache/comic/PK/{preview_comic_id}/cover.jpg",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 8.0,
+            "tag_ids": [comic_tag_id],
+            "list_ids": [selected_list_id, extra_list_id],
+            "create_time": now,
+            "last_read_time": now,
+            "is_deleted": False,
+            "preview_image_urls": [f"/media/recommendation_cache/comic/PK/{preview_comic_id}/001.jpg"],
+            "preview_pages": [1],
+            "storage_path_relative": f"recommendation_cache/comic/PK/{preview_comic_id}",
+            "storage_path_kind": "preview_asset_dir",
+        },
+    )
+    _update_total(source_recs, "recommendations", "total_recommendations")
+    save_json(source_recs_path, source_recs)
+
+    source_videos = load_json(source_videos_path)
+    _upsert_by_id(
+        source_videos.setdefault("videos", []),
+        {
+            "id": local_video_id,
+            "code": f"LP-{suffix[:4].upper()}",
+            "title": f"Pull Local Video {suffix}",
+            "title_jp": "",
+            "creator": "Pull Tester",
+            "desc": "Local video for list-scope pull.",
+            "cover_path": "",
+            "total_units": 1,
+            "current_unit": 1,
+            "score": 8.7,
+            "tag_ids": [video_tag_id],
+            "list_ids": [selected_list_id, extra_list_id],
+            "create_time": now,
+            "last_access_time": now,
+            "is_deleted": False,
+            "cover_path_local": f"/media/video/LOCAL/{local_video_id}/cover.jpg",
+            "thumbnail_images_local": [f"/media/video/LOCAL/{local_video_id}/thumbs/thumb-0001.jpg"],
+            "local_video_path": f"/media/video/LOCAL/{local_video_id}/source.mp4",
+            "storage_path_relative": f"video/LOCAL/{local_video_id}",
+            "storage_path_kind": "local_dir",
+            "local_source_filename": "source.mp4",
+            "local_asset_dir_name": local_video_id,
+            "actors": ["Pull Actor"],
+        },
+    )
+    source_videos["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(source_videos_path, source_videos)
+
+    source_video_recs = load_json(source_video_recs_path)
+    _upsert_by_id(
+        source_video_recs.setdefault("video_recommendations", []),
+        {
+            "id": preview_video_id,
+            "code": f"PR-{suffix[:4].upper()}",
+            "title": f"Pull Preview Video {suffix}",
+            "title_jp": "",
+            "creator": "Pull Tester",
+            "desc": "Preview video for list-scope pull.",
+            "cover_path": "",
+            "total_units": 1,
+            "current_unit": 1,
+            "score": 7.8,
+            "tag_ids": [video_tag_id],
+            "list_ids": [selected_list_id],
+            "create_time": now,
+            "last_access_time": now,
+            "is_deleted": False,
+            "cover_path_local": f"/media/recommendation_cache/video/JAVDB/{preview_video_id}/cover.jpg",
+            "thumbnail_images_local": [f"/media/recommendation_cache/video/JAVDB/{preview_video_id}/thumb-0001.jpg"],
+            "preview_video_local": f"/media/recommendation_cache/video/JAVDB/{preview_video_id}/preview.mp4",
+            "storage_path_relative": f"recommendation_cache/video/JAVDB/{preview_video_id}",
+            "storage_path_kind": "preview_asset_dir",
+            "actors": ["Pull Preview Actor"],
+        },
+    )
+    source_video_recs["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(source_video_recs_path, source_video_recs)
+
+    target_comics = load_json(target_comics_path)
+    _upsert_by_id(
+        target_comics.setdefault("comics", []),
+        {
+            "id": duplicate_comic_id,
+            "title": f"Target Existing Pull Duplicate {suffix}",
+            "title_jp": "",
+            "author": "Target Pull Seed",
+            "desc": "Should remain untouched because identical ID already exists locally.",
+            "cover_path": f"/static/cover/JM/{duplicate_comic_id}.jpg",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 5.1,
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": now,
+            "last_read_time": now,
+            "is_deleted": False,
+        },
+    )
+    _update_total(target_comics, "comics", "total_comics")
+    save_json(target_comics_path, target_comics)
+
+    local_comic_page_rel = f"comic/JM/{local_comic_id}/001.png"
+    expected_hashes: dict[str, str] = {}
+    for rel_path, content in {
+        local_comic_page_rel: f"pull-comic-page-{suffix}".encode("utf-8"),
+        f"static/cover/JM/{local_comic_id}.jpg": f"pull-comic-cover-{suffix}".encode("utf-8"),
+        f"video/LOCAL/{local_video_id}/source.mp4": f"pull-video-source-{suffix}".encode("utf-8"),
+        f"video/LOCAL/{local_video_id}/cover.jpg": f"pull-video-cover-{suffix}".encode("utf-8"),
+        f"video/LOCAL/{local_video_id}/thumbs/thumb-0001.jpg": f"pull-video-thumb-{suffix}".encode("utf-8"),
+        f"recommendation_cache/comic/PK/{preview_comic_id}/cover.jpg": f"pull-rec-cover-{suffix}".encode("utf-8"),
+        f"recommendation_cache/comic/PK/{preview_comic_id}/001.jpg": f"pull-rec-page-{suffix}".encode("utf-8"),
+        f"recommendation_cache/video/JAVDB/{preview_video_id}/cover.jpg": f"pull-vrec-cover-{suffix}".encode("utf-8"),
+        f"recommendation_cache/video/JAVDB/{preview_video_id}/thumb-0001.jpg": f"pull-vrec-thumb-{suffix}".encode("utf-8"),
+        f"recommendation_cache/video/JAVDB/{preview_video_id}/preview.mp4": f"pull-vrec-preview-{suffix}".encode("utf-8"),
+    }.items():
+        _write_binary(source_data, rel_path, content)
+        expected_hashes[rel_path] = _sha256(source_data / rel_path.replace("/", os.sep))
+        assert not (target_data / rel_path.replace("/", os.sep)).exists()
+
+    invite_data = _request_ok(
+        "POST",
+        f"{source_base}/api/v1/sync/pairing/invite",
+        json_body={"ttl_minutes": 10},
+        timeout=10,
+    )
+    pairing_code = str(invite_data.get("pairing_code", "")).strip()
+    assert pairing_code
+
+    connect_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/pairing/connect",
+        json_body={
+            "remote_base_url": source_base,
+            "pairing_code": pairing_code,
+            "requester_base_url": target_base,
+        },
+        timeout=20,
+    )
+    peer_id = str(connect_data.get("peer_id", "")).strip()
+    assert peer_id
+
+    options_data = _request_ok(
+        "GET",
+        f"{target_base}/api/v1/sync/list-scope/options",
+        params={"peer_id": peer_id},
+        timeout=20,
+    )
+    selected_option = find_by_id(options_data, selected_list_id)
+    assert selected_option is not None
+    assert int(selected_option.get("comic_count", 0)) == 3
+    assert int(selected_option.get("video_count", 0)) == 2
+
+    preview_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/list-scope/preview",
+        json_body={"peer_id": peer_id, "list_id": selected_list_id, "direction": "pull"},
+        timeout=20,
+    )
+    scope_info = preview_data.get("list_scope", {})
+    assert preview_data.get("direction") == "pull"
+    assert preview_data.get("scope") == "list"
+    assert str(scope_info.get("list_id", "")).strip() == selected_list_id
+    assert int(scope_info.get("source_content_count", 0)) == 5
+    assert int(scope_info.get("pending_content_count", 0)) == 4
+    assert int(scope_info.get("skipped_existing_content_count", 0)) == 1
+    assert int(preview_data.get("asset_sync", {}).get("file_count", 0)) >= len(expected_hashes)
+
+    task_data = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/list-scope/task/start",
+        json_body={"peer_id": peer_id, "list_id": selected_list_id, "direction": "pull"},
+        timeout=20,
+    )
+    task_id = str(task_data.get("task_id", "")).strip()
+    assert task_id
+    finished_task = _wait_for_list_scope_task(target_base, task_id, timeout_seconds=180)
+    assert finished_task.get("status") == "completed"
+    assert finished_task.get("progress") == 100
+    assert str(finished_task.get("task_kind", "")).strip() == "list_scope_pull"
+
+    result = finished_task.get("result", {})
+    assert result.get("status") == "completed"
+    assert result.get("scope") == "list"
+    assert str((result.get("list_scope", {}) or {}).get("list_id", "")).strip() == selected_list_id
+
+    target_lists = load_json(target_lists_path).get("lists", [])
+    target_tags = load_json(target_tags_path).get("tags", [])
+    target_comics_rows = load_json(target_comics_path).get("comics", [])
+    target_recs_rows = load_json(target_recs_path).get("recommendations", [])
+    target_videos_rows = load_json(target_videos_path).get("videos", [])
+    target_video_recs_rows = load_json(target_video_recs_path).get("video_recommendations", [])
+
+    synced_list = find_by_id(target_lists, selected_list_id)
+    assert synced_list is not None
+    assert str(synced_list.get("platform", "")).strip() == ""
+    assert str(synced_list.get("platform_list_id", "")).strip() == ""
+    assert str(synced_list.get("import_source", "")).strip() == ""
+    assert find_by_id(target_lists, extra_list_id) is None
+
+    synced_comic_tag = find_by_id(target_tags, comic_tag_id)
+    synced_video_tag = find_by_id(target_tags, video_tag_id)
+    assert synced_comic_tag is not None
+    assert synced_video_tag is not None
+    assert find_by_id(target_tags, unused_tag_id) is None
+
+    synced_local_comic = find_by_id(target_comics_rows, local_comic_id)
+    synced_preview_comic = find_by_id(target_recs_rows, preview_comic_id)
+    synced_local_video = find_by_id(target_videos_rows, local_video_id)
+    synced_preview_video = find_by_id(target_video_recs_rows, preview_video_id)
+    assert synced_local_comic is not None
+    assert synced_preview_comic is not None
+    assert synced_local_video is not None
+    assert synced_preview_video is not None
+
+    assert synced_local_comic.get("list_ids") == [selected_list_id]
+    assert synced_preview_comic.get("list_ids") == [selected_list_id]
+    assert synced_local_video.get("list_ids") == [selected_list_id]
+    assert synced_preview_video.get("list_ids") == [selected_list_id]
+    assert extra_list_id not in (synced_local_comic.get("list_ids") or [])
+    assert extra_list_id not in (synced_local_video.get("list_ids") or [])
+    assert comic_tag_id in (synced_local_comic.get("tag_ids") or [])
+    assert comic_tag_id in (synced_preview_comic.get("tag_ids") or [])
+    assert video_tag_id in (synced_local_video.get("tag_ids") or [])
+    assert video_tag_id in (synced_preview_video.get("tag_ids") or [])
+
+    duplicate_target = find_by_id(target_comics_rows, duplicate_comic_id)
+    assert duplicate_target is not None
+    assert duplicate_target.get("list_ids") == []
+    assert duplicate_target.get("tag_ids") == []
+
+    for rel, expected_hash in expected_hashes.items():
+        target_file = target_data / rel.replace("/", os.sep)
+        assert target_file.exists(), f"missing pulled scoped asset: {rel}"
+        assert _sha256(target_file) == expected_hash, f"hash mismatch for pulled scoped asset: {rel}"
+
+    synced_local_comic_images = _request_ok(
+        "GET",
+        f"{target_base}/api/v1/comic/images?comic_id={local_comic_id}",
+        timeout=20,
+    )
+    assert len(synced_local_comic_images) == 1
+
+    removed_target_asset = target_data / local_comic_page_rel.replace("/", os.sep)
+    removed_target_asset.unlink()
+    assert not removed_target_asset.exists()
+
+    pull_repair = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/list-scope/pull",
+        json_body={"peer_id": peer_id, "list_id": selected_list_id},
+        timeout=180,
+    )
+    assert pull_repair.get("status") == "completed"
+    local_apply = pull_repair.get("local_apply")
+    assert local_apply in (None, {})
+    assert int(pull_repair.get("asset_sync", {}).get("file_count", 0)) >= 1
+    assert removed_target_asset.exists()
+    assert _sha256(removed_target_asset) == expected_hashes[local_comic_page_rel]
+
+    pull_again = _request_ok(
+        "POST",
+        f"{target_base}/api/v1/sync/list-scope/pull",
+        json_body={"peer_id": peer_id, "list_id": selected_list_id},
+        timeout=180,
+    )
+    assert pull_again.get("status") == "no_change"
+    assert int(pull_again.get("asset_sync", {}).get("file_count", 0)) == 0

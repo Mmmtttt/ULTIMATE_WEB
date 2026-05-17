@@ -158,22 +158,36 @@ class DirectionalSyncService:
         task = self._create_task_record(peer_id=peer_id, direction=direction_key, task_kind="directional")
         return self._enqueue_task(task, self._execute_directional_task)
 
-    def start_list_scope_push_task(self, peer_id: str, list_id: str) -> Dict[str, Any]:
+    def start_list_scope_task(self, peer_id: str, list_id: str, direction: str = "push") -> Dict[str, Any]:
         peer_key = str(peer_id or "").strip()
         list_key = str(list_id or "").strip()
+        direction_key = str(direction or "").strip().lower() or "push"
+        if direction_key not in {"push", "pull"}:
+            raise ValueError("direction must be push or pull")
         self._peer_or_raise(peer_key)
-        list_row = self._get_list_scope_row_or_raise(list_key)
+        list_row = (
+            self._get_list_scope_row_or_raise(list_key)
+            if direction_key == "push"
+            else self._fetch_list_scope_row_from_peer(peer_key, list_key)
+        )
         task = self._create_task_record(
             peer_id=peer_key,
-            direction="push",
-            task_kind="list_scope_push",
+            direction=direction_key,
+            task_kind=f"list_scope_{direction_key}",
             extra={
                 "list_id": list_key,
                 "list_name": str(list_row.get("name", "")).strip(),
                 "list_content_type": str(list_row.get("content_type", "")).strip(),
             },
         )
-        return self._enqueue_task(task, self._execute_list_scope_push_task)
+        target = self._execute_list_scope_push_task if direction_key == "push" else self._execute_list_scope_pull_task
+        return self._enqueue_task(task, target)
+
+    def start_list_scope_push_task(self, peer_id: str, list_id: str) -> Dict[str, Any]:
+        return self.start_list_scope_task(peer_id, list_id, "push")
+
+    def start_list_scope_pull_task(self, peer_id: str, list_id: str) -> Dict[str, Any]:
+        return self.start_list_scope_task(peer_id, list_id, "pull")
 
     def get_directional_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         key = str(task_id or "").strip()
@@ -287,6 +301,61 @@ class DirectionalSyncService:
             )
         except Exception as exc:
             app_logger.exception(f"[sync] list scope push task failed task_id={task_id}: {exc}")
+            self._update_directional_task(
+                task_id,
+                status="failed",
+                stage="failed",
+                progress=max(1, int(task.get("progress", 0) or 0)),
+                message=str(exc),
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+                finished_at=_iso(_utc_now()),
+            )
+
+    def _execute_list_scope_pull_task(self, task_id: str) -> None:
+        task = self.get_directional_task(task_id)
+        if not isinstance(task, dict):
+            return
+
+        peer_id = str(task.get("peer_id", "")).strip()
+        extra = task.get("extra", {}) if isinstance(task.get("extra"), dict) else {}
+        list_id = str(extra.get("list_id", "")).strip()
+        list_name = str(extra.get("list_name", "")).strip()
+        now_iso = _iso(_utc_now())
+        self._update_directional_task(
+            task_id,
+            status="running",
+            stage="starting",
+            progress=1,
+            message="list scope pull started",
+            started_at=now_iso,
+        )
+
+        def _progress_cb(progress: int, stage: str, message: str = "", extra_payload: Optional[Dict[str, Any]] = None) -> None:
+            self._update_directional_task(
+                task_id,
+                status="running",
+                stage=stage,
+                progress=progress,
+                message=message,
+                extra=extra_payload or {},
+            )
+
+        try:
+            result = self.pull_list_scope_from_peer(peer_id, list_id, progress_cb=_progress_cb)
+            self._update_directional_task(
+                task_id,
+                status="completed",
+                stage="completed",
+                progress=100,
+                message=f"list scope pull completed: {list_name or list_id}",
+                result=result,
+                finished_at=_iso(_utc_now()),
+            )
+        except Exception as exc:
+            app_logger.exception(f"[sync] list scope pull task failed task_id={task_id}: {exc}")
             self._update_directional_task(
                 task_id,
                 status="failed",
@@ -910,6 +979,52 @@ class DirectionalSyncService:
             "asset_sync": asset_sync,
         }
 
+    def estimate_list_scope_pull(self, peer_id: str, list_id: str) -> Dict[str, Any]:
+        peer = self._peer_or_raise(peer_id)
+        headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        local_inventory = self.inventory()
+        remote_delta = self._request_json(
+            "POST",
+            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/delta"),
+            headers,
+            {
+                "list_id": list_id,
+                "known_inventory": local_inventory,
+            },
+        )
+        remote_data = remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {}
+        datasets = remote_data.get("datasets", {}) if isinstance(remote_data, dict) else {}
+        asset_paths = remote_data.get("asset_paths", []) if isinstance(remote_data, dict) else []
+        scope_info = remote_data.get("list_scope", {}) if isinstance(remote_data, dict) else {}
+        data_sync = self._summarize_dataset_delta(datasets if isinstance(datasets, dict) else {})
+
+        remote_asset_inv = self._request_json(
+            "GET",
+            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+            headers,
+            None,
+        )
+        remote_files = (
+            remote_asset_inv.get("data", {}).get("files", {})
+            if isinstance(remote_asset_inv, dict) and isinstance(remote_asset_inv.get("data"), dict)
+            else {}
+        )
+        local_files = self.asset_inventory().get("files", {})
+        asset_sync = self._estimate_pull_assets_from_remote_for_paths(
+            remote_files if isinstance(remote_files, dict) else {},
+            local_files if isinstance(local_files, dict) else {},
+            asset_paths if isinstance(asset_paths, list) else [],
+        )
+        return {
+            "direction": "pull",
+            "scope": "list",
+            "peer_id": peer_id,
+            "estimated_at": _iso(_utc_now()),
+            "list_scope": scope_info,
+            "data_sync": data_sync,
+            "asset_sync": asset_sync,
+        }
+
     def push_list_scope_to_peer(
         self,
         peer_id: str,
@@ -1039,6 +1154,104 @@ class DirectionalSyncService:
             "list_scope": scope_info,
             "remote_apply": applied.get("data") if isinstance(applied, dict) else None,
             "asset_sync": asset_sync,
+        }
+
+    def pull_list_scope_from_peer(
+        self,
+        peer_id: str,
+        list_id: str,
+        progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+    ) -> Dict[str, Any]:
+        self._report_progress(progress_cb, 2, "prepare", "preparing list scope pull task")
+        peer = self._peer_or_raise(peer_id)
+        headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        self._report_progress(
+            progress_cb,
+            8,
+            "prepare",
+            "peer resolved",
+            {"remote_base_url": str(peer.get("remote_base_url", ""))},
+        )
+        self._report_progress(progress_cb, 14, "local_inventory", "building local inventory")
+        local_inventory = self.inventory()
+        self._report_progress(progress_cb, 24, "remote_scope_delta", "requesting remote scoped delta")
+        remote_delta = self._request_json(
+            "POST",
+            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/delta"),
+            headers,
+            {
+                "list_id": list_id,
+                "known_inventory": local_inventory,
+            },
+        )
+        remote_data = remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {}
+        datasets = remote_data.get("datasets", {}) if isinstance(remote_data, dict) else {}
+        asset_paths = remote_data.get("asset_paths", []) if isinstance(remote_data, dict) else []
+        scope_info = remote_data.get("list_scope", {}) if isinstance(remote_data, dict) else {}
+        data_records = self._count_dataset_records(datasets if isinstance(datasets, dict) else {})
+        self._report_progress(
+            progress_cb,
+            38,
+            "remote_scope_delta",
+            "remote scoped delta received",
+            {
+                "record_count": data_records,
+                "list_id": str(scope_info.get("list_id", "")),
+                "list_name": str(scope_info.get("list_name", "")),
+                "pending_content_count": int(scope_info.get("pending_content_count", 0)),
+            },
+        )
+
+        applied = None
+        if datasets:
+            self._report_progress(progress_cb, 50, "data_apply_local", "applying scoped data delta locally")
+            applied = self.apply_delta({"datasets": datasets})
+            self._report_progress(
+                progress_cb,
+                66,
+                "data_apply_local",
+                "local scoped data delta applied",
+                {
+                    "total_added": int(applied.get("total_added", 0)),
+                    "total_updated": int(applied.get("total_updated", 0)),
+                    "total_skipped": int(applied.get("total_skipped", 0)),
+                },
+            )
+        else:
+            self._report_progress(progress_cb, 66, "data_apply_local", "no scoped data changes")
+
+        local_asset_inventory = self.asset_inventory()
+        self._report_progress(progress_cb, 72, "asset_pull", "pulling scoped assets from remote")
+        asset_pull = self._pull_assets_from_peer(
+            peer["remote_base_url"],
+            headers,
+            local_asset_inventory.get("files", {}),
+            progress_cb=progress_cb,
+            rel_paths=asset_paths if isinstance(asset_paths, list) else [],
+        )
+
+        if not datasets and int(asset_pull.get("file_count", 0)) == 0:
+            self._touch_peer(peer_id)
+            self._report_progress(progress_cb, 100, "completed", "list scope pull finished (no changes)")
+            return {
+                "direction": "pull",
+                "scope": "list",
+                "peer_id": peer_id,
+                "status": "no_change",
+                "list_scope": scope_info,
+                "asset_sync": asset_pull,
+            }
+
+        self._touch_peer(peer_id)
+        self._report_progress(progress_cb, 100, "completed", "list scope pull completed")
+        return {
+            "direction": "pull",
+            "scope": "list",
+            "peer_id": peer_id,
+            "status": "completed",
+            "list_scope": scope_info,
+            "local_apply": applied,
+            "asset_sync": asset_pull,
         }
 
     def push_to_peer(
@@ -1314,6 +1527,7 @@ class DirectionalSyncService:
         headers: Dict[str, str],
         known_files: Dict[str, str],
         progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
+        rel_paths: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         temp_zip = ""
         try:
@@ -1331,7 +1545,10 @@ class DirectionalSyncService:
             response = requests.post(
                 endpoint,
                 headers=headers,
-                json={"known_files": known_files or {}},
+                json={
+                    "known_files": known_files or {},
+                    "rel_paths": rel_paths if isinstance(rel_paths, list) else None,
+                },
                 timeout=self.HTTP_TIMEOUT_SECONDS,
                 stream=True,
             )
@@ -1457,11 +1674,98 @@ class DirectionalSyncService:
                 result.add(item_id)
         return result
 
+    def list_scope_options(self) -> List[Dict[str, Any]]:
+        counts: Dict[str, Dict[str, int]] = {}
+        for row in self._read_dataset(self.DATASETS["lists"]):
+            if not isinstance(row, dict):
+                continue
+            list_id = str(row.get("id", "")).strip()
+            if not list_id:
+                continue
+            counts[list_id] = {"comic_count": 0, "video_count": 0}
+
+        for dataset_name in ("comics", "recommendations"):
+            for row in self._read_dataset(self.DATASETS[dataset_name]):
+                if not isinstance(row, dict) or bool(row.get("is_deleted", False)):
+                    continue
+                list_ids = row.get("list_ids")
+                if not isinstance(list_ids, list):
+                    continue
+                for raw_list_id in list_ids:
+                    list_id = str(raw_list_id or "").strip()
+                    if not list_id:
+                        continue
+                    bucket = counts.setdefault(list_id, {"comic_count": 0, "video_count": 0})
+                    bucket["comic_count"] += 1
+
+        for dataset_name in ("videos", "video_recommendations"):
+            for row in self._read_dataset(self.DATASETS[dataset_name]):
+                if not isinstance(row, dict) or bool(row.get("is_deleted", False)):
+                    continue
+                list_ids = row.get("list_ids")
+                if not isinstance(list_ids, list):
+                    continue
+                for raw_list_id in list_ids:
+                    list_id = str(raw_list_id or "").strip()
+                    if not list_id:
+                        continue
+                    bucket = counts.setdefault(list_id, {"comic_count": 0, "video_count": 0})
+                    bucket["video_count"] += 1
+
+        options: List[Dict[str, Any]] = []
+        for row in self._read_dataset(self.DATASETS["lists"]):
+            if not isinstance(row, dict):
+                continue
+            list_id = str(row.get("id", "")).strip()
+            if not list_id:
+                continue
+            item = self._sanitize_list_scope_row(row)
+            bucket = counts.get(list_id, {"comic_count": 0, "video_count": 0})
+            item["comic_count"] = int(bucket.get("comic_count", 0))
+            item["video_count"] = int(bucket.get("video_count", 0))
+            options.append(item)
+
+        options.sort(
+            key=lambda item: (
+                -(int(item.get("comic_count", 0)) + int(item.get("video_count", 0))),
+                str(item.get("name", "")).casefold(),
+            )
+        )
+        return options
+
+    def fetch_list_scope_options_from_peer(self, peer_id: str) -> List[Dict[str, Any]]:
+        peer = self._peer_or_raise(peer_id)
+        headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
+        payload = self._request_json(
+            "GET",
+            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/options"),
+            headers,
+            None,
+        )
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        options = data if isinstance(data, list) else []
+        result: List[Dict[str, Any]] = []
+        for row in options:
+            if not isinstance(row, dict):
+                continue
+            item = self._sanitize_list_scope_row(row)
+            item["comic_count"] = max(0, int(row.get("comic_count", 0) or 0))
+            item["video_count"] = max(0, int(row.get("video_count", 0) or 0))
+            result.append(item)
+        return result
+
     def _get_list_scope_row_or_raise(self, list_id: str) -> Dict[str, Any]:
         list_key = str(list_id or "").strip()
         for row in self._read_dataset(self.DATASETS["lists"]):
             if not isinstance(row, dict):
                 continue
+            if str(row.get("id", "")).strip() == list_key:
+                return dict(row)
+        raise ValueError("list not found")
+
+    def _fetch_list_scope_row_from_peer(self, peer_id: str, list_id: str) -> Dict[str, Any]:
+        list_key = str(list_id or "").strip()
+        for row in self.fetch_list_scope_options_from_peer(peer_id):
             if str(row.get("id", "")).strip() == list_key:
                 return dict(row)
         raise ValueError("list not found")
@@ -1617,6 +1921,20 @@ class DirectionalSyncService:
             "asset_paths": asset_paths,
         }
 
+    def list_scope_delta_from_known(self, list_id: str, known_inventory: Dict[str, Any]) -> Dict[str, Any]:
+        bundle = self._build_list_scope_transfer_bundle(
+            str(list_id or "").strip(),
+            known_inventory if isinstance(known_inventory, dict) else {},
+        )
+        return {
+            "direction": "push",
+            "scope": "list",
+            "generated_at": _iso(_utc_now()),
+            "list_scope": bundle.get("scope", {}),
+            "datasets": bundle.get("datasets", {}),
+            "asset_paths": bundle.get("asset_paths", []),
+        }
+
     def _estimate_asset_delta(self, known_files: Dict[str, str], rel_paths: Optional[List[str]] = None) -> Dict[str, Any]:
         local_files = self._collect_asset_index()
         file_count = 0
@@ -1668,6 +1986,17 @@ class DirectionalSyncService:
             "total_bytes": total_bytes,
             "total_mb": round(total_bytes / (1024 * 1024), 2),
         }
+
+    def _estimate_pull_assets_from_remote_for_paths(
+        self,
+        remote_files: Dict[str, str],
+        local_files: Dict[str, str],
+        rel_paths: List[str],
+    ) -> Dict[str, Any]:
+        remote_map = remote_files if isinstance(remote_files, dict) else {}
+        selected_paths = self._normalize_asset_selection(rel_paths, remote_map)
+        subset = {path: remote_map[path] for path in selected_paths if path in remote_map}
+        return self._estimate_pull_assets_from_remote(subset, local_files if isinstance(local_files, dict) else {})
 
     @staticmethod
     def _signature_size(signature: Any) -> int:
