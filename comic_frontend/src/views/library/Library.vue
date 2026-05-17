@@ -2,10 +2,13 @@
   <div class="library-page">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
-      <div class="search-trigger" @click="goToSearch">
-        <van-icon name="search" />
-        <span>{{ searchPlaceholder }}</span>
-      </div>
+      <van-search
+        v-model.trim="searchKeyword"
+        class="toolbar-search"
+        shape="round"
+        clearable
+        :placeholder="searchPlaceholder"
+      />
       
       <div class="actions">
         <van-button size="small" plain class="toolbar-action-btn" @click="showSortPanel = true">
@@ -51,9 +54,9 @@
       <van-loading v-if="isLoading" class="loading-center" />
       
       <EmptyState 
-        v-else-if="items.length === 0" 
+        v-else-if="displayItems.length === 0" 
         :title="emptyTitle" 
-        description="快去导入一些内容吧"
+        :description="emptyDescription"
       />
 
       <MediaGrid 
@@ -72,7 +75,7 @@
     </div>
 
     <AppPagination
-      v-if="items.length > 0"
+      v-if="displayItems.length > 0"
       v-model="currentPage"
       class="content-pagination"
       :total-items="totalItems"
@@ -224,8 +227,10 @@ import {
   clearBrowseState,
   buildSortOptions,
   buildUiStateScope,
+  debounce,
   decodeSortSelection,
   extractAuthors,
+  filterMediaItemsByKeyword,
   getOrCreateUiStateClientId,
   isAllSelected,
   isDefaultSortState,
@@ -256,6 +261,7 @@ const showBatchListPopup = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
 const batchSelectedListIds = ref([])
+const searchKeyword = ref('')
 const includeTags = ref([])
 const excludeTags = ref([])
 const selectedAuthors = ref([])
@@ -264,6 +270,7 @@ const minScore = ref(0)
 const unreadOnly = ref(false)
 const currentSortField = ref('')
 const currentSortOrder = ref('desc')
+const suppressSearchStateWatch = ref(false)
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const initVersion = ref(0)
 const uiStateClientId = getOrCreateUiStateClientId()
@@ -291,6 +298,7 @@ function isSortFieldSupported(sortField) {
 
 function buildPersistedStatePayload() {
   const payload = {
+    searchKeyword: String(searchKeyword.value || '').trim(),
     includeTags: includeTags.value,
     excludeTags: excludeTags.value,
     selectedAuthors: selectedAuthors.value,
@@ -309,6 +317,7 @@ function buildPersistedStatePayload() {
     payload.selectedListIds.length === 0 &&
     Number(payload.minScore) <= 0 &&
     !payload.unreadOnly &&
+    !payload.searchKeyword &&
     !payload.sortField
   ) {
     return null
@@ -344,12 +353,14 @@ async function persistViewState() {
 }
 
 async function restoreViewState() {
+  suppressSearchStateWatch.value = true
   let parsed = loadBrowseState(getUiStateScope(), null)
   if (!parsed) {
     const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
     parsed = response?.data?.state
   }
   if (!parsed) {
+    searchKeyword.value = ''
     includeTags.value = []
     excludeTags.value = []
     selectedAuthors.value = []
@@ -359,8 +370,10 @@ async function restoreViewState() {
     currentSortField.value = ''
     currentSortOrder.value = 'desc'
     currentStore.value.setSortState?.(null, currentSortOrder.value)
+    suppressSearchStateWatch.value = false
     return false
   }
+  searchKeyword.value = String(parsed.searchKeyword || '').trim()
   includeTags.value = parsed.includeTags || []
   excludeTags.value = parsed.excludeTags || []
   selectedAuthors.value = parsed.selectedAuthors || []
@@ -373,6 +386,7 @@ async function restoreViewState() {
     currentPage.value = Math.max(1, Math.floor(Number(parsed.currentPage)))
   }
   currentStore.value.setSortState?.(currentSortField.value || null, currentSortOrder.value)
+  suppressSearchStateWatch.value = false
   return true
 }
 
@@ -400,6 +414,10 @@ const items = computed(() => {
   return isVideoMode.value ? videoStore.videoList : comicStore.comicList
 })
 
+const displayItems = computed(() => {
+  return filterMediaItemsByKeyword(items.value, searchKeyword.value)
+})
+
 const paginationStorageKey = computed(() => `library_${isVideoMode.value ? 'video' : 'comic'}`)
 const {
   pageSize,
@@ -407,7 +425,7 @@ const {
   totalItems,
   pagedItems,
   goFirst
-} = useClientPagination(items, paginationStorageKey)
+} = useClientPagination(displayItems, paginationStorageKey)
 
 async function applyFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
@@ -449,21 +467,28 @@ async function applyFilters(options = {}) {
 const isLoading = computed(() => currentStore.value.loading)
 
 const searchPlaceholder = computed(() => 
-  isVideoMode.value ? '搜索视频...' : '搜索漫画...'
+  isVideoMode.value ? '实时搜索视频...' : '实时搜索漫画...'
 )
 
 const emptyTitle = computed(() => 
   isVideoMode.value ? '暂无视频' : '暂无漫画'
 )
 
+const emptyDescription = computed(() => {
+  return String(searchKeyword.value || '').trim()
+    ? '没有找到匹配的内容'
+    : '快去导入一些内容吧'
+})
+
 const menuActions = [
+  { text: '搜索中心', icon: 'search' },
   { text: '批量管理', icon: 'setting-o' },
   { text: '刷新列表', icon: 'replay' }
 ]
 
 const selectedItems = computed(() => {
   const selectedIdSet = new Set(selectedIds.value)
-  return items.value.filter((item) => selectedIdSet.has(item.id))
+  return displayItems.value.filter((item) => selectedIdSet.has(item.id))
 })
 
 const batchTaskActions = computed(() => {
@@ -582,7 +607,7 @@ const activeFilters = computed(() => {
 })
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, items.value, (item) => item.id)
+  return isAllSelected(selectedIds.value, displayItems.value, (item) => item.id)
 })
 
 // Methods
@@ -591,6 +616,10 @@ function goToSearch() {
 }
 
 async function onMenuSelect(action) {
+  if (action.text === '搜索中心') {
+    goToSearch()
+    return
+  }
   if (action.text === '批量管理') isManageMode.value = true
   if (action.text === '刷新列表') {
     await initializePage(true)
@@ -616,7 +645,7 @@ function toggleSelection(item) {
 }
 
 function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, items.value, (item) => item.id)
+  toggleSelectAll(selectedIds, displayItems.value, (item) => item.id)
 }
 
 async function openBatchTaskSheet() {
@@ -861,7 +890,7 @@ watch(() => route.query.tagId, async (newTagId) => {
 })
 
 watch(
-  () => items.value.map((item) => item.id),
+  () => displayItems.value.map((item) => item.id),
   () => {
     selectedIds.value = []
   }
@@ -869,6 +898,19 @@ watch(
 
 watch(currentPage, () => {
   persistLocalBrowseState()
+})
+
+const debouncedPersistSearchState = debounce(() => {
+  persistViewState().catch(() => {})
+}, 260)
+
+watch(searchKeyword, () => {
+  if (suppressSearchStateWatch.value) {
+    return
+  }
+  goFirst()
+  persistLocalBrowseState()
+  debouncedPersistSearchState()
 })
 
 onMounted(async () => {
@@ -892,18 +934,26 @@ onMounted(async () => {
   z-index: 12;
 }
 
-.search-trigger {
+.toolbar-search {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  font-size: 14px;
 }
 
-.search-trigger .van-icon {
-  color: var(--text-tertiary);
+.toolbar-search :deep(.van-search) {
+  padding: 0;
+  background: transparent;
+}
+
+.toolbar-search :deep(.van-search__content) {
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.toolbar-search :deep(.van-field__control) {
+  color: var(--text-primary);
 }
 
 .actions {
@@ -1016,10 +1066,8 @@ onMounted(async () => {
     gap: 8px;
   }
 
-  .search-trigger {
+  .toolbar-search :deep(.van-search__content) {
     height: 34px;
-    padding: 0 12px;
-    font-size: 13px;
   }
 
   .manage-bar {

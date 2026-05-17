@@ -27,6 +27,9 @@ export * from './viewState'
 // 批量任务工具
 export * from './batchTasks'
 
+// 前端即时搜索工具
+export * from './mediaSearch'
+
 /**
  * 防抖函数
  * @param {Function} fn - 要执行的函数

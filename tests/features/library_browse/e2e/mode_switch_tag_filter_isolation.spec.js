@@ -194,7 +194,7 @@ async function assertModeSwitchClearsTagFilters(page, options) {
   });
 
   await page.goto(path);
-  await expect(page.getByText(comicSearchText)).toBeVisible();
+  await expect(page.locator('.toolbar-search input').first()).toHaveAttribute("placeholder", comicSearchText);
   await expect(page.getByText("Comic Action A")).toBeVisible();
 
   const filterButton = page
@@ -210,7 +210,7 @@ async function assertModeSwitchClearsTagFilters(page, options) {
   await expect(page.getByText("Comic Other")).not.toBeVisible();
 
   await page.locator(".mode-switch").first().click();
-  await expect(page.getByText(videoSearchText)).toBeVisible();
+  await expect(page.locator('.toolbar-search input').first()).toHaveAttribute("placeholder", videoSearchText);
   await expect(page.locator(".active-filters")).toHaveCount(0);
   await expect(page.getByText("Video Mode One")).toBeVisible();
 }
@@ -222,8 +222,8 @@ test("library mode switch does not leak comic tag filters into video mode", asyn
     comicFilterPattern: "**/api/v1/comic/filter**",
     videoListPattern: "**/api/v1/video/list**",
     videoFilterPattern: "**/api/v1/video/filter**",
-    comicSearchText: "搜索漫画...",
-    videoSearchText: "搜索视频...",
+    comicSearchText: "实时搜索漫画...",
+    videoSearchText: "实时搜索视频...",
   });
 });
 
@@ -234,7 +234,7 @@ test("preview mode switch does not leak comic tag filters into video mode", asyn
     comicFilterPattern: "**/api/v1/recommendation/filter**",
     videoListPattern: "**/api/v1/video/recommendation/list**",
     videoFilterPattern: "**/api/v1/video/recommendation/filter**",
-    comicSearchText: "搜索推荐漫画...",
-    videoSearchText: "搜索推荐视频...",
+    comicSearchText: "实时搜索推荐漫画...",
+    videoSearchText: "实时搜索推荐视频...",
   });
 });

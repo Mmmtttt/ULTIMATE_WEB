@@ -16,7 +16,14 @@
         </div>
         
         <div v-else class="tag-list" :class="{ 'tag-list-desktop': isDesktop }">
-          <template v-for="tag in getTagList(tab.key)" :key="tag.id">
+          <van-search
+            v-model.trim="tagListKeyword"
+            class="tag-search-bar"
+            shape="round"
+            clearable
+            placeholder="搜索标签..."
+          />
+          <template v-for="tag in getFilteredTagList(tab.key)" :key="tag.id">
             <van-cell
               v-if="isDesktop"
               class="tag-cell-desktop"
@@ -74,6 +81,9 @@
               </template>
             </van-swipe-cell>
           </template>
+          <div v-if="getFilteredTagList(tab.key).length === 0" class="empty-search-result">
+            没有匹配的标签
+          </div>
         </div>
       </van-tab>
       
@@ -123,10 +133,18 @@
           <div class="section-header">
             <span class="section-title">选择标签</span>
           </div>
+
+          <van-search
+            v-model.trim="batchTagKeyword"
+            class="tag-search-bar"
+            shape="round"
+            clearable
+            placeholder="搜索可添加的标签..."
+          />
           
           <div class="tag-select-grid">
             <van-tag 
-              v-for="tag in allTags" 
+              v-for="tag in filteredBatchTags" 
               :key="tag.id" 
               :type="selectedTagIds.includes(tag.id) ? 'primary' : 'default'"
               size="large"
@@ -135,6 +153,9 @@
             >
               {{ tag.name }}
             </van-tag>
+          </div>
+          <div v-if="filteredBatchTags.length === 0" class="empty-search-result">
+            没有匹配的标签
           </div>
           
           <div class="batch-actions">
@@ -284,6 +305,8 @@ const showEditPopup = ref(false)
 const newTagName = ref('')
 const editTagName = ref('')
 const editingTag = ref(null)
+const tagListKeyword = ref('')
+const batchTagKeyword = ref('')
 const selectedContentIds = ref([])
 const selectedTagIds = ref([])
 const showBatchTaskSheet = ref(false)
@@ -313,6 +336,8 @@ const allTags = computed(() => {
     : sortTags(props.tagStore.tags || [], 'comic_count')
 })
 
+const filteredBatchTags = computed(() => filterTagsByKeyword(allTags.value, batchTagKeyword.value))
+
 const paginationStorageKey = computed(() => `tag_manage_batch_${props.contentType}`)
 const {
   pageSize,
@@ -334,6 +359,12 @@ function persistBrowseState() {
   if (currentPage.value > 1) {
     payload.currentPage = currentPage.value
   }
+  if (String(tagListKeyword.value || '').trim()) {
+    payload.tagListKeyword = String(tagListKeyword.value || '').trim()
+  }
+  if (String(batchTagKeyword.value || '').trim()) {
+    payload.batchTagKeyword = String(batchTagKeyword.value || '').trim()
+  }
 
   if (Object.keys(payload).length === 0) {
     clearBrowseState(getBrowseStateKey())
@@ -354,6 +385,8 @@ function restoreBrowseState() {
   if (Number(parsed.currentPage) >= 1) {
     currentPage.value = Math.max(1, Math.floor(Number(parsed.currentPage)))
   }
+  tagListKeyword.value = String(parsed.tagListKeyword || '').trim()
+  batchTagKeyword.value = String(parsed.batchTagKeyword || '').trim()
 }
 
 const canBatchAdd = computed(() => {
@@ -392,8 +425,24 @@ function getTagList(tabKey) {
   return sortTags(props.tagStore.tags || [], 'comic_count')
 }
 
+function getFilteredTagList(tabKey) {
+  return filterTagsByKeyword(getTagList(tabKey), tagListKeyword.value)
+}
+
 function sortTags(tags, countField) {
   return [...tags].sort((a, b) => (b[countField] || 0) - (a[countField] || 0))
+}
+
+function filterTagsByKeyword(tags, keyword) {
+  const normalizedKeyword = String(keyword || '').trim().toLowerCase()
+  if (!normalizedKeyword) {
+    return Array.isArray(tags) ? tags : []
+  }
+  return (Array.isArray(tags) ? tags : []).filter((tag) => {
+    const name = String(tag?.name || '').toLowerCase()
+    const id = String(tag?.id || '').toLowerCase()
+    return name.includes(normalizedKeyword) || id.includes(normalizedKeyword)
+  })
 }
 
 function getTagLabel(tag, tabKey) {
@@ -660,7 +709,7 @@ watch(contentList, (nextItems) => {
   )
 })
 
-watch([activeTab, currentPage], () => {
+watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   persistBrowseState()
 })
 </script>
@@ -684,6 +733,21 @@ watch([activeTab, currentPage], () => {
 .tag-icon {
   margin-right: 8px;
   color: #1989fa;
+}
+
+.tag-search-bar {
+  margin-bottom: 10px;
+}
+
+.tag-search-bar :deep(.van-search) {
+  padding: 0;
+  background: transparent;
+}
+
+.tag-search-bar :deep(.van-search__content) {
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
 }
 
 .swipe-btn {
@@ -851,6 +915,12 @@ watch([activeTab, currentPage], () => {
 
 .tag-select-item {
   cursor: pointer;
+}
+
+.empty-search-result {
+  padding: 8px 0 16px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .batch-actions {

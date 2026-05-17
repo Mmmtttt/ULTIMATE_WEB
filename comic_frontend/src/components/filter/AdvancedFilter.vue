@@ -99,9 +99,17 @@
 
     <div class="filter-content">
       <div v-show="activeTab === 'tags'" class="tag-panel">
+        <div class="search-box">
+          <input
+            v-model="tagSearch"
+            type="text"
+            placeholder="搜索标签..."
+            class="search-input"
+          />
+        </div>
         <div class="tags-grid">
           <span
-            v-for="tag in sortedTags"
+            v-for="tag in filteredSortedTags"
             :key="tag.id"
             class="tag-item"
             :class="getTagType(tag.id)"
@@ -110,6 +118,9 @@
             {{ tag.name }}
             <span v-if="showTagCount" class="count">({{ tag[tagCountKey] }})</span>
           </span>
+        </div>
+        <div v-if="filteredSortedTags.length === 0" class="empty-search-state">
+          没有匹配的标签
         </div>
         <div class="filter-hint">
           <span class="hint-text">💡 单击添加，再次单击排除，第三次取消</span>
@@ -251,6 +262,7 @@ const emit = defineEmits([
 ])
 
 const activeTab = ref('tags')
+const tagSearch = ref('')
 const authorSearch = ref('')
 
 const showUnreadFilter = computed(() => !props.isVideoMode)
@@ -313,6 +325,18 @@ const sortedTags = computed(() => {
     }
 
     return String(a?.name || '').localeCompare(String(b?.name || ''), 'zh-CN')
+  })
+})
+
+const filteredSortedTags = computed(() => {
+  const keyword = String(tagSearch.value || '').trim().toLowerCase()
+  if (!keyword) {
+    return sortedTags.value
+  }
+  return sortedTags.value.filter((tag) => {
+    const name = String(tag?.name || '').toLowerCase()
+    const id = String(tag?.id || '').toLowerCase()
+    return name.includes(keyword) || id.includes(keyword)
   })
 })
 
@@ -731,6 +755,12 @@ function handleClear() {
 .filter-hint {
   padding-top: 12px;
   border-top: 1px solid var(--border-soft);
+}
+
+.empty-search-state {
+  padding: 8px 0 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .hint-text {

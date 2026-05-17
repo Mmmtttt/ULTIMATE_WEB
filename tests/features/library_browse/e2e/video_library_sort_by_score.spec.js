@@ -7,6 +7,30 @@ const {
 
 const VIDEO_TITLE = "Seed Video";
 
+function buildVideo(id, title, score) {
+  return {
+    id,
+    code: id,
+    title,
+    title_jp: "",
+    creator: "Video Creator",
+    actors: ["Actor A"],
+    desc: `${title} detail`,
+    cover_path: `/static/mock/${id}.jpg`,
+    thumbnail_images: [],
+    score,
+    tag_ids: [],
+    tags: [],
+    list_ids: [],
+    total_units: 1,
+    current_unit: 1,
+    create_time: "2026-05-17T08:00:00",
+    last_access_time: "2026-05-17T09:00:00",
+    is_deleted: false,
+    source: "local",
+  };
+}
+
 /**
  * 用例描述:
  * - 用例目的: 强看护视频库"按评分排序"主链路，确保前端操作会触发正确后端参数，且页面结果顺序与评分降序一致。
@@ -25,10 +49,82 @@ const VIDEO_TITLE = "Seed Video";
  */
 test("video library sort by score keeps UI order consistent with backend sorting", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+  const unsortedVideos = [
+    buildVideo("video-low", "Low Video", 7.2),
+    buildVideo("video-high", VIDEO_TITLE, 9.6),
+    buildVideo("video-mid", "Mid Video", 8.4),
+  ];
+  const sortedVideos = [...unsortedVideos].sort((a, b) => b.score - a.score);
+
+  await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tag_name: "0.0.0",
+        html_url: "https://github.com/Mmmtttt/ULTIMATE_WEB/releases",
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/ui-state**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 200, data: { state: null } }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: { ok: true } }),
+    });
+  });
+
+  await page.route("**/api/v1/list/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/tag/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/comic/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/video/list**", async (route) => {
+    const url = new URL(route.request().url());
+    const sortType = url.searchParams.get("sort_type");
+    const sortOrder = url.searchParams.get("sort_order");
+    const data = sortType === "score" && sortOrder === "desc" ? sortedVideos : unsortedVideos;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data }),
+    });
+  });
 
   await page.goto("/library");
   await page.locator(".mode-switch").first().click();
-  await expect(page.getByText("搜索视频...")).toBeVisible();
+  const searchInput = page.locator('.toolbar-search input').first();
+  await expect(searchInput).toHaveAttribute("placeholder", "实时搜索视频...");
+  await searchInput.clear();
 
   await page.locator(".toolbar .toolbar-action-btn").first().click();
   const scoreOption = page.locator(".van-picker-column__item", { hasText: "评分最高" });
