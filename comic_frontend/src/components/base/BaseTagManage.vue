@@ -234,7 +234,16 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { useImportTaskStore, useRuntimeStore } from '@/stores'
-import { buildBatchTaskActions, getCoverUrl, isAllSelected, keepSelectionWithinItems, toggleSelection } from '@/utils'
+import {
+  buildBatchTaskActions,
+  clearBrowseState,
+  getCoverUrl,
+  isAllSelected,
+  keepSelectionWithinItems,
+  loadBrowseState,
+  saveBrowseState,
+  toggleSelection
+} from '@/utils'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { useClientPagination } from '@/composables/useClientPagination'
 import { useDevice } from '@/composables/useDevice'
@@ -312,6 +321,40 @@ const {
   pagedItems
 } = useClientPagination(contentList, paginationStorageKey)
 const pagedContentList = computed(() => pagedItems.value)
+
+function getBrowseStateKey() {
+  return `tag_manage_state_${props.contentType}`
+}
+
+function persistBrowseState() {
+  const payload = {}
+  if (activeTab.value > 0) {
+    payload.activeTab = activeTab.value
+  }
+  if (currentPage.value > 1) {
+    payload.currentPage = currentPage.value
+  }
+
+  if (Object.keys(payload).length === 0) {
+    clearBrowseState(getBrowseStateKey())
+    return
+  }
+
+  saveBrowseState(getBrowseStateKey(), payload)
+}
+
+function restoreBrowseState() {
+  const parsed = loadBrowseState(getBrowseStateKey(), null)
+  if (!parsed) {
+    return
+  }
+  if (Number(parsed.activeTab) >= 0) {
+    activeTab.value = Math.max(0, Math.floor(Number(parsed.activeTab)))
+  }
+  if (Number(parsed.currentPage) >= 1) {
+    currentPage.value = Math.max(1, Math.floor(Number(parsed.currentPage)))
+  }
+}
 
 const canBatchAdd = computed(() => {
   return selectedContentIds.value.length > 0 && selectedTagIds.value.length > 0
@@ -604,6 +647,7 @@ async function batchRemoveTags() {
 }
 
 onMounted(async () => {
+  restoreBrowseState()
   await fetchTagList()
   await fetchContentList()
 })
@@ -614,6 +658,10 @@ watch(contentList, (nextItems) => {
     nextItems,
     (item) => item.id
   )
+})
+
+watch([activeTab, currentPage], () => {
+  persistBrowseState()
 })
 </script>
 

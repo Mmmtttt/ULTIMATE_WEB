@@ -87,10 +87,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast } from 'vant'
 import MediaGrid from '@/components/common/MediaGrid.vue'
+import { clearBrowseState, loadBrowseState, saveBrowseState } from '@/utils'
 
 const props = defineProps({
   contentType: {
@@ -143,6 +144,28 @@ const allItems = computed(() => {
   const recWithSource = recommendationItems.value.map(item => ({ ...item, source: 'recommendation' }))
   return [...homeWithSource, ...recWithSource]
 })
+
+function getBrowseStateKey() {
+  return `tag_detail_state_${props.contentType}_${route.params.id}`
+}
+
+function persistBrowseState() {
+  if (activeTab.value <= 0) {
+    clearBrowseState(getBrowseStateKey())
+    return
+  }
+  saveBrowseState(getBrowseStateKey(), { activeTab: activeTab.value })
+}
+
+function restoreBrowseState() {
+  const parsed = loadBrowseState(getBrowseStateKey(), null)
+  if (!parsed) {
+    return
+  }
+  if (Number(parsed.activeTab) >= 0) {
+    activeTab.value = Math.max(0, Math.floor(Number(parsed.activeTab)))
+  }
+}
 
 async function fetchTagDetail() {
   const tagId = route.params.id
@@ -223,7 +246,12 @@ async function saveEdit() {
 }
 
 onMounted(() => {
+  restoreBrowseState()
   fetchTagDetail()
+})
+
+watch(activeTab, () => {
+  persistBrowseState()
 })
 </script>
 

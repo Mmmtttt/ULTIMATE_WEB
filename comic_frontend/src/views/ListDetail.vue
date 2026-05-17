@@ -378,8 +378,16 @@ import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { useClientPagination } from '@/composables/useClientPagination'
-import { StorageArea, getRawItem, setRawItem } from '@/runtime/storage'
-import { buildBatchTaskActions, extractAuthors, extractItemAuthors, isReadByProgress, isUnreadByProgress } from '@/utils'
+import {
+  buildBatchTaskActions,
+  clearBrowseState,
+  extractAuthors,
+  extractItemAuthors,
+  isReadByProgress,
+  isUnreadByProgress,
+  loadBrowseState,
+  saveBrowseState
+} from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -430,31 +438,46 @@ function saveFilterState() {
     selectedListIds: selectedListIds.value,
     unreadOnly: unreadOnly.value
   }
-  setRawItem(getFilterStorageKey(), JSON.stringify(payload), StorageArea.SESSION)
+  if (currentPage.value > 1) {
+    payload.currentPage = currentPage.value
+  }
+  const hasFilterState = Boolean(payload.currentSortType)
+    || (payload.minScore !== null && Number(payload.minScore) > 0)
+    || payload.includeTags.length > 0
+    || payload.excludeTags.length > 0
+    || payload.selectedAuthors.length > 0
+    || payload.selectedListIds.length > 0
+    || payload.unreadOnly
+    || Number(payload.currentPage) > 1
+
+  if (!hasFilterState) {
+    clearBrowseState(getFilterStorageKey())
+    return
+  }
+  saveBrowseState(getFilterStorageKey(), payload)
 }
 
 function restoreFilterState() {
-  const raw = getRawItem(getFilterStorageKey(), StorageArea.SESSION)
-  if (!raw) {
+  const parsed = loadBrowseState(getFilterStorageKey(), null)
+  if (!parsed) {
     return
   }
-  try {
-    const parsed = JSON.parse(raw)
-    currentSortType.value = parsed.currentSortType || ''
-    minScore.value = parsed.minScore ?? null
-    includeTags.value = parsed.includeTags || []
-    excludeTags.value = parsed.excludeTags || []
-    selectedAuthors.value = parsed.selectedAuthors || []
-    selectedListIds.value = parsed.selectedListIds || []
-    unreadOnly.value = Boolean(parsed.unreadOnly)
-    tempMinScore.value = minScore.value || 0
-    tempIncludeTags.value = [...includeTags.value]
-    tempExcludeTags.value = [...excludeTags.value]
-    tempSelectedAuthors.value = [...selectedAuthors.value]
-    tempSelectedListIds.value = [...selectedListIds.value]
-    tempUnreadOnly.value = unreadOnly.value
-  } catch {
+  currentSortType.value = parsed.currentSortType || ''
+  minScore.value = parsed.minScore ?? null
+  includeTags.value = parsed.includeTags || []
+  excludeTags.value = parsed.excludeTags || []
+  selectedAuthors.value = parsed.selectedAuthors || []
+  selectedListIds.value = parsed.selectedListIds || []
+  unreadOnly.value = Boolean(parsed.unreadOnly)
+  if (Number(parsed.currentPage) >= 1) {
+    currentPage.value = Math.max(1, Math.floor(Number(parsed.currentPage)))
   }
+  tempMinScore.value = minScore.value || 0
+  tempIncludeTags.value = [...includeTags.value]
+  tempExcludeTags.value = [...excludeTags.value]
+  tempSelectedAuthors.value = [...selectedAuthors.value]
+  tempSelectedListIds.value = [...selectedListIds.value]
+  tempUnreadOnly.value = unreadOnly.value
 }
 
 const comics = computed(() => listInfo.value?.comics || [])
@@ -1138,6 +1161,10 @@ watch(
     selectedItemKeys.value = []
   }
 )
+
+watch(currentPage, () => {
+  saveFilterState()
+})
 
 onMounted(async () => {
   if (listStore.lists.length === 0) {

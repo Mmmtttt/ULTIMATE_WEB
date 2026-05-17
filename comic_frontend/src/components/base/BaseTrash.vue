@@ -86,7 +86,15 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showToast, showConfirmDialog } from 'vant'
 import { useConfigStore } from '@/stores'
-import { getCoverUrl, isAllSelected, STORAGE_KEYS, toggleSelection } from '@/utils'
+import {
+  clearBrowseState,
+  getCoverUrl,
+  isAllSelected,
+  loadBrowseState,
+  saveBrowseState,
+  STORAGE_KEYS,
+  toggleSelection
+} from '@/utils'
 import { getItem, setItem } from '@/utils/storage'
 import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -171,6 +179,10 @@ function getPaginationStorageKey(tabKey) {
   return `${STORAGE_KEYS.PAGINATION_STATE}:trash_${props.contentType}_${tabKey}`
 }
 
+function getBrowseStateKey() {
+  return `trash_state_${props.contentType}`
+}
+
 function normalizePageValue(page) {
   const value = Number(page)
   if (!Number.isFinite(value) || value < 1) {
@@ -197,6 +209,26 @@ function onTabPageChange(tabKey, page) {
   currentPages.value[tabKey] = normalizePageValue(page)
   setItem(getPaginationStorageKey(tabKey), currentPages.value[tabKey])
   normalizeTabPage(tabKey)
+}
+
+function persistBrowseState() {
+  if (activeTab.value <= 0) {
+    clearBrowseState(getBrowseStateKey())
+    return
+  }
+  saveBrowseState(getBrowseStateKey(), {
+    activeTab: activeTab.value
+  })
+}
+
+function restoreBrowseState() {
+  const parsed = loadBrowseState(getBrowseStateKey(), null)
+  if (!parsed) {
+    return
+  }
+  if (Number(parsed.activeTab) >= 0) {
+    activeTab.value = Math.max(0, Math.floor(Number(parsed.activeTab)))
+  }
 }
 
 function normalizeTabPage(tabKey) {
@@ -397,10 +429,15 @@ watch(pageSize, () => {
 })
 
 onMounted(async () => {
+  restoreBrowseState()
   tabs.value.forEach(tab => restorePageState(tab.key))
   for (const tab of tabs.value) {
     await fetchTrashList(tab.key)
   }
+})
+
+watch(activeTab, () => {
+  persistBrowseState()
 })
 </script>
 

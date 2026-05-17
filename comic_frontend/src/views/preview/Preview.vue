@@ -213,13 +213,16 @@ import { useDevice } from '@/composables/useDevice'
 import { useClientPagination } from '@/composables/useClientPagination'
 import {
   buildSortOptions,
+  clearBrowseState,
   buildUiStateScope,
   decodeSortSelection,
   extractAuthors,
   getOrCreateUiStateClientId,
   isAllSelected,
   isDefaultSortState,
+  loadBrowseState,
   normalizeSortOrder,
+  saveBrowseState,
   toggleSelectAll
 } from '@/utils'
 
@@ -302,8 +305,26 @@ function buildPersistedStatePayload() {
   return payload
 }
 
+function buildLocalBrowseStatePayload() {
+  const payload = buildPersistedStatePayload() || {}
+  if (currentPage.value > 1) {
+    payload.currentPage = currentPage.value
+  }
+  return Object.keys(payload).length > 0 ? payload : null
+}
+
+function persistLocalBrowseState() {
+  const payload = buildLocalBrowseStatePayload()
+  if (!payload) {
+    clearBrowseState(getUiStateScope())
+    return
+  }
+  saveBrowseState(getUiStateScope(), payload)
+}
+
 async function persistViewState() {
   const payload = buildPersistedStatePayload()
+  persistLocalBrowseState()
   if (!payload) {
     await uiStateApi.clear(getUiStateScope(), uiStateClientId)
     return
@@ -312,8 +333,11 @@ async function persistViewState() {
 }
 
 async function restoreViewState() {
-  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
-  const parsed = response?.data?.state
+  let parsed = loadBrowseState(getUiStateScope(), null)
+  if (!parsed) {
+    const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
+    parsed = response?.data?.state
+  }
   if (!parsed) {
     currentSortField.value = ''
     currentSortOrder.value = 'desc'
@@ -327,6 +351,9 @@ async function restoreViewState() {
   tempUnreadOnly.value = Boolean(parsed.unreadOnly)
   currentSortField.value = isSortFieldSupported(parsed.sortField) ? String(parsed.sortField || '').trim() : ''
   currentSortOrder.value = normalizeSortOrder(parsed.sortOrder)
+  if (Number(parsed.currentPage) >= 1) {
+    currentPage.value = Math.max(1, Math.floor(Number(parsed.currentPage)))
+  }
   currentStore.value.setSortType?.(currentSortField.value || null, currentSortOrder.value)
   return true
 }
@@ -756,6 +783,10 @@ watch(
     selectedIds.value = []
   }
 )
+
+watch(currentPage, () => {
+  persistLocalBrowseState()
+})
 
 onMounted(async () => {
   await initializePage(false)

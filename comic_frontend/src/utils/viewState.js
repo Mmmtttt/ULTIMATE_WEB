@@ -1,4 +1,4 @@
-import { getRawItem, setRawItem, StorageArea } from '@/runtime/storage'
+import { getRawItem, removeRawItem, setRawItem, StorageArea } from '@/runtime/storage'
 
 export const SORT_ORDER = {
   ASC: 'asc',
@@ -9,6 +9,7 @@ export const DEFAULT_SORT_ORDER = SORT_ORDER.DESC
 export const DEFAULT_SORT_FIELD = ''
 
 const UI_STATE_CLIENT_ID_KEY = 'ui_state_client_id'
+const BROWSE_STATE_PREFIX = 'browse_state'
 
 function generateClientId() {
   const prefix = 'ui'
@@ -30,6 +31,54 @@ export function getOrCreateUiStateClientId() {
 
 export function buildUiStateScope(baseScope, isVideoMode = false) {
   return `${String(baseScope || '').trim()}_${isVideoMode ? 'video' : 'comic'}`
+}
+
+export function buildBrowseStateStorageKey(scope) {
+  return `${BROWSE_STATE_PREFIX}:${String(scope || '').trim()}`
+}
+
+export function loadBrowseState(scope, fallback = null, area = StorageArea.SESSION) {
+  const normalizedScope = String(scope || '').trim()
+  if (!normalizedScope) {
+    return fallback
+  }
+
+  const raw = getRawItem(buildBrowseStateStorageKey(normalizedScope), area)
+  if (!raw) {
+    return fallback
+  }
+
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return fallback
+  }
+}
+
+export function saveBrowseState(scope, state, area = StorageArea.SESSION) {
+  const normalizedScope = String(scope || '').trim()
+  if (!normalizedScope || !state || typeof state !== 'object') {
+    return
+  }
+
+  try {
+    setRawItem(buildBrowseStateStorageKey(normalizedScope), JSON.stringify(state), area)
+  } catch (error) {
+    console.error('saveBrowseState error:', error)
+  }
+}
+
+export function clearBrowseState(scope, area = StorageArea.SESSION) {
+  const normalizedScope = String(scope || '').trim()
+  if (!normalizedScope) {
+    return
+  }
+
+  try {
+    removeRawItem(buildBrowseStateStorageKey(normalizedScope), area)
+  } catch (error) {
+    console.error('clearBrowseState error:', error)
+  }
 }
 
 export function normalizeSortOrder(value) {
