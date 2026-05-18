@@ -10,9 +10,8 @@ from infrastructure.persistence.repositories.comic_repository_impl import ComicJ
 from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from infrastructure.persistence.json_storage import JsonStorage
 from core.utils import get_current_time, generate_id
-from core.constants import CACHE_ROOT_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE
+from core.constants import CACHE_ROOT_DIR
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from application.base.content_app_service import BaseCreatorAppService
 from core.enums import ContentType
@@ -221,25 +220,17 @@ class AuthorAppService(BaseCreatorAppService):
             normalized_original_id = str(original_id or "").strip()
             return normalized_original_id or normalized_raw_id
         
-        try:
-            home_storage = JsonStorage(JSON_FILE)
-            home_data = home_storage.read()
-            for comic in home_data.get('comics', []):
-                normalized_id = _normalize_existing_id(comic.get('id', ''))
-                if normalized_id:
-                    existing_ids.add(normalized_id)
-        except Exception as e:
-            error_logger.error(f"获取主页漫画ID失败: {e}")
-        
-        try:
-            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            rec_data = rec_storage.read()
-            for comic in rec_data.get('recommendations', []):
-                normalized_id = _normalize_existing_id(comic.get('id', ''))
-                if normalized_id:
-                    existing_ids.add(normalized_id)
-        except Exception as e:
-            error_logger.error(f"获取推荐页漫画ID失败: {e}")
+        for repo, label in (
+            (self._comic_repo, "主页"),
+            (self._recommendation_repo, "推荐页"),
+        ):
+            try:
+                for comic in repo.get_all():
+                    normalized_id = _normalize_existing_id(getattr(comic, "id", ""))
+                    if normalized_id:
+                        existing_ids.add(normalized_id)
+            except Exception as e:
+                error_logger.error(f"获取{label}漫画ID失败: {e}")
         
         return existing_ids
     

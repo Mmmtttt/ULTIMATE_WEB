@@ -6,3 +6,4 @@ from .recommendation_repository_impl import RecommendationJsonRepository
 from .author_repository_impl import AuthorJsonRepository
 from .video_repository_impl import VideoJsonRepository
 from .video_recommendation_repository_impl import VideoRecommendationJsonRepository
+from .document_repository import JsonDocumentRepository

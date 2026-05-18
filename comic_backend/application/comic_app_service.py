@@ -9,11 +9,13 @@ from application.persisted_content_metadata import (
     resolve_data_relative_path,
 )
 from domain.comic import Comic, ComicRepository
+from domain.recommendation import Recommendation
 from domain.tag import TagRepository
-from infrastructure.persistence.repositories import ComicJsonRepository, TagJsonRepository
+from infrastructure.persistence.repositories import ComicJsonRepository, RecommendationJsonRepository, TagJsonRepository
+from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
-from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR
+from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE
 from core.host_platform_fallback import infer_existing_host_comic_dir
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
 from core.enums import ContentType
@@ -38,7 +40,15 @@ class ComicAppService:
         tag_repo: TagRepository = None
     ):
         self._comic_repo = comic_repo or ComicJsonRepository()
+        self._recommendation_repo = RecommendationJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
+        self._comic_document_repo = JsonDocumentRepository(JSON_FILE, "comics", "total_comics")
+        self._recommendation_document_repo = JsonDocumentRepository(
+            RECOMMENDATION_JSON_FILE,
+            "recommendations",
+            "total_recommendations",
+        )
+        self._tag_document_repo = JsonDocumentRepository(TAGS_JSON_FILE, "tags")
 
     @staticmethod
     def _apply_persisted_fields(target: Any, updates: Dict[str, Any]) -> bool:
@@ -1184,27 +1194,14 @@ class ComicAppService:
 
     def organize_deduplicate_by_title(self) -> ServiceResult:
         try:
-            from infrastructure.persistence.json_storage import JsonStorage
-            from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
-
-            home_storage = JsonStorage(JSON_FILE)
-            home_data = home_storage.read()
-            home_records = home_data.get("comics", [])
-            if not isinstance(home_records, list):
-                home_records = []
-                home_data["comics"] = home_records
+            home_records = self._comic_document_repo.read_items()
             home_stats = self._deduplicate_records_by_title(home_records)
-            if not home_storage.write(home_data):
+            if not self._comic_document_repo.write_items(home_records):
                 return ServiceResult.error("Failed to write home database")
 
-            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            rec_data = rec_storage.read()
-            rec_records = rec_data.get("recommendations", [])
-            if not isinstance(rec_records, list):
-                rec_records = []
-                rec_data["recommendations"] = rec_records
+            rec_records = self._recommendation_document_repo.read_items()
             rec_stats = self._deduplicate_records_by_title(rec_records)
-            if not rec_storage.write(rec_data):
+            if not self._recommendation_document_repo.write_items(rec_records):
                 return ServiceResult.error("Failed to write recommendation database")
 
             moved_total = int(home_stats.get("moved_to_trash", 0)) + int(rec_stats.get("moved_to_trash", 0))
@@ -1378,16 +1375,9 @@ class ComicAppService:
 
     def organize_enrich_local_metadata(self) -> ServiceResult:
         try:
-            from infrastructure.persistence.json_storage import JsonStorage
-            from core.constants import JSON_FILE, TAGS_JSON_FILE
             from core.runtime_profile import is_third_party_enabled
 
-            home_storage = JsonStorage(JSON_FILE)
-            home_data = home_storage.read()
-            home_records = home_data.get("comics", [])
-            if not isinstance(home_records, list):
-                home_records = []
-                home_data["comics"] = home_records
+            home_records = self._comic_document_repo.read_items()
 
             search_platforms = self._list_comic_search_platforms()
             stats = {
@@ -1428,8 +1418,7 @@ class ComicAppService:
             from protocol.platform_service import get_platform_service
 
             platform_service = get_platform_service()
-            tag_storage = JsonStorage(TAGS_JSON_FILE)
-            tags_data = tag_storage.read()
+            tags_data = self._tag_document_repo.read_document()
             tag_name_to_id, max_tag_num = self._build_comic_tag_lookup(tags_data)
             max_tag_num_holder = [max_tag_num]
             tag_changed = False
@@ -1534,10 +1523,10 @@ class ComicAppService:
                         stats["updated_ids"].append(comic_id)
 
             if tag_changed:
-                if not tag_storage.write(tags_data):
+                if not self._tag_document_repo.write_items(tags_data.get("tags", [])):
                     return ServiceResult.error("Failed to write tags database")
 
-            if not home_storage.write(home_data):
+            if not self._comic_document_repo.write_items(home_records):
                 return ServiceResult.error("Failed to write home database")
 
             summary = (
@@ -1816,16 +1805,12 @@ class ComicAppService:
         3) Clamp current_page into [1, total_page] when local pages exist.
         """
         try:
-            from infrastructure.persistence.json_storage import JsonStorage
-            from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE
             from protocol.platform_service import get_platform_service
 
             platform_service = get_platform_service()
 
             # Home DB
-            home_storage = JsonStorage(JSON_FILE)
-            home_data = home_storage.read()
-            home_comics = home_data.get("comics", [])
+            home_comics = self._comic_document_repo.read_items()
 
             home_stats = {
                 "total_comics": len(home_comics),
@@ -1882,13 +1867,11 @@ class ComicAppService:
                     home_stats["failed_comics"] += 1
                     error_logger.error(f"Organize home comic failed: {comic_id}, {item_error}")
 
-            if not home_storage.write(home_data):
+            if not self._comic_document_repo.write_items(home_comics):
                 return ServiceResult.error("Failed to write home database")
 
             # Recommendation DB (cover repair only)
-            rec_storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            rec_data = rec_storage.read()
-            rec_comics = rec_data.get("recommendations", [])
+            rec_comics = self._recommendation_document_repo.read_items()
 
             rec_stats = {
                 "total_comics": len(rec_comics),
@@ -1909,7 +1892,7 @@ class ComicAppService:
                     rec_stats["failed_comics"] += 1
                     error_logger.error(f"Organize recommendation comic failed: {comic_id}, {item_error}")
 
-            if not rec_storage.write(rec_data):
+            if not self._recommendation_document_repo.write_items(rec_comics):
                 return ServiceResult.error("Failed to write recommendation database")
 
             return ServiceResult.ok({

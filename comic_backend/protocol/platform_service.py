@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from infrastructure.logger import error_logger
 
 from .gateway import ProtocolGateway, get_protocol_gateway
+from .host_service import ProtocolHostService
 
 BaseAdapter = Any
 
@@ -24,6 +25,14 @@ class PlatformService:
             self._gateway = gateway or get_protocol_gateway()
             self._initialized = True
 
+    def _get_host_service(self) -> ProtocolHostService:
+        host_service = getattr(self, "_host_service", None)
+        gateway = getattr(self, "_gateway", None) or get_protocol_gateway()
+        if host_service is None or getattr(host_service, "gateway", None) is not gateway:
+            host_service = ProtocolHostService(gateway)
+            self._host_service = host_service
+        return host_service
+
     @staticmethod
     def _normalize_platform_name(platform: Any) -> str:
         return str(getattr(platform, "value", platform) or "").strip().lower()
@@ -33,19 +42,13 @@ class PlatformService:
         platform: Any,
         capability: Optional[str] = None,
     ) -> str:
-        normalized_name = self._normalize_platform_name(platform)
-        if normalized_name:
-            manifest = self._gateway.get_manifest_by_lookup(
-                normalized_name,
-                capability=capability,
-            )
-            if manifest is not None:
-                return manifest.plugin_id
+        plugin_id = self._get_host_service().get_plugin_id(platform, capability=capability)
+        if plugin_id:
+            return plugin_id
         raise ValueError(f"未知平台: {platform}")
 
     def get_adapter(self, platform: Any) -> BaseAdapter:
-        plugin_id = self._resolve_plugin_id(platform)
-        return self._gateway.get_client(plugin_id)
+        return self._get_host_service().get_comic_platform_client(platform)
 
     def download_album(
         self,
@@ -57,10 +60,10 @@ class PlatformService:
     ) -> Tuple[Dict[str, Any], bool]:
         try:
             plugin_id = self._resolve_plugin_id(platform, capability="asset.bundle.fetch")
-            result = self._gateway.execute_plugin(
-                plugin_id,
+            result = self._get_host_service().execute_comic_platform(
+                platform,
                 "asset.bundle.fetch",
-                params={
+                {
                     "album_id": album_id,
                     "download_dir": download_dir,
                     "show_progress": show_progress,
@@ -81,10 +84,10 @@ class PlatformService:
     ) -> Tuple[Dict[str, Any], bool]:
         try:
             plugin_id = self._resolve_plugin_id(platform, capability="asset.cover.fetch")
-            result = self._gateway.execute_plugin(
-                plugin_id,
+            result = self._get_host_service().execute_comic_platform(
+                platform,
                 "asset.cover.fetch",
-                params={
+                {
                     "album_id": album_id,
                     "save_path": save_path,
                     "show_progress": show_progress,
@@ -103,11 +106,10 @@ class PlatformService:
         title: str = None,
         base_dir: str = None,
     ) -> str:
-        plugin_id = self._resolve_plugin_id(platform, capability="storage.comic_dir.resolve")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "storage.comic_dir.resolve",
-            params={
+            {
                 "album_id": album_id,
                 "author": author,
                 "title": title,
@@ -122,22 +124,20 @@ class PlatformService:
         return self.get_adapter(platform).get_image_url(album_id, page)
 
     def get_preview_image_urls(self, platform: Any, album_id: str, preview_pages: List[int]) -> List[str]:
-        plugin_id = self._resolve_plugin_id(platform, capability="asset.preview.resolve")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "asset.preview.resolve",
-            params={
+            {
                 "album_id": album_id,
                 "preview_pages": preview_pages,
             },
         )
 
     def get_album_by_id(self, platform: Any, album_id: str) -> Dict[str, Any]:
-        plugin_id = self._resolve_plugin_id(platform, capability="catalog.detail")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "catalog.detail",
-            params={"album_id": album_id},
+            {"album_id": album_id},
         )
 
     def search_albums(
@@ -147,11 +147,10 @@ class PlatformService:
         max_pages: int = 1,
         fast_mode: bool = False,
     ) -> Dict[str, Any]:
-        plugin_id = self._resolve_plugin_id(platform, capability="catalog.search")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "catalog.search",
-            params={
+            {
                 "keyword": keyword,
                 "page": 1,
                 "max_pages": max_pages,
@@ -160,11 +159,10 @@ class PlatformService:
         )
 
     def get_favorites(self, platform: Any) -> Dict[str, Any]:
-        plugin_id = self._resolve_plugin_id(platform, capability="collection.favorites")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._host_service.execute_comic_platform(
+            platform,
             "collection.favorites",
-            params={},
+            {},
         )
 
     def get_favorites_basic(self, platform: Any) -> Dict[str, Any]:
@@ -181,22 +179,20 @@ class PlatformService:
                     capability = "collection.favorites"
             except Exception:
                 capability = "collection.favorites"
-        return self._gateway.execute_plugin(plugin_id, capability, params={})
+        return self._get_host_service().execute_comic_platform(platform, capability, {})
 
     def get_user_lists(self, platform: Any) -> Dict[str, Any]:
-        plugin_id = self._resolve_plugin_id(platform, capability="collection.list")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "collection.list",
-            params={},
+            {},
         )
 
     def get_list_detail(self, platform: Any, list_id: str) -> Dict[str, Any]:
-        plugin_id = self._resolve_plugin_id(platform, capability="collection.detail")
-        return self._gateway.execute_plugin(
-            plugin_id,
+        return self._get_host_service().execute_comic_platform(
+            platform,
             "collection.detail",
-            params={"list_id": list_id},
+            {"list_id": list_id},
         )
 
 

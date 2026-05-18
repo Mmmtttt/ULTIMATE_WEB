@@ -1,43 +1,123 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
+from core.enums import ContentType
 from core.utils import normalize_total_page
+from domain.base.entity import BaseContent
 
 
-@dataclass
-class Recommendation:
-    """推荐漫画实体类 - 结构与 Comic 相同，但图片存储在图床"""
-    id: str
-    title: str
-    cover_path: str           # 图床 URL，而非本地路径
-    total_page: int
-    current_page: int = 1
-    title_jp: str = ""
-    author: str = ""
-    desc: str = ""
-    score: Optional[float] = 8.0
-    tag_ids: List[str] = field(default_factory=list)
-    list_ids: List[str] = field(default_factory=list)
-    create_time: str = ""
-    last_read_time: str = ""
-    is_deleted: bool = False
-    preview_image_urls: List[str] = field(default_factory=list)  # 预览图片 URL 列表
-    preview_pages: List[int] = field(default_factory=list)        # 预览页码列表
-    platform: str = ""
-    plugin_id: str = ""
-    plugin_name: str = ""
-    display: Dict[str, Any] = field(default_factory=dict)
-    storage_path_relative: str = ""
-    storage_path_kind: str = ""
-    
+def _normalize_int_list(values) -> List[int]:
+    normalized: List[int] = []
+    for item in values or []:
+        try:
+            normalized.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+@dataclass(init=False)
+class Recommendation(BaseContent):
+    preview_image_urls: List[str] = field(default_factory=list)
+    preview_pages: List[int] = field(default_factory=list)
+    content_type: ContentType = ContentType.COMIC
+
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        cover_path: str = "",
+        total_page: int = 0,
+        current_page: int = 1,
+        title_jp: str = "",
+        author: str = "",
+        desc: str = "",
+        score: float = 8.0,
+        tag_ids: List[str] = None,
+        list_ids: List[str] = None,
+        create_time: str = "",
+        last_read_time: str = "",
+        is_deleted: bool = False,
+        preview_image_urls: List[str] = None,
+        preview_pages: List[int] = None,
+        platform: str = "",
+        plugin_id: str = "",
+        plugin_name: str = "",
+        display: Dict[str, Any] = None,
+        storage_path_relative: str = "",
+        storage_path_kind: str = "",
+        **kwargs,
+    ):
+        super().__init__(
+            id=id,
+            title=title,
+            title_jp=title_jp,
+            creator=author or str(kwargs.get("creator") or ""),
+            desc=desc,
+            cover_path=cover_path,
+            total_units=normalize_total_page(total_page or kwargs.get("total_units", 0)),
+            current_unit=max(1, int(current_page or kwargs.get("current_unit", 1) or 1)),
+            score=score,
+            tag_ids=BaseContent._normalize_unique_values(tag_ids or []),
+            list_ids=BaseContent._normalize_unique_values(list_ids or []),
+            create_time=create_time,
+            last_access_time=last_read_time or str(kwargs.get("last_access_time") or ""),
+            is_deleted=bool(is_deleted),
+            platform=platform,
+            plugin_id=plugin_id,
+            plugin_name=plugin_name,
+            display=dict(display or {}),
+            storage_path_relative=storage_path_relative,
+            storage_path_kind=storage_path_kind,
+            content_type=ContentType.COMIC,
+        )
+        self.preview_image_urls = [str(item or "") for item in (preview_image_urls or [])]
+        self.preview_pages = _normalize_int_list(preview_pages or [])
+
+    @property
+    def author(self) -> str:
+        return self.creator
+
+    @author.setter
+    def author(self, value: str):
+        self.creator = str(value or "")
+
+    @property
+    def total_page(self) -> int:
+        return self.total_units
+
+    @total_page.setter
+    def total_page(self, value: int):
+        self.total_units = normalize_total_page(value)
+
+    @property
+    def current_page(self) -> int:
+        return self.current_unit
+
+    @current_page.setter
+    def current_page(self, value: int):
+        try:
+            page = int(value)
+        except (TypeError, ValueError):
+            page = 1
+        self.current_unit = max(1, page)
+
+    @property
+    def last_read_time(self) -> str:
+        return self.last_access_time
+
+    @last_read_time.setter
+    def last_read_time(self, value: str):
+        self.last_access_time = str(value or "")
+
     @classmethod
     def from_dict(cls, data: dict) -> "Recommendation":
-        total_page = normalize_total_page(data.get("total_page", 0))
-        current_page = data.get("current_page", 1)
+        total_page = normalize_total_page(data.get("total_page", data.get("total_units", 0)))
+        current_page = data.get("current_page", data.get("current_unit", 1))
         try:
             current_page = int(current_page)
         except (TypeError, ValueError):
             current_page = 1
-
         if total_page > 0:
             current_page = min(max(1, current_page), total_page)
         else:
@@ -47,7 +127,7 @@ class Recommendation:
             id=data.get("id", ""),
             title=data.get("title", ""),
             title_jp=data.get("title_jp", ""),
-            author=data.get("author", ""),
+            author=data.get("author", data.get("creator", "")),
             desc=data.get("desc", ""),
             cover_path=data.get("cover_path", ""),
             total_page=total_page,
@@ -56,36 +136,37 @@ class Recommendation:
             tag_ids=data.get("tag_ids") or [],
             list_ids=data.get("list_ids") or [],
             create_time=data.get("create_time", ""),
-            last_read_time=data.get("last_read_time", ""),
-            is_deleted=data.get("is_deleted", False),
-            preview_image_urls=data.get("preview_image_urls") or [],
-            preview_pages=data.get("preview_pages") or [],
+            last_read_time=data.get("last_read_time", data.get("last_access_time", "")),
+            is_deleted=bool(data.get("is_deleted", False)),
+            preview_image_urls=[str(item or "") for item in (data.get("preview_image_urls") or [])],
+            preview_pages=_normalize_int_list(data.get("preview_pages") or []),
             platform=data.get("platform", ""),
             plugin_id=data.get("plugin_id", ""),
             plugin_name=data.get("plugin_name", ""),
             display=dict(data.get("display") or {}),
             storage_path_relative=data.get("storage_path_relative", ""),
             storage_path_kind=data.get("storage_path_kind", ""),
+            content_type=ContentType.COMIC,
         )
-    
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "title": self.title,
             "title_jp": self.title_jp,
-            "author": self.author,
+            "author": self.creator,
             "desc": self.desc,
             "cover_path": self.cover_path,
-            "total_page": self.total_page,
-            "current_page": self.current_page,
-            "score": self.score,
-            "tag_ids": self.tag_ids,
-            "list_ids": self.list_ids,
+            "total_page": self.total_units,
+            "current_page": self.current_unit,
+            "score": self.score if self.score is not None else 8.0,
+            "tag_ids": list(self.tag_ids),
+            "list_ids": list(self.list_ids),
             "create_time": self.create_time,
-            "last_read_time": self.last_read_time,
+            "last_read_time": self.last_access_time,
             "is_deleted": self.is_deleted,
-            "preview_image_urls": self.preview_image_urls,
-            "preview_pages": self.preview_pages,
+            "preview_image_urls": list(self.preview_image_urls),
+            "preview_pages": list(self.preview_pages),
             "platform": self.platform,
             "plugin_id": self.plugin_id,
             "plugin_name": self.plugin_name,
@@ -93,44 +174,3 @@ class Recommendation:
             "storage_path_relative": self.storage_path_relative,
             "storage_path_kind": self.storage_path_kind,
         }
-    
-    def update_progress(self, page: int):
-        """更新阅读进度"""
-        if 1 <= page <= self.total_page:
-            self.current_page = page
-    
-    def update_score(self, score: float):
-        """更新评分"""
-        self.score = score
-    
-    def bind_tags(self, tag_ids: List[str]):
-        """绑定标签"""
-        self.tag_ids = tag_ids
-    
-    def add_tags(self, tag_ids: List[str]):
-        """添加标签"""
-        for tag_id in tag_ids:
-            if tag_id not in self.tag_ids:
-                self.tag_ids.append(tag_id)
-    
-    def remove_tags(self, tag_ids: List[str]):
-        """移除标签"""
-        for tag_id in tag_ids:
-            if tag_id in self.tag_ids:
-                self.tag_ids.remove(tag_id)
-    
-    def add_to_list(self, list_id: str):
-        """添加到清单"""
-        if list_id not in self.list_ids:
-            self.list_ids.append(list_id)
-    
-    def remove_from_list(self, list_id: str):
-        """从清单移除"""
-        if list_id in self.list_ids:
-            self.list_ids.remove(list_id)
-    
-    def move_to_trash(self):
-        self.is_deleted = True
-    
-    def restore_from_trash(self):
-        self.is_deleted = False

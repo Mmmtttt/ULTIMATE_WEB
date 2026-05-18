@@ -1,31 +1,12 @@
-"""
-视频推荐实体
-"""
-
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
+
 from core.enums import ContentType
+from domain.base.entity import BaseContent
 
 
 @dataclass
-class VideoRecommendation:
-    """推荐视频实体类 - 结构与 Video 相似，但图片存储在图床"""
-    id: str
-    title: str
-    title_jp: str = ""
-    creator: str = ""
-    desc: str = ""
-    cover_path: str = ""           # 图床 URL，而非本地路径
-    total_units: int = 0
-    current_unit: int = 1
-    score: Optional[float] = 8.0
-    tag_ids: List[str] = field(default_factory=list)
-    list_ids: List[str] = field(default_factory=list)
-    create_time: str = ""
-    last_access_time: str = ""
-    is_deleted: bool = False
-    
-    content_type: ContentType = ContentType.VIDEO
+class VideoRecommendation(BaseContent):
     code: str = ""
     date: str = ""
     series: str = ""
@@ -35,23 +16,17 @@ class VideoRecommendation:
     cover_path_local: str = ""
     thumbnail_images_local: List[str] = field(default_factory=list)
     preview_video_local: str = ""
-    platform: str = ""
-    plugin_id: str = ""
-    plugin_name: str = ""
-    display: Dict[str, Any] = field(default_factory=dict)
-    storage_path_relative: str = ""
-    storage_path_kind: str = ""
-    
+    content_type: ContentType = ContentType.VIDEO
     _actors: List[str] = field(default_factory=list, repr=False)
-    
+
     @property
     def actors(self) -> List[str]:
         return self._actors
-    
+
     @actors.setter
     def actors(self, value: List[str]):
-        self._actors = value or []
-    
+        self._actors = BaseContent._normalize_unique_values(value or [])
+
     @classmethod
     def from_dict(cls, data: dict) -> "VideoRecommendation":
         return cls(
@@ -61,102 +36,47 @@ class VideoRecommendation:
             creator=data.get("creator", data.get("actors", [""])[0] if data.get("actors") else ""),
             desc=data.get("desc", ""),
             cover_path=data.get("cover_path", ""),
-            total_units=data.get("total_units", 0),
-            current_unit=data.get("current_unit", 1),
+            total_units=int(data.get("total_units", 0) or 0),
+            current_unit=int(data.get("current_unit", 1) or 1),
             score=data.get("score") if data.get("score") is not None else 8.0,
-            tag_ids=data.get("tag_ids", []),
-            list_ids=data.get("list_ids", []),
+            tag_ids=BaseContent._normalize_unique_values(data.get("tag_ids") or []),
+            list_ids=BaseContent._normalize_unique_values(data.get("list_ids") or []),
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_access_time", ""),
-            is_deleted=data.get("is_deleted", False),
-            content_type=ContentType.VIDEO,
-            code=data.get("code", ""),
-            date=data.get("date", ""),
-            series=data.get("series", ""),
-            magnets=data.get("magnets", []),
-            thumbnail_images=data.get("thumbnail_images", []),
-            preview_video=data.get("preview_video", ""),
-            cover_path_local=data.get("cover_path_local", ""),
-            thumbnail_images_local=data.get("thumbnail_images_local", []),
-            preview_video_local=data.get("preview_video_local", ""),
+            is_deleted=bool(data.get("is_deleted", False)),
             platform=data.get("platform", ""),
             plugin_id=data.get("plugin_id", ""),
             plugin_name=data.get("plugin_name", ""),
             display=dict(data.get("display") or {}),
             storage_path_relative=data.get("storage_path_relative", ""),
             storage_path_kind=data.get("storage_path_kind", ""),
-            _actors=data.get("actors", [])
+            content_type=ContentType.VIDEO,
+            code=data.get("code", ""),
+            date=data.get("date", ""),
+            series=data.get("series", ""),
+            magnets=list(data.get("magnets") or []),
+            thumbnail_images=[str(item or "") for item in (data.get("thumbnail_images") or [])],
+            preview_video=data.get("preview_video", ""),
+            cover_path_local=data.get("cover_path_local", ""),
+            thumbnail_images_local=[str(item or "") for item in (data.get("thumbnail_images_local") or [])],
+            preview_video_local=data.get("preview_video_local", ""),
+            _actors=BaseContent._normalize_unique_values(data.get("actors") or []),
         )
-    
+
     def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "title_jp": self.title_jp,
-            "creator": self.creator,
-            "desc": self.desc,
-            "cover_path": self.cover_path,
-            "total_units": self.total_units,
-            "current_unit": self.current_unit,
-            "score": self.score,
-            "tag_ids": self.tag_ids,
-            "list_ids": self.list_ids,
-            "create_time": self.create_time,
-            "last_access_time": self.last_access_time,
-            "is_deleted": self.is_deleted,
-            "content_type": self.content_type.value if hasattr(self.content_type, 'value') else self.content_type,
-            "code": self.code,
-            "date": self.date,
-            "series": self.series,
-            "magnets": self.magnets,
-            "thumbnail_images": self.thumbnail_images,
-            "preview_video": self.preview_video,
-            "cover_path_local": self.cover_path_local,
-            "thumbnail_images_local": self.thumbnail_images_local,
-            "preview_video_local": self.preview_video_local,
-            "platform": self.platform,
-            "plugin_id": self.plugin_id,
-            "plugin_name": self.plugin_name,
-            "display": dict(self.display or {}),
-            "storage_path_relative": self.storage_path_relative,
-            "storage_path_kind": self.storage_path_kind,
-            "actors": self._actors
-        }
-    
-    def update_progress(self, unit: int):
-        """更新观看进度"""
-        if 1 <= unit <= self.total_units:
-            self.current_unit = unit
-    
-    def update_score(self, score: float):
-        """更新评分"""
-        self.score = score
-    
-    def bind_tags(self, tag_ids: List[str]):
-        self.tag_ids = tag_ids
-    
-    def add_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.update(tag_ids)
-        self.tag_ids = list(current)
-    
-    def remove_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.difference_update(tag_ids)
-        self.tag_ids = list(current)
-    
-    def add_to_list(self, list_id: str):
-        """添加到清单"""
-        if list_id not in self.list_ids:
-            self.list_ids.append(list_id)
-    
-    def remove_from_list(self, list_id: str):
-        """从清单移除"""
-        if list_id in self.list_ids:
-            self.list_ids.remove(list_id)
-    
-    def move_to_trash(self):
-        self.is_deleted = True
-    
-    def restore_from_trash(self):
-        self.is_deleted = False
+        payload = super().to_dict()
+        payload.update(
+            {
+                "code": self.code,
+                "date": self.date,
+                "series": self.series,
+                "magnets": list(self.magnets),
+                "thumbnail_images": list(self.thumbnail_images),
+                "preview_video": self.preview_video,
+                "cover_path_local": self.cover_path_local,
+                "thumbnail_images_local": list(self.thumbnail_images_local),
+                "preview_video_local": self.preview_video_local,
+                "actors": list(self._actors),
+            }
+        )
+        return payload

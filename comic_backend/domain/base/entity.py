@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 
 from core.enums import ContentType
+from core.utils import validate_score
 
 
 @dataclass
@@ -40,6 +41,18 @@ class BaseContent(BaseEntity):
     storage_path_relative: str = ""
     storage_path_kind: str = ""
     content_type: ContentType = ContentType.COMIC
+
+    @staticmethod
+    def _normalize_unique_values(values: List[str]) -> List[str]:
+        normalized: List[str] = []
+        seen = set()
+        for raw_value in values or []:
+            value = str(raw_value or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized
     
     def to_dict(self) -> dict:
         return {
@@ -81,8 +94,8 @@ class BaseContent(BaseEntity):
             total_units=data.get("total_units", data.get("total_page", 0)),
             current_unit=data.get("current_unit", data.get("current_page", 1)),
             score=data.get("score"),
-            tag_ids=data.get("tag_ids") or [],
-            list_ids=data.get("list_ids") or [],
+            tag_ids=cls._normalize_unique_values(data.get("tag_ids") or []),
+            list_ids=cls._normalize_unique_values(data.get("list_ids") or []),
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_access_time", data.get("last_read_time", "")),
             is_deleted=data.get("is_deleted", False),
@@ -103,7 +116,6 @@ class BaseContent(BaseEntity):
         return False
     
     def update_score(self, score: float) -> bool:
-        from core.utils import validate_score
         valid, _ = validate_score(score)
         if valid:
             self.score = score
@@ -111,29 +123,29 @@ class BaseContent(BaseEntity):
         return False
     
     def bind_tags(self, tag_ids: List[str]):
-        self.tag_ids = tag_ids
-    
+        self.tag_ids = self._normalize_unique_values(tag_ids)
+
     def add_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.update(tag_ids)
-        self.tag_ids = list(current)
-    
+        self.tag_ids = self._normalize_unique_values(list(self.tag_ids) + list(tag_ids or []))
+
     def remove_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.difference_update(tag_ids)
-        self.tag_ids = list(current)
-    
+        removing = {str(item or "").strip() for item in (tag_ids or []) if str(item or "").strip()}
+        self.tag_ids = [tag_id for tag_id in self.tag_ids if tag_id not in removing]
+
     def update_meta(self, meta: dict):
-        if 'title' in meta and meta['title']:
-            self.title = meta['title']
-        if 'creator' in meta:
-            self.creator = meta['creator']
-        if 'author' in meta:
-            self.creator = meta['author']
-        if 'desc' in meta:
-            self.desc = meta['desc']
-        if 'cover_path' in meta and meta['cover_path']:
-            self.cover_path = meta['cover_path']
+        if not isinstance(meta, dict):
+            return
+        title = str(meta.get("title") or "").strip()
+        creator = str(meta.get("creator") or meta.get("author") or "").strip()
+        if title:
+            self.title = title
+        if creator:
+            self.creator = creator
+        if "desc" in meta:
+            self.desc = str(meta.get("desc") or "")
+        cover_path = str(meta.get("cover_path") or "").strip()
+        if cover_path:
+            self.cover_path = cover_path
     
     def add_to_list(self, list_id: str):
         if list_id not in self.list_ids:

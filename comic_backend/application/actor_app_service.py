@@ -14,15 +14,11 @@ from domain.video import VideoRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.persistence.cache import CacheManager
-from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id
-from core.constants import (
-    CACHE_ROOT_DIR,
-    VIDEO_JSON_FILE,
-    VIDEO_RECOMMENDATION_JSON_FILE
-)
+from core.constants import CACHE_ROOT_DIR
+from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
 from application.base.content_app_service import BaseCreatorAppService
 from application.video_runtime_support import get_video_adapter as get_protocol_video_adapter
 from core.enums import ContentType
@@ -37,6 +33,7 @@ class ActorAppService(BaseCreatorAppService):
     def __init__(self, actor_repo: ActorRepository = None, video_repo: VideoRepository = None):
         self._actor_repo = actor_repo or ActorJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
+        self._video_recommendation_repo = VideoRecommendationJsonRepository()
 
     @staticmethod
     def _normalize_platform(platform: str) -> str:
@@ -247,22 +244,18 @@ class ActorAppService(BaseCreatorAppService):
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的视频ID集合"""
         existing_ids = set()
-        
-        try:
-            home_storage = JsonStorage(VIDEO_JSON_FILE)
-            home_data = home_storage.read()
-            for video in home_data.get('videos', []):
-                existing_ids.add(video.get('id', ''))
-        except Exception as e:
-            error_logger.error(f"获取主页视频ID失败: {e}")
-        
-        try:
-            rec_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-            rec_data = rec_storage.read()
-            for video in rec_data.get('video_recommendations', []):
-                existing_ids.add(video.get('id', ''))
-        except Exception as e:
-            error_logger.error(f"获取推荐页视频ID失败: {e}")
+
+        for repo, label in (
+            (self._video_repo, "主页"),
+            (self._video_recommendation_repo, "推荐页"),
+        ):
+            try:
+                for video in repo.get_all():
+                    video_id = str(getattr(video, "id", "") or "").strip()
+                    if video_id:
+                        existing_ids.add(video_id)
+            except Exception as e:
+                error_logger.error(f"获取{label}视频ID失败: {e}")
         
         return existing_ids
     

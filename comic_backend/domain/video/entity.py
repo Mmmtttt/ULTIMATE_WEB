@@ -37,7 +37,7 @@ class Video(BaseContent):
     
     @actors.setter
     def actors(self, value: List[str]):
-        self._actors = value or []
+        self._actors = BaseContent._normalize_unique_values(value or [])
     
     _actors: List[str] = field(default_factory=list, repr=False)
     
@@ -53,8 +53,8 @@ class Video(BaseContent):
             total_units=data.get("total_units", 0),
             current_unit=data.get("current_unit", 1),
             score=data.get("score"),
-            tag_ids=data.get("tag_ids", []),
-            list_ids=data.get("list_ids", []),
+            tag_ids=BaseContent._normalize_unique_values(data.get("tag_ids") or []),
+            list_ids=BaseContent._normalize_unique_values(data.get("list_ids") or []),
             create_time=data.get("create_time", ""),
             last_access_time=data.get("last_access_time", ""),
             is_deleted=data.get("is_deleted", False),
@@ -87,7 +87,7 @@ class Video(BaseContent):
             source_origin=data.get("source_origin", ""),
             source_updated_time=data.get("source_updated_time", ""),
             local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
-            _actors=data.get("actors", [])
+            _actors=BaseContent._normalize_unique_values(data.get("actors") or [])
         )
     
     def to_dict(self) -> dict:
@@ -125,15 +125,3 @@ class Video(BaseContent):
         })
         return base_dict
     
-    def bind_tags(self, tag_ids: List[str]):
-        self.tag_ids = tag_ids
-    
-    def add_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.update(tag_ids)
-        self.tag_ids = list(current)
-    
-    def remove_tags(self, tag_ids: List[str]):
-        current = set(self.tag_ids)
-        current.difference_update(tag_ids)
-        self.tag_ids = list(current)

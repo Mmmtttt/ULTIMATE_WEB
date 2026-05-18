@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .gateway import ProtocolGateway, get_protocol_gateway
+from .host_service import ProtocolHostService, get_protocol_host_service
 from .runtime_config import ProtocolConfigStore
 
 
@@ -12,6 +13,7 @@ class ProtocolAdapterAPI:
     def __init__(self, gateway: Optional[ProtocolGateway] = None, config_store: Optional[ProtocolConfigStore] = None):
         self._gateway = gateway or get_protocol_gateway()
         self._config_store = config_store or ProtocolConfigStore()
+        self._host_service = ProtocolHostService(self._gateway, self._config_store)
 
     def get_config_manager(self):
         return self._config_store
@@ -20,34 +22,20 @@ class ProtocolAdapterAPI:
         self._config_store = ProtocolConfigStore()
 
     def _resolve_adapter_name(self, adapter_name: Optional[str] = None) -> str:
-        resolved = adapter_name if adapter_name is not None else self._config_store.get_default_adapter()
-        return str(resolved or "").strip()
+        return self._host_service.resolve_adapter_name(adapter_name)
 
     def _resolve_manifest(self, adapter_name: Optional[str] = None):
-        resolved_adapter = self._resolve_adapter_name(adapter_name)
-        if not resolved_adapter:
-            return None
-        manifest = self._gateway.get_manifest_by_config_key(resolved_adapter)
-        if manifest is not None:
-            return manifest
-        return self._gateway.get_manifest_by_lookup(resolved_adapter)
+        return self._host_service.resolve_comic_adapter_manifest(adapter_name)
 
     def get_adapter(self, adapter_name: Optional[str] = None):
-        resolved_adapter = self._resolve_adapter_name(adapter_name)
-        manifest = self._resolve_manifest(resolved_adapter)
-        if manifest is None:
-            raise ValueError(f"unsupported adapter: {resolved_adapter}")
-        return self._gateway.get_client(manifest.plugin_id)
+        return self._host_service.get_comic_adapter_client(adapter_name)
 
     def get_album_by_id(self, album_id: str, adapter_name: Optional[str] = None) -> Dict[str, Any]:
-        manifest = self._resolve_manifest(adapter_name)
-        if manifest is not None:
-            return self._gateway.execute_plugin(
-                manifest.plugin_id,
-                "catalog.detail",
-                params={"album_id": album_id},
-            )
-        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
+        return self._host_service.execute_comic_adapter(
+            "catalog.detail",
+            {"album_id": album_id},
+            adapter_name=adapter_name,
+        )
 
     def search_albums(
         self,
@@ -57,30 +45,23 @@ class ProtocolAdapterAPI:
         adapter_name: Optional[str] = None,
         fast_mode: bool = False,
     ) -> Dict[str, Any]:
-        manifest = self._resolve_manifest(adapter_name)
-        if manifest is not None:
-            return self._gateway.execute_plugin(
-                manifest.plugin_id,
-                "catalog.search",
-                params={
-                    "keyword": keyword,
-                    "page": page,
-                    "max_pages": max_pages,
-                    "fast_mode": fast_mode,
-                },
-            )
-
-        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
+        return self._host_service.execute_comic_adapter(
+            "catalog.search",
+            {
+                "keyword": keyword,
+                "page": page,
+                "max_pages": max_pages,
+                "fast_mode": fast_mode,
+            },
+            adapter_name=adapter_name,
+        )
 
     def get_favorites(self, adapter_name: Optional[str] = None) -> Dict[str, Any]:
-        manifest = self._resolve_manifest(adapter_name)
-        if manifest is not None:
-            return self._gateway.execute_plugin(
-                manifest.plugin_id,
-                "collection.favorites",
-                params={},
-            )
-        raise ValueError(f"unsupported adapter: {self._resolve_adapter_name(adapter_name)}")
+        return self._host_service.execute_comic_adapter(
+            "collection.favorites",
+            {},
+            adapter_name=adapter_name,
+        )
 
     def list_available_adapters(self) -> list:
         discovered = []

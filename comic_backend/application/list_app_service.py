@@ -6,7 +6,7 @@ from domain.comic import ComicRepository
 from domain.video import VideoRepository, Video
 from domain.recommendation import RecommendationRepository
 from domain.video_recommendation import VideoRecommendationRepository, VideoRecommendation
-from infrastructure.persistence.repositories import ListJsonRepository, ComicJsonRepository
+from infrastructure.persistence.repositories import ListJsonRepository, ComicJsonRepository, JsonDocumentRepository
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
@@ -15,6 +15,7 @@ from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id, generate_uuid, normalize_total_page
 from core.enums import ContentType
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
+from core.constants import RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items
 
@@ -40,6 +41,16 @@ class ListAppService:
         self._video_repo = video_repo or VideoJsonRepository()
         self._rec_repo = rec_repo or RecommendationJsonRepository()
         self._video_rec_repo = video_rec_repo or VideoRecommendationJsonRepository()
+        self._recommendation_document_repo = JsonDocumentRepository(
+            RECOMMENDATION_JSON_FILE,
+            "recommendations",
+            "total_recommendations",
+        )
+        self._video_recommendation_document_repo = JsonDocumentRepository(
+            VIDEO_RECOMMENDATION_JSON_FILE,
+            "video_recommendations",
+            "total_video_recommendations",
+        )
 
     def _get_platform_service(self):
         if not is_third_party_enabled():
@@ -1442,9 +1453,6 @@ class ListAppService:
                     else:
                         skipped_count += 1
                 else:
-                    from infrastructure.persistence.json_storage import JsonStorage
-                    from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-                    
                     video_data["cover_path"] = to_proxy_image_url(
                         video_detail.get("cover_url", ""),
                         asset_kind="cover",
@@ -1453,24 +1461,19 @@ class ListAppService:
                         content_id=video_id,
                     )
                     
-                    db_file = VIDEO_RECOMMENDATION_JSON_FILE
-                    storage = JsonStorage(db_file)
-                    db_data = storage.read()
-                    videos_key = "video_recommendations"
+                    video_items = self._video_recommendation_document_repo.read_items()
                     existing_codes = {
                         (v.get("code", "") or "").strip().upper()
-                        for v in db_data.get(videos_key, [])
+                        for v in video_items
                     }
 
                     if video_code and video_code.upper() in existing_codes:
                         skipped_count += 1
                         return
-                    
-                    if videos_key not in db_data:
-                        db_data[videos_key] = []
-                    db_data[videos_key].append(video_data)
-                    
-                    if storage.write(db_data):
+
+                    video_items.append(video_data)
+
+                    if self._video_recommendation_document_repo.write_items(video_items):
                         imported_count += 1
                         imported_video_ids.append(prefixed_id)
                         cover_url = video_detail.get("cover_url", "")
@@ -1806,16 +1809,10 @@ class ListAppService:
                         comic_data["preview_image_urls"] = []
                         comic_data["preview_pages"] = []
                     
-                    db_file = RECOMMENDATION_JSON_FILE
-                    storage = JsonStorage(db_file)
-                    db_data = storage.read()
-                    comics_key = "recommendations"
-                    
-                    if comics_key not in db_data:
-                        db_data[comics_key] = []
-                    db_data[comics_key].append(comic_data)
-                    
-                    if storage.write(db_data):
+                    recommendation_items = self._recommendation_document_repo.read_items()
+                    recommendation_items.append(comic_data)
+
+                    if self._recommendation_document_repo.write_items(recommendation_items):
                         imported_count += 1
                         imported_comic_ids.append(prefixed_id)
                     else:

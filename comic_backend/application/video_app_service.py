@@ -30,6 +30,7 @@ from infrastructure.persistence.repositories.video_repository_impl import VideoJ
 from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
+from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
@@ -41,6 +42,8 @@ from core.constants import (
     VIDEO_CACHE_DIR,
     VIDEO_DIR,
     VIDEO_RECOMMENDATION_CACHE_DIR,
+    VIDEO_JSON_FILE,
+    VIDEO_RECOMMENDATION_JSON_FILE,
 )
 from core.enums import ContentType
 from application.tag_content_type_guard import validate_tag_ids_for_content_type
@@ -179,6 +182,12 @@ class VideoAppService(BaseContentAppService):
         self._video_rec_repo = video_rec_repo or VideoRecommendationJsonRepository()
         self._tag_repo = tag_repo or TagJsonRepository()
         self._actor_repo = actor_repo or ActorJsonRepository()
+        self._video_document_repo = JsonDocumentRepository(VIDEO_JSON_FILE, "videos", "total_videos")
+        self._video_recommendation_document_repo = JsonDocumentRepository(
+            VIDEO_RECOMMENDATION_JSON_FILE,
+            "video_recommendations",
+            "total_video_recommendations",
+        )
 
     def _get_repo_by_source(self, source: str = "local"):
         return self._video_rec_repo if source == "preview" else self._video_repo
@@ -1583,31 +1592,15 @@ class VideoAppService(BaseContentAppService):
 
     def organize_deduplicate_by_code(self) -> ServiceResult:
         try:
-            from infrastructure.persistence.json_storage import JsonStorage
-            from core.constants import VIDEO_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
-
-            home_storage = JsonStorage(VIDEO_JSON_FILE)
-            recommendation_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-
-            home_data = home_storage.read()
-            recommendation_data = recommendation_storage.read()
-
-            home_records = home_data.get("videos", [])
-            if not isinstance(home_records, list):
-                home_records = []
-                home_data["videos"] = home_records
-
-            recommendation_records = recommendation_data.get("video_recommendations", [])
-            if not isinstance(recommendation_records, list):
-                recommendation_records = []
-                recommendation_data["video_recommendations"] = recommendation_records
+            home_records = self._video_document_repo.read_items()
+            recommendation_records = self._video_recommendation_document_repo.read_items()
 
             home_stats = self._deduplicate_video_collection(home_records)
             recommendation_stats = self._deduplicate_video_collection(recommendation_records)
 
-            if not home_storage.write(home_data):
+            if not self._video_document_repo.write_items(home_records):
                 return ServiceResult.error("failed to write local video database")
-            if not recommendation_storage.write(recommendation_data):
+            if not self._video_recommendation_document_repo.write_items(recommendation_records):
                 return ServiceResult.error("failed to write recommendation video database")
 
             summary = (
