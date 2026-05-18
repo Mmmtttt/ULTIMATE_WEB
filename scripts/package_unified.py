@@ -1690,6 +1690,7 @@ def write_desktop_bundle_scripts(
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
         "set SCRIPT_DIR=%~dp0\n"
+        "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
         "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
         "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
         "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
@@ -1711,6 +1712,7 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
         "if (Test-Path $archiveTools) {\n"
         "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
@@ -1739,6 +1741,7 @@ def write_desktop_bundle_scripts(
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
         "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
         "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
         "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
@@ -1849,6 +1852,9 @@ def prepare_desktop_release_bundle(
     if manifest_src.exists():
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
+    external_plugin_roots = copy_external_plugins_to_bundle(backend_src, bundle_dir) if backend_src.exists() else []
+    write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
+
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
     ffmpeg_tools_dir = copy_ffmpeg_runtime_tools(target, bundle_dir)
 
@@ -1858,6 +1864,7 @@ def prepare_desktop_release_bundle(
         f"- target: `{target}`",
         "- `backend_source/`: fallback Python source runtime",
         "- `frontend_dist/`: frontend static assets",
+        "- `plugins/`: external hot-pluggable protocol plugins",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
     ]
     if archive_tools_dir is not None:
@@ -1871,6 +1878,7 @@ def prepare_desktop_release_bundle(
             "- Windows cmd: `start_backend.bat`",
             "- Windows PowerShell: `start_backend.ps1`",
             "- Linux/macOS: `start_backend.sh`",
+            "- Install external plugin deps manually if needed: `install_plugin_deps.ps1` / `install_plugin_deps.sh`",
         ]
     )
     write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
@@ -1914,6 +1922,148 @@ def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
         if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
             roots.append(child)
     return roots
+
+
+def current_plugin_platform_tag() -> str:
+    system_name = str(platform.system() or "").strip().lower() or sys.platform.lower()
+    machine = str(platform.machine() or "").strip().lower() or "unknown"
+    return f"{system_name}-{machine}"
+
+
+def current_plugin_python_tag() -> str:
+    return f"py{sys.version_info.major}{sys.version_info.minor}"
+
+
+def get_external_plugin_vendor_relative_dir() -> Path:
+    return Path("vendor") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
+
+
+def _collect_external_plugin_requirements(payload: Dict[str, Any]) -> List[str]:
+    packaging = dict(payload.get("packaging") or {})
+    external = dict(packaging.get("external") or {})
+    if external.get("pip_requirements"):
+        return _normalize_string_list(external.get("pip_requirements") or [])
+    pyinstaller = dict(packaging.get("pyinstaller") or {})
+    return _normalize_string_list(pyinstaller.get("pip_requirements") or [])
+
+
+def collect_external_plugin_metadata(plugin_root: Path) -> Dict[str, Any]:
+    requirements: List[str] = []
+    for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+        payload = load_json(manifest_path)
+        requirements.extend(_collect_external_plugin_requirements(payload))
+    return {
+        "root": str(plugin_root),
+        "requirements": _normalize_string_list(requirements),
+        "vendor_relative_dir": str(get_external_plugin_vendor_relative_dir()).replace("\\", "/"),
+    }
+
+
+def copy_external_plugins_to_bundle(staged_backend: Path, bundle_dir: Path) -> List[Path]:
+    third_party_root = staged_backend / "third_party"
+    plugin_roots = discover_packaged_plugin_roots(third_party_root)
+    if not plugin_roots:
+        return []
+
+    plugins_dir = bundle_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_roots: List[Path] = []
+    for plugin_root in plugin_roots:
+        target_root = plugins_dir / plugin_root.name
+        if target_root.exists():
+            shutil.rmtree(target_root)
+        shutil.copytree(plugin_root, target_root)
+        copied_roots.append(target_root)
+
+        backend_plugin_root = bundle_dir / "backend_source" / "third_party" / plugin_root.name
+        if backend_plugin_root.exists():
+            shutil.rmtree(backend_plugin_root, ignore_errors=True)
+
+    return copied_roots
+
+
+def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: List[Path]) -> List[List[str]]:
+    commands: List[List[str]] = []
+    script_specs: List[Tuple[str, str]] = []
+    for plugin_root in plugin_roots:
+        metadata = collect_external_plugin_metadata(plugin_root)
+        requirements = list(metadata.get("requirements") or [])
+        if not requirements:
+            continue
+        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
+        vendor_target.mkdir(parents=True, exist_ok=True)
+        relative_vendor_target = vendor_target.relative_to(bundle_dir).as_posix()
+        commands.append(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--target",
+                str(vendor_target),
+                *requirements,
+            ]
+        )
+        script_specs.append((relative_vendor_target, " ".join(requirements)))
+
+    ps1_lines = [
+        "$ErrorActionPreference = 'Stop'",
+        "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
+        "$pythonCmd = Get-Command python -ErrorAction SilentlyContinue",
+        "if (-not $pythonCmd) { throw 'python command not found' }",
+    ]
+    sh_lines = [
+        "#!/usr/bin/env sh",
+        "set -e",
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
+        "if command -v python3 >/dev/null 2>&1; then PYTHON_CMD=python3; else PYTHON_CMD=python; fi",
+    ]
+    for relative_vendor_target, requirements in script_specs:
+        ps1_lines.append(
+            f"& $pythonCmd.Source -m pip install --upgrade --target "
+            f"\"$scriptDir/{relative_vendor_target}\" {requirements}"
+        )
+        sh_lines.append(
+            f"\"$PYTHON_CMD\" -m pip install --upgrade --target "
+            f"\"$SCRIPT_DIR/{relative_vendor_target}\" {requirements}"
+        )
+
+    write_text(bundle_dir / "install_plugin_deps.ps1", "\n".join(ps1_lines) + "\n")
+    sh_path = bundle_dir / "install_plugin_deps.sh"
+    write_text(sh_path, "\n".join(sh_lines) + "\n")
+    try:
+        sh_path.chmod(0o755)
+    except OSError:
+        pass
+    return commands
+
+
+def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Path]) -> Tuple[bool, str]:
+    outputs: List[str] = []
+    for plugin_root in plugin_roots:
+        metadata = collect_external_plugin_metadata(plugin_root)
+        requirements = list(metadata.get("requirements") or [])
+        if not requirements:
+            continue
+        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
+        vendor_target.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--target",
+            str(vendor_target),
+            *requirements,
+        ]
+        code, output = run_cmd(cmd, cwd=bundle_dir)
+        outputs.append(output)
+        if code != 0:
+            return False, output
+    return True, "\n".join(outputs)
 
 
 def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Dict[str, Any]]:
@@ -2136,8 +2286,6 @@ def write_pyinstaller_scripts(
     # 使用绝对路径确保PyInstaller能找到文件
     staged_backend = staged_target_dir / "comic_backend"
     server_config_src = staged_target_dir / "server_config.json"
-    plugin_packaging = collect_pyinstaller_plugin_metadata(staged_backend)
-
     cmd = [
         "python",
         "-m",
@@ -2162,22 +2310,6 @@ def write_pyinstaller_scripts(
         "--hidden-import", "_multiprocessing",
         entry,
     ]
-
-    for collect_name in plugin_packaging["collect_all"]:
-        cmd.insert(-1, "--collect-all")
-        cmd.insert(-1, collect_name)
-
-    for hidden_import in plugin_packaging["hidden_imports"]:
-        cmd.insert(-1, "--hidden-import")
-        cmd.insert(-1, hidden_import)
-
-    # 保持与源码目录一致的相对布局，确保冻结环境下协议层仍能从
-    # comic_backend/third_party 扫描到所有插件 manifest。
-    for plugin_root in plugin_packaging["plugin_roots"]:
-        plugin_root_path = Path(plugin_root)
-        destination = f"comic_backend/third_party/{plugin_root_path.name}"
-        cmd.insert(-1, "--add-data")
-        cmd.insert(-1, f"{plugin_root_path}{sep}{destination}")
     
     if server_config_src.exists():
         cmd.insert(-1, f"--add-data")
@@ -2244,12 +2376,25 @@ def package_pyinstaller(
         binary_name=binary_name,
         runtime_env=runtime_env,
     )
+    external_plugin_roots = sorted((bundle_dir / "plugins").iterdir(), key=lambda item: item.name.lower()) if (bundle_dir / "plugins").exists() else []
 
     if not execute:
         return PackageResult(
             target=target,
             status="prepared",
             message="pyinstaller scripts generated; desktop release bundle prepared (execution skipped)",
+            output_dir=str(target_out_dir),
+            command=cmd,
+        )
+
+    vendor_ok, vendor_output = install_external_plugin_dependencies(bundle_dir, [path for path in external_plugin_roots if path.is_dir()])
+    if vendor_output:
+        write_text(target_out_dir / "plugin_vendor_install.log", vendor_output)
+    if not vendor_ok:
+        return PackageResult(
+            target=target,
+            status="failed",
+            message="external plugin dependency installation failed; see plugin_vendor_install.log",
             output_dir=str(target_out_dir),
             command=cmd,
         )

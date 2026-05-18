@@ -97,6 +97,14 @@ class PluginManifest:
         return [dict(item or {}) for item in (self.raw.get("actions") or []) if isinstance(item, dict)]
 
     @property
+    def runtime(self) -> Dict[str, Any]:
+        return dict(self.raw.get("runtime") or {})
+
+    @property
+    def packaging(self) -> Dict[str, Any]:
+        return dict(self.raw.get("packaging") or {})
+
+    @property
     def resource_policy(self) -> Dict[str, Any]:
         return dict(self.raw.get("resource_policy") or {})
 

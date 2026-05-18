@@ -59,7 +59,7 @@ def _write_manifest(plugin_dir: Path, plugin_id: str, packaging: dict | None = N
     )
 
 
-def test_write_pyinstaller_scripts_keeps_third_party_under_backend_layout():
+def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binary():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
@@ -115,21 +115,88 @@ def test_write_pyinstaller_scripts_keeps_third_party_under_backend_layout():
             },
         )
 
-        add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
         collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
         hidden_import_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--hidden-import"]
-        sep = ";" if os.name == "nt" else ":"
 
-        assert any(f"{sep}comic_backend/third_party/JMComic-Crawler-Python" in item for item in add_data_args)
-        assert any(f"{sep}comic_backend/third_party/Missav" in item for item in add_data_args)
-        assert any(f"{sep}comic_backend/third_party/Picacomic-Crawler" in item for item in add_data_args)
-        assert any(f"{sep}comic_backend/third_party/javdb-api-scraper" in item for item in add_data_args)
-        assert collect_all_args.count("curl_cffi") == 1
-        assert "common" in collect_all_args
-        assert "Crypto" in collect_all_args
-        assert "lxml" in collect_all_args
-        assert "cffi" in collect_all_args
-        assert "curl_cffi._wrapper" in hidden_import_args
+        assert "common" not in collect_all_args
+        assert "Crypto" not in collect_all_args
+        assert "curl_cffi" not in collect_all_args
+        assert "lxml" not in collect_all_args
+        assert "cffi" not in collect_all_args
+        assert "curl_cffi._wrapper" not in hidden_import_args
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_plugins_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        staged_target_dir = temp_dir / "staged"
+        backend_src = staged_target_dir / "comic_backend"
+        third_party_root = backend_src / "third_party"
+        (backend_src / "third_party" / "__init__.py").parent.mkdir(parents=True, exist_ok=True)
+        (backend_src / "third_party" / "__init__.py").write_text("", encoding="utf-8")
+        (backend_src / "third_party" / "external_api.py").write_text("pass\n", encoding="utf-8")
+        (staged_target_dir / "comic_frontend_dist" / "index.html").parent.mkdir(parents=True, exist_ok=True)
+        (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        _write_manifest(
+            third_party_root / "JMComic-Crawler-Python",
+            "comic.jmcomic",
+            packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
+        )
+
+        bundle_dir = package_unified.prepare_desktop_release_bundle(
+            target="windows" if os.name == "nt" else "linux",
+            target_out_dir=temp_dir / "out",
+            staged_target_dir=staged_target_dir,
+            binary_name="ultimate_backend_test",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+        )
+
+        assert (bundle_dir / "plugins" / "JMComic-Crawler-Python" / "ultimate-plugin.json").exists()
+        assert not (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
+        assert (bundle_dir / "backend_source" / "third_party" / "__init__.py").exists()
+        assert (bundle_dir / "install_plugin_deps.ps1").exists()
+        assert (bundle_dir / "install_plugin_deps.sh").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_desktop_bundle_scripts_export_external_plugin_root():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_scripts_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bundle_dir = temp_dir / "bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        package_unified.write_desktop_bundle_scripts(
+            bundle_dir=bundle_dir,
+            binary_name="ultimate_backend_test",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+        )
+
+        bat_text = (bundle_dir / "start_backend.bat").read_text(encoding="utf-8")
+        ps1_text = (bundle_dir / "start_backend.ps1").read_text(encoding="utf-8")
+        sh_text = (bundle_dir / "start_backend.sh").read_text(encoding="utf-8")
+
+        assert "ULTIMATE_PLUGIN_ROOTS" in bat_text
+        assert "ULTIMATE_PLUGIN_ROOTS" in ps1_text
+        assert "ULTIMATE_PLUGIN_ROOTS" in sh_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

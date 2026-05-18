@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import platform
+import sys
 from typing import Any, Dict, Optional
 
 from .base import PluginManifest, ProtocolProvider
@@ -15,8 +17,83 @@ class ProviderManager:
         self.registry = registry or get_plugin_registry()
         self._providers: Dict[str, ProtocolProvider] = {}
         self._config_store = ProtocolConfigStore()
+        self._plugin_runtime_paths: Dict[str, list[str]] = {}
+
+    @staticmethod
+    def _runtime_tokens() -> Dict[str, str]:
+        machine = str(platform.machine() or "").strip().lower() or "unknown"
+        system_name = str(platform.system() or "").strip().lower() or sys.platform.lower()
+        python_tag = f"py{sys.version_info.major}{sys.version_info.minor}"
+        return {
+            "platform": system_name,
+            "machine": machine,
+            "platform_tag": f"{system_name}-{machine}",
+            "python_tag": python_tag,
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+        }
+
+    def _resolve_runtime_paths(self, manifest: PluginManifest) -> list[str]:
+        manifest_dir = os.path.abspath(os.path.dirname(manifest.path))
+        runtime = dict(getattr(manifest, "runtime", {}) or {})
+        python_paths = runtime.get("python_paths") or []
+        vendor_templates = runtime.get("vendor_path_templates") or []
+        if not isinstance(python_paths, list):
+            python_paths = []
+        if not isinstance(vendor_templates, list):
+            vendor_templates = []
+
+        resolved: list[str] = [manifest_dir]
+        tokens = self._runtime_tokens()
+
+        def _append_relative_path(raw_value: Any) -> None:
+            template = str(raw_value or "").strip()
+            if not template:
+                return
+            try:
+                template = template.format(**tokens)
+            except Exception:
+                return
+            candidate = os.path.abspath(os.path.join(manifest_dir, template))
+            if os.path.isdir(candidate):
+                resolved.append(candidate)
+
+        for entry in python_paths:
+            _append_relative_path(entry)
+        for entry in vendor_templates:
+            _append_relative_path(entry)
+
+        deduped: list[str] = []
+        seen = set()
+        for path in resolved:
+            normalized = os.path.abspath(str(path or "").strip())
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    def _ensure_plugin_runtime_paths(self, manifest: PluginManifest) -> list[str]:
+        plugin_id = str(manifest.plugin_id or "").strip()
+        cached = self._plugin_runtime_paths.get(plugin_id)
+        if cached is not None:
+            return list(cached)
+
+        resolved = self._resolve_runtime_paths(manifest)
+        for path in reversed(resolved):
+            if path in sys.path:
+                sys.path.remove(path)
+            sys.path.insert(0, path)
+        self._plugin_runtime_paths[plugin_id] = list(resolved)
+        return list(resolved)
+
+    def _drop_plugin_runtime_paths(self, plugin_id: str) -> None:
+        cached = self._plugin_runtime_paths.pop(str(plugin_id or "").strip(), None)
+        for path in reversed(list(cached or [])):
+            while path in sys.path:
+                sys.path.remove(path)
 
     def _load_provider_class(self, manifest: PluginManifest):
+        self._ensure_plugin_runtime_paths(manifest)
         entrypoint = manifest.entrypoint
         module_ref, _, class_name = entrypoint.partition(":")
         if not module_ref or not class_name:
@@ -69,9 +146,12 @@ class ProviderManager:
         plugin_key = str(plugin_id or "").strip()
         if plugin_key:
             self._providers.pop(plugin_key, None)
+            self._drop_plugin_runtime_paths(plugin_key)
 
     def reset_all_providers(self) -> None:
         self._providers.clear()
+        for plugin_id in list(self._plugin_runtime_paths.keys()):
+            self._drop_plugin_runtime_paths(plugin_id)
 
     def _get_runtime_config(self, manifest: PluginManifest) -> Dict[str, Any]:
         config_key = str(manifest.config_key or "").strip()

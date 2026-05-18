@@ -16,6 +16,10 @@ _SNAPSHOT_ENV_KEYS = (
     "ULTIMATE_PROTOCOL_SNAPSHOT_PATH",
     "BACKEND_PROTOCOL_SNAPSHOT_PATH",
 )
+_PLUGIN_ROOT_ENV_KEYS = (
+    "ULTIMATE_PLUGIN_ROOTS",
+    "BACKEND_PLUGIN_ROOTS",
+)
 _SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 _METADATA_ONLY_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
 
@@ -41,17 +45,36 @@ class PluginRegistry:
         if self.search_root:
             return [self.search_root]
 
-        candidates: List[str] = [
+        candidates: List[str] = []
+
+        for env_key in _PLUGIN_ROOT_ENV_KEYS:
+            raw_value = str(os.environ.get(env_key, "") or "").strip()
+            if not raw_value:
+                continue
+            for item in raw_value.split(os.pathsep):
+                normalized = os.path.abspath(str(item or "").strip())
+                if normalized:
+                    candidates.append(normalized)
+
+        candidates.extend(
+            [
+                os.path.abspath(os.path.join(PROJECT_ROOT, "plugins")),
+                os.path.abspath(os.path.join(BACKEND_ROOT, "plugins")),
+            ]
+        )
+
+        candidates.extend([
             os.path.abspath(os.path.join(BACKEND_ROOT, "third_party")),
             os.path.abspath(os.path.join(PROJECT_ROOT, "backend_source", "third_party")),
             os.path.abspath(os.path.join(PROJECT_ROOT, "comic_backend", "third_party")),
             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "third_party")),
-        ]
+        ])
 
         meipass_root = str(getattr(sys, "_MEIPASS", "") or "").strip()
         if meipass_root:
             candidates.extend(
                 [
+                    os.path.abspath(os.path.join(meipass_root, "plugins")),
                     os.path.abspath(os.path.join(meipass_root, "comic_backend", "third_party")),
                     os.path.abspath(os.path.join(meipass_root, "third_party")),
                 ]

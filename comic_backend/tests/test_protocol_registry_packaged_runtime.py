@@ -180,3 +180,98 @@ def test_plugin_registry_loads_mobile_protocol_snapshot_without_third_party_dirs
         )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_plugin_registry_scans_external_plugin_roots_from_env(monkeypatch):
+    workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"registry_external_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        external_root = temp_dir / "plugins"
+        plugin_dir = external_root / "demo_plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        (plugin_dir / "ultimate-plugin.json").write_text(
+            json.dumps(
+                {
+                    "protocol_version": "2.0",
+                    "plugin": {
+                        "id": "comic.demo.external",
+                        "name": "Demo External",
+                        "version": "1.0.0",
+                        "entrypoint": "./ultimate_provider.py:DemoProvider",
+                    },
+                    "media_types": ["comic"],
+                    "capabilities": [{"key": "catalog.search"}],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "ultimate_provider.py").write_text(
+            "from protocol.base import ProtocolProvider\n"
+            "class DemoProvider(ProtocolProvider):\n"
+            "    def execute(self, capability, params, context, config):\n"
+            "        return {'ok': True}\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("ULTIMATE_PLUGIN_ROOTS", str(external_root))
+        registry = registry_module.PluginRegistry()
+        manifests = registry.list_manifests()
+
+        assert any(manifest.plugin_id == "comic.demo.external" for manifest in manifests)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_plugin_registry_scans_release_bundle_plugins_root(monkeypatch):
+    workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"registry_bundle_plugins_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bundle_root = temp_dir / "release_bundle"
+        backend_source = bundle_root / "backend_source"
+        plugins_root = bundle_root / "plugins"
+        backend_source.mkdir(parents=True, exist_ok=True)
+        plugin_dir = plugins_root / "demo_plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+
+        (plugin_dir / "ultimate-plugin.json").write_text(
+            json.dumps(
+                {
+                    "protocol_version": "2.0",
+                    "plugin": {
+                        "id": "video.demo.bundle",
+                        "name": "Demo Bundle Plugin",
+                        "version": "1.0.0",
+                        "entrypoint": "./ultimate_provider.py:DemoProvider",
+                    },
+                    "media_types": ["video"],
+                    "capabilities": [{"key": "catalog.search"}],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "ultimate_provider.py").write_text(
+            "from protocol.base import ProtocolProvider\n"
+            "class DemoProvider(ProtocolProvider):\n"
+            "    def execute(self, capability, params, context, config):\n"
+            "        return {'ok': True}\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(registry_module, "BACKEND_ROOT", str(backend_source))
+        monkeypatch.setattr(registry_module, "PROJECT_ROOT", str(bundle_root))
+        registry = registry_module.PluginRegistry()
+        manifests = registry.list_manifests()
+
+        assert any(manifest.plugin_id == "video.demo.bundle" for manifest in manifests)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
