@@ -1266,7 +1266,8 @@ def import_online():
         checker = DuplicateChecker(existing_ids)
         
         # 无论导入到哪里，都从独立标签数据库读取标签
-        tag_db_data = _get_tag_document_repository().read_document()
+        tag_document_repo = _get_tag_document_repository()
+        tag_db_data = tag_document_repo.read_document()
         existing_tags = tag_db_data.get('tags', [])
         adapter = MetaDataAdapter(
             is_recommendation=is_recommendation,
@@ -1402,10 +1403,10 @@ def import_online():
                     existing_tag_ids.add(tag["id"])
             # 保存主数据库
             tag_db_data['last_updated'] = time.strftime("%Y-%m-%d")
-            tag_storage.write(tag_db_data)
-        
-            if not document_repo.write_document(db_data):
-                return error_response(500, "数据写入失败")
+            tag_document_repo.write_document(tag_db_data)
+
+        if not document_repo.write_document(db_data):
+            return error_response(500, "数据写入失败")
         
         if not is_recommendation and downloaded_comics:
             try:
@@ -1427,7 +1428,8 @@ def import_online():
                     except Exception as e:
                         error_logger.error(f"生成封面失败 {comic_id}: {e}")
                 
-                storage.write(db_data)
+                if not document_repo.write_document(db_data):
+                    return error_response(500, "数据写入失败")
             except ImportError as e:
                 error_logger.warning(f"无法导入封面生成模块: {e}")
         
@@ -1504,7 +1506,8 @@ def import_online():
         # 对推荐页导入，持久化可能更新过的 cover_path
         if is_recommendation:
             try:
-                storage.write(db_data)
+                if not document_repo.write_document(db_data):
+                    raise RuntimeError("数据写入失败")
             except Exception as e:
                 error_logger.error(f"写入推荐页封面更新失败: {e}")
         
@@ -1521,7 +1524,7 @@ def import_online():
                 data['last_updated'] = time.strftime("%Y-%m-%d")
                 return data
             
-            tag_storage.atomic_update(update_tags)
+            tag_document_repo.atomic_update_document(update_tags)
         
         app_logger.info(f"在线导入成功: 平台={platform_name}, 导入方式={import_type}, 目标={target}, 新增={len(new_comics)}, 跳过={len(skipped_ids)}, 下载成功={len(downloaded_comics)}, 下载失败={len(failed_downloads)}")
         
