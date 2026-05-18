@@ -471,6 +471,67 @@ export const useComicStore = defineStore('comic', () => {
     filteredComics.value = []
   }
 
+  async function refreshLocalMetadata(id) {
+    try {
+      const response = await comicApi.refreshLocalMetadata(id)
+      if (response.code === 200 && response.data) {
+        currentComic.value = response.data
+        comics.value = comics.value.map(comic => (comic.id === id ? response.data : comic))
+        cacheStore.clearCache('detail', id)
+        cacheStore.clearCache('list')
+      }
+      return response
+    } catch (err) {
+      console.error('[Comic] 更新本地详情失败:', err)
+      throw err
+    }
+  }
+
+  async function download(id, title = '') {
+    return comicApi.download(id, title)
+  }
+
+  async function checkUpdate(id) {
+    return comicApi.checkUpdate(id)
+  }
+
+  async function downloadUpdate(id) {
+    const response = await comicApi.downloadUpdate(id)
+    if (response.code === 200) {
+      cacheStore.clearCache('detail', id)
+      cacheStore.clearCache('images', id)
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
+  async function moveToTrash(id) {
+    const response = await comicApi.moveToTrash(id)
+    if (response.code === 200) {
+      comics.value = comics.value.filter((comic) => comic.id !== id)
+      if (currentComic.value?.id === id) {
+        currentComic.value = null
+      }
+      cacheStore.clearCache('detail', id)
+      cacheStore.clearCache('images', id)
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
+  async function batchMoveToTrash(ids) {
+    const response = await comicApi.batchMoveToTrash(ids)
+    if (response.code === 200) {
+      const idSet = new Set(ids)
+      comics.value = comics.value.filter((comic) => !idSet.has(comic.id))
+      if (currentComic.value?.id && idSet.has(currentComic.value.id)) {
+        currentComic.value = null
+      }
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
   function setSortState(sortType = null, sortOrder = 'desc') {
     currentSort.value = sortType || null
     currentSortOrder.value = sortOrder || 'desc'
@@ -579,6 +640,12 @@ export const useComicStore = defineStore('comic', () => {
     saveProgress,
     bindTags,
     editComic,
+    refreshLocalMetadata,
+    download,
+    checkUpdate,
+    downloadUpdate,
+    moveToTrash,
+    batchMoveToTrash,
     searchComics,
     filterByTags,
     filterMulti,

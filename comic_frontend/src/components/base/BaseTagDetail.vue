@@ -37,6 +37,7 @@
           <MediaGrid 
             v-else 
             :items="homeItems" 
+            :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToHomeItem" 
           />
@@ -49,6 +50,7 @@
           <MediaGrid 
             v-else 
             :items="recommendationItems" 
+            :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToRecommendationItem" 
           />
@@ -61,6 +63,7 @@
           <MediaGrid 
             v-else 
             :items="allItems" 
+            :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToItem" 
           />

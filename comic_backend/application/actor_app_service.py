@@ -36,10 +36,6 @@ class ActorAppService(BaseCreatorAppService):
         self._video_recommendation_repo = VideoRecommendationJsonRepository()
 
     @staticmethod
-    def _normalize_platform(platform: str) -> str:
-        return str(platform or "").strip().upper()
-
-    @staticmethod
     def _list_video_search_platforms() -> List[str]:
         platforms: List[str] = []
         for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="catalog.search"):
@@ -76,54 +72,8 @@ class ActorAppService(BaseCreatorAppService):
             content_id=content_id,
         )
 
-    @classmethod
-    def _get_actor_cover_cache_dir(cls, platform: str) -> str:
-        platform_key = cls._normalize_platform(platform)
-        return os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
-
-    @classmethod
-    def _build_actor_cover_url(cls, content_id: str, platform: str) -> str:
-        platform_key = cls._normalize_platform(platform)
-        safe_id = str(content_id or "").strip()
-        return f"/static/cover/{platform_key}/author_cache/{safe_id}.jpg"
-
-    def _resolve_cover_url_for_work(self, work: Dict) -> str:
-        if not isinstance(work, dict):
-            return ""
-        content_id = str(work.get("id", "")).strip()
-        if not content_id:
-            return ""
-        platform = work.get("platform", "")
-        cache_dir = self._get_actor_cover_cache_dir(platform)
-        local_file = os.path.join(cache_dir, f"{content_id}.jpg")
-        if os.path.exists(local_file):
-            return self._build_actor_cover_url(content_id, platform)
-        return ""
-
     def _sync_actor_latest_work(self, actor: ActorSubscription, works: List[Dict]) -> None:
-        """Sync latest work metadata into actor subscription without changing badge count."""
-        if not actor or not isinstance(works, list) or not works:
-            return
-
-        latest = works[0] if isinstance(works[0], dict) else {}
-        latest_work_id = str(latest.get("id", "") or "").strip()
-        latest_work_title = str(latest.get("title", "") or "").strip()
-
-        if not latest_work_id and not latest_work_title:
-            return
-
-        if (
-            str(actor.last_work_id or "").strip() == latest_work_id
-            and str(actor.last_work_title or "").strip() == latest_work_title
-        ):
-            return
-
-        try:
-            keep_new_count = int(actor.new_work_count or 0)
-            actor.update_check_info(latest_work_id, latest_work_title, keep_new_count)
-            self._actor_repo.save(actor)
-        except Exception as e:
-            error_logger.error(f"同步演员最新作品失败: {e}")
+        self._sync_latest_work(self._actor_repo, actor, works)
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索演员作品 - 支持分页
@@ -216,8 +166,8 @@ class ActorAppService(BaseCreatorAppService):
                         continue
                     
                     cover_url = video.get("cover_url", "")
-                    local_cover = self._build_actor_cover_url(work_id, plat)
-                    if os.path.exists(os.path.join(self._get_actor_cover_cache_dir(plat), f"{work_id}.jpg")):
+                    local_cover = self._build_cover_url(work_id, plat)
+                    if os.path.exists(os.path.join(self._get_cover_cache_dir(plat), f"{work_id}.jpg")):
                         cover_url = local_cover
                     elif cover_url:
                         cover_url = self._to_frontend_work_cover_url(str(cover_url), plat, work_id)
@@ -243,21 +193,12 @@ class ActorAppService(BaseCreatorAppService):
     
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的视频ID集合"""
-        existing_ids = set()
-
-        for repo, label in (
-            (self._video_repo, "主页"),
-            (self._video_recommendation_repo, "推荐页"),
-        ):
-            try:
-                for video in repo.get_all():
-                    video_id = str(getattr(video, "id", "") or "").strip()
-                    if video_id:
-                        existing_ids.add(video_id)
-            except Exception as e:
-                error_logger.error(f"获取{label}视频ID失败: {e}")
-        
-        return existing_ids
+        return self._collect_existing_content_ids(
+            (
+                (self._video_repo, "主页"),
+                (self._video_recommendation_repo, "推荐页"),
+            )
+        )
     
     def _download_cover(self, content_id: str, cover_url: str, platform: str) -> str:
         """下载演员作品封面"""
@@ -291,11 +232,11 @@ class ActorAppService(BaseCreatorAppService):
             pass
 
         platform_key = self._normalize_platform(platform)
-        cache_dir = self._get_actor_cover_cache_dir(platform_key)
+        cache_dir = self._get_cover_cache_dir(platform_key)
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
 
         if os.path.exists(local_path):
-            return self._build_actor_cover_url(content_id, platform_key)
+            return self._build_cover_url(content_id, platform_key)
 
         if not (
             normalized_cover_url.startswith("http://")
@@ -333,7 +274,7 @@ class ActorAppService(BaseCreatorAppService):
                     img = img.convert('RGB')
                 img.save(local_path, 'JPEG', quality=85)
 
-            return self._build_actor_cover_url(content_id, platform_key)
+            return self._build_cover_url(content_id, platform_key)
         except Exception as e:
             error_logger.error(f"下载演员作品封面失败 {content_id}: {e}")
             return cover_url
@@ -380,54 +321,18 @@ class ActorAppService(BaseCreatorAppService):
             return ServiceResult.error("获取所有演员失败")
     
     def get_subscription_list(self) -> ServiceResult:
-        try:
-            actors = self._actor_repo.get_all()
-            actor_list = [a.to_dict() for a in actors]
-            app_logger.info(f"获取演员订阅列表成功，共 {len(actor_list)} 个")
-            return ServiceResult.ok(actor_list)
-        except Exception as e:
-            error_logger.error(f"获取演员订阅列表失败: {e}")
-            return ServiceResult.error("获取演员订阅列表失败")
+        return self._get_subscription_list_impl(self._actor_repo)
     
     def subscribe_actor(self, name: str) -> ServiceResult:
-        try:
-            if not name or not name.strip():
-                return ServiceResult.error("演员名称不能为空")
-            
-            name = name.strip()
-            
-            if self._actor_repo.exists_by_name(name):
-                return ServiceResult.error("已订阅该演员")
-            
-            actor = ActorSubscription(
-                id=generate_id("actor"),
-                name=name,
-                subscribe_time=get_current_time()
-            )
-            
-            if not self._actor_repo.save(actor):
-                return ServiceResult.error("订阅演员失败")
-            
-            app_logger.info(f"订阅演员成功: {name}")
-            return ServiceResult.ok(actor.to_dict(), "订阅成功")
-        except Exception as e:
-            error_logger.error(f"订阅演员失败: {e}")
-            return ServiceResult.error("订阅演员失败")
+        return self._subscribe_by_name_impl(
+            self._actor_repo,
+            ActorSubscription,
+            name,
+            "actor",
+        )
     
     def unsubscribe_actor(self, actor_id: str) -> ServiceResult:
-        try:
-            actor = self._actor_repo.get_by_id(actor_id)
-            if not actor:
-                return ServiceResult.error("订阅不存在")
-            
-            if not self._actor_repo.delete(actor_id):
-                return ServiceResult.error("取消订阅失败")
-            
-            app_logger.info(f"取消订阅演员成功: {actor_id}")
-            return ServiceResult.ok({"id": actor_id}, "取消订阅成功")
-        except Exception as e:
-            error_logger.error(f"取消订阅演员失败: {e}")
-            return ServiceResult.error("取消订阅演员失败")
+        return self._unsubscribe_by_id_impl(self._actor_repo, actor_id)
     
     def check_actor_updates(self, actor_id: str = None) -> ServiceResult:
         try:

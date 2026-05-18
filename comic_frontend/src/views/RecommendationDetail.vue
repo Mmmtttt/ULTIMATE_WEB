@@ -284,7 +284,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { recommendationApi, authorApi } from '@/api'
+import { authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
 
@@ -502,7 +502,7 @@ function onActionSelect(action) {
 
 async function saveEdit() {
   try {
-    const response = await recommendationApi.edit(recommendation.value.id, editForm.value)
+    const response = await recommendationStore.editRecommendation(recommendation.value.id, editForm.value)
     if (response.code === 200) {
       recommendation.value.title = editForm.value.title
       recommendation.value.author = editForm.value.author
@@ -527,7 +527,7 @@ async function handleMoveToTrash() {
       message: '确定将此漫画移入回收站吗？'
     })
     
-    const res = await recommendationApi.moveToTrash(recommendation.value.id)
+    const res = await recommendationStore.moveToTrash(recommendation.value.id)
     if (res.code === 200) {
       showSuccessToast('已移入回收站')
       router.back()

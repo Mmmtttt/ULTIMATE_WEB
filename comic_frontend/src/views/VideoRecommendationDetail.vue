@@ -377,7 +377,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stores'
 import { EmptyState } from '@/components'
-import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
@@ -626,7 +625,7 @@ async function refreshPreviewVideo() {
   })
 
   try {
-    const response = await videoApi.refreshPreviewVideo(recommendationId.value, 'preview')
+    const response = await videoRecommendationStore.refreshPreviewVideo(recommendationId.value, 'preview')
     closeToast()
 
     if (response?.code !== 200 || !response?.data) {
@@ -854,7 +853,7 @@ function goBack() {
 
 async function fetchAllTags() {
   try {
-    const response = await videoApi.getTags()
+    const response = await videoRecommendationStore.fetchTags()
     if (response.code === 200) {
       allTags.value = response.data || []
     }
@@ -874,7 +873,7 @@ function toggleTag(tagId) {
 
 async function saveEdit() {
   try {
-    const response = await videoApi.editVideoRecommendation(recommendationId.value, editForm.value)
+    const response = await videoRecommendationStore.editRecommendation(recommendationId.value, editForm.value)
     if (response.code === 200) {
       recommendation.value.title = editForm.value.title
       recommendation.value.code = editForm.value.code
@@ -895,7 +894,7 @@ async function saveEdit() {
 
 async function saveTags() {
   try {
-    const response = await videoApi.bindVideoRecommendationTags(recommendationId.value, selectedTagIds.value)
+    const response = await videoRecommendationStore.bindTags(recommendationId.value, selectedTagIds.value)
     if (response.code === 200) {
       recommendation.value.tag_ids = [...selectedTagIds.value]
       const tagMap = {}
@@ -941,7 +940,7 @@ async function loadPlayUrls() {
   })
   
   try {
-    const response = await videoApi.getRecommendationPlayUrls(recommendationId.value)
+    const response = await videoRecommendationStore.getPlayUrls(recommendationId.value)
     closeToast()
     
     if (response.code === 200 && response.data) {

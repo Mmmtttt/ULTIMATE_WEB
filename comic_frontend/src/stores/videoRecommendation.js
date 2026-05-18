@@ -219,6 +219,76 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     }
   }
 
+  async function migrateToLocal(videoIds) {
+    return videoApi.migrateRecommendationToLocal(videoIds)
+  }
+
+  async function refreshPreviewVideo(videoId, source = 'preview') {
+    const response = await videoApi.refreshPreviewVideo(videoId, source)
+    if (response.code === 200 && response.data) {
+      currentRecommendation.value = response.data
+      recommendations.value = recommendations.value.map((item) => (item.id === videoId ? response.data : item))
+    }
+    return response
+  }
+
+  async function fetchTags() {
+    return videoApi.getTags()
+  }
+
+  async function editRecommendation(videoId, data) {
+    const response = await videoApi.editVideoRecommendation(videoId, data)
+    if (response.code === 200) {
+      recommendations.value = recommendations.value.map((item) =>
+        item.id === videoId
+          ? {
+              ...item,
+              ...data,
+              actors: Array.isArray(data.actors)
+                ? data.actors
+                : String(data.actors || '')
+                    .split(',')
+                    .map((actor) => actor.trim())
+                    .filter(Boolean),
+            }
+          : item
+      )
+      if (currentRecommendation.value?.id === videoId) {
+        currentRecommendation.value = {
+          ...currentRecommendation.value,
+          ...data,
+          actors: Array.isArray(data.actors)
+            ? data.actors
+            : String(data.actors || '')
+                .split(',')
+                .map((actor) => actor.trim())
+                .filter(Boolean),
+        }
+      }
+    }
+    return response
+  }
+
+  async function bindTags(videoId, tagIds) {
+    const response = await videoApi.bindVideoRecommendationTags(videoId, tagIds)
+    if (response.code === 200) {
+      if (currentRecommendation.value?.id === videoId) {
+        currentRecommendation.value = {
+          ...currentRecommendation.value,
+          tag_ids: [...tagIds],
+        }
+      }
+      recommendations.value = recommendations.value.map((item) =>
+        item.id === videoId ? { ...item, tag_ids: [...tagIds] } : item
+      )
+    }
+    return response
+  }
+
+  async function getPlayUrls(videoId) {
+    return videoApi.getRecommendationPlayUrls(videoId)
+  }
+
   async function filterByTags(includeTagIds = [], excludeTagIds = []) {
     console.log('[Video Recommendation] filterByTags called, include:', includeTagIds, 'exclude:', excludeTagIds)
     
@@ -330,6 +400,12 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     updateScore,
     moveToTrash,
     batchMoveToTrash,
+    migrateToLocal,
+    refreshPreviewVideo,
+    fetchTags,
+    editRecommendation,
+    bindTags,
+    getPlayUrls,
     fetchTrashList,
     restoreFromTrash,
     batchRestoreFromTrash,

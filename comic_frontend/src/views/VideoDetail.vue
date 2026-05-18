@@ -485,7 +485,6 @@ import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
 import { EmptyState } from '@/components'
-import { videoApi } from '@/api'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
@@ -745,11 +744,11 @@ function scheduleLocalAssetRefresh() {
   assetRefreshAttempts.value += 1
   assetRefreshTimer.value = setTimeout(async () => {
     try {
-      const res = await videoApi.getDetail(videoId.value)
-      if (res?.code === 200 && res.data) {
-        video.value = res.data
-        if (res.data?.score) {
-          scoreValue.value = res.data.score
+      const detail = await videoStore.fetchDetailSnapshot(videoId.value)
+      if (detail) {
+        video.value = detail
+        if (detail?.score) {
+          scoreValue.value = detail.score
         }
       }
     } catch (error) {
@@ -940,7 +939,7 @@ async function refreshPreviewVideo() {
   })
 
   try {
-    const response = await videoApi.refreshPreviewVideo(videoId.value, previewRefreshSource.value)
+    const response = await videoStore.refreshPreviewVideo(videoId.value, previewRefreshSource.value)
     closeToast()
 
     if (response?.code !== 200 || !response?.data) {
@@ -978,7 +977,7 @@ async function refreshLocalMetadata() {
   })
 
   try {
-    const response = await videoApi.refreshLocalMetadata(videoId.value)
+    const response = await videoStore.refreshLocalMetadata(videoId.value)
     closeToast()
 
     if (response?.code !== 200 || !response?.data) {
@@ -1023,7 +1022,7 @@ async function generateLocalThumbnails() {
   })
 
   try {
-    const response = await videoApi.generateLocalThumbnails(videoId.value)
+    const response = await videoStore.generateLocalThumbnails(videoId.value)
     closeToast()
 
     if (response?.code !== 200 || !response?.data) {
@@ -1057,7 +1056,7 @@ async function saveThumbnailCoverSelection() {
   })
 
   try {
-    const response = await videoApi.selectLocalThumbnailCover(
+    const response = await videoStore.selectLocalThumbnailCover(
       videoId.value,
       selectedThumbnailCoverIndex.value
     )
@@ -1444,7 +1443,7 @@ async function loadPlayUrls() {
   })
   
   try {
-    const response = await videoApi.getPlayUrls(videoId.value)
+    const response = await videoStore.getPlayUrls(videoId.value)
     closeToast()
     
     if (response.code === 200 && response.data) {

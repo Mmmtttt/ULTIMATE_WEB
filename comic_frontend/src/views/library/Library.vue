@@ -74,6 +74,7 @@
       <MediaGrid 
         v-else 
         :items="pagedItems" 
+        :content-type="isVideoMode ? 'video' : 'comic'"
         :show-favorite="true"
         :is-favorited="isFavorited"
         :selectable="isManageMode"
@@ -226,7 +227,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useComicStore, useVideoStore, useTagStore, useListStore, useImportTaskStore, useRuntimeStore } from '@/stores'
-import { comicApi, uiStateApi } from '@/api'
+import { uiStateApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
@@ -736,7 +737,7 @@ async function batchDelete() {
     if (isVideoMode.value) {
       success = await videoStore.batchMoveToTrash(selectedIds.value)
     } else {
-      const res = await comicApi.batchMoveToTrash(selectedIds.value)
+      const res = await comicStore.batchMoveToTrash(selectedIds.value)
       success = res.code === 200
     }
     

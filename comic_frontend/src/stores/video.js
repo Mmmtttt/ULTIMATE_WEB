@@ -93,6 +93,14 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
 
+  async function fetchDetailSnapshot(videoId) {
+    const res = await videoApi.getDetail(videoId)
+    if (res.code === 200) {
+      return res.data || null
+    }
+    return null
+  }
+
   async function bindTags(videoId, tagIdList) {
     try {
       const response = await videoApi.bindTags(videoId, tagIdList)
@@ -220,6 +228,46 @@ export const useVideoStore = defineStore('video', () => {
       return { code: 500, message: e.message }
     }
   }
+
+  async function refreshPreviewVideo(videoId, source = 'local') {
+    const response = await videoApi.refreshPreviewVideo(videoId, source)
+    if (response.code === 200 && response.data) {
+      currentVideo.value = response.data
+      videos.value = videos.value.map((video) => (video.id === videoId ? response.data : video))
+    }
+    return response
+  }
+
+  async function refreshLocalMetadata(videoId) {
+    const response = await videoApi.refreshLocalMetadata(videoId)
+    if (response.code === 200 && response.data) {
+      currentVideo.value = response.data
+      videos.value = videos.value.map((video) => (video.id === videoId ? response.data : video))
+    }
+    return response
+  }
+
+  async function generateLocalThumbnails(videoId) {
+    const response = await videoApi.generateLocalThumbnails(videoId)
+    if (response.code === 200 && response.data) {
+      currentVideo.value = response.data
+      videos.value = videos.value.map((video) => (video.id === videoId ? response.data : video))
+    }
+    return response
+  }
+
+  async function selectLocalThumbnailCover(videoId, coverIndex) {
+    const response = await videoApi.selectLocalThumbnailCover(videoId, coverIndex)
+    if (response.code === 200 && response.data) {
+      currentVideo.value = response.data
+      videos.value = videos.value.map((video) => (video.id === videoId ? response.data : video))
+    }
+    return response
+  }
+
+  async function getPlayUrls(videoId) {
+    return videoApi.getPlayUrls(videoId)
+  }
   
   async function filterByTags(includeTags = [], excludeTags = []) {
     if (includeTags.length === 0 && excludeTags.length === 0) {
@@ -336,6 +384,7 @@ export const useVideoStore = defineStore('video', () => {
     videoList,
     fetchList,
     fetchDetail,
+    fetchDetailSnapshot,
     search,
     updateScore,
     updateProgress,
@@ -347,6 +396,11 @@ export const useVideoStore = defineStore('video', () => {
     deletePermanently,
     fetchTrashList,
     importVideo,
+    refreshPreviewVideo,
+    refreshLocalMetadata,
+    generateLocalThumbnails,
+    selectLocalThumbnailCover,
+    getPlayUrls,
     thirdPartySearch,
     thirdPartyDetail,
     thirdPartyImport,

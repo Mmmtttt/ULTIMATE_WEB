@@ -38,11 +38,6 @@ class AuthorAppService(BaseCreatorAppService):
         from protocol import adapter_api as external_api
         return external_api
 
-    @staticmethod
-    def _normalize_platform(platform: str) -> str:
-        normalized = str(platform or "").strip().upper()
-        return normalized or "UNKNOWN"
-
     @classmethod
     def _get_search_platform_descriptors(cls) -> List[Dict]:
         descriptors: List[Dict] = []
@@ -76,54 +71,8 @@ class AuthorAppService(BaseCreatorAppService):
             error_logger.error(f"加载作者搜索平台协议失败: {e}")
         return descriptors
 
-    @classmethod
-    def _get_author_cover_cache_dir(cls, platform: str) -> str:
-        platform_key = cls._normalize_platform(platform)
-        return os.path.join(CACHE_ROOT_DIR, "author_cover", platform_key)
-
-    @classmethod
-    def _build_author_cover_url(cls, content_id: str, platform: str) -> str:
-        platform_key = cls._normalize_platform(platform)
-        safe_id = str(content_id or "").strip()
-        return f"/static/cover/{platform_key}/author_cache/{safe_id}.jpg"
-
-    def _resolve_cover_url_for_work(self, work: Dict) -> str:
-        if not isinstance(work, dict):
-            return ""
-        content_id = str(work.get("id", "")).strip()
-        if not content_id:
-            return ""
-        platform = work.get("platform", "")
-        cache_dir = self._get_author_cover_cache_dir(platform)
-        local_file = os.path.join(cache_dir, f"{content_id}.jpg")
-        if os.path.exists(local_file):
-            return self._build_author_cover_url(content_id, platform)
-        return ""
-
     def _sync_author_latest_work(self, author: AuthorSubscription, works: List[Dict]) -> None:
-        """Sync latest work metadata into author subscription without changing badge count."""
-        if not author or not isinstance(works, list) or not works:
-            return
-
-        latest = works[0] if isinstance(works[0], dict) else {}
-        latest_work_id = str(latest.get("id", "") or "").strip()
-        latest_work_title = str(latest.get("title", "") or "").strip()
-
-        if not latest_work_id and not latest_work_title:
-            return
-
-        if (
-            str(author.last_work_id or "").strip() == latest_work_id
-            and str(author.last_work_title or "").strip() == latest_work_title
-        ):
-            return
-
-        try:
-            keep_new_count = int(author.new_work_count or 0)
-            author.update_check_info(latest_work_id, latest_work_title, keep_new_count)
-            self._author_repo.save(author)
-        except Exception as e:
-            error_logger.error(f"同步作者最新作品失败: {e}")
+        self._sync_latest_work(self._author_repo, author, works)
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索作者作品 - 支持分页
@@ -180,8 +129,8 @@ class AuthorAppService(BaseCreatorAppService):
                         album = platform_albums[plat][i]
                         work_id = str(album.get("album_id", ""))
                         cover_url = album.get("cover_url", "")
-                        local_cover = self._build_author_cover_url(work_id, plat)
-                        cache_dir = self._get_author_cover_cache_dir(plat)
+                        local_cover = self._build_cover_url(work_id, plat)
+                        cache_dir = self._get_cover_cache_dir(plat)
                         if os.path.exists(os.path.join(cache_dir, f"{work_id}.jpg")):
                             cover_url = local_cover
                         
@@ -207,8 +156,6 @@ class AuthorAppService(BaseCreatorAppService):
     
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的漫画ID集合"""
-        existing_ids = set()
-
         def _normalize_existing_id(raw_id: str) -> str:
             normalized_raw_id = str(raw_id or "").strip()
             if not normalized_raw_id:
@@ -219,20 +166,14 @@ class AuthorAppService(BaseCreatorAppService):
             )
             normalized_original_id = str(original_id or "").strip()
             return normalized_original_id or normalized_raw_id
-        
-        for repo, label in (
-            (self._comic_repo, "主页"),
-            (self._recommendation_repo, "推荐页"),
-        ):
-            try:
-                for comic in repo.get_all():
-                    normalized_id = _normalize_existing_id(getattr(comic, "id", ""))
-                    if normalized_id:
-                        existing_ids.add(normalized_id)
-            except Exception as e:
-                error_logger.error(f"获取{label}漫画ID失败: {e}")
-        
-        return existing_ids
+
+        return self._collect_existing_content_ids(
+            (
+                (self._comic_repo, "主页"),
+                (self._recommendation_repo, "推荐页"),
+            ),
+            normalize_existing_id=_normalize_existing_id,
+        )
     
     def _download_cover(self, content_id: str, cover_url: str, platform: str) -> str:
         """下载作者作品封面"""
@@ -240,11 +181,11 @@ class AuthorAppService(BaseCreatorAppService):
             return ""
 
         platform_key = self._normalize_platform(platform)
-        cache_dir = self._get_author_cover_cache_dir(platform_key)
+        cache_dir = self._get_cover_cache_dir(platform_key)
         local_path = os.path.join(cache_dir, f"{content_id}.jpg")
 
         if os.path.exists(local_path):
-            return self._build_author_cover_url(content_id, platform_key)
+            return self._build_cover_url(content_id, platform_key)
         
         try:
             headers = {
@@ -260,7 +201,7 @@ class AuthorAppService(BaseCreatorAppService):
                     img = img.convert('RGB')
                 img.save(local_path, 'JPEG', quality=85)
 
-            return self._build_author_cover_url(content_id, platform_key)
+            return self._build_cover_url(content_id, platform_key)
         except Exception as e:
             error_logger.error(f"下载作者作品封面失败 {content_id}: {e}")
             return cover_url
@@ -303,54 +244,18 @@ class AuthorAppService(BaseCreatorAppService):
             return ServiceResult.error("获取所有作者失败")
     
     def get_subscription_list(self) -> ServiceResult:
-        try:
-            authors = self._author_repo.get_all()
-            author_list = [a.to_dict() for a in authors]
-            app_logger.info(f"获取作者订阅列表成功，共 {len(author_list)} 个")
-            return ServiceResult.ok(author_list)
-        except Exception as e:
-            error_logger.error(f"获取作者订阅列表失败: {e}")
-            return ServiceResult.error("获取作者订阅列表失败")
+        return self._get_subscription_list_impl(self._author_repo)
     
     def subscribe_author(self, name: str) -> ServiceResult:
-        try:
-            if not name or not name.strip():
-                return ServiceResult.error("作者名称不能为空")
-            
-            name = name.strip()
-            
-            if self._author_repo.exists_by_name(name):
-                return ServiceResult.error("已订阅该作者")
-            
-            author = AuthorSubscription(
-                id=generate_id("author"),
-                name=name,
-                subscribe_time=get_current_time()
-            )
-            
-            if not self._author_repo.save(author):
-                return ServiceResult.error("订阅作者失败")
-            
-            app_logger.info(f"订阅作者成功: {name}")
-            return ServiceResult.ok(author.to_dict(), "订阅成功")
-        except Exception as e:
-            error_logger.error(f"订阅作者失败: {e}")
-            return ServiceResult.error("订阅作者失败")
+        return self._subscribe_by_name_impl(
+            self._author_repo,
+            AuthorSubscription,
+            name,
+            "author",
+        )
     
     def unsubscribe_author(self, author_id: str) -> ServiceResult:
-        try:
-            author = self._author_repo.get_by_id(author_id)
-            if not author:
-                return ServiceResult.error("订阅不存在")
-            
-            if not self._author_repo.delete(author_id):
-                return ServiceResult.error("取消订阅失败")
-            
-            app_logger.info(f"取消订阅作者成功: {author_id}")
-            return ServiceResult.ok({"id": author_id}, "取消订阅成功")
-        except Exception as e:
-            error_logger.error(f"取消订阅作者失败: {e}")
-            return ServiceResult.error("取消订阅作者失败")
+        return self._unsubscribe_by_id_impl(self._author_repo, author_id)
     
     def check_author_updates(self, author_id: str = None) -> ServiceResult:
         try:

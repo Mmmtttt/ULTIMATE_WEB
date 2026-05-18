@@ -421,6 +421,53 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     currentSortOrder.value = sortOrder
   }
 
+  async function editRecommendation(recommendationId, data) {
+    try {
+      const response = await recommendationApi.edit(recommendationId, data)
+      if (response.code === 200) {
+        recommendations.value = recommendations.value.map((item) =>
+          item.id === recommendationId ? { ...item, ...data } : item
+        )
+        if (currentRecommendation.value?.id === recommendationId) {
+          currentRecommendation.value = {
+            ...currentRecommendation.value,
+            ...data,
+          }
+        }
+        cacheStore.clearRecommendationDetailCache(recommendationId)
+      }
+      return response
+    } catch (err) {
+      console.error('[Recommendation] 编辑失败:', err)
+      throw err
+    }
+  }
+
+  async function moveToTrash(recommendationId) {
+    const response = await recommendationApi.moveToTrash(recommendationId)
+    if (response.code === 200) {
+      recommendations.value = recommendations.value.filter((item) => item.id !== recommendationId)
+      if (currentRecommendation.value?.id === recommendationId) {
+        currentRecommendation.value = null
+      }
+      cacheStore.clearRecommendationDetailCache(recommendationId)
+    }
+    return response
+  }
+
+  async function batchMoveToTrash(recommendationIds) {
+    const response = await recommendationApi.batchMoveToTrash(recommendationIds)
+    if (response.code === 200) {
+      const idSet = new Set(recommendationIds)
+      recommendations.value = recommendations.value.filter((item) => !idSet.has(item.id))
+    }
+    return response
+  }
+
+  async function migrateToLocal(recommendationIds) {
+    return recommendationApi.migrateToLocal(recommendationIds)
+  }
+
   /**
    * 清除排序
    */
@@ -528,6 +575,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     saveProgress,
     updateScore,
     bindTags,
+    editRecommendation,
+    moveToTrash,
+    batchMoveToTrash,
+    migrateToLocal,
     searchRecommendations,
     filterByTags,
     filterMulti,

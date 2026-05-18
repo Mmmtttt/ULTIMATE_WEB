@@ -132,6 +132,11 @@ const props = defineProps({
   viewMode: {
     type: String,
     default: ''
+  },
+  contentType: {
+    type: String,
+    default: '',
+    validator: (value) => ['', 'comic', 'video'].includes(String(value || '').trim().toLowerCase())
   }
 })
 
@@ -163,16 +168,11 @@ function isSelected(item) {
 }
 
 function isVideoItem(item) {
-  const pluginId = String(item?.plugin_id || '').trim().toLowerCase()
-  const contentType = String(item?.content_type || '').trim().toLowerCase()
-  return Boolean(
-    contentType === 'video' ||
-    pluginId.startsWith('video.') ||
-    (Array.isArray(item?.actors) && item.actors.length > 0) ||
-    item?.video_id ||
-    item?.preview_video ||
-    item?.preview_video_local
-  )
+  const explicitType = String(props.contentType || '').trim().toLowerCase()
+  if (explicitType) {
+    return explicitType === 'video'
+  }
+  return String(item?.content_type || '').trim().toLowerCase() === 'video'
 }
 
 function resolveCoverFit(item) {

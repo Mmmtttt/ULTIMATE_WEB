@@ -12,7 +12,9 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.persistence.json_storage import JsonStorage
+from core.constants import CACHE_ROOT_DIR
 from core.enums import ContentType
+from core.utils import generate_id, get_current_time
 
 T = TypeVar('T', bound=BaseEntity)
 
@@ -197,6 +199,8 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
     _entity_name: str = "创作者"
     _content_type: ContentType = ContentType.COMIC
     _cache_manager = CacheManager()
+    _cover_cache_namespace: str = "author_cover"
+    _cover_url_segment: str = "author_cache"
     
     @abstractmethod
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
@@ -233,7 +237,127 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
 
     def _resolve_cover_url_for_work(self, work: Dict) -> str:
         """可选钩子：返回本地封面 URL，默认不处理。"""
+        if not isinstance(work, dict):
+            return ""
+        content_id = str(work.get("id", "")).strip()
+        if not content_id:
+            return ""
+        platform = work.get("platform", "")
+        cache_dir = self._get_cover_cache_dir(platform)
+        local_file = os.path.join(cache_dir, f"{content_id}.jpg")
+        if os.path.exists(local_file):
+            return self._build_cover_url(content_id, platform)
         return ""
+
+    @staticmethod
+    def _normalize_platform(platform: str) -> str:
+        normalized = str(platform or "").strip().upper()
+        return normalized or "UNKNOWN"
+
+    @classmethod
+    def _get_cover_cache_dir(cls, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        return os.path.join(CACHE_ROOT_DIR, cls._cover_cache_namespace, platform_key)
+
+    @classmethod
+    def _build_cover_url(cls, content_id: str, platform: str) -> str:
+        platform_key = cls._normalize_platform(platform)
+        safe_id = str(content_id or "").strip()
+        return f"/static/cover/{platform_key}/{cls._cover_url_segment}/{safe_id}.jpg"
+
+    def _sync_latest_work(self, repo: BaseCreatorRepository, creator: BaseCreator, works: List[Dict]) -> None:
+        if not creator or not isinstance(works, list) or not works:
+            return
+
+        latest = works[0] if isinstance(works[0], dict) else {}
+        latest_work_id = str(latest.get("id", "") or "").strip()
+        latest_work_title = str(latest.get("title", "") or "").strip()
+
+        if not latest_work_id and not latest_work_title:
+            return
+
+        if (
+            str(creator.last_work_id or "").strip() == latest_work_id
+            and str(creator.last_work_title or "").strip() == latest_work_title
+        ):
+            return
+
+        try:
+            keep_new_count = int(creator.new_work_count or 0)
+            creator.update_check_info(latest_work_id, latest_work_title, keep_new_count)
+            repo.save(creator)
+        except Exception as e:
+            error_logger.error(f"同步{self._entity_name}最新作品失败: {e}")
+
+    def _collect_existing_content_ids(self, repo_specs, normalize_existing_id=None) -> Set[str]:
+        existing_ids = set()
+        normalize = normalize_existing_id or (lambda raw_id: str(raw_id or "").strip())
+
+        for repo, label in repo_specs:
+            try:
+                for item in repo.get_all():
+                    normalized_id = normalize(getattr(item, "id", ""))
+                    if normalized_id:
+                        existing_ids.add(normalized_id)
+            except Exception as e:
+                error_logger.error(f"获取{label}{self._entity_name}内容ID失败: {e}")
+
+        return existing_ids
+
+    def _get_subscription_list_impl(self, repo: BaseCreatorRepository) -> ServiceResult:
+        try:
+            creators = repo.get_all()
+            creator_list = [creator.to_dict() for creator in creators]
+            app_logger.info(f"获取{self._entity_name}订阅列表成功，共 {len(creator_list)} 个")
+            return ServiceResult.ok(creator_list)
+        except Exception as e:
+            error_logger.error(f"获取{self._entity_name}订阅列表失败: {e}")
+            return ServiceResult.error(f"获取{self._entity_name}订阅列表失败")
+
+    def _subscribe_by_name_impl(
+        self,
+        repo: BaseCreatorRepository,
+        subscription_cls,
+        name: str,
+        id_prefix: str,
+    ) -> ServiceResult:
+        try:
+            normalized_name = str(name or "").strip()
+            if not normalized_name:
+                return ServiceResult.error(f"{self._entity_name}名称不能为空")
+
+            if repo.exists_by_name(normalized_name):
+                return ServiceResult.error(f"已订阅该{self._entity_name}")
+
+            creator = subscription_cls(
+                id=generate_id(id_prefix),
+                name=normalized_name,
+                subscribe_time=get_current_time(),
+            )
+
+            if not repo.save(creator):
+                return ServiceResult.error(f"订阅{self._entity_name}失败")
+
+            app_logger.info(f"订阅{self._entity_name}成功: {normalized_name}")
+            return ServiceResult.ok(creator.to_dict(), "订阅成功")
+        except Exception as e:
+            error_logger.error(f"订阅{self._entity_name}失败: {e}")
+            return ServiceResult.error(f"订阅{self._entity_name}失败")
+
+    def _unsubscribe_by_id_impl(self, repo: BaseCreatorRepository, creator_id: str) -> ServiceResult:
+        try:
+            creator = repo.get_by_id(creator_id)
+            if not creator:
+                return ServiceResult.error("订阅不存在")
+
+            if not repo.delete(creator_id):
+                return ServiceResult.error("取消订阅失败")
+
+            app_logger.info(f"取消订阅{self._entity_name}成功: {creator_id}")
+            return ServiceResult.ok({"id": creator_id}, "取消订阅成功")
+        except Exception as e:
+            error_logger.error(f"取消订阅{self._entity_name}失败: {e}")
+            return ServiceResult.error(f"取消订阅{self._entity_name}失败")
 
     def _apply_local_cover_preference(self, works: List[Dict]):
         for work in works or []:

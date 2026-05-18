@@ -345,7 +345,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { comicApi, authorApi } from '@/api'
+import { authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
 
@@ -596,7 +596,7 @@ async function refreshLocalMetadata() {
 
   refreshingLocalMetadata.value = true
   try {
-    const response = await comicApi.refreshLocalMetadata(comic.value.id)
+    const response = await comicStore.refreshLocalMetadata(comic.value.id)
     if (response?.code !== 200 || !response?.data) {
       showFailToast(response?.msg || '更新详情信息失败')
       return
@@ -627,7 +627,7 @@ async function handleDownload() {
   
   downloadLoading.value = true
   try {
-    await comicApi.download(comic.value.id, comic.value.title)
+    await comicStore.download(comic.value.id, comic.value.title)
     showSuccessToast('下载成功')
   } catch (error) {
     console.error('下载失败:', error)
@@ -641,7 +641,7 @@ async function handleCheckAndDownloadUpdate() {
   if (!comic.value) return
 
   try {
-    const checkResponse = await comicApi.checkUpdate(comic.value.id)
+    const checkResponse = await comicStore.checkUpdate(comic.value.id)
     const checkData = checkResponse?.data || {}
 
     if (!checkData.can_update) {
@@ -665,7 +665,7 @@ async function handleCheckAndDownloadUpdate() {
       message: `检测到远程页数 ${remotePages} 大于本地页数 ${localPages}，是否立即下载更新？`
     })
 
-    const downloadResponse = await comicApi.downloadUpdate(comic.value.id)
+    const downloadResponse = await comicStore.downloadUpdate(comic.value.id)
     if (downloadResponse.code !== 200) {
       showFailToast(downloadResponse.msg || '下载更新失败')
       return
@@ -694,7 +694,7 @@ async function handleMoveToTrash() {
       message: '确定将此漫画移入回收站吗？'
     })
     
-    const res = await comicApi.moveToTrash(comic.value.id)
+    const res = await comicStore.moveToTrash(comic.value.id)
     if (res.code === 200) {
       showSuccessToast('已移入回收站')
       router.back()

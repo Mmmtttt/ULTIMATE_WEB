@@ -73,6 +73,7 @@
       <MediaGrid 
         v-else 
         :items="pagedItems" 
+        :content-type="isVideoMode ? 'video' : 'comic'"
         :show-favorite="true"
         :is-favorited="isSaved"
         :selectable="isManageMode"
@@ -218,7 +219,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore } from '@/stores'
-import { recommendationApi, uiStateApi, videoApi } from '@/api'
+import { uiStateApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -587,9 +588,9 @@ async function batchImportToLocal() {
 
   let res
   if (isVideoMode.value) {
-    res = await videoApi.migrateRecommendationToLocal(selectedIds.value)
+    res = await videoRecStore.migrateToLocal(selectedIds.value)
   } else {
-    res = await recommendationApi.migrateToLocal(selectedIds.value)
+    res = await comicRecStore.migrateToLocal(selectedIds.value)
   }
 
   if (!res || res.code !== 200) {
@@ -621,7 +622,7 @@ async function batchTrash() {
       return
     }
   } else {
-    const res = await recommendationApi.batchMoveToTrash(selectedIds.value)
+    const res = await comicRecStore.batchMoveToTrash(selectedIds.value)
     if (res.code !== 200) {
       showToast(res.msg || '移入回收站失败')
       return
