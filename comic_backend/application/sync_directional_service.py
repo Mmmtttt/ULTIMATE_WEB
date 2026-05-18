@@ -40,7 +40,7 @@ from core.host_platform_fallback import (
 )
 from core.enums import ContentType
 from infrastructure.logger import app_logger
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from application.tag_content_type_guard import filter_tag_ids_by_type_lookup, normalize_tag_content_type
 
 
@@ -2607,7 +2607,11 @@ class DirectionalSyncService:
     def _apply_dataset(self, cfg: Dict[str, Any], payload: Any) -> Dict[str, Any]:
         if cfg.get("kind") == "dict":
             incoming = payload if isinstance(payload, dict) else {}
-            storage = JsonStorage(cfg["file"])
+            storage = JsonDocumentRepository(
+                cfg["file"],
+                cfg["root_key"],
+                root_type="dict",
+            )
             stats = {"added": 0, "updated": 0, "skipped": 0, "status": "applied"}
 
             def _updater(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2625,11 +2629,15 @@ class DirectionalSyncService:
                     stats["skipped"] += 1
                 return data
 
-            storage.atomic_update(_updater)
+            storage.atomic_update_document(_updater)
             return stats
 
         incoming_rows = payload if isinstance(payload, list) else []
-        storage = JsonStorage(cfg["file"])
+        storage = JsonDocumentRepository(
+            cfg["file"],
+            cfg["root_key"],
+            str(cfg.get("count_key", "")).strip(),
+        )
         stats = {"added": 0, "updated": 0, "skipped": 0, "status": "applied"}
         id_key = cfg.get("id_key", "id")
         dataset_path = str(cfg.get("root_key", "") or "")
@@ -2678,7 +2686,7 @@ class DirectionalSyncService:
             data["last_updated"] = _iso(_utc_now())
             return data
 
-        storage.atomic_update(_updater)
+        storage.atomic_update_document(_updater)
         return stats
 
     def _merge_row(self, existing: Dict[str, Any], incoming: Dict[str, Any]) -> bool:
@@ -2735,7 +2743,13 @@ class DirectionalSyncService:
             return repr(value)
 
     def _read_dataset(self, cfg: Dict[str, Any]) -> Any:
-        data = JsonStorage(cfg["file"]).read()
+        storage = JsonDocumentRepository(
+            cfg["file"],
+            cfg["root_key"],
+            str(cfg.get("count_key", "")).strip(),
+            root_type="dict" if cfg.get("kind") == "dict" else "list",
+        )
+        data = storage.read_document()
         if not isinstance(data, dict):
             return {} if cfg.get("kind") == "dict" else []
         payload = data.get(cfg["root_key"])

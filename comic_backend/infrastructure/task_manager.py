@@ -17,6 +17,7 @@ from core.constants import (
     RECOMMENDATION_JSON_FILE,
 )
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.repositories import JsonDocumentRepository
 
 
 class TaskStatus(Enum):
@@ -561,7 +562,6 @@ class TaskManager:
             sys.path.insert(0, project_root)
         
         from protocol.platform_service import get_platform_service
-        from infrastructure.persistence.json_storage import JsonStorage
         from application.comic_app_service import ComicAppService
         from core.constants import TAGS_JSON_FILE
         from core.utils import normalize_total_page
@@ -580,14 +580,18 @@ class TaskManager:
             comic_service = ComicAppService()
             
             # 从独立的标签数据库读取tag
-            tag_storage = JsonStorage(TAGS_JSON_FILE)
-            tag_db_data = tag_storage.read()
+            tag_storage = JsonDocumentRepository(TAGS_JSON_FILE, "tags", "total_tags")
+            tag_db_data = tag_storage.read_document()
             existing_tags = tag_db_data.get('tags', [])
             
             # 获取漫画/推荐漫画数据库文件
             db_file = JSON_FILE if task.target == 'home' else RECOMMENDATION_JSON_FILE
-            storage = JsonStorage(db_file)
-            db_data = storage.read()
+            storage = JsonDocumentRepository(
+                db_file,
+                "comics" if task.target == "home" else "recommendations",
+                "total_comics" if task.target == "home" else "total_recommendations",
+            )
+            db_data = storage.read_document()
             from core.utils import normalize_total_page
             
             # 使用 PlatformService 获取数据
@@ -724,7 +728,6 @@ class TaskManager:
             )
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
-            from infrastructure.persistence.json_storage import JsonStorage
             from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
             from core.utils import get_current_time
 
@@ -745,8 +748,12 @@ class TaskManager:
             preview_codes = set()
             preview_dirty = False
             if task.target == "recommendation":
-                preview_storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-                preview_db_data = preview_storage.read()
+                preview_storage = JsonDocumentRepository(
+                    VIDEO_RECOMMENDATION_JSON_FILE,
+                    "video_recommendations",
+                    "total_video_recommendations",
+                )
+                preview_db_data = preview_storage.read_document()
                 preview_codes = {
                     str((v or {}).get("code", "")).strip().upper()
                     for v in preview_db_data.get("video_recommendations", [])
@@ -922,7 +929,7 @@ class TaskManager:
                     error_logger.error(f"导入视频失败: {raw_lookup}, 错误: {item_error}")
 
             if preview_dirty and preview_storage:
-                if not preview_storage.write(preview_db_data):
+                if not preview_storage.write_document(preview_db_data):
                     return {"success": False, "error": "写入视频预览库失败"}
 
             if imported_ids:
@@ -1208,7 +1215,6 @@ class TaskManager:
     
     def _save_to_database(self, converted_data: Dict, target: str) -> int:
         """保存到数据库"""
-        from infrastructure.persistence.json_storage import JsonStorage
         from core.constants import TAGS_JSON_FILE
         from core.utils import normalize_total_page
         
@@ -1221,8 +1227,8 @@ class TaskManager:
             comics_key = 'recommendations'
             total_key = 'total_recommendations'
         
-        storage = JsonStorage(json_file)
-        db_data = storage.read()
+        storage = JsonDocumentRepository(json_file, comics_key, total_key)
+        db_data = storage.read_document()
         
         # 保存漫画/推荐漫画数据
         new_comics = converted_data.get('comics', [])
@@ -1230,8 +1236,8 @@ class TaskManager:
         actual_new_comics = [comic for comic in new_comics if comic['id'] not in existing_ids]
         
         # 处理tag保存到独立的标签数据库
-        tag_storage = JsonStorage(TAGS_JSON_FILE)
-        tag_db_data = tag_storage.read()
+        tag_storage = JsonDocumentRepository(TAGS_JSON_FILE, "tags", "total_tags")
+        tag_db_data = tag_storage.read_document()
 
         recent_import_tag_id = ""
         if actual_new_comics:
@@ -1266,13 +1272,13 @@ class TaskManager:
         
         # 更新tag_last_updated
         tag_db_data['last_updated'] = time.strftime("%Y-%m-%d")
-        tag_storage.write(tag_db_data)
+        tag_storage.write_document(tag_db_data)
         
         # 更新漫画/推荐漫画数据
         db_data[total_key] = len(db_data.get(comics_key, []))
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
-        storage.write(db_data)
+        storage.write_document(db_data)
         return len(actual_new_comics)
     
     def create_task(

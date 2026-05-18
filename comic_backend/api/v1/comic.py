@@ -10,6 +10,7 @@ from application.softref_comic_reader import (
 from application.softref_reader_protocol import require_softref_reader
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
@@ -21,6 +22,7 @@ from core.constants import (
     PICTURES_DIR,
     RECOMMENDATION_JSON_FILE,
     SUPPORTED_FORMATS,
+    TAGS_JSON_FILE,
 )
 from core.utils import normalize_total_page
 from protocol.compatibility import get_query_status_for_adapter_name
@@ -149,6 +151,18 @@ def _get_default_platform_name(media_type: str = "comic") -> str:
     return _resolve_manifest_platform_label(manifests[0])
 
 
+def _get_comic_document_repository(is_recommendation: bool = False) -> JsonDocumentRepository:
+    return JsonDocumentRepository(
+        RECOMMENDATION_JSON_FILE if is_recommendation else JSON_FILE,
+        "recommendations" if is_recommendation else "comics",
+        "total_recommendations" if is_recommendation else "total_comics",
+    )
+
+
+def _get_tag_document_repository() -> JsonDocumentRepository:
+    return JsonDocumentRepository(TAGS_JSON_FILE, "tags")
+
+
 @comic_bp.route('/init', methods=['POST'])
 def comic_init():
     try:
@@ -160,9 +174,8 @@ def comic_init():
         comic_id = data['comic_id']
         title = data.get('title', f"漫画_{comic_id}")
 
-        from infrastructure.persistence.json_storage import JsonStorage
-        storage = JsonStorage()
-        db_data = storage.read()
+        document_repo = _get_comic_document_repository(False)
+        db_data = document_repo.read_document()
         
         existing_comic = next((c for c in db_data.get('comics', []) if c['id'] == comic_id), None)
         if existing_comic:
@@ -194,7 +207,7 @@ def comic_init():
         db_data['total_comics'] = len(db_data['comics'])
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         app_logger.info(f"漫画初始化成功: {comic_id}")
@@ -819,9 +832,8 @@ def upload_comic():
         import tempfile
         import shutil
         
-        from infrastructure.persistence.json_storage import JsonStorage
-        storage = JsonStorage()
-        db_data = storage.read()
+        document_repo = _get_comic_document_repository(False)
+        db_data = document_repo.read_document()
         
         comics = db_data.get('comics', [])
         max_id = 1000000000
@@ -891,7 +903,7 @@ def upload_comic():
             db_data['total_comics'] = len(db_data['comics'])
             db_data['last_updated'] = time.strftime("%Y-%m-%d")
             
-            if not storage.write(db_data):
+            if not document_repo.write_document(db_data):
                 shutil.rmtree(comic_dir)
                 return error_response(500, "数据写入失败")
             
@@ -924,9 +936,8 @@ def batch_upload_comics():
         import tempfile
         import shutil
         
-        from infrastructure.persistence.json_storage import JsonStorage
-        storage = JsonStorage()
-        db_data = storage.read()
+        document_repo = _get_comic_document_repository(False)
+        db_data = document_repo.read_document()
         
         comics = db_data.get('comics', [])
         max_id = 1000000000
@@ -1022,7 +1033,7 @@ def batch_upload_comics():
         db_data['total_comics'] = len(db_data['comics'])
         db_data['last_updated'] = time.strftime("%Y-%m-%d")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         app_logger.info(f"批量上传漫画成功: {len(uploaded_comics)} 部")
@@ -1244,11 +1255,9 @@ def import_online():
         
         from protocol.adapter_api import get_album_by_id, search_albums, get_favorites
         from protocol.metadata_adapter import MetaDataAdapter, DuplicateChecker
-        from infrastructure.persistence.json_storage import JsonStorage
-        from core.constants import JSON_FILE as ACTIVE_JSON_FILE, RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE
-        
-        storage = JsonStorage(ACTIVE_JSON_FILE if not is_recommendation else ACTIVE_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+
+        document_repo = _get_comic_document_repository(is_recommendation)
+        db_data = document_repo.read_document()
         
         comics_key = 'recommendations' if is_recommendation else 'comics'
         total_key = 'total_recommendations' if is_recommendation else 'total_comics'
@@ -1257,8 +1266,7 @@ def import_online():
         checker = DuplicateChecker(existing_ids)
         
         # 无论导入到哪里，都从独立标签数据库读取标签
-        tag_storage = JsonStorage(TAGS_JSON_FILE)
-        tag_db_data = tag_storage.read()
+        tag_db_data = _get_tag_document_repository().read_document()
         existing_tags = tag_db_data.get('tags', [])
         adapter = MetaDataAdapter(
             is_recommendation=is_recommendation,
@@ -1396,8 +1404,8 @@ def import_online():
             tag_db_data['last_updated'] = time.strftime("%Y-%m-%d")
             tag_storage.write(tag_db_data)
         
-        if not storage.write(db_data):
-            return error_response(500, "数据写入失败")
+            if not document_repo.write_document(db_data):
+                return error_response(500, "数据写入失败")
         
         if not is_recommendation and downloaded_comics:
             try:
@@ -1806,10 +1814,7 @@ def import_async():
         if content_type == 'comic' and import_type == 'by_id' and comic_id:
             full_comic_id = _build_prefixed_id(host_prefix, comic_id)
             
-            from infrastructure.persistence.json_storage import JsonStorage
-            db_file = JSON_FILE if target == 'home' else RECOMMENDATION_JSON_FILE
-            storage = JsonStorage(db_file)
-            db_data = storage.read()
+            db_data = _get_comic_document_repository(target != 'home').read_document()
             comics_key = 'comics' if target == 'home' else 'recommendations'
             
             existing_ids = {c['id'] for c in db_data.get(comics_key, [])}

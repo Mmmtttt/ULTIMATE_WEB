@@ -6,7 +6,7 @@ from typing import Any, Dict
 from core.constants import UI_STATE_JSON_FILE
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import error_logger
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 
 
 def _now_iso() -> str:
@@ -14,8 +14,12 @@ def _now_iso() -> str:
 
 
 class UiStateAppService:
-    def __init__(self, storage: JsonStorage | None = None):
-        self._storage = storage or JsonStorage(UI_STATE_JSON_FILE)
+    def __init__(self, storage: JsonDocumentRepository | None = None):
+        self._storage = storage or JsonDocumentRepository(
+            UI_STATE_JSON_FILE,
+            "clients",
+            root_type="dict",
+        )
 
     @staticmethod
     def _empty_payload() -> Dict[str, Any]:
@@ -52,7 +56,7 @@ class UiStateAppService:
         return dict(raw_value)
 
     def _read_payload(self) -> Dict[str, Any]:
-        payload = self._storage.read()
+        payload = self._storage.read_document()
         if not isinstance(payload, dict):
             return self._empty_payload()
 
@@ -115,7 +119,7 @@ class UiStateAppService:
                 self._prune_empty_client(payload, normalized_client)
 
             payload["last_updated"] = _now_iso()
-            saved = self._storage.write(payload)
+            saved = self._storage.write_document(payload)
             if not saved:
                 return ServiceResult.error("保存 UI 状态失败")
 

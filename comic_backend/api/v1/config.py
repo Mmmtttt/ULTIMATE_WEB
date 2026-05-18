@@ -23,7 +23,7 @@ from core.constants import (
 )
 from core.runtime_profile import is_third_party_enabled, runtime_capabilities
 from infrastructure.logger import app_logger, error_logger
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from protocol.config_service import get_plugin_config_service
 from protocol.gateway import get_protocol_gateway
@@ -141,8 +141,12 @@ def _clear_directory_keep_root(dir_path):
 
 
 def _clear_preview_video_local_fields():
-    storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-    raw_data = storage.read() or {}
+    storage = JsonDocumentRepository(
+        VIDEO_RECOMMENDATION_JSON_FILE,
+        "video_recommendations",
+        "total_video_recommendations",
+    )
+    raw_data = storage.read_document()
     video_recommendations = raw_data.get("video_recommendations", [])
     if not isinstance(video_recommendations, list):
         return {"updated_count": 0, "removed_field_count": 0}
@@ -164,7 +168,7 @@ def _clear_preview_video_local_fields():
 
     if removed_field_count > 0:
         raw_data["video_recommendations"] = video_recommendations
-        if not storage.write(raw_data):
+        if not storage.write_document(raw_data):
             raise RuntimeError("写入预览库数据库失败")
 
     return {

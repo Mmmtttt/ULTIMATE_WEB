@@ -26,7 +26,7 @@ if not existing_utils_file.startswith(str(utils_root)):
 
 import application.local_comic_import_service as local_import_module
 from application.local_comic_import_service import LocalComicImportService
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 
 file_parser_module = importlib.import_module("utils.file_parser")
 image_handler_module = importlib.import_module("utils.image_handler")
@@ -57,8 +57,8 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     tags_json = meta_dir / "tags_database.json"
 
     service = LocalComicImportService()
-    service._db_storage = JsonStorage(str(comics_json))
-    service._tag_storage = JsonStorage(str(tags_json))
+    service._db_storage = JsonDocumentRepository(str(comics_json), "comics", "total_comics")
+    service._tag_storage = JsonDocumentRepository(str(tags_json), "tags", "total_tags")
 
     source_root = tmp_path / "source"
     work_dir = source_root / "作品A"
@@ -72,7 +72,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     assert result["imported_count"] == 1
     assert result["failed_count"] == 0
 
-    comics_data = service._db_storage.read()
+    comics_data = service._db_storage.read_document()
     assert len(comics_data.get("comics", [])) == 1
     comic = comics_data["comics"][0]
 
@@ -106,7 +106,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     local_tag_id = tag_ids[0]
     assert comic.get("score") == 8.0
 
-    tags_data = service._tag_storage.read()
+    tags_data = service._tag_storage.read_document()
     local_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "本地"), None)
     assert local_tag is not None
     assert local_tag.get("id") == local_tag_id

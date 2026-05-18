@@ -17,10 +17,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from application.persisted_content_metadata import normalize_data_relative_path
-from core.constants import CACHE_ROOT_DIR, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
+from core.constants import CACHE_ROOT_DIR, JSON_FILE, LOCAL_PICTURES_DIR, SUPPORTED_FORMATS, TAGS_JSON_FILE
 from infrastructure.archive import ensure_rar_backend_configured
 from infrastructure.logger import app_logger
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from protocol.platform_meta import build_platform_root_dir, resolve_manifest_host_prefix, split_prefixed_id
 from utils.file_parser import file_parser
 from utils.image_handler import image_handler
@@ -58,8 +58,8 @@ ensure_rar_backend_configured(logger=app_logger)
 
 class LocalComicImportService:
     def __init__(self):
-        self._db_storage = JsonStorage()
-        self._tag_storage = JsonStorage(TAGS_JSON_FILE)
+        self._db_storage = JsonDocumentRepository(JSON_FILE, "comics", "total_comics")
+        self._tag_storage = JsonDocumentRepository(TAGS_JSON_FILE, "tags", "total_tags")
         self._softref_cover_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="softref-cover")
 
     @staticmethod
@@ -1855,7 +1855,7 @@ class LocalComicImportService:
             result["tag_id"] = new_tag_id
             return data
 
-        ok = self._tag_storage.atomic_update(updater)
+        ok = self._tag_storage.atomic_update_document(updater)
         if not ok or not result["tag_id"]:
             raise RuntimeError("创建/查询本地标签失败")
         return result["tag_id"]
@@ -1917,7 +1917,7 @@ class LocalComicImportService:
                 data["last_updated"] = time.strftime("%Y-%m-%d")
             return data
 
-        ok = self._tag_storage.atomic_update(updater)
+        ok = self._tag_storage.atomic_update_document(updater)
         if not ok:
             raise RuntimeError("创建/查询漫画标签失败")
         for name in tag_names:
@@ -1966,7 +1966,7 @@ class LocalComicImportService:
             data["comics"] = comics
             return data
 
-        ok = self._db_storage.atomic_update(updater)
+        ok = self._db_storage.atomic_update_document(updater)
         return bool(ok and status["updated"])
 
     def _ensure_comic_has_tag(self, comic_id: str, tag_id: str) -> bool:
@@ -2056,7 +2056,7 @@ class LocalComicImportService:
             status["inserted"] = True
             return data
 
-        ok = self._db_storage.atomic_update(updater)
+        ok = self._db_storage.atomic_update_document(updater)
         return ok, bool(status["inserted"])
 
     def _update_softref_cover_path(self, comic_id: str, cover_path: str) -> bool:
@@ -2086,7 +2086,7 @@ class LocalComicImportService:
                 return data
             return data
 
-        self._db_storage.atomic_update(updater)
+        self._db_storage.atomic_update_document(updater)
         return bool(updated["ok"])
 
     @staticmethod
@@ -2258,7 +2258,7 @@ class LocalComicImportService:
             all_tag_names.extend(self._normalize_entry_tag_names(entry.get("标签名称列表")))
         tag_id_map = self._ensure_comic_tag_ids(all_tag_names) if all_tag_names else {}
 
-        db_data = self._db_storage.read()
+        db_data = self._db_storage.read_document()
         comics = db_data.get("comics", [])
         existing_ids = {str(item.get("id", "")) for item in comics if str(item.get("id", "")).strip()}
         existing_source_map = {

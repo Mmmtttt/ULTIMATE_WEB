@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.constants import CACHE_ROOT_DIR, JSON_FILE, SUPPORTED_FORMATS
 from infrastructure.archive import ensure_rar_backend_configured
-from infrastructure.persistence.json_storage import JsonStorage
 from application.softref_reader_protocol import register_softref_reader
+from infrastructure.persistence.repositories import JsonDocumentRepository
 
 try:
     import py7zr  # type: ignore
@@ -64,7 +64,7 @@ class SoftRefComicReader:
 
     def __init__(self):
         ensure_rar_backend_configured()
-        self._db_storage = JsonStorage(JSON_FILE)
+        self._db_storage = JsonDocumentRepository(JSON_FILE, "comics", "total_comics")
         self._index_cache: Dict[str, Dict[str, Any]] = {}
         self._nested_archive_cache: "OrderedDict[str, bytes]" = OrderedDict()
         self._nested_archive_cache_total_bytes = 0
@@ -339,7 +339,7 @@ class SoftRefComicReader:
         return password or None
 
     def _get_raw_comic_record(self, comic_id: str) -> Optional[Dict[str, Any]]:
-        data = self._db_storage.read()
+        data = self._db_storage.read_document()
         comics = data.get("comics", []) if isinstance(data, dict) else []
         for item in comics:
             if str((item or {}).get("id", "")) == str(comic_id):

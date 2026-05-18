@@ -19,7 +19,9 @@ from application.video_runtime_support import (
 )
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from core.host_platform_fallback import infer_host_video_platform, merge_host_video_display
+from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
 from core.utils import get_current_time
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
@@ -82,6 +84,14 @@ def _get_video_proxy_client():
 def _build_play_sources(code: str):
     client = _get_video_proxy_client()
     return client.build_sources(code)
+
+
+def _get_video_recommendation_document_repository() -> JsonDocumentRepository:
+    return JsonDocumentRepository(
+        VIDEO_RECOMMENDATION_JSON_FILE,
+        "video_recommendations",
+        "total_video_recommendations",
+    )
 
 
 @video_bp.route('/list', methods=['GET'])
@@ -1757,7 +1767,6 @@ def third_party_import():
         
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
         
         tag_service = TagAppService()
         existing_tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
@@ -1864,7 +1873,6 @@ def third_party_import():
             else:
                 return error_response(400, result.message)
         else:
-            from infrastructure.persistence.json_storage import JsonStorage
             from application.tag_app_service import TagAppService
             from domain.tag.entity import ContentType
             
@@ -1886,9 +1894,8 @@ def third_party_import():
                 if tag_name in tag_name_to_id:
                     video_tag_ids.append(tag_name_to_id[tag_name])
             
-            db_file = VIDEO_RECOMMENDATION_JSON_FILE
-            storage = JsonStorage(db_file)
-            db_data = storage.read()
+            document_repo = _get_video_recommendation_document_repository()
+            db_data = document_repo.read_document()
             videos_key = 'video_recommendations'
 
             existing_codes = {
@@ -1944,7 +1951,7 @@ def third_party_import():
                 db_data[videos_key] = []
             db_data[videos_key].append(video_data)
             
-            if not storage.write(db_data):
+            if not document_repo.write_document(db_data):
                 return error_response(500, "数据写入失败")
             
             _schedule_video_asset_cache(
@@ -1984,23 +1991,21 @@ def third_party_import():
 def get_video_recommendation_list():
     """获取推荐视频列表"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
-        
+
         sort_type = request.args.get('sort_type')
         sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
-        
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
-        
+
         tag_service = TagAppService()
         tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         tag_map = {t["id"]: t["name"] for t in tags}
-        
+
         filtered_videos = []
         persisted_changed = False
         for video in videos:
@@ -2017,8 +2022,8 @@ def get_video_recommendation_list():
             )
 
         if persisted_changed:
-            storage.write(db_data)
-        
+            document_repo.write_document(db_data)
+
         reverse = str(sort_order or 'desc').strip().lower() != 'asc'
 
         if sort_type == 'score':
@@ -2027,7 +2032,7 @@ def get_video_recommendation_list():
             filtered_videos.sort(key=lambda x: (x.get('date') or ''), reverse=reverse)
         else:
             filtered_videos.sort(key=lambda x: (x.get('create_time') or ''), reverse=reverse)
-        
+
         return success_response(filtered_videos)
     except Exception as e:
         error_logger.error(f"获取推荐视频列表失败: {e}")
@@ -2038,8 +2043,6 @@ def get_video_recommendation_list():
 def get_video_recommendation_detail():
     """获取推荐视频详情"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
         
@@ -2047,8 +2050,8 @@ def get_video_recommendation_detail():
         if not video_id:
             return error_response(400, "缺少参数: video_id")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         tag_service = TagAppService()
@@ -2058,7 +2061,7 @@ def get_video_recommendation_detail():
         for video in videos:
             if video.get('id') == video_id:
                 if _refresh_preview_video_persisted_fields(video):
-                    storage.write(db_data)
+                    document_repo.write_document(db_data)
                 detail = _decorate_video_recommendation_item(
                     video,
                     tag_map=tag_map,
@@ -2127,9 +2130,6 @@ def migrate_video_recommendations_to_local():
 def edit_video_recommendation():
     """编辑推荐视频元数据"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         if not data or 'video_id' not in data:
             return error_response(400, "缺少参数: video_id")
@@ -2146,8 +2146,8 @@ def edit_video_recommendation():
         }
         meta = {k: v for k, v in meta.items() if v is not None}
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         found = False
@@ -2160,7 +2160,7 @@ def edit_video_recommendation():
         if not found:
             return error_response(404, "视频不存在")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         app_logger.info(f"编辑推荐视频成功: {video_id}")
@@ -2174,9 +2174,6 @@ def edit_video_recommendation():
 def bind_video_recommendation_tags():
     """绑定推荐视频标签"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         if not data or 'video_id' not in data or 'tag_id_list' not in data:
             return error_response(400, "缺少参数: video_id 或 tag_id_list")
@@ -2191,8 +2188,8 @@ def bind_video_recommendation_tags():
         if validation_error:
             return error_response(400, validation_error)
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         found = False
@@ -2205,7 +2202,7 @@ def bind_video_recommendation_tags():
         if not found:
             return error_response(404, "视频不存在")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         app_logger.info(f"绑定推荐视频标签成功: {video_id}, 标签: {validated_tag_ids}")
@@ -2219,9 +2216,6 @@ def bind_video_recommendation_tags():
 def update_video_recommendation_score():
     """更新推荐视频评分"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_id = data.get('video_id')
         score = data.get('score')
@@ -2229,8 +2223,8 @@ def update_video_recommendation_score():
         if not video_id or score is None:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         found = False
@@ -2243,7 +2237,7 @@ def update_video_recommendation_score():
         if not found:
             return error_response(404, "视频不存在")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         return success_response({"message": "评分更新成功"})
@@ -2256,17 +2250,14 @@ def update_video_recommendation_score():
 def move_video_recommendation_to_trash():
     """移动推荐视频到回收站"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_id = data.get('video_id')
         
         if not video_id:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         found = False
@@ -2280,7 +2271,7 @@ def move_video_recommendation_to_trash():
         if not found:
             return error_response(404, "视频不存在")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         return success_response({"message": "已移入回收站"})
@@ -2293,17 +2284,14 @@ def move_video_recommendation_to_trash():
 def batch_move_video_recommendation_to_trash():
     """批量移动推荐视频到回收站"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_ids = data.get('video_ids', [])
         
         if not video_ids:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         count = 0
@@ -2313,7 +2301,7 @@ def batch_move_video_recommendation_to_trash():
                 video['deleted_time'] = get_current_time()
                 count += 1
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         return success_response({"moved_count": count}, f"已将 {count} 个视频移入回收站")
@@ -2326,13 +2314,11 @@ def batch_move_video_recommendation_to_trash():
 def get_video_recommendation_trash_list():
     """获取推荐视频回收站列表"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
-        
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         tag_service = TagAppService()
@@ -2357,17 +2343,14 @@ def get_video_recommendation_trash_list():
 def restore_video_recommendation_from_trash():
     """从回收站恢复推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_id = data.get('video_id')
         
         if not video_id:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         found = False
@@ -2382,7 +2365,7 @@ def restore_video_recommendation_from_trash():
         if not found:
             return error_response(404, "视频不存在")
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         app_logger.info(f"推荐视频从回收站恢复: {video_id}")
@@ -2396,15 +2379,12 @@ def restore_video_recommendation_from_trash():
 def delete_video_recommendation_permanently():
     """永久删除推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         video_id = request.args.get('video_id')
         if not video_id:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         original_count = len(videos)
@@ -2422,7 +2402,7 @@ def delete_video_recommendation_permanently():
         
         db_data['video_recommendations'] = videos
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         video_service.delete_recommendation_assets(
@@ -2446,17 +2426,14 @@ def delete_video_recommendation_permanently():
 def batch_restore_video_recommendation_from_trash():
     """批量从回收站恢复推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_ids = data.get('video_ids', [])
         
         if not video_ids:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         count = 0
@@ -2467,7 +2444,7 @@ def batch_restore_video_recommendation_from_trash():
                     del video['deleted_time']
                 count += 1
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         return success_response({"restored_count": count}, f"已恢复 {count} 个视频")
@@ -2480,17 +2457,14 @@ def batch_restore_video_recommendation_from_trash():
 def batch_delete_video_recommendation_permanently():
     """批量永久删除推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
         data = request.json
         video_ids = data.get('video_ids', [])
         
         if not video_ids:
             return error_response(400, "缺少参数")
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         original_count = len(videos)
@@ -2508,7 +2482,7 @@ def batch_delete_video_recommendation_permanently():
         
         db_data['video_recommendations'] = remaining_videos
         
-        if not storage.write(db_data):
+        if not document_repo.write_document(db_data):
             return error_response(500, "数据写入失败")
         
         for video in videos_to_delete:
@@ -2533,8 +2507,6 @@ def batch_delete_video_recommendation_permanently():
 def search_video_recommendations():
     """搜索推荐视频"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
         from application.tag_app_service import TagAppService
         from domain.tag.entity import ContentType
         
@@ -2544,8 +2516,8 @@ def search_video_recommendations():
         
         keyword = keyword.lower()
         
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         tag_service = TagAppService()
@@ -2619,11 +2591,8 @@ def filter_video_recommendations():
 def get_video_recommendation_play_urls(video_id):
     """获取推荐视频播放链接（从 MissAV 和 Jable 提取）"""
     try:
-        from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
-        from infrastructure.persistence.json_storage import JsonStorage
-        
-        storage = JsonStorage(VIDEO_RECOMMENDATION_JSON_FILE)
-        db_data = storage.read()
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
         
         video = None

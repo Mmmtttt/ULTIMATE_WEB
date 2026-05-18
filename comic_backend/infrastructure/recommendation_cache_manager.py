@@ -20,7 +20,7 @@ from core.host_platform_fallback import (
     build_host_recommendation_cache_dir,
     infer_existing_host_recommendation_cache_dir,
 )
-from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories import JsonDocumentRepository
 from protocol.platform_meta import (
     build_platform_root_dir,
     resolve_manifest_host_prefix,
@@ -77,8 +77,12 @@ class RecommendationCacheManager:
         recommendation = {}
         stored_abs = ""
         try:
-            storage = JsonStorage(RECOMMENDATION_JSON_FILE)
-            db_data = storage.read()
+            storage = JsonDocumentRepository(
+                RECOMMENDATION_JSON_FILE,
+                "recommendations",
+                "total_recommendations",
+            )
+            db_data = storage.read_document()
             recommendations = db_data.get("recommendations", [])
             recommendation = next((rec for rec in recommendations if rec.get("id") == comic_id), {}) or {}
             stored_relative = str(recommendation.get("storage_path_relative", "")).strip()

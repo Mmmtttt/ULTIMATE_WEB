@@ -11,6 +11,7 @@ from core.constants import (
     RECOMMENDATION_JSON_FILE,
 )
 from infrastructure.logger import app_logger, error_logger
+from infrastructure.persistence.repositories import JsonDocumentRepository
 
 
 class FileParser:
@@ -29,14 +30,12 @@ class FileParser:
     @staticmethod
     def _find_comic_record(comic_id):
         try:
-            from infrastructure.persistence.json_storage import JsonStorage
-
             for json_file, data_key in (
                 (JSON_FILE, "comics"),
                 (RECOMMENDATION_JSON_FILE, "recommendations"),
             ):
-                storage = JsonStorage(json_file)
-                db_data = storage.read()
+                storage = JsonDocumentRepository(json_file, data_key)
+                db_data = storage.read_document()
                 for item in db_data.get(data_key, []) or []:
                     if str(item.get("id", "")).strip() == str(comic_id or "").strip():
                         return item
