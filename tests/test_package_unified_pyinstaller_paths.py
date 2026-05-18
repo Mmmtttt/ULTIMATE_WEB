@@ -171,6 +171,79 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_write_external_plugin_dependency_scripts_are_idempotent_and_fail_fast():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_plugin_deps_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        plugin_root = temp_dir / "plugins" / "javdb-api-scraper"
+        _write_manifest(
+            plugin_root,
+            "video.javdb",
+            packaging={"external": {"pip_requirements": ["curl_cffi>=0.6.0", "lxml>=4.9.0"]}},
+        )
+
+        package_unified.write_external_plugin_dependency_scripts(temp_dir, [plugin_root])
+
+        ps1_text = (temp_dir / "install_plugin_deps.ps1").read_text(encoding="utf-8")
+        sh_text = (temp_dir / "install_plugin_deps.sh").read_text(encoding="utf-8")
+
+        assert ".ultimate_vendor_state.json" in ps1_text
+        assert ".ultimate_vendor_state.json" in sh_text
+        assert "--upgrade" not in ps1_text
+        assert "--upgrade" not in sh_text
+        assert "already installed" in ps1_text
+        assert "already installed" in sh_text
+        assert "$LASTEXITCODE" in ps1_text
+        assert "python version mismatch" in ps1_text
+        assert "python version mismatch" in sh_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_install_external_plugin_dependencies_writes_state_and_skips_repeat_install(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_plugin_state_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        plugin_root = temp_dir / "plugins" / "JMComic-Crawler-Python"
+        _write_manifest(
+            plugin_root,
+            "comic.jmcomic",
+            packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
+        )
+
+        call_log = []
+
+        def fake_run_cmd(cmd, cwd, env=None):
+            call_log.append({"cmd": list(cmd), "cwd": str(cwd)})
+            vendor_target = Path(cmd[cmd.index("--target") + 1])
+            vendor_target.mkdir(parents=True, exist_ok=True)
+            (vendor_target / "installed.txt").write_text("ok", encoding="utf-8")
+            return 0, "installed"
+
+        monkeypatch.setattr(package_unified, "run_cmd", fake_run_cmd)
+
+        ok_first, output_first = package_unified.install_external_plugin_dependencies(temp_dir, [plugin_root])
+        ok_second, output_second = package_unified.install_external_plugin_dependencies(temp_dir, [plugin_root])
+
+        state_path = plugin_root / package_unified.get_external_plugin_dependency_state_filename()
+        assert ok_first is True
+        assert ok_second is True
+        assert len(call_log) == 1
+        assert state_path.exists()
+        assert "installed" in output_first
+        assert "already installed" in output_second
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_desktop_bundle_scripts_export_external_plugin_root():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"

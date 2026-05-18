@@ -18,6 +18,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1938,6 +1939,14 @@ def get_external_plugin_vendor_relative_dir() -> Path:
     return Path("vendor") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
 
 
+def get_external_plugin_dependency_state_filename() -> str:
+    return ".ultimate_vendor_state.json"
+
+
+def get_external_plugin_dependency_state_path(plugin_root: Path) -> Path:
+    return plugin_root / get_external_plugin_dependency_state_filename()
+
+
 def _collect_external_plugin_requirements(payload: Dict[str, Any]) -> List[str]:
     packaging = dict(payload.get("packaging") or {})
     external = dict(packaging.get("external") or {})
@@ -1952,10 +1961,18 @@ def collect_external_plugin_metadata(plugin_root: Path) -> Dict[str, Any]:
     for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
         payload = load_json(manifest_path)
         requirements.extend(_collect_external_plugin_requirements(payload))
+    vendor_relative_dir = str(get_external_plugin_vendor_relative_dir()).replace("\\", "/")
     return {
         "root": str(plugin_root),
         "requirements": _normalize_string_list(requirements),
-        "vendor_relative_dir": str(get_external_plugin_vendor_relative_dir()).replace("\\", "/"),
+        "vendor_relative_dir": vendor_relative_dir,
+        "python_tag": current_plugin_python_tag(),
+        "state_filename": get_external_plugin_dependency_state_filename(),
+        "state_payload": {
+            "requirements": _normalize_string_list(requirements),
+            "vendor_relative_dir": vendor_relative_dir,
+            "python_tag": current_plugin_python_tag(),
+        },
     }
 
 
@@ -1983,9 +2000,45 @@ def copy_external_plugins_to_bundle(staged_backend: Path, bundle_dir: Path) -> L
     return copied_roots
 
 
+def _serialize_external_plugin_dependency_state(metadata: Dict[str, Any]) -> str:
+    payload = dict(metadata.get("state_payload") or {})
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _external_plugin_dependency_install_is_current(plugin_root: Path, metadata: Dict[str, Any]) -> bool:
+    vendor_relative_dir = str(metadata.get("vendor_relative_dir") or "").strip()
+    if not vendor_relative_dir:
+        return False
+    vendor_target = plugin_root / Path(vendor_relative_dir)
+    state_path = get_external_plugin_dependency_state_path(plugin_root)
+    if not vendor_target.exists() or not state_path.exists():
+        return False
+    try:
+        if not any(vendor_target.iterdir()):
+            return False
+    except OSError:
+        return False
+    try:
+        actual = state_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return actual == _serialize_external_plugin_dependency_state(metadata)
+
+
+def _write_external_plugin_dependency_state(plugin_root: Path, metadata: Dict[str, Any]) -> None:
+    write_text(
+        get_external_plugin_dependency_state_path(plugin_root),
+        _serialize_external_plugin_dependency_state(metadata) + "\n",
+    )
+
+
+def _quote_powershell_single(text: str) -> str:
+    return "'" + str(text or "").replace("'", "''") + "'"
+
+
 def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: List[Path]) -> List[List[str]]:
     commands: List[List[str]] = []
-    script_specs: List[Tuple[str, str]] = []
+    script_specs: List[Dict[str, str]] = []
     for plugin_root in plugin_roots:
         metadata = collect_external_plugin_metadata(plugin_root)
         requirements = list(metadata.get("requirements") or [])
@@ -1994,41 +2047,96 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
         vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
         vendor_target.mkdir(parents=True, exist_ok=True)
         relative_vendor_target = vendor_target.relative_to(bundle_dir).as_posix()
+        state_path = get_external_plugin_dependency_state_path(plugin_root)
+        relative_state_path = state_path.relative_to(bundle_dir).as_posix()
         commands.append(
             [
                 sys.executable,
                 "-m",
                 "pip",
                 "install",
-                "--upgrade",
                 "--target",
                 str(vendor_target),
                 *requirements,
             ]
         )
-        script_specs.append((relative_vendor_target, " ".join(requirements)))
+        script_specs.append(
+            {
+                "plugin_name": plugin_root.name,
+                "relative_vendor_target": relative_vendor_target,
+                "relative_state_path": relative_state_path,
+                "requirements": " ".join(requirements),
+                "requirements_ps": " ".join(_quote_powershell_single(item) for item in requirements),
+                "requirements_shell": " ".join(shlex.quote(item) for item in requirements),
+                "expected_state": _serialize_external_plugin_dependency_state(metadata),
+            }
+        )
 
     ps1_lines = [
         "$ErrorActionPreference = 'Stop'",
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
         "$pythonCmd = Get-Command python -ErrorAction SilentlyContinue",
         "if (-not $pythonCmd) { throw 'python command not found' }",
+        f"$expectedPyTag = {_quote_powershell_single(current_plugin_python_tag())}",
+        "$actualPyTag = (& $pythonCmd.Source -c \"import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')\").Trim()",
+        "if ($LASTEXITCODE -ne 0) { throw 'failed to probe python version' }",
+        "if ($actualPyTag -ne $expectedPyTag) { throw \"python version mismatch: expected $expectedPyTag, got $actualPyTag\" }",
     ]
     sh_lines = [
         "#!/usr/bin/env sh",
         "set -e",
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"",
         "if command -v python3 >/dev/null 2>&1; then PYTHON_CMD=python3; else PYTHON_CMD=python; fi",
+        f"EXPECTED_PY_TAG={shlex.quote(current_plugin_python_tag())}",
+        "ACTUAL_PY_TAG=\"$($PYTHON_CMD -c 'import sys; print(f\"py{sys.version_info.major}{sys.version_info.minor}\")')\"",
+        "if [ \"$ACTUAL_PY_TAG\" != \"$EXPECTED_PY_TAG\" ]; then",
+        "  echo \"python version mismatch: expected $EXPECTED_PY_TAG, got $ACTUAL_PY_TAG\" >&2",
+        "  exit 1",
+        "fi",
     ]
-    for relative_vendor_target, requirements in script_specs:
+    for spec in script_specs:
+        expected_state_ps = _quote_powershell_single(spec["expected_state"])
         ps1_lines.append(
-            f"& $pythonCmd.Source -m pip install --upgrade --target "
-            f"\"$scriptDir/{relative_vendor_target}\" {requirements}"
+            f"$vendorPath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_vendor_target'].replace('/', '\\'))}"
         )
+        ps1_lines.append(
+            f"$statePath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_state_path'].replace('/', '\\'))}"
+        )
+        ps1_lines.append(f"$expectedState = {expected_state_ps}")
+        ps1_lines.append("New-Item -ItemType Directory -Force -Path $vendorPath | Out-Null")
+        ps1_lines.append(
+            f"if ((Test-Path $statePath) -and (Test-Path $vendorPath) -and "
+            f"(@(Get-ChildItem -Force $vendorPath -ErrorAction SilentlyContinue).Count -gt 0) -and "
+            f"((Get-Content -Raw -Path $statePath).Trim() -eq $expectedState)) "
+            f"{{ Write-Host \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\" }}"
+        )
+        ps1_lines.append("else {")
+        ps1_lines.append(
+            f"  & $pythonCmd.Source -m pip install --target $vendorPath {spec['requirements_ps']}"
+        )
+        ps1_lines.append(
+            f"  if ($LASTEXITCODE -ne 0) {{ throw \"plugin dependency install failed: {spec['plugin_name']}\" }}"
+        )
+        ps1_lines.append("  Set-Content -Path $statePath -Value $expectedState -Encoding UTF8")
+        ps1_lines.append("}")
+
         sh_lines.append(
-            f"\"$PYTHON_CMD\" -m pip install --upgrade --target "
-            f"\"$SCRIPT_DIR/{relative_vendor_target}\" {requirements}"
+            f"VENDOR_PATH=\"$SCRIPT_DIR/{spec['relative_vendor_target']}\""
         )
+        sh_lines.append(f"STATE_PATH=\"$SCRIPT_DIR/{spec['relative_state_path']}\"")
+        sh_lines.append(f"EXPECTED_STATE={shlex.quote(spec['expected_state'])}")
+        sh_lines.append("mkdir -p \"$VENDOR_PATH\"")
+        sh_lines.append(
+            f"if [ -f \"$STATE_PATH\" ] && [ -n \"$(ls -A \"$VENDOR_PATH\" 2>/dev/null)\" ] "
+            f"&& [ \"$(tr -d '\\r\\n' < \"$STATE_PATH\")\" = \"$EXPECTED_STATE\" ]; then"
+        )
+        sh_lines.append(f"  echo \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\"")
+        sh_lines.append("else")
+        sh_lines.append(
+            f"  \"$PYTHON_CMD\" -m pip install --target \"$VENDOR_PATH\" {spec['requirements_shell']}"
+        )
+        sh_lines.append("  printf '%s' \"$EXPECTED_STATE\" > \"$STATE_PATH\"")
+        sh_lines.append("fi")
 
     write_text(bundle_dir / "install_plugin_deps.ps1", "\n".join(ps1_lines) + "\n")
     sh_path = bundle_dir / "install_plugin_deps.sh"
@@ -2047,6 +2155,9 @@ def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Pa
         requirements = list(metadata.get("requirements") or [])
         if not requirements:
             continue
+        if _external_plugin_dependency_install_is_current(plugin_root, metadata):
+            outputs.append(f"skip {plugin_root.name}: plugin dependencies already installed")
+            continue
         vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
         vendor_target.mkdir(parents=True, exist_ok=True)
         cmd = [
@@ -2054,7 +2165,6 @@ def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Pa
             "-m",
             "pip",
             "install",
-            "--upgrade",
             "--target",
             str(vendor_target),
             *requirements,
@@ -2063,6 +2173,7 @@ def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Pa
         outputs.append(output)
         if code != 0:
             return False, output
+        _write_external_plugin_dependency_state(plugin_root, metadata)
     return True, "\n".join(outputs)
 
 
