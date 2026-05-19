@@ -173,8 +173,10 @@ class ComicAppService:
                     error_logger.error(f"回填漫画存储路径失败（列表）: {c.id}, {persisted_error}")
 
                 # 确保封面存在（对未落地封面的内容，必要时用第 1 张图片生成）
+                # 仅对封面缺失或默认封面的漫画触发修复，避免对已有有效封面的漫画做磁盘 I/O
                 try:
-                    self._ensure_cover(c)
+                    if self._is_missing_cover_path(c.cover_path):
+                        self._ensure_cover(c)
                 except Exception as e:
                     error_logger.error(f"确保漫画封面失败（列表）: {c.id}, {e}")
 
