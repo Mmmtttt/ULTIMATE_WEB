@@ -41,6 +41,69 @@ DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg
 HOST_OVERLAY_FILENAME = "ultimate-host.json"
 MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
+DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
+    "email",
+    "html",
+    "http",
+    "urllib",
+    "xml",
+)
+DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS = (
+    "base64",
+    "bz2",
+    "concurrent.futures",
+    "concurrent.futures.thread",
+    "datetime",
+    "email.encoders",
+    "email.generator",
+    "email.header",
+    "email.message",
+    "email.mime",
+    "email.mime.application",
+    "email.mime.audio",
+    "email.mime.base",
+    "email.mime.image",
+    "email.mime.message",
+    "email.mime.multipart",
+    "email.mime.nonmultipart",
+    "email.mime.text",
+    "email.parser",
+    "email.policy",
+    "email.utils",
+    "gzip",
+    "hashlib",
+    "hmac",
+    "html.entities",
+    "html.parser",
+    "http.client",
+    "http.cookiejar",
+    "http.cookies",
+    "importlib.metadata",
+    "importlib.resources",
+    "lzma",
+    "mimetypes",
+    "netrc",
+    "queue",
+    "secrets",
+    "selectors",
+    "socket",
+    "ssl",
+    "threading",
+    "urllib.error",
+    "urllib.parse",
+    "urllib.request",
+    "urllib.response",
+    "urllib.robotparser",
+    "uuid",
+    "xml.dom",
+    "xml.dom.minidom",
+    "xml.etree",
+    "xml.etree.ElementPath",
+    "xml.etree.ElementTree",
+    "xml.parsers",
+    "xml.parsers.expat",
+    "zlib",
+)
 
 
 @dataclass
@@ -166,6 +229,11 @@ def select_targets(targets: List[str], requested: str) -> List[str]:
 def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def append_repeated_cli_option(cmd: List[str], option: str, values: List[str] | Tuple[str, ...]) -> None:
+    for value in _normalize_string_list(values):
+        cmd.extend([option, value])
 
 
 def has_non_ascii_path(path: Path) -> bool:
@@ -2425,8 +2493,10 @@ def write_pyinstaller_scripts(
         "--hidden-import", "third_party.platform_service",
         "--hidden-import", "third_party.adapter",
         "--hidden-import", "third_party.credential_guard",
-        entry,
     ]
+    append_repeated_cli_option(cmd, "--collect-submodules", DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES)
+    append_repeated_cli_option(cmd, "--hidden-import", DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS)
+    cmd.append(entry)
     
     if server_config_src.exists():
         cmd.insert(-1, f"--add-data")

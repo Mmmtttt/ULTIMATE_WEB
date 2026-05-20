@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
@@ -116,14 +117,27 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
         )
 
         collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
+        collect_submodules_args = [
+            cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-submodules"
+        ]
         hidden_import_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--hidden-import"]
 
+        assert cmd[-1] == "comic_backend/app.py"
         assert "common" not in collect_all_args
         assert "Crypto" not in collect_all_args
         assert "curl_cffi" not in collect_all_args
         assert "lxml" not in collect_all_args
         assert "cffi" not in collect_all_args
         assert "curl_cffi._wrapper" not in hidden_import_args
+        assert "email" in collect_submodules_args
+        assert "http" in collect_submodules_args
+        assert "urllib" in collect_submodules_args
+        assert "xml" in collect_submodules_args
+        assert "email.mime" in hidden_import_args
+        assert "email.mime.multipart" in hidden_import_args
+        assert "email.mime.text" in hidden_import_args
+        assert "http.cookiejar" in hidden_import_args
+        assert "urllib.request" in hidden_import_args
         assert "protocol.credential_guard" in hidden_import_args
         assert "third_party" in hidden_import_args
         assert "third_party.external_api" in hidden_import_args
@@ -132,6 +146,13 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
         assert "third_party.credential_guard" in hidden_import_args
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_desktop_plugin_runtime_hidden_imports_are_importable_stdlib_modules():
+    package_unified = _load_package_unified_module()
+
+    for module_name in package_unified.DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS:
+        importlib.import_module(module_name)
 
 
 def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
