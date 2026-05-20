@@ -2419,6 +2419,12 @@ def write_pyinstaller_scripts(
         "--collect-all", "PIL",
         "--collect-all", "bs4",
         "--hidden-import", "_multiprocessing",
+        "--hidden-import", "protocol.credential_guard",
+        "--hidden-import", "third_party",
+        "--hidden-import", "third_party.external_api",
+        "--hidden-import", "third_party.platform_service",
+        "--hidden-import", "third_party.adapter",
+        "--hidden-import", "third_party.credential_guard",
         entry,
     ]
     

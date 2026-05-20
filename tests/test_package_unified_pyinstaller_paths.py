@@ -124,6 +124,12 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
         assert "lxml" not in collect_all_args
         assert "cffi" not in collect_all_args
         assert "curl_cffi._wrapper" not in hidden_import_args
+        assert "protocol.credential_guard" in hidden_import_args
+        assert "third_party" in hidden_import_args
+        assert "third_party.external_api" in hidden_import_args
+        assert "third_party.platform_service" in hidden_import_args
+        assert "third_party.adapter" in hidden_import_args
+        assert "third_party.credential_guard" in hidden_import_args
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
