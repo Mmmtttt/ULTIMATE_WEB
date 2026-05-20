@@ -41,6 +41,13 @@ DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg
 HOST_OVERLAY_FILENAME = "ultimate-host.json"
 MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
+PLUGIN_PACKAGE_MODE_EXTERNAL = "external"
+PLUGIN_PACKAGE_MODE_BUNDLED = "bundled"
+PLUGIN_PACKAGE_MODES = (
+    PLUGIN_PACKAGE_MODE_EXTERNAL,
+    PLUGIN_PACKAGE_MODE_BUNDLED,
+)
+DEFAULT_PLUGIN_PACKAGE_MODE = PLUGIN_PACKAGE_MODE_EXTERNAL
 DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
     "email",
     "html",
@@ -133,6 +140,24 @@ def parse_runtime_env(path: Path) -> Dict[str, str]:
         key, val = line.split("=", 1)
         values[key.strip()] = val.strip()
     return values
+
+
+def normalize_plugin_package_mode(raw: str, default: str = DEFAULT_PLUGIN_PACKAGE_MODE) -> str:
+    mode = str(raw or "").strip().lower()
+    if not mode:
+        mode = default
+    aliases = {
+        "external_plugins": PLUGIN_PACKAGE_MODE_EXTERNAL,
+        "hotplug": PLUGIN_PACKAGE_MODE_EXTERNAL,
+        "dynamic": PLUGIN_PACKAGE_MODE_EXTERNAL,
+        "compiled": PLUGIN_PACKAGE_MODE_BUNDLED,
+        "embedded": PLUGIN_PACKAGE_MODE_BUNDLED,
+        "builtin": PLUGIN_PACKAGE_MODE_BUNDLED,
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in PLUGIN_PACKAGE_MODES:
+        raise ValueError(f"unsupported plugin package mode: {raw}")
+    return mode
 
 
 def normalize_app_version(raw: str) -> str:
@@ -1894,7 +1919,9 @@ def prepare_desktop_release_bundle(
     staged_target_dir: Path,
     binary_name: str,
     runtime_env: Dict[str, str],
+    plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
 ) -> Path:
+    plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     bundle_dir = target_out_dir / "release_bundle"
     ensure_clean_dir(bundle_dir)
 
@@ -1921,7 +1948,16 @@ def prepare_desktop_release_bundle(
     if manifest_src.exists():
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
-    external_plugin_roots = copy_external_plugins_to_bundle(backend_src, bundle_dir) if backend_src.exists() else []
+    if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL:
+        external_plugin_roots = copy_external_plugins_to_bundle(backend_src, bundle_dir) if backend_src.exists() else []
+    else:
+        plugins_dir = bundle_dir / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+        write_text(
+            plugins_dir / "README.md",
+            "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
+        )
+        external_plugin_roots = []
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
@@ -1933,9 +1969,14 @@ def prepare_desktop_release_bundle(
         f"- target: `{target}`",
         "- `backend_source/`: fallback Python source runtime",
         "- `frontend_dist/`: frontend static assets",
+        f"- plugin package mode: `{plugin_mode}`",
         "- `plugins/`: external hot-pluggable protocol plugins",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
     ]
+    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
+        notes.append("- default repository plugins are bundled into the executable; `plugins/` is reserved for extra plugins")
+    else:
+        notes.append("- default repository plugins are placed under `plugins/` and loaded dynamically at runtime")
     if archive_tools_dir is not None:
         notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
     if ffmpeg_tools_dir is not None:
@@ -2455,7 +2496,9 @@ def write_pyinstaller_scripts(
     binary_name: str,
     entry: str,
     runtime_env: Dict[str, str],
+    plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
 ) -> List[str]:
+    plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     dist_dir = out_dir / "dist"
     work_dir = out_dir / "build"
     spec_dir = out_dir / "spec"
@@ -2496,6 +2539,18 @@ def write_pyinstaller_scripts(
     ]
     append_repeated_cli_option(cmd, "--collect-submodules", DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES)
     append_repeated_cli_option(cmd, "--hidden-import", DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS)
+    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
+        plugin_metadata = collect_pyinstaller_plugin_metadata(staged_backend)
+        append_repeated_cli_option(cmd, "--collect-all", list(plugin_metadata.get("collect_all") or []))
+        append_repeated_cli_option(cmd, "--hidden-import", list(plugin_metadata.get("hidden_imports") or []))
+        for plugin_root in plugin_metadata.get("plugin_roots") or []:
+            plugin_path = Path(str(plugin_root))
+            cmd.extend(
+                [
+                    "--add-data",
+                    f"{plugin_path}{sep}comic_backend/third_party/{plugin_path.name}",
+                ]
+            )
     cmd.append(entry)
     
     if server_config_src.exists():
@@ -2542,7 +2597,9 @@ def package_pyinstaller(
     packager_cfg: Dict,
     target_out_dir: Path,
     execute: bool,
+    plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
 ) -> PackageResult:
+    plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     runtime_env = parse_runtime_env(staged_target_dir / "runtime.env")
     binary_name = str(packager_cfg.get("binary_name", f"ultimate_backend_{target}")).strip()
     entry = str(packager_cfg.get("entry", "comic_backend/app.py")).strip()
@@ -2555,6 +2612,7 @@ def package_pyinstaller(
         binary_name=binary_name,
         entry=entry,
         runtime_env=runtime_env,
+        plugin_package_mode=plugin_mode,
     )
     bundle_dir = prepare_desktop_release_bundle(
         target=target,
@@ -2562,6 +2620,7 @@ def package_pyinstaller(
         staged_target_dir=staged_target_dir,
         binary_name=binary_name,
         runtime_env=runtime_env,
+        plugin_package_mode=plugin_mode,
     )
     external_plugin_roots = sorted((bundle_dir / "plugins").iterdir(), key=lambda item: item.name.lower()) if (bundle_dir / "plugins").exists() else []
 
@@ -2569,7 +2628,7 @@ def package_pyinstaller(
         return PackageResult(
             target=target,
             status="prepared",
-            message="pyinstaller scripts generated; desktop release bundle prepared (execution skipped)",
+            message=f"pyinstaller scripts generated; desktop release bundle prepared (plugin_package_mode={plugin_mode}, execution skipped)",
             output_dir=str(target_out_dir),
             command=cmd,
         )
@@ -2634,7 +2693,7 @@ def package_pyinstaller(
     return PackageResult(
         target=target,
         status="built",
-        message="pyinstaller build completed and desktop release bundle updated",
+        message=f"pyinstaller build completed and desktop release bundle updated (plugin_package_mode={plugin_mode})",
         output_dir=str(target_out_dir),
         command=cmd,
     )
@@ -2985,6 +3044,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=str(DEFAULT_PACKAGES_DIR), help="Packaging output root.")
     parser.add_argument("--targets-config", default=str(DEFAULT_TARGETS_CONFIG), help="Path to build/targets.json.")
     parser.add_argument("--packagers-config", default=str(DEFAULT_PACKAGERS_CONFIG), help="Path to build/packagers.json.")
+    parser.add_argument(
+        "--plugin-package-mode",
+        default=os.environ.get("ULTIMATE_PLUGIN_PACKAGE_MODE", DEFAULT_PLUGIN_PACKAGE_MODE),
+        choices=PLUGIN_PACKAGE_MODES,
+        help="Desktop plugin packaging mode: external keeps default plugins outside the executable; bundled compiles default plugins into the executable while keeping external plugin discovery enabled.",
+    )
     parser.add_argument("--execute", action="store_true", help="Execute packaging commands when possible.")
     return parser.parse_args()
 
@@ -2998,6 +3063,7 @@ def main() -> int:
 
     available_targets = [str(item.get("id", "")).strip().lower() for item in targets_cfg.get("targets", []) if str(item.get("id", "")).strip()]
     selected_targets = select_targets(available_targets, args.targets)
+    plugin_package_mode = normalize_plugin_package_mode(args.plugin_package_mode)
 
     packagers = packagers_cfg.get("packagers", {})
     if not isinstance(packagers, dict):
@@ -3006,6 +3072,7 @@ def main() -> int:
     print(f"[package] targets: {', '.join(selected_targets)}")
     print(f"[package] staged root: {staged_root}")
     print(f"[package] output root: {output_root}")
+    print(f"[package] plugin package mode: {plugin_package_mode}")
 
     results: List[PackageResult] = []
     for target in selected_targets:
@@ -3027,7 +3094,14 @@ def main() -> int:
         packager_cfg = packagers.get(target, {})
         packager_type = str(packager_cfg.get("type", "")).strip().lower()
         if packager_type == "pyinstaller":
-            result = package_pyinstaller(target, staged_target_dir, packager_cfg, target_out_dir, execute=args.execute)
+            result = package_pyinstaller(
+                target,
+                staged_target_dir,
+                packager_cfg,
+                target_out_dir,
+                execute=args.execute,
+                plugin_package_mode=plugin_package_mode,
+            )
         elif packager_type == "capacitor":
             result = package_android(target, staged_target_dir, packager_cfg, target_out_dir, execute=args.execute)
         else:

@@ -14,12 +14,17 @@ Use GitHub Actions workflow:
 - Workflow file: `.github/workflows/release-three-platforms.yml`
 - Trigger: `workflow_dispatch` (manual click) or push tag like `v1.2.3`
 - Optional manual input: `app_version`
+- Optional manual input: `plugin_package_mode`
+  - `bundled`: compile the repository default desktop plugins into the executable, while still scanning `plugins/` for additional runtime plugins.
+  - `external`: keep repository default desktop plugins outside the executable under `plugins/`, matching the pure external-plugin packaging mode.
+
+Tag-triggered releases default to `plugin_package_mode=bundled`.
 
 ## What each CI job does
 
 1. Resolve one shared `APP_VERSION` for the whole workflow
 2. Build staged workspace with `scripts/build_unified.py`
-3. Package target with `scripts/package_unified.py --execute`
+3. Package target with `scripts/package_unified.py --execute --plugin-package-mode <mode>`
 4. Verify target status in `packaging_summary.json` is `built`
 5. Upload target artifact (`ultimate-windows`, `ultimate-linux`, `ultimate-android`)
 6. Collect all artifacts into `ultimate-release-bundle` with SHA256 manifest
@@ -58,6 +63,13 @@ python scripts/release_unified.py --targets linux --execute
 python scripts/release_unified.py --targets android --execute
 ```
 
+Desktop plugin packaging mode can be selected locally:
+
+```bash
+python scripts/release_unified.py --targets windows --execute --plugin-package-mode bundled
+python scripts/release_unified.py --targets windows --execute --plugin-package-mode external
+```
+
 Note: desktop builds must run on matching host OS. Android build requires JDK 21 + Android SDK.
 On Windows non-ASCII repo paths, Android packaging auto-stages in `%LOCALAPPDATA%\UltimateWebBuild\android_workspace`.
 
@@ -75,7 +87,8 @@ Optional arguments:
 powershell -ExecutionPolicy Bypass -File scripts/release_windows_local_venv.ps1 `
   -VenvDir .venv-packaging-win `
   -BuildOutput output/local_stage `
-  -PackageOutput output/local_packages
+  -PackageOutput output/local_packages `
+  -PluginPackageMode bundled
 ```
 
 This script is only for local packaging and does not change GitHub Actions workflow behavior.

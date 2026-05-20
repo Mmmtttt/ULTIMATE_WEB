@@ -155,6 +155,67 @@ def test_desktop_plugin_runtime_hidden_imports_are_importable_stdlib_modules():
         importlib.import_module(module_name)
 
 
+def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_keeps_hotplug_root():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"pyinstaller_bundled_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        staged_target_dir = temp_dir / "staged"
+        backend_third_party = staged_target_dir / "comic_backend" / "third_party"
+        _write_manifest(
+            backend_third_party / "JMComic-Crawler-Python",
+            "comic.jmcomic",
+            packaging={
+                "pyinstaller": {
+                    "collect_all": ["common", "Crypto"],
+                    "pip_requirements": ["commonx>=0.6.38", "pycryptodome>=3.20.0"],
+                }
+            },
+        )
+        _write_manifest(
+            backend_third_party / "Missav",
+            "video.missav",
+            packaging={
+                "pyinstaller": {
+                    "collect_all": ["curl_cffi", "cffi"],
+                    "hidden_imports": ["curl_cffi._wrapper"],
+                    "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0"],
+                }
+            },
+        )
+
+        cmd = package_unified.write_pyinstaller_scripts(
+            out_dir=temp_dir / "out",
+            staged_target_dir=staged_target_dir,
+            target="windows" if os.name == "nt" else "linux",
+            binary_name="ultimate_backend_test",
+            entry="comic_backend/app.py",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+            plugin_package_mode="bundled",
+        )
+
+        collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
+        hidden_import_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--hidden-import"]
+        add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
+
+        assert "common" in collect_all_args
+        assert "Crypto" in collect_all_args
+        assert "curl_cffi" in collect_all_args
+        assert "cffi" in collect_all_args
+        assert "curl_cffi._wrapper" in hidden_import_args
+        assert any("comic_backend/third_party/JMComic-Crawler-Python" in item for item in add_data_args)
+        assert any("comic_backend/third_party/Missav" in item for item in add_data_args)
+        assert cmd[-1] == "comic_backend/app.py"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
@@ -194,6 +255,50 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
         assert (bundle_dir / "backend_source" / "third_party" / "__init__.py").exists()
         assert (bundle_dir / "install_plugin_deps.ps1").exists()
         assert (bundle_dir / "install_plugin_deps.sh").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_source_and_reserves_plugin_root():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_bundled_plugins_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        staged_target_dir = temp_dir / "staged"
+        backend_src = staged_target_dir / "comic_backend"
+        third_party_root = backend_src / "third_party"
+        (backend_src / "third_party" / "__init__.py").parent.mkdir(parents=True, exist_ok=True)
+        (backend_src / "third_party" / "__init__.py").write_text("", encoding="utf-8")
+        (staged_target_dir / "comic_frontend_dist" / "index.html").parent.mkdir(parents=True, exist_ok=True)
+        (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        _write_manifest(
+            third_party_root / "JMComic-Crawler-Python",
+            "comic.jmcomic",
+            packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
+        )
+
+        bundle_dir = package_unified.prepare_desktop_release_bundle(
+            target="windows" if os.name == "nt" else "linux",
+            target_out_dir=temp_dir / "out",
+            staged_target_dir=staged_target_dir,
+            binary_name="ultimate_backend_test",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+            plugin_package_mode="bundled",
+        )
+
+        assert (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
+        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
+        assert (bundle_dir / "plugins" / "README.md").exists()
+        readme_text = (bundle_dir / "README.md").read_text(encoding="utf-8")
+        assert "plugin package mode: `bundled`" in readme_text
+        assert "additional protocol plugin directories" in (bundle_dir / "plugins" / "README.md").read_text(encoding="utf-8")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

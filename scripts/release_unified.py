@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-frontend-build", action="store_true", help="Skip frontend build in stage-1.")
     parser.add_argument("--execute", action="store_true", help="Execute packager commands when available.")
     parser.add_argument(
+        "--plugin-package-mode",
+        choices=("external", "bundled"),
+        default="external",
+        help="Desktop plugin packaging mode passed to package_unified.py.",
+    )
+    parser.add_argument(
         "--app-version",
         default="",
         help="Set packaged app version (e.g. 2.0.0). If empty, build script auto-resolves from env/tag/package.json.",
@@ -78,6 +84,8 @@ def main() -> int:
         args.targets_config,
         "--packagers-config",
         args.packagers_config,
+        "--plugin-package-mode",
+        args.plugin_package_mode,
     ]
     if args.execute:
         package_cmd.append("--execute")

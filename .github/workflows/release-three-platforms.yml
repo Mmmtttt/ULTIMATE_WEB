@@ -7,6 +7,14 @@ on:
         description: "Override release version (for example 1.2.3). Leave empty to auto-resolve."
         required: false
         type: string
+      plugin_package_mode:
+        description: "Desktop plugin packaging mode. bundled is easier for users; external keeps default plugins outside the executable."
+        required: false
+        type: choice
+        default: bundled
+        options:
+          - bundled
+          - external
   push:
     tags:
       - "v*"
@@ -19,6 +27,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     outputs:
       app_version: ${{ steps.resolve.outputs.app_version }}
+      plugin_package_mode: ${{ steps.plugin_mode.outputs.plugin_package_mode }}
     steps:
       - name: checkout code
         uses: actions/checkout@v4.2.1
@@ -43,6 +52,26 @@ jobs:
         run: |
           echo "Resolved APP_VERSION: ${{ steps.resolve.outputs.app_version }}"
 
+      - name: resolve plugin package mode
+        id: plugin_mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW_MODE="${{ github.event.inputs.plugin_package_mode || '' }}"
+          if [[ -z "$RAW_MODE" ]]; then
+            RAW_MODE="bundled"
+          fi
+          case "$RAW_MODE" in
+            bundled|external)
+              ;;
+            *)
+              echo "Unsupported plugin_package_mode: $RAW_MODE" >&2
+              exit 1
+              ;;
+          esac
+          echo "plugin_package_mode=$RAW_MODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved PLUGIN_PACKAGE_MODE: $RAW_MODE"
+
   build_targets:
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -51,6 +80,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       APP_VERSION: ${{ needs.resolve_release_version.outputs.app_version }}
+      PLUGIN_PACKAGE_MODE: ${{ needs.resolve_release_version.outputs.plugin_package_mode }}
     strategy:
       fail-fast: false
       matrix:
@@ -127,9 +157,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r comic_backend/requirements.txt pyinstaller
-          python scripts/export_plugin_packaging_requirements.py --output .plugin_packaging_requirements.txt
+          if [ "$PLUGIN_PACKAGE_MODE" = "bundled" ]; then
+            python scripts/export_plugin_packaging_requirements.py --output .plugin_packaging_requirements.txt
+          else
+            : > .plugin_packaging_requirements.txt
+          fi
           if [ -s .plugin_packaging_requirements.txt ]; then
             python -m pip install -r .plugin_packaging_requirements.txt
+          else
+            echo "No plugin build-time dependencies required for mode: $PLUGIN_PACKAGE_MODE"
           fi
 
       - name: install frontend dependencies
@@ -304,8 +340,9 @@ jobs:
           node --version
           java --version 2>&1 | head -n1
           echo "Resolved APP_VERSION: $APP_VERSION"
+          echo "Resolved PLUGIN_PACKAGE_MODE: $PLUGIN_PACKAGE_MODE"
           # 执行发布脚本（单行命令，避免多行换行问题）
-          python scripts/release_unified.py --targets "${{ matrix.target }}" --execute --build-output output/ci_stage --package-output output/ci_packages --app-version "$APP_VERSION"
+          python scripts/release_unified.py --targets "${{ matrix.target }}" --execute --build-output output/ci_stage --package-output output/ci_packages --app-version "$APP_VERSION" --plugin-package-mode "$PLUGIN_PACKAGE_MODE"
           # 打印安卓日志（仅安卓平台）
           if [ "${{ matrix.build_android }}" = "true" ]; then
             if [ -f "output/ci_packages/android/android_build.log" ]; then

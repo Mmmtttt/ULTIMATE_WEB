@@ -3,6 +3,8 @@ param(
     [string]$VenvDir = ".venv-packaging-win",
     [string]$BuildOutput = "output/local_stage",
     [string]$PackageOutput = "output/local_packages",
+    [ValidateSet("bundled", "external")]
+    [string]$PluginPackageMode = "bundled",
     [switch]$SkipFrontendBuild
 )
 
@@ -39,7 +41,11 @@ Write-Info "Install Python build dependencies into venv"
 & $venvPython -m pip install --upgrade pip setuptools wheel
 & $venvPython -m pip install -r "comic_backend/requirements.txt" pyinstaller
 $pluginPackagingReqFile = Join-Path $repoRoot ".plugin_packaging_requirements.txt"
-& $venvPython "scripts/export_plugin_packaging_requirements.py" "--output" $pluginPackagingReqFile
+if ($PluginPackageMode -eq "bundled") {
+    & $venvPython "scripts/export_plugin_packaging_requirements.py" "--output" $pluginPackagingReqFile
+} else {
+    Set-Content -Path $pluginPackagingReqFile -Value "" -Encoding UTF8
+}
 if ((Test-Path $pluginPackagingReqFile) -and ((Get-Item $pluginPackagingReqFile).Length -gt 0)) {
     & $venvPython -m pip install -r $pluginPackagingReqFile
 }
@@ -61,7 +67,8 @@ $releaseArgs = @(
     "--targets", "windows",
     "--execute",
     "--build-output", $BuildOutput,
-    "--package-output", $PackageOutput
+    "--package-output", $PackageOutput,
+    "--plugin-package-mode", $PluginPackageMode
 )
 if ($SkipFrontendBuild) {
     $releaseArgs += "--skip-frontend-build"
