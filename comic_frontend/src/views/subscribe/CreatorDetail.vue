@@ -144,7 +144,6 @@ const showImportSheet = ref(false)
 const isSubscribed = ref(false)
 const authorSubscriptionId = ref(null)
 const actorId = ref(null)
-const hasRemoteQueried = ref(false)
 const totalPages = computed(() => {
   const loadedPages = Math.max(1, Math.ceil((totalWorks.value || 0) / pageSize.value))
   return loadedPages + (hasMoreWorks.value ? 1 : 0)
@@ -180,45 +179,39 @@ async function resolveSubscription() {
   authorSubscriptionId.value = author?.id || null
 }
 
-function applyWorksPage(res, options = {}) {
+function applyWorksPage(res) {
   const newWorks = res?.data?.works || []
   works.value = Array.isArray(newWorks) ? newWorks : []
   totalWorks.value = res?.data?.total || works.value.length
-  hasMoreWorks.value = Boolean(options?.allowHasMore && res?.data?.has_more)
+  hasMoreWorks.value = Boolean(res?.data?.has_more)
   ensureWithinRange(totalPages.value)
 }
 
 async function loadData(page = 1, options = {}) {
   loading.value = true
-  const forceQuery = Boolean(options?.forceQuery)
+  const allowRemoteFetch = Boolean(options?.allowRemoteFetch || options?.forceQuery)
+  const forceRefresh = Boolean(options?.forceRefresh || (options?.forceQuery && page === 1))
   const offset = (page - 1) * pageSize.value
 
   try {
     if (page === 1) {
       await resolveSubscription()
-      if (!forceQuery) {
-        hasRemoteQueried.value = false
-      }
     }
 
     if (isVideoMode.value) {
       if (isSubscribed.value && actorId.value) {
-        const cacheOnly = !forceQuery && !hasRemoteQueried.value
-        const forceRefresh = Boolean(forceQuery && page === 1)
+        const cacheOnly = !allowRemoteFetch
         const res = await actorApi.getWorks(actorId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
         if (res.code === 200) {
           const previousPage = currentPage.value
-          applyWorksPage(res, { allowHasMore: forceQuery || hasRemoteQueried.value })
+          applyWorksPage(res)
           if (currentPage.value !== previousPage) {
-            await loadData(currentPage.value, { forceQuery })
+            await loadData(currentPage.value, { allowRemoteFetch, forceRefresh })
             return
-          }
-          if (forceQuery) {
-            hasRemoteQueried.value = true
           }
         }
       } else {
-        if (!forceQuery) {
+        if (!allowRemoteFetch) {
           works.value = []
           totalWorks.value = 0
           hasMoreWorks.value = false
@@ -229,40 +222,35 @@ async function loadData(page = 1, options = {}) {
           creatorName.value,
           offset,
           pageSize.value,
-          { forceRefresh: forceQuery && page === 1 }
+          { forceRefresh }
         )
         if (res.code === 200) {
           const previousPage = currentPage.value
-          applyWorksPage(res, { allowHasMore: true })
+          applyWorksPage(res)
           if (currentPage.value !== previousPage) {
-            await loadData(currentPage.value, { forceQuery: true })
+            await loadData(currentPage.value, { allowRemoteFetch: true })
             return
           }
-          hasRemoteQueried.value = true
         }
       }
       return
     }
 
     if (isSubscribed.value && authorSubscriptionId.value) {
-      const cacheOnly = !forceQuery && !hasRemoteQueried.value
-      const forceRefresh = Boolean(forceQuery && page === 1)
+      const cacheOnly = !allowRemoteFetch
       const res = await authorApi.getWorks(authorSubscriptionId.value, offset, pageSize.value, { cacheOnly, forceRefresh })
       if (res.code === 200) {
         const previousPage = currentPage.value
-        applyWorksPage(res, { allowHasMore: forceQuery || hasRemoteQueried.value })
+        applyWorksPage(res)
         if (currentPage.value !== previousPage) {
-          await loadData(currentPage.value, { forceQuery })
+          await loadData(currentPage.value, { allowRemoteFetch, forceRefresh })
           return
-        }
-        if (forceQuery) {
-          hasRemoteQueried.value = true
         }
       }
       return
     }
 
-    if (!forceQuery) {
+    if (!allowRemoteFetch) {
       works.value = []
       totalWorks.value = 0
       hasMoreWorks.value = false
@@ -273,12 +261,11 @@ async function loadData(page = 1, options = {}) {
     const res = await authorApi.searchWorksByName(creatorName.value, offset, pageSize.value)
     if (res.code === 200) {
       const previousPage = currentPage.value
-      applyWorksPage(res, { allowHasMore: true })
+      applyWorksPage(res)
       if (currentPage.value !== previousPage) {
-        await loadData(currentPage.value, { forceQuery: true })
+        await loadData(currentPage.value, { allowRemoteFetch: true })
         return
       }
-      hasRemoteQueried.value = true
     }
 
   } catch (e) {
@@ -289,17 +276,28 @@ async function loadData(page = 1, options = {}) {
 }
 
 async function queryWorks() {
-  await handlePageChange(1, true)
+  setPage(1)
+  selectedIds.value = []
+  await loadData(1, { allowRemoteFetch: true, forceRefresh: true })
 }
 
-async function handlePageChange(page, forceQuery = hasRemoteQueried.value) {
+function shouldFetchRemoteForPage(page) {
+  const nextPage = Number(page)
+  return Boolean(hasMoreWorks.value && nextPage === totalPages.value)
+}
+
+async function handlePageChange(page, forceQuery = false) {
   const nextPage = Number(page)
   if (!Number.isFinite(nextPage) || nextPage < 1) {
     return
   }
+  const allowRemoteFetch = Boolean(forceQuery || shouldFetchRemoteForPage(nextPage))
   setPage(nextPage)
   selectedIds.value = []
-  await loadData(currentPage.value, { forceQuery })
+  await loadData(currentPage.value, {
+    allowRemoteFetch,
+    forceRefresh: Boolean(forceQuery && currentPage.value === 1)
+  })
 }
 
 function toggleSelection(item) {
@@ -398,19 +396,20 @@ async function toggleSubscribe() {
 
 watch(pageStorageKey, async () => {
   selectedIds.value = []
-  hasRemoteQueried.value = false
   hasMoreWorks.value = false
-  await loadData(currentPage.value, { forceQuery: false })
+  await loadData(currentPage.value, { allowRemoteFetch: false })
 })
 
 watch(pageSize, async () => {
   ensureWithinRange(totalPages.value)
-  await loadData(currentPage.value, { forceQuery: hasRemoteQueried.value })
+  await loadData(currentPage.value, {
+    allowRemoteFetch: shouldFetchRemoteForPage(currentPage.value)
+  })
 })
 
 onMounted(async () => {
   ensureWithinRange(totalPages.value)
-  await loadData(currentPage.value, { forceQuery: false })
+  await loadData(currentPage.value, { allowRemoteFetch: false })
 })
 </script>
 <style scoped>

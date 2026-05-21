@@ -677,12 +677,30 @@ function isActorSubscribed(actorName) {
   return actorStore.actors.some(actor => actor.name.toLowerCase() === actorName.toLowerCase())
 }
 
+function normalizeActorName(actorName) {
+  return String(actorName || '').trim().toLocaleLowerCase()
+}
+
+function getActorRefForName(actorName) {
+  const targetName = normalizeActorName(actorName)
+  const actorRefs = Array.isArray(recommendation.value?.actor_refs) ? recommendation.value.actor_refs : []
+  return actorRefs.find((ref) => {
+    const refName = normalizeActorName(ref?.actor_name || ref?.name)
+    return refName && refName === targetName
+  })
+}
+
+function buildActorSubscribeOptions(actorName) {
+  const actorRef = getActorRefForName(actorName)
+  return actorRef ? { actorRefs: [actorRef] } : {}
+}
+
 async function subscribeActor(actorName) {
   if (subscribingActors.value.includes(actorName)) return
   
   subscribingActors.value.push(actorName)
   try {
-    const result = await actorStore.subscribe(actorName)
+    const result = await actorStore.subscribe(actorName, buildActorSubscribeOptions(actorName))
     if (result.success) {
       showSuccessToast(`订阅 ${actorName} 成功`)
     } else {

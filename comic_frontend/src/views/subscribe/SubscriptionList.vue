@@ -17,7 +17,7 @@
         >
           检查更新
         </van-button>
-        <van-button icon="plus" type="primary" size="small" round @click="showAddPopup = true">
+        <van-button icon="plus" type="primary" size="small" round @click="openAddDialog">
           添加
         </van-button>
       </div>
@@ -105,11 +105,46 @@
     <!-- Add Subscription Popup -->
     <van-dialog 
       v-model:show="showAddPopup" 
-      title="添加订阅"
+      :title="addDialogTitle"
       show-cancel-button
-      @confirm="addSubscription"
+      :before-close="beforeAddDialogClose"
     >
-      <van-field v-model="newSubscriptionName" label="名称" placeholder="输入作者/演员名称" />
+      <div class="subscription-dialog-body">
+        <van-field
+          v-model="newSubscriptionName"
+          :label="isVideoMode ? '演员' : '作者'"
+          :placeholder="isVideoMode ? '输入演员名称' : '输入作者名称'"
+          clearable
+        />
+
+        <template v-if="isVideoMode">
+          <button class="manual-source-toggle" type="button" @click="showManualActorSource = !showManualActorSource">
+            <span>
+              <strong>手动指定来源</strong>
+              <small>用于同名演员或自动识别不准</small>
+            </span>
+            <van-icon :name="showManualActorSource ? 'arrow-up' : 'arrow-down'" />
+          </button>
+
+          <div v-if="showManualActorSource" class="manual-source-panel">
+            <van-field
+              v-model="manualActorPlatform"
+              label="平台"
+              placeholder="javdb"
+              clearable
+            />
+            <van-field
+              v-model="manualActorSource"
+              label="链接/ID"
+              placeholder="https://javdb.com/actors/0R1n3 或 0R1n3"
+              clearable
+            />
+            <p class="manual-source-hint">
+              留空则按演员名自动订阅；填写后会优先使用指定 ID 查询作品。
+            </p>
+          </div>
+        </template>
+      </div>
     </van-dialog>
   </div>
 </template>
@@ -131,11 +166,15 @@ const items = ref([])
 const searchKeyword = ref('')
 const showAddPopup = ref(false)
 const newSubscriptionName = ref('')
+const showManualActorSource = ref(false)
+const manualActorPlatform = ref('javdb')
+const manualActorSource = ref('')
 const checkingUpdates = ref(false)
 const unsubscribingIds = reactive(new Set())
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? actorStore : authorStore)
+const addDialogTitle = computed(() => isVideoMode.value ? '添加演员订阅' : '添加作者订阅')
 
 const filteredItems = computed(() => {
   const safeItems = items.value || []
@@ -182,6 +221,74 @@ async function checkAllUpdates() {
   }
 }
 
+function openAddDialog() {
+  resetAddForm()
+  showAddPopup.value = true
+}
+
+function resetAddForm() {
+  newSubscriptionName.value = ''
+  showManualActorSource.value = false
+  manualActorPlatform.value = 'javdb'
+  manualActorSource.value = ''
+}
+
+function extractActorIdFromManualSource(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+
+  const actorPathMatch = raw.match(/\/(?:actors?|stars?|persons?)\/([^/?#]+)/i)
+  if (actorPathMatch?.[1]) {
+    return decodeURIComponent(actorPathMatch[1]).trim()
+  }
+
+  try {
+    const url = new URL(raw.includes('://') ? raw : `https://${raw}`)
+    const segments = url.pathname.split('/').filter(Boolean)
+    const markerIndex = segments.findIndex(segment =>
+      ['actor', 'actors', 'star', 'stars', 'person', 'persons'].includes(segment.toLowerCase())
+    )
+    if (markerIndex >= 0 && segments[markerIndex + 1]) {
+      return decodeURIComponent(segments[markerIndex + 1]).trim()
+    }
+  } catch (_e) {
+    // Plain actor IDs are valid manual input.
+  }
+
+  return raw
+}
+
+function buildManualActorSubscribeOptions(actorName) {
+  if (!isVideoMode.value) {
+    return {}
+  }
+
+  const sourceValue = String(manualActorSource.value || '').trim()
+  const platform = String(manualActorPlatform.value || '').trim().toLowerCase()
+  if (!sourceValue) {
+    return {}
+  }
+  if (!platform) {
+    return { error: '请填写平台名称' }
+  }
+
+  const actorId = extractActorIdFromManualSource(sourceValue)
+  if (!actorId) {
+    return { error: '请填写有效的演员链接或ID' }
+  }
+
+  return {
+    actorRefs: [
+      {
+        platform,
+        actor_id: actorId,
+        actor_name: actorName,
+        actor_url: sourceValue.includes('/') ? sourceValue : ''
+      }
+    ]
+  }
+}
+
 async function goToDetail(item) {
   const subscriptionId = String(item?.id || '').trim()
   if (subscriptionId && Number(item?.new_work_count || 0) > 0) {
@@ -204,20 +311,42 @@ async function goToDetail(item) {
 }
 
 async function addSubscription() {
-  if (!newSubscriptionName.value) return
+  const subscriptionName = String(newSubscriptionName.value || '').trim()
+  if (!subscriptionName) {
+    showToast(isVideoMode.value ? '请输入演员名称' : '请输入作者名称')
+    return false
+  }
   
   try {
-    const res = await currentStore.value.subscribe(newSubscriptionName.value)
+    const options = buildManualActorSubscribeOptions(subscriptionName)
+    if (options.error) {
+      showToast(options.error)
+      return false
+    }
+
+    const res = await currentStore.value.subscribe(subscriptionName, options)
     if (res.success) {
       showToast('订阅成功')
     } else {
       showToast(res.message || '订阅失败')
+      return false
     }
     await loadData()
-    newSubscriptionName.value = ''
+    resetAddForm()
+    return true
   } catch (e) {
     showToast('操作失败')
+    return false
   }
+}
+
+async function beforeAddDialogClose(action) {
+  if (action !== 'confirm') {
+    resetAddForm()
+    return true
+  }
+
+  return addSubscription()
 }
 
 async function unsubscribe(item) {
@@ -427,6 +556,63 @@ onMounted(() => {
 .author-arrow {
   color: var(--text-tertiary);
   font-size: 16px;
+}
+
+.subscription-dialog-body {
+  padding: 8px 0 4px;
+}
+
+.manual-source-toggle {
+  width: calc(100% - 32px);
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(47, 116, 255, 0.08), rgba(255, 255, 255, 0.02));
+  color: var(--text-strong);
+  text-align: left;
+  cursor: pointer;
+}
+
+.manual-source-toggle strong,
+.manual-source-toggle small {
+  display: block;
+}
+
+.manual-source-toggle strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.manual-source-toggle small {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.manual-source-panel {
+  margin: 10px 16px 0;
+  padding: 10px 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.manual-source-panel :deep(.van-cell) {
+  background: transparent;
+}
+
+.manual-source-hint {
+  margin: 6px 16px 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (min-width: 768px) {

@@ -287,8 +287,13 @@ export const actorApi = {
     return request.get('/v1/actor/all')
   },
   
-  subscribe(name) {
-    return request.post('/v1/actor/subscribe', { name })
+  subscribe(name, options = {}) {
+    const payload = { name }
+    const actorRefs = Array.isArray(options.actorRefs) ? options.actorRefs : []
+    if (actorRefs.length > 0) {
+      payload.actor_refs = actorRefs
+    }
+    return request.post('/v1/actor/subscribe', payload)
   },
   
   unsubscribe(actorId) {

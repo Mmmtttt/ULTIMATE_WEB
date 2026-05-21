@@ -289,6 +289,9 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
         except Exception as e:
             error_logger.error(f"同步{self._entity_name}最新作品失败: {e}")
 
+    def _search_works_for_creator(self, creator: BaseCreator, page: int = 1, max_pages: int = 1) -> Dict:
+        return self._search_works(creator.name, page=page, max_pages=max_pages)
+
     def _collect_existing_content_ids(self, repo_specs, normalize_existing_id=None) -> Set[str]:
         existing_ids = set()
         normalize = normalize_existing_id or (lambda raw_id: str(raw_id or "").strip())
@@ -445,8 +448,8 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
             while (len(cached_all_works) < required_count or should_force_fetch) and cached_meta.get("has_more", True) and not cached_meta.get("all_fetched", False):
                 app_logger.info(f"[Paginated] 缓存不足，继续获取第 {cached_meta['next_page']} 页")
                 
-                search_result = self._search_works(
-                    creator.name,
+                search_result = self._search_works_for_creator(
+                    creator,
                     page=cached_meta["next_page"],
                     max_pages=1
                 )

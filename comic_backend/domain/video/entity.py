@@ -3,7 +3,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List
 from domain.base.entity import BaseContent
 from core.enums import ContentType
 
@@ -30,6 +30,7 @@ class Video(BaseContent):
     source_origin: str = ""
     source_updated_time: str = ""
     local_metadata_enriched: bool = False
+    actor_refs: List[Dict[str, Any]] = field(default_factory=list)
     
     @property
     def actors(self) -> List[str]:
@@ -87,6 +88,11 @@ class Video(BaseContent):
             source_origin=data.get("source_origin", ""),
             source_updated_time=data.get("source_updated_time", ""),
             local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
+            actor_refs=[
+                dict(item or {})
+                for item in (data.get("actor_refs") or [])
+                if isinstance(item, dict)
+            ],
             _actors=BaseContent._normalize_unique_values(data.get("actors") or [])
         )
     
@@ -121,6 +127,11 @@ class Video(BaseContent):
             "source_origin": self.source_origin,
             "source_updated_time": self.source_updated_time,
             "local_metadata_enriched": bool(self.local_metadata_enriched),
+            "actor_refs": [
+                dict(item or {})
+                for item in (self.actor_refs or [])
+                if isinstance(item, dict)
+            ],
             "actors": self._actors
         })
         return base_dict

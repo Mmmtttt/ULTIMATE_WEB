@@ -2,8 +2,9 @@
 演员应用服务
 """
 
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 import os
+from urllib.parse import unquote, urlparse
 import threading
 import requests
 from io import BytesIO
@@ -51,6 +52,21 @@ class ActorAppService(BaseCreatorAppService):
         return platforms
 
     @staticmethod
+    def _list_video_person_platforms() -> List[str]:
+        platforms: List[str] = []
+        for manifest in get_protocol_gateway().list_manifests(media_type="video", capability="person.works"):
+            platform_name = str(
+                resolve_manifest_platform_label(
+                    manifest,
+                    fallback=getattr(manifest, "config_key", "") or getattr(manifest, "plugin_id", ""),
+                )
+                or ""
+            ).strip().lower()
+            if platform_name and platform_name not in platforms:
+                platforms.append(platform_name)
+        return platforms
+
+    @staticmethod
     def _get_video_asset_service_cls():
         from application.video_app_service import VideoAppService
 
@@ -74,6 +90,238 @@ class ActorAppService(BaseCreatorAppService):
 
     def _sync_actor_latest_work(self, actor: ActorSubscription, works: List[Dict]) -> None:
         self._sync_latest_work(self._actor_repo, actor, works)
+
+    @staticmethod
+    def _normalize_actor_lookup_text(value: Any) -> str:
+        return str(value or "").strip().casefold()
+
+    @staticmethod
+    def _extract_actor_id_from_url(actor_url: Any) -> str:
+        raw_url = str(actor_url or "").strip()
+        if not raw_url:
+            return ""
+
+        parsed = urlparse(raw_url)
+        path = parsed.path or raw_url
+        segments = [
+            unquote(segment.strip())
+            for segment in path.replace("\\", "/").split("/")
+            if segment.strip()
+        ]
+        lower_segments = [segment.lower() for segment in segments]
+
+        for marker in ("actors", "actor", "stars", "star", "persons", "person"):
+            if marker not in lower_segments:
+                continue
+            marker_index = lower_segments.index(marker)
+            if marker_index + 1 < len(segments):
+                return segments[marker_index + 1].strip()
+
+        return ""
+
+    @classmethod
+    def _normalize_actor_ref(cls, platform: str, raw_actor: Any, fallback_name: str = "") -> Optional[Dict[str, Any]]:
+        if not isinstance(raw_actor, dict):
+            return None
+        actor_url = str(raw_actor.get("actor_url") or raw_actor.get("url") or "").strip()
+        actor_id = str(
+            raw_actor.get("id")
+            or raw_actor.get("actor_id")
+            or raw_actor.get("uid")
+            or raw_actor.get("person_id")
+            or ""
+        ).strip()
+        if not actor_id:
+            actor_id = cls._extract_actor_id_from_url(actor_url)
+        if not actor_id:
+            return None
+        actor_name = str(
+            raw_actor.get("name")
+            or raw_actor.get("actor_name")
+            or raw_actor.get("title")
+            or fallback_name
+            or ""
+        ).strip()
+        return {
+            "platform": str(platform or "").strip().lower(),
+            "actor_id": actor_id,
+            "actor_name": actor_name,
+            "actor_url": actor_url,
+        }
+
+    @classmethod
+    def _pick_best_actor_ref(cls, platform: str, actors: Any, actor_name: str) -> Optional[Dict[str, Any]]:
+        if not isinstance(actors, list):
+            return None
+        normalized_name = cls._normalize_actor_lookup_text(actor_name)
+        fallback_ref = None
+        for actor in actors:
+            actor_ref = cls._normalize_actor_ref(platform, actor, fallback_name=actor_name)
+            if not actor_ref:
+                continue
+            if fallback_ref is None:
+                fallback_ref = actor_ref
+            candidate_name = cls._normalize_actor_lookup_text(actor_ref.get("actor_name"))
+            if candidate_name and candidate_name == normalized_name:
+                return actor_ref
+        return fallback_ref
+
+    @classmethod
+    def _dedupe_actor_refs(cls, actor_refs: Any) -> List[Dict[str, Any]]:
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for ref in actor_refs or []:
+            if not isinstance(ref, dict):
+                continue
+            normalized = cls._normalize_actor_ref(
+                str((ref or {}).get("platform") or ""),
+                ref,
+                fallback_name=str((ref or {}).get("actor_name") or ""),
+            )
+            if not normalized:
+                continue
+            key = (normalized.get("platform"), normalized.get("actor_id"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(normalized)
+        return deduped
+
+    def _resolve_actor_refs(self, actor_name: str) -> List[Dict[str, Any]]:
+        refs: List[Dict[str, Any]] = []
+        for platform in self._list_video_person_platforms():
+            try:
+                adapter = self._get_video_adapter(platform)
+                if not hasattr(adapter, "search_actor"):
+                    continue
+                actor_ref = self._pick_best_actor_ref(
+                    platform,
+                    adapter.search_actor(actor_name) or [],
+                    actor_name,
+                )
+                if actor_ref:
+                    refs.append(actor_ref)
+            except Exception as e:
+                error_logger.error(f"解析演员 {actor_name} 在平台 {platform} 的演员ID失败: {e}")
+        return self._dedupe_actor_refs(refs)
+
+    def _ensure_actor_refs(self, actor: ActorSubscription) -> List[Dict[str, Any]]:
+        if not actor:
+            return []
+        existing_refs = self._dedupe_actor_refs(getattr(actor, "actor_refs", []) or [])
+        if existing_refs:
+            actor.actor_refs = existing_refs
+            return existing_refs
+
+        resolved_refs = self._resolve_actor_refs(actor.name)
+        if resolved_refs:
+            actor.actor_refs = resolved_refs
+            if not str(getattr(actor, "actor_id", "") or "").strip():
+                actor.actor_id = str(resolved_refs[0].get("actor_id") or "")
+            self._actor_repo.save(actor)
+        return resolved_refs
+
+    def _collect_actor_refs_by_platform(self, actor_refs: Any) -> Dict[str, Dict[str, Any]]:
+        refs_by_platform: Dict[str, Dict[str, Any]] = {}
+        for ref in self._dedupe_actor_refs(actor_refs):
+            platform = str(ref.get("platform") or "").strip().lower()
+            if platform and platform not in refs_by_platform:
+                refs_by_platform[platform] = ref
+        return refs_by_platform
+
+    def _search_works_with_actor_refs(
+        self,
+        creator_name: str,
+        actor_refs: Optional[List[Dict[str, Any]]] = None,
+        page: int = 1,
+        max_pages: int = 1,
+    ) -> Dict:
+        works = []
+        has_more = False
+
+        try:
+            platforms_to_search = self._list_video_search_platforms()
+            person_platforms = set(self._list_video_person_platforms())
+            refs_by_platform = self._collect_actor_refs_by_platform(actor_refs or [])
+            platform_videos = {}
+
+            for plat in platforms_to_search:
+                try:
+                    adapter = self._get_video_adapter(plat)
+                    result = {}
+                    actor_ref = refs_by_platform.get(str(plat or "").strip().lower())
+
+                    if actor_ref and hasattr(adapter, "get_actor_works"):
+                        result = adapter.get_actor_works(
+                            str(actor_ref.get("actor_id") or ""),
+                            page=page,
+                            max_pages=max_pages,
+                        ) or {}
+                    elif plat in person_platforms and hasattr(adapter, "search_actor") and hasattr(adapter, "get_actor_works"):
+                        resolved_ref = self._pick_best_actor_ref(
+                            plat,
+                            adapter.search_actor(creator_name) or [],
+                            creator_name,
+                        )
+                        if resolved_ref:
+                            result = adapter.get_actor_works(
+                                str(resolved_ref.get("actor_id") or ""),
+                                page=page,
+                                max_pages=max_pages,
+                            ) or {}
+
+                    if not result or (
+                        not isinstance(result.get("videos", None), list)
+                        and not isinstance(result.get("works", None), list)
+                    ):
+                        result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
+
+                    videos = []
+                    if isinstance(result, dict):
+                        candidate_videos = result.get("videos")
+                        if not isinstance(candidate_videos, list):
+                            candidate_videos = result.get("works")
+                        if isinstance(candidate_videos, list):
+                            videos = candidate_videos
+                    has_more = has_more or bool(result.get("has_next", False) if isinstance(result, dict) else False)
+
+                    if videos:
+                        platform_videos[plat] = videos
+                except Exception as e:
+                    error_logger.error(f"搜索演员 {creator_name} 在平台 {plat} 的作品失败: {e}")
+                    continue
+
+            for plat in platforms_to_search:
+                for video in platform_videos.get(plat, []):
+                    work_id = str(video.get("video_id") or video.get("code") or video.get("id") or "")
+                    if not work_id:
+                        continue
+
+                    cover_url = video.get("cover_url", "")
+                    local_cover = self._build_cover_url(work_id, plat)
+                    if os.path.exists(os.path.join(self._get_cover_cache_dir(plat), f"{work_id}.jpg")):
+                        cover_url = local_cover
+                    elif cover_url:
+                        cover_url = self._to_frontend_work_cover_url(str(cover_url), plat, work_id)
+
+                    works.append({
+                        "id": work_id,
+                        "title": video.get("title", ""),
+                        "actor": creator_name,
+                        "cover_url": cover_url,
+                        "duration": video.get("duration", 0),
+                        "has_detail": False,
+                        "is_new": True,
+                        "platform": plat
+                    })
+        except Exception as e:
+            error_logger.error(f"搜索演员 {creator_name} 作品失败: {e}")
+
+        return {
+            "works": works,
+            "has_more": has_more,
+            "page": page
+        }
     
     def _search_works(self, creator_name: str, page: int = 1, max_pages: int = 1) -> Dict:
         """搜索演员作品 - 支持分页
@@ -90,106 +338,16 @@ class ActorAppService(BaseCreatorAppService):
                 "page": int           # 当前页码
             }
         """
-        works = []
-        has_more = False
-        
-        try:
-            platforms_to_search = self._list_video_search_platforms()
-            platform_videos = {}
-            
-            for plat in platforms_to_search:
-                try:
-                    adapter = self._get_video_adapter(plat)
-                    result = {}
+        return self._search_works_with_actor_refs(creator_name, page=page, max_pages=max_pages)
 
-                    if hasattr(adapter, "search_actor") and hasattr(adapter, "get_actor_works"):
-                        actor_id = ""
-                        actors = adapter.search_actor(creator_name) or []
-                        if isinstance(actors, list) and actors:
-                            normalized_name = str(creator_name or "").strip().lower()
-                            fallback_actor_id = ""
-                            for actor in actors:
-                                if not isinstance(actor, dict):
-                                    continue
-                                candidate_id = str(
-                                    actor.get("id")
-                                    or actor.get("actor_id")
-                                    or actor.get("uid")
-                                    or ""
-                                ).strip()
-                                if not candidate_id:
-                                    continue
-                                candidate_name = str(
-                                    actor.get("name")
-                                    or actor.get("actor_name")
-                                    or actor.get("title")
-                                    or ""
-                                ).strip().lower()
-                                if candidate_name and candidate_name == normalized_name:
-                                    actor_id = candidate_id
-                                    break
-                                if not fallback_actor_id:
-                                    fallback_actor_id = candidate_id
-                            if not actor_id:
-                                actor_id = fallback_actor_id
-
-                        if actor_id:
-                            result = adapter.get_actor_works(actor_id, page=page, max_pages=max_pages) or {}
-                        if not result or (
-                            not isinstance(result.get("videos", None), list)
-                            and not isinstance(result.get("works", None), list)
-                        ):
-                            result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
-                    else:
-                        result = adapter.search_videos(creator_name, page=page, max_pages=max_pages) or {}
-
-                    videos = []
-                    if isinstance(result, dict):
-                        candidate_videos = result.get("videos")
-                        if not isinstance(candidate_videos, list):
-                            candidate_videos = result.get("works")
-                        if isinstance(candidate_videos, list):
-                            videos = candidate_videos
-                    has_more = has_more or bool(result.get("has_next", False) if isinstance(result, dict) else False)
-                    
-                    if videos:
-                        platform_videos[plat] = videos
-                except Exception as e:
-                    error_logger.error(f"搜索演员 {creator_name} 在平台 {plat} 的作品失败: {e}")
-                    continue
-            
-            # 按协议声明顺序分组输出，不在宿主内写死平台名。
-            for plat in platforms_to_search:
-                for video in platform_videos.get(plat, []):
-                    work_id = str(video.get("video_id") or video.get("code") or "")
-                    if not work_id:
-                        continue
-                    
-                    cover_url = video.get("cover_url", "")
-                    local_cover = self._build_cover_url(work_id, plat)
-                    if os.path.exists(os.path.join(self._get_cover_cache_dir(plat), f"{work_id}.jpg")):
-                        cover_url = local_cover
-                    elif cover_url:
-                        cover_url = self._to_frontend_work_cover_url(str(cover_url), plat, work_id)
-                    
-                    works.append({
-                        "id": work_id,
-                        "title": video.get("title", ""),
-                        "actor": creator_name,
-                        "cover_url": cover_url,
-                        "duration": video.get("duration", 0),
-                        "has_detail": False,
-                        "is_new": True,
-                        "platform": plat
-                    })
-        except Exception as e:
-            error_logger.error(f"搜索演员 {creator_name} 作品失败: {e}")
-        
-        return {
-            "works": works,
-            "has_more": has_more,
-            "page": page
-        }
+    def _search_works_for_creator(self, creator, page: int = 1, max_pages: int = 1) -> Dict:
+        actor_refs = self._ensure_actor_refs(creator) if isinstance(creator, ActorSubscription) else []
+        return self._search_works_with_actor_refs(
+            creator.name,
+            actor_refs=actor_refs,
+            page=page,
+            max_pages=max_pages,
+        )
     
     def _get_existing_content_ids(self) -> Set[str]:
         """获取已存在的视频ID集合"""
@@ -323,13 +481,33 @@ class ActorAppService(BaseCreatorAppService):
     def get_subscription_list(self) -> ServiceResult:
         return self._get_subscription_list_impl(self._actor_repo)
     
-    def subscribe_actor(self, name: str) -> ServiceResult:
-        return self._subscribe_by_name_impl(
-            self._actor_repo,
-            ActorSubscription,
-            name,
-            "actor",
-        )
+    def subscribe_actor(self, name: str, actor_refs: Optional[List[Dict[str, Any]]] = None) -> ServiceResult:
+        try:
+            normalized_name = str(name or "").strip()
+            if not normalized_name:
+                return ServiceResult.error("演员名称不能为空")
+
+            if self._actor_repo.exists_by_name(normalized_name):
+                return ServiceResult.error("已订阅该演员")
+
+            resolved_refs = self._resolve_actor_refs(normalized_name)
+            actor_refs = self._dedupe_actor_refs([*(actor_refs or []), *resolved_refs])
+            actor = ActorSubscription(
+                id=generate_id("actor"),
+                name=normalized_name,
+                subscribe_time=get_current_time(),
+                actor_id=str(actor_refs[0].get("actor_id") or "") if actor_refs else "",
+                actor_refs=actor_refs,
+            )
+
+            if not self._actor_repo.save(actor):
+                return ServiceResult.error("订阅演员失败")
+
+            app_logger.info(f"订阅演员成功: {normalized_name}, refs={len(actor_refs)}")
+            return ServiceResult.ok(actor.to_dict(), "订阅成功")
+        except Exception as e:
+            error_logger.error(f"订阅演员失败: {e}")
+            return ServiceResult.error("订阅演员失败")
     
     def unsubscribe_actor(self, actor_id: str) -> ServiceResult:
         return self._unsubscribe_by_id_impl(self._actor_repo, actor_id)
@@ -353,7 +531,7 @@ class ActorAppService(BaseCreatorAppService):
                     cache_key = f"{self._get_cache_key_prefix()}_{actor.name}"
                     cached_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
                     
-                    search_result = self._search_works(actor.name, page=1, max_pages=3)
+                    search_result = self._search_works_for_creator(actor, page=1, max_pages=3)
                     works = search_result.get("works", [])
                     
                     if not works:
@@ -412,7 +590,7 @@ class ActorAppService(BaseCreatorAppService):
             
             works = []
             try:
-                search_result = self._search_works(actor.name, page=1, max_pages=3)
+                search_result = self._search_works_for_creator(actor, page=1, max_pages=3)
                 works = search_result.get("works", [])
             except Exception as e:
                 error_logger.error(f"搜索演员 {actor.name} 作品失败: {e}")

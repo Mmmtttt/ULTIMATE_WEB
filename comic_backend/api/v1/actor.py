@@ -103,7 +103,24 @@ def subscribe_actor():
             return error_response(400, "缺少参数: name")
         
         name = data['name']
-        result = actor_service.subscribe_actor(name)
+        raw_actor_refs = data.get('actor_refs') or []
+        if isinstance(raw_actor_refs, dict):
+            actor_refs = [raw_actor_refs]
+        elif isinstance(raw_actor_refs, list):
+            actor_refs = raw_actor_refs
+        else:
+            actor_refs = []
+        actor_ref = data.get('actor_ref')
+        if isinstance(actor_ref, dict):
+            actor_refs = [actor_ref, *actor_refs]
+        if not actor_refs and (data.get('actor_id') or data.get('actor_url')):
+            actor_refs = [{
+                "platform": data.get('platform', ''),
+                "actor_id": data.get('actor_id', ''),
+                "actor_name": name,
+                "actor_url": data.get('actor_url', ''),
+            }]
+        result = actor_service.subscribe_actor(name, actor_refs=actor_refs)
         
         if result.success:
             app_logger.info(f"订阅演员成功: {name}")

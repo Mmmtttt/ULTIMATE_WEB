@@ -16,6 +16,7 @@ class VideoRecommendation(BaseContent):
     cover_path_local: str = ""
     thumbnail_images_local: List[str] = field(default_factory=list)
     preview_video_local: str = ""
+    actor_refs: List[Dict[str, Any]] = field(default_factory=list)
     content_type: ContentType = ContentType.VIDEO
     _actors: List[str] = field(default_factory=list, repr=False)
 
@@ -60,6 +61,11 @@ class VideoRecommendation(BaseContent):
             cover_path_local=data.get("cover_path_local", ""),
             thumbnail_images_local=[str(item or "") for item in (data.get("thumbnail_images_local") or [])],
             preview_video_local=data.get("preview_video_local", ""),
+            actor_refs=[
+                dict(item or {})
+                for item in (data.get("actor_refs") or [])
+                if isinstance(item, dict)
+            ],
             _actors=BaseContent._normalize_unique_values(data.get("actors") or []),
         )
 
@@ -76,6 +82,11 @@ class VideoRecommendation(BaseContent):
                 "cover_path_local": self.cover_path_local,
                 "thumbnail_images_local": list(self.thumbnail_images_local),
                 "preview_video_local": self.preview_video_local,
+                "actor_refs": [
+                    dict(item or {})
+                    for item in (self.actor_refs or [])
+                    if isinstance(item, dict)
+                ],
                 "actors": list(self._actors),
             }
         )

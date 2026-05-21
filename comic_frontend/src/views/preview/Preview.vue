@@ -911,7 +911,7 @@ onMounted(async () => {
   height: 40px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
-  background: var(--surface-3);
+  background: transparent;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 

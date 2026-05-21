@@ -1516,6 +1516,11 @@ class VideoAppService(BaseContentAppService):
                 source_origin=video_data.get("source_origin", ""),
                 source_updated_time=video_data.get("source_updated_time", ""),
                 local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
+                actor_refs=[
+                    dict(item or {})
+                    for item in (video_data.get("actor_refs") or [])
+                    if isinstance(item, dict)
+                ],
                 create_time=get_current_time(),
                 last_access_time=get_current_time()
             )
@@ -1779,6 +1784,15 @@ class VideoAppService(BaseContentAppService):
         remote_actors = self._normalize_actor_names(detail.get("actors"))
         if remote_actors and remote_actors != list(video.actors or []):
             video.actors = remote_actors
+            updated_fields += 1
+
+        remote_actor_refs = [
+            dict(item or {})
+            for item in (detail.get("actor_refs") or [])
+            if isinstance(item, dict)
+        ]
+        if remote_actor_refs and remote_actor_refs != list(getattr(video, "actor_refs", []) or []):
+            video.actor_refs = remote_actor_refs
             updated_fields += 1
 
         remote_creator = self._pick_first_non_empty(
@@ -2291,6 +2305,11 @@ class VideoAppService(BaseContentAppService):
                         display=dict(getattr(recommendation_video, "display", {}) or {}),
                         storage_path_relative=getattr(recommendation_video, "storage_path_relative", "") or "",
                         storage_path_kind=getattr(recommendation_video, "storage_path_kind", "") or "",
+                        actor_refs=[
+                            dict(item or {})
+                            for item in (getattr(recommendation_video, "actor_refs", []) or [])
+                            if isinstance(item, dict)
+                        ],
                     )
                     local_video.actors = list(recommendation_video.actors or [])
 
