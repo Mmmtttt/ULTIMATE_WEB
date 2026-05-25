@@ -28,7 +28,7 @@ from domain.tag.entity import ContentType
 import os
 import threading
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 import mimetypes
 from .runtime_guard import require_third_party
 from protocol.gateway import get_protocol_gateway
@@ -92,6 +92,38 @@ def _get_video_recommendation_document_repository() -> JsonDocumentRepository:
         "video_recommendations",
         "total_video_recommendations",
     )
+
+
+def _build_teledrive_file_url(file_id: str, name: str) -> str:
+    normalized_id = str(file_id or "").strip()
+    if not normalized_id:
+        return ""
+    query = urlencode({"name": str(name or "")})
+    return f"/api/v1/teledrive/files/{quote(normalized_id, safe='')}/content?{query}"
+
+
+def _build_teledrive_video_sources(video: dict) -> list:
+    display = video.get("display") if isinstance(video.get("display"), dict) else {}
+    teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
+    if str(teledrive.get("type") or "") != "video":
+        return []
+
+    sources = []
+    for index, episode in enumerate(teledrive.get("episodes") or [], start=1):
+        if not isinstance(episode, dict):
+            continue
+        file_id = str(episode.get("file_id") or "").strip()
+        name = str(episode.get("name") or "").strip()
+        url = _build_teledrive_file_url(file_id, name)
+        if not url:
+            continue
+        sources.append({
+            "name": episode.get("relative_path") or name or f"第 {index} 集",
+            "url": url,
+            "type": "direct",
+            "source": "TeleDrive",
+        })
+    return sources
 
 
 @video_bp.route('/list', methods=['GET'])
@@ -2605,6 +2637,15 @@ def get_video_recommendation_play_urls(video_id):
         
         if not video:
             return error_response(404, "视频不存在")
+
+        teledrive_sources = _build_teledrive_video_sources(video)
+        if teledrive_sources:
+            return success_response({
+                'video_id': video_id,
+                'code': video.get('code', ''),
+                'title': video.get('title', ''),
+                'sources': teledrive_sources
+            })
         
         code = video.get('code', '')
         

@@ -12,6 +12,7 @@ from .v1 import (
     recommendation_bp,
     sync_bp,
     tag_bp,
+    teledrive_bp,
     ui_state_bp,
     video_bp,
 )
@@ -31,3 +32,4 @@ def register_blueprints(app):
     app.register_blueprint(sync_bp, url_prefix='/api/v1/sync')
     app.register_blueprint(feed_bp, url_prefix='/api/v1/feed')
     app.register_blueprint(ui_state_bp, url_prefix='/api/v1/ui-state')
+    app.register_blueprint(teledrive_bp, url_prefix='/api/v1/teledrive')

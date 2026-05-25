@@ -16,6 +16,7 @@ export { syncApi } from './sync'
 export { feedApi } from './feed'
 export { organizeApi } from './organize'
 export { uiStateApi } from './uiState'
+export { teledriveApi } from './teledrive'
 
 import { comicApi } from './comic'
 export default comicApi

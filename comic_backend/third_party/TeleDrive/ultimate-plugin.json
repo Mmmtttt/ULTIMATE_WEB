@@ -1,0 +1,60 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "storage.teledrive",
+    "name": "TeleDrive",
+    "version": "0.1.0",
+    "entrypoint": "application.teledrive_app_service:TeleDriveProtocolProvider",
+    "config_key": "teledrive"
+  },
+  "media_types": ["comic", "video"],
+  "identity": {
+    "content_type": "mixed",
+    "host_id_prefix": "TELEDRIVE",
+    "platform_label": "TeleDrive",
+    "aliases": ["teledrive", "teldrive"]
+  },
+  "capabilities": [
+    { "key": "bridge.status" },
+    { "key": "bridge.import.preview" },
+    { "key": "bridge.import.run" },
+    { "key": "bridge.catalog.items" },
+    { "key": "bridge.tree.items" },
+    { "key": "bridge.file.content" },
+    { "key": "library.sync.preview" },
+    { "key": "library.sync.apply" },
+    { "key": "health.query.status" }
+  ],
+  "assets": {
+    "preview_video": {
+      "available": true,
+      "download_enabled": true
+    }
+  },
+  "configuration": {
+    "order": 90,
+    "label": "TeleDrive",
+    "sections": [
+      {
+        "id": "bridge",
+        "label": "Bridge 配置",
+        "fields": [
+          { "key": "enabled", "label": "启用", "type": "boolean" },
+          { "key": "bridge_base_url", "label": "Bridge 地址", "type": "text", "placeholder": "http://127.0.0.1:8892" },
+          { "key": "api_token", "label": "API Token", "type": "password", "placeholder": "Bearer token，可留空", "secret": true },
+          { "key": "default_limit", "label": "默认扫描条数", "type": "number", "placeholder": "100" },
+          { "key": "convert_photos", "label": "转存普通图片", "type": "boolean" },
+          { "key": "timeout_seconds", "label": "请求超时秒数", "type": "number", "placeholder": "30" }
+        ]
+      }
+    ]
+  },
+  "presentation": {
+    "media_card": {
+      "badge": {
+        "show_platform_label": true,
+        "label": "TeleDrive"
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, Response, request, jsonify, send_file, stream_with_context
 from application.comic_app_service import ComicAppService
 from application.database_organize_service import DatabaseOrganizeService
 from application.local_comic_import_service import local_comic_import_service
@@ -29,6 +29,10 @@ from protocol.compatibility import get_query_status_for_adapter_name
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items
 from .runtime_guard import require_third_party
+from application.teledrive_app_service import (
+    TeleDriveBridgeError,
+    get_teledrive_app_service,
+)
 import os
 import time
 
@@ -36,6 +40,44 @@ comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
 database_organize_service = DatabaseOrganizeService(comic_service)
 softref_comic_reader = require_softref_reader("comic")
+
+
+def _get_teledrive_comic_pages(comic_id: str):
+    try:
+        return get_teledrive_app_service().get_teledrive_comic_pages(comic_id)
+    except Exception as exc:
+        error_logger.error(f"读取 TeleDrive 漫画页失败: {comic_id}, {exc}")
+        return None
+
+
+def _stream_teledrive_comic_page(comic_id: str, page_num: int):
+    service = get_teledrive_app_service()
+    upstream = service.proxy_teledrive_comic_page(
+        comic_id,
+        page_num,
+        method=request.method,
+        incoming_headers=request.headers,
+    )
+    headers = service.filter_headers(upstream.headers, service.STREAM_RESPONSE_HEADERS)
+    status_code = int(getattr(upstream, "status_code", 200) or 200)
+    if request.method == "HEAD":
+        service.close_response(upstream)
+        return Response(status=status_code, headers=headers)
+
+    def generate():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    yield chunk
+        finally:
+            service.close_response(upstream)
+
+    return Response(
+        stream_with_context(generate()),
+        status=status_code,
+        headers=headers,
+        direct_passthrough=True,
+    )
 
 
 def success_response(data=None, msg="成功"):
@@ -290,6 +332,15 @@ def comic_images():
         if not comic_id:
             return error_response(400, "缺少参数")
 
+        teledrive_pages = _get_teledrive_comic_pages(comic_id)
+        if teledrive_pages is not None:
+            relative_paths = [
+                f"/api/v1/comic/image?comic_id={comic_id}&page_num={index + 1}"
+                for index in range(len(teledrive_pages))
+            ]
+            app_logger.info(f"获取 TeleDrive 漫画图片列表成功: {comic_id}, 共 {len(relative_paths)} 张图片")
+            return success_response(relative_paths)
+
         if softref_comic_reader.is_soft_ref_content(comic_id):
             try:
                 page_count = softref_comic_reader.get_page_count(comic_id)
@@ -328,6 +379,13 @@ def comic_image():
         page_num = request.args.get('page_num', type=int)
         if not comic_id or not page_num:
             return error_response(400, "缺少参数")
+
+        teledrive_pages = _get_teledrive_comic_pages(comic_id)
+        if teledrive_pages is not None:
+            try:
+                return _stream_teledrive_comic_page(comic_id, page_num)
+            except TeleDriveBridgeError as exc:
+                return error_response(exc.status_code, str(exc))
 
         if softref_comic_reader.is_soft_ref_content(comic_id):
             try:

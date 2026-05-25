@@ -1,5 +1,9 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, Response, request, jsonify, send_file, stream_with_context
 from application.recommendation_app_service import RecommendationAppService
+from application.teledrive_app_service import (
+    TeleDriveBridgeError,
+    get_teledrive_app_service,
+)
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.constants import COMIC_RECOMMENDATION_CACHE_DIR
@@ -15,6 +19,44 @@ import sys
 
 recommendation_bp = Blueprint('recommendation', __name__)
 recommendation_service = RecommendationAppService()
+
+
+def _get_teledrive_recommendation_pages(recommendation_id: str):
+    try:
+        return get_teledrive_app_service().get_teledrive_comic_pages(recommendation_id)
+    except Exception as exc:
+        error_logger.error(f"读取 TeleDrive 推荐漫画页失败: {recommendation_id}, {exc}")
+        return None
+
+
+def _stream_teledrive_recommendation_page(recommendation_id: str, page_num: int):
+    service = get_teledrive_app_service()
+    upstream = service.proxy_teledrive_comic_page(
+        recommendation_id,
+        page_num,
+        method=request.method,
+        incoming_headers=request.headers,
+    )
+    headers = service.filter_headers(upstream.headers, service.STREAM_RESPONSE_HEADERS)
+    status_code = int(getattr(upstream, "status_code", 200) or 200)
+    if request.method == "HEAD":
+        service.close_response(upstream)
+        return Response(status=status_code, headers=headers)
+
+    def generate():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    yield chunk
+        finally:
+            service.close_response(upstream)
+
+    return Response(
+        stream_with_context(generate()),
+        status=status_code,
+        headers=headers,
+        direct_passthrough=True,
+    )
 
 
 def success_response(data=None, msg="成功"):
@@ -371,6 +413,19 @@ def download_to_cache():
             return error_response(400, "缺少参数: recommendation_id")
         
         recommendation_id = data['recommendation_id']
+
+        teledrive_pages = _get_teledrive_recommendation_pages(recommendation_id)
+        if teledrive_pages is not None:
+            page_numbers = list(range(1, len(teledrive_pages) + 1))
+            if page_numbers:
+                recommendation_service.update_total_page(recommendation_id, len(page_numbers))
+            app_logger.info(f"TeleDrive 推荐漫画使用远端页读取: {recommendation_id}, 页数: {len(page_numbers)}")
+            return success_response({
+                "status": "teledrive",
+                "message": "TeleDrive 远端漫画无需下载缓存",
+                "total_pages": len(page_numbers),
+                "cached_pages": page_numbers
+            })
         
         if recommendation_cache_manager.is_cached(recommendation_id):
             cache_info = recommendation_cache_manager.get_cache_info(recommendation_id)
@@ -471,6 +526,13 @@ def get_cached_image():
         
         if not recommendation_id or not page_num:
             return error_response(400, "缺少参数: recommendation_id 或 page_num")
+
+        teledrive_pages = _get_teledrive_recommendation_pages(recommendation_id)
+        if teledrive_pages is not None:
+            try:
+                return _stream_teledrive_recommendation_page(recommendation_id, page_num)
+            except TeleDriveBridgeError as exc:
+                return error_response(exc.status_code, str(exc))
         
         image_path = recommendation_cache_manager.get_cached_page_path(recommendation_id, page_num)
         
@@ -491,6 +553,20 @@ def get_cache_status():
         recommendation_id = request.args.get('recommendation_id')
         if not recommendation_id:
             return error_response(400, "缺少参数: recommendation_id")
+
+        teledrive_pages = _get_teledrive_recommendation_pages(recommendation_id)
+        if teledrive_pages is not None:
+            page_numbers = list(range(1, len(teledrive_pages) + 1))
+            return success_response({
+                "is_cached": True,
+                "cache_info": {
+                    "source": "teledrive",
+                    "remote": True,
+                    "page_count": len(page_numbers)
+                },
+                "cached_pages": page_numbers,
+                "cached_count": len(page_numbers)
+            })
         
         is_cached = recommendation_cache_manager.is_cached(recommendation_id)
         cache_info = recommendation_cache_manager.get_cache_info(recommendation_id)

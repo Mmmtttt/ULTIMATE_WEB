@@ -28,6 +28,12 @@ const routes = [
         meta: { title: '随机流' }
       },
       {
+        path: 'teledrive-import',
+        name: 'TeleDriveImport',
+        component: () => import('@/views/TeleDriveImport.vue'),
+        meta: { title: 'TeleDrive' }
+      },
+      {
         path: 'subscribe',
         name: 'Subscribe',
         component: () => import('@/views/subscribe/SubscriptionList.vue'),
