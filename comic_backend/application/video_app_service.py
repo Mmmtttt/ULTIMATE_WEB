@@ -2236,6 +2236,226 @@ class VideoAppService(BaseContentAppService):
             "strategy": "copy_preview_cache" if copied else "no_preview_cache"
         }
 
+    @staticmethod
+    def _get_teledrive_video_payload(video: VideoRecommendation) -> Dict[str, Any]:
+        display = getattr(video, "display", {}) if video else {}
+        if not isinstance(display, dict):
+            return {}
+        teledrive = display.get("teledrive")
+        if not isinstance(teledrive, dict):
+            return {}
+        if str(teledrive.get("type") or "").strip().lower() != "video":
+            return {}
+        episodes = teledrive.get("episodes")
+        if not isinstance(episodes, list) or not episodes:
+            return {}
+        return teledrive
+
+    @classmethod
+    def _safe_teledrive_asset_relative_path(cls, raw_path: str, fallback_name: str) -> str:
+        raw = str(raw_path or "").replace("\\", "/").strip("/")
+        parts = [
+            cls._sanitize_local_fs_name(part, fallback="part")
+            for part in raw.split("/")
+            if part and part not in {".", ".."}
+        ]
+        if not parts:
+            parts = [cls._sanitize_local_fs_name(fallback_name, fallback="source.mp4")]
+        return os.path.join(*parts)
+
+    def _build_teledrive_local_video_dir(
+        self,
+        recommendation_video: VideoRecommendation,
+        teledrive: Dict[str, Any],
+    ) -> str:
+        folder_id = str(teledrive.get("folder_id") or recommendation_video.id or "").strip()
+        suffix = self._sanitize_local_fs_name(folder_id, fallback="folder")[:12]
+        label = (
+            str(teledrive.get("work_id") or "").strip()
+            or str(getattr(recommendation_video, "title", "") or "").strip()
+            or str(getattr(recommendation_video, "id", "") or "").strip()
+        )
+        dir_name = self._sanitize_local_fs_name(label, fallback="video")
+        if suffix and suffix.lower() not in dir_name.lower():
+            dir_name = f"{dir_name}__{suffix}"
+
+        base_dir = os.path.join(VIDEO_DIR, "TeleDrive")
+        candidate = os.path.abspath(os.path.join(base_dir, dir_name))
+        if not os.path.exists(candidate):
+            return candidate
+
+        for index in range(2, 10_000):
+            next_candidate = os.path.abspath(os.path.join(base_dir, f"{dir_name}__{index}"))
+            if not os.path.exists(next_candidate):
+                return next_candidate
+        raise RuntimeError(f"failed to allocate TeleDrive video directory: {candidate}")
+
+    @staticmethod
+    def _build_local_teledrive_video_display(display: Dict[str, Any], local_episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        local_display = dict(display or {})
+        teledrive = local_display.pop("teledrive", None)
+        if isinstance(teledrive, dict):
+            origin = {
+                key: teledrive.get(key)
+                for key in ("type", "root", "path", "folder_id", "work_id", "platform_segment")
+                if teledrive.get(key) not in (None, "", [], {})
+            }
+            origin["episode_count"] = len(teledrive.get("episodes") or [])
+            origin["thumbnail_count"] = len(teledrive.get("thumbnails") or [])
+            local_display["teledrive_origin"] = origin
+        if local_episodes:
+            local_display["local_episodes"] = local_episodes
+        return local_display
+
+    def _download_teledrive_video_file(
+        self,
+        downloader,
+        item: Dict[str, Any],
+        tmp_dir: str,
+        *,
+        fallback_name: str,
+        index: int,
+    ) -> Dict[str, Any]:
+        file_id = str(item.get("file_id") or "").strip()
+        if not file_id:
+            raise RuntimeError(f"TeleDrive video item has no file id: index={index}")
+
+        item_name = str(item.get("name") or "").strip() or fallback_name
+        relative = self._safe_teledrive_asset_relative_path(
+            str(item.get("relative_path") or item_name),
+            item_name,
+        )
+        target_path = os.path.abspath(os.path.join(tmp_dir, relative))
+        tmp_root = os.path.abspath(tmp_dir)
+        try:
+            if os.path.commonpath([tmp_root, target_path]) != tmp_root:
+                raise RuntimeError("invalid TeleDrive video path")
+        except Exception as exc:
+            raise RuntimeError("invalid TeleDrive video path") from exc
+
+        if os.path.exists(target_path):
+            stem, ext = os.path.splitext(target_path)
+            target_path = f"{stem}__{index}{ext or os.path.splitext(item_name)[1] or '.mp4'}"
+
+        downloader.download_file_to_path(file_id, target_path, name=item_name)
+        return {
+            "name": item_name,
+            "path": target_path,
+            "relative_path": os.path.relpath(target_path, tmp_dir).replace("\\", "/"),
+        }
+
+    def _migrate_teledrive_video_content_to_local(
+        self,
+        recommendation_video: VideoRecommendation,
+        local_video: Video,
+    ) -> dict:
+        teledrive = self._get_teledrive_video_payload(recommendation_video)
+        if not teledrive:
+            return {"success": True, "handled": False, "strategy": "not_teledrive"}
+
+        from application.teledrive_app_service import get_teledrive_app_service
+
+        local_dir = self._build_teledrive_local_video_dir(recommendation_video, teledrive)
+        tmp_dir = f"{local_dir}.tmp"
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        downloader = get_teledrive_app_service()
+        downloaded_episodes: List[Dict[str, Any]] = []
+        try:
+            for index, episode in enumerate(teledrive.get("episodes") or [], start=1):
+                if not isinstance(episode, dict):
+                    continue
+                downloaded = self._download_teledrive_video_file(
+                    downloader,
+                    episode,
+                    tmp_dir,
+                    fallback_name=f"episode-{index:03d}.mp4",
+                    index=index,
+                )
+                downloaded_episodes.append(downloaded)
+
+            if not downloaded_episodes:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return {"success": False, "reason": "teledrive_episodes_empty"}
+
+            cover_local_url = ""
+            cover = teledrive.get("cover") if isinstance(teledrive.get("cover"), dict) else {}
+            if cover:
+                cover_download = self._download_teledrive_video_file(
+                    downloader,
+                    cover,
+                    tmp_dir,
+                    fallback_name="cover.jpg",
+                    index=1,
+                )
+                cover_local_url = self._to_media_url(cover_download["path"].replace(tmp_dir, local_dir, 1))
+
+            thumbnail_local_urls: List[str] = []
+            for index, thumb in enumerate(teledrive.get("thumbnails") or [], start=1):
+                if not isinstance(thumb, dict):
+                    continue
+                thumb_download = self._download_teledrive_video_file(
+                    downloader,
+                    thumb,
+                    tmp_dir,
+                    fallback_name=f"thumbs/thumb-{index:04d}.jpg",
+                    index=index,
+                )
+                thumbnail_local_urls.append(
+                    self._to_media_url(thumb_download["path"].replace(tmp_dir, local_dir, 1))
+                )
+
+            if os.path.isdir(local_dir):
+                shutil.rmtree(local_dir, ignore_errors=True)
+            os.makedirs(os.path.dirname(local_dir), exist_ok=True)
+            shutil.move(tmp_dir, local_dir)
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+        local_episodes: List[Dict[str, Any]] = []
+        for index, episode in enumerate(downloaded_episodes, start=1):
+            local_path = episode["path"].replace(tmp_dir, local_dir, 1)
+            media_url = self._to_media_url(local_path)
+            if not media_url:
+                continue
+            local_episodes.append(
+                {
+                    "name": episode["name"],
+                    "relative_path": episode["relative_path"],
+                    "url": media_url,
+                    "index": index,
+                }
+            )
+
+        first_episode_path = downloaded_episodes[0]["path"].replace(tmp_dir, local_dir, 1)
+        first_episode_url = self._to_media_url(first_episode_path)
+        local_video.local_video_path = first_episode_url
+        local_video.local_source_path = os.path.abspath(first_episode_path)
+        local_video.local_asset_dir_name = os.path.basename(local_dir)
+        local_video.local_source_filename = os.path.basename(first_episode_path)
+        local_video.preview_video_local = first_episode_url
+        local_video.source_origin = "teledrive_migrate"
+        local_video.source_updated_time = get_current_time()
+        local_video.storage_path_relative = normalize_data_relative_path(first_episode_path)
+        local_video.storage_path_kind = "local_file" if local_video.storage_path_relative else "source"
+        local_video.cover_path_local = cover_local_url
+        local_video.thumbnail_images_local = [url for url in thumbnail_local_urls if url]
+        local_video.display = self._build_local_teledrive_video_display(
+            getattr(recommendation_video, "display", {}) or {},
+            local_episodes,
+        )
+
+        return {
+            "success": True,
+            "handled": True,
+            "strategy": "download_teledrive",
+            "local_dir": local_dir,
+            "episode_count": len(local_episodes),
+        }
+
     def migrate_recommendations_to_local(self, video_ids: List[str]) -> ServiceResult:
         try:
             if not video_ids:
@@ -2313,7 +2533,9 @@ class VideoAppService(BaseContentAppService):
                     )
                     local_video.actors = list(recommendation_video.actors or [])
 
-                    assets_result = self._migrate_recommendation_assets_to_local(recommendation_video, local_video)
+                    assets_result = self._migrate_teledrive_video_content_to_local(recommendation_video, local_video)
+                    if assets_result.get("success") and not assets_result.get("handled"):
+                        assets_result = self._migrate_recommendation_assets_to_local(recommendation_video, local_video)
                     if not assets_result.get("success"):
                         failed_count += 1
                         failed_items.append({

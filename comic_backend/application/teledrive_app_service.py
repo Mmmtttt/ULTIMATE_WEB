@@ -911,8 +911,16 @@ class TeleDriveAppService:
             merged["current_unit"] = max(1, min(current_unit, total_units or current_unit))
         return merged
 
-    def get_teledrive_comic_pages(self, comic_id: str) -> Optional[List[Dict[str, Any]]]:
-        record = self._find_teledrive_comic_record(comic_id)
+    def get_teledrive_comic_pages(
+        self,
+        comic_id: str,
+        *,
+        include_recommendation: bool = True,
+    ) -> Optional[List[Dict[str, Any]]]:
+        record = self._find_teledrive_comic_record(
+            comic_id,
+            include_recommendation=include_recommendation,
+        )
         if not record:
             return None
         display = record.get("display") if isinstance(record.get("display"), dict) else {}
@@ -946,14 +954,18 @@ class TeleDriveAppService:
         )
 
     @staticmethod
-    def _find_teledrive_comic_record(comic_id: str) -> Optional[Dict[str, Any]]:
+    def _find_teledrive_comic_record(
+        comic_id: str,
+        *,
+        include_recommendation: bool = True,
+    ) -> Optional[Dict[str, Any]]:
         normalized_id = str(comic_id or "").strip()
         if not normalized_id:
             return None
-        for file_path, root_key in (
-            (RECOMMENDATION_JSON_FILE, "recommendations"),
-            (JSON_FILE, "comics"),
-        ):
+        sources = [(JSON_FILE, "comics")]
+        if include_recommendation:
+            sources.append((RECOMMENDATION_JSON_FILE, "recommendations"))
+        for file_path, root_key in sources:
             try:
                 repo = JsonDocumentRepository(file_path, root_key)
                 for item in repo.read_items():
@@ -964,6 +976,8 @@ class TeleDriveAppService:
                         teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
                         if str(teledrive.get("type") or "") == "comic":
                             return dict(item)
+                    if file_path == JSON_FILE and not include_recommendation:
+                        return None
             except Exception:
                 continue
         return None
@@ -1007,6 +1021,50 @@ class TeleDriveAppService:
             )
         except requests.RequestException as exc:
             raise TeleDriveBridgeError(f"TeleDrive Bridge stream failed: {exc}", status_code=502) from exc
+
+    def download_file_to_path(self, file_id: str, target_path: str, *, name: str = "") -> Dict[str, Any]:
+        normalized_target = os.path.abspath(str(target_path or "").strip())
+        if not normalized_target:
+            raise TeleDriveBridgeError("Missing target path.", status_code=400)
+
+        upstream = self.proxy_file_content(
+            file_id,
+            method="GET",
+            query_string=urlencode({"name": str(name or "")}) if name else "",
+            incoming_headers=None,
+        )
+        tmp_path = f"{normalized_target}.tmp"
+        written = 0
+        try:
+            status_code = int(getattr(upstream, "status_code", 200) or 200)
+            if status_code >= 400:
+                raise TeleDriveBridgeError(
+                    f"TeleDrive Bridge returned HTTP {status_code}",
+                    status_code=status_code,
+                )
+
+            os.makedirs(os.path.dirname(normalized_target) or ".", exist_ok=True)
+            with open(tmp_path, "wb") as file_obj:
+                for chunk in upstream.iter_content(chunk_size=1024 * 512):
+                    if not chunk:
+                        continue
+                    file_obj.write(chunk)
+                    written += len(chunk)
+            os.replace(tmp_path, normalized_target)
+            return {
+                "path": normalized_target,
+                "bytes": written,
+                "content_type": str(getattr(upstream, "headers", {}).get("Content-Type") or ""),
+            }
+        except Exception:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            raise
+        finally:
+            self.close_response(upstream)
 
     @staticmethod
     def close_response(response) -> None:

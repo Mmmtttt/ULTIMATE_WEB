@@ -1,294 +1,341 @@
 <template>
-  <div class="teledrive-import-page desktop-page-shell">
-    <van-nav-bar
-      title="TeleDrive"
-      left-arrow
-      @click-left="$router.back()"
-    />
-
-    <section class="hero card-surface">
-      <div>
-        <h2>Telegram 云媒体库</h2>
-        <p>
-          扫描已绑定频道中的转发消息，把图片和视频纳入 Ultimate 管理。普通 Telegram 图片会按需转存为 document，视频保留 Range 播放能力。
-        </p>
-      </div>
-      <van-button
-        plain
-        type="primary"
-        size="small"
-        :loading="loadingStatus"
-        @click="loadStatus"
-      >
-        刷新状态
-      </van-button>
-    </section>
-
-    <section class="status-grid">
-      <div class="status-card card-surface">
-        <span class="status-label">连接状态</span>
-        <strong :class="statusClass">{{ statusLabel }}</strong>
-        <small>{{ statusHint }}</small>
-      </div>
-      <div class="status-card card-surface">
-        <span class="status-label">最近导入</span>
-        <strong>{{ latestResult ? `${latestResult.imported || 0} 个新增` : '-' }}</strong>
-        <small>{{ latestResult ? `扫描 ${latestResult.scanned || 0}，跳过 ${latestResult.skipped || 0}` : '暂无记录' }}</small>
-      </div>
-      <div class="status-card card-surface">
-        <span class="status-label">Bridge</span>
-        <strong>{{ bridgeBaseUrl || '-' }}</strong>
-        <small>前端通过 Ultimate 后端代理访问</small>
-      </div>
-    </section>
-
-    <section class="card-surface form-card">
-      <div class="section-title">
-        <h3>扫描频道</h3>
-        <span class="hint">建议先预览，再真实导入</span>
-      </div>
-
-      <van-field
-        v-model.number="limit"
-        type="number"
-        label="扫描条数"
-        placeholder="100"
-        min="1"
-        max="1000"
-      />
-
-      <van-cell title="转存普通图片" label="开启后会把 Telegram photo 转成 document，再写入 Teldrive 文件表">
-        <template #right-icon>
-          <van-switch v-model="convertPhotos" />
-        </template>
-      </van-cell>
-
-      <div class="actions">
+  <div class="teledrive-page desktop-page-shell">
+    <van-nav-bar title="TeleDrive" left-arrow @click-left="$router.back()">
+      <template #right>
         <van-button
-          plain
-          type="primary"
-          :loading="previewing"
-          :disabled="running"
-          @click="previewImport"
-        >
-          预览扫描
-        </van-button>
-        <van-button
-          type="primary"
-          :loading="running"
-          :disabled="previewing"
-          @click="runImport"
-        >
-          确认导入
-        </van-button>
-      </div>
-    </section>
-
-    <section v-if="currentResult" class="card-surface result-card">
-      <div class="section-title">
-        <h3>{{ currentResult.dry_run ? '预览结果' : '导入结果' }}</h3>
-        <van-tag :type="currentResult.dry_run ? 'warning' : 'success'">
-          {{ currentResult.dry_run ? 'dry-run' : '已执行' }}
-        </van-tag>
-      </div>
-
-      <div class="stats-grid">
-        <div class="stat-item">
-          <div class="label">扫描</div>
-          <div class="value">{{ currentResult.scanned || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">新增</div>
-          <div class="value success">{{ currentResult.imported || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">转存图片</div>
-          <div class="value">{{ currentResult.converted_photos || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">跳过</div>
-          <div class="value warning">{{ currentResult.skipped || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">错误</div>
-          <div class="value danger">{{ resultErrors.length }}</div>
-        </div>
-      </div>
-
-      <van-cell-group v-if="resultFiles.length" inset title="文件">
-        <van-cell
-          v-for="file in resultFiles"
-          :key="`${file.original_message_id}-${file.file_id}`"
-          :title="file.name || file.file_id || '-'"
-          :label="`${file.category || '-'} · ${file.mime_type || '-'} · ${formatBytes(file.size)}`"
-        >
-          <template #right-icon>
-            <van-tag v-if="file.converted" type="primary" size="small">已转存</van-tag>
-          </template>
-        </van-cell>
-      </van-cell-group>
-
-      <van-cell-group v-if="resultErrors.length" inset title="错误">
-        <van-cell
-          v-for="(error, index) in resultErrors"
-          :key="`err-${index}`"
-          :title="String(error)"
-        />
-      </van-cell-group>
-    </section>
-
-    <section class="card-surface form-card">
-      <div class="section-title">
-        <h3>同步预览库</h3>
-        <span class="hint">只识别 /comic 和 /video 固定目录</span>
-      </div>
-
-      <van-field
-        v-model.number="syncLimit"
-        type="number"
-        label="扫描文件数"
-        placeholder="10000"
-        min="1"
-        max="50000"
-      />
-
-      <div class="actions">
-        <van-button
-          plain
-          type="primary"
-          :loading="syncPreviewing"
-          :disabled="syncing"
-          @click="previewLibrarySync"
-        >
-          预览同步
-        </van-button>
-        <van-button
-          type="primary"
-          :loading="syncing"
-          :disabled="syncPreviewing"
-          @click="runLibrarySync"
-        >
-          写入预览库
-        </van-button>
-      </div>
-    </section>
-
-    <section v-if="syncResult" class="card-surface result-card">
-      <div class="section-title">
-        <h3>{{ syncResult.dry_run ? '同步预览' : '同步结果' }}</h3>
-        <van-tag :type="syncResult.dry_run ? 'warning' : 'success'">
-          {{ syncResult.dry_run ? 'dry-run' : '已写入' }}
-        </van-tag>
-      </div>
-
-      <div class="stats-grid">
-        <div class="stat-item">
-          <div class="label">漫画</div>
-          <div class="value success">{{ syncStats.recognized_comics || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">视频</div>
-          <div class="value success">{{ syncStats.recognized_videos || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">跳过</div>
-          <div class="value warning">{{ syncStats.skipped || 0 }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">新增</div>
-          <div class="value">{{ syncAddedCount }}</div>
-        </div>
-        <div class="stat-item">
-          <div class="label">更新</div>
-          <div class="value">{{ syncUpdatedCount }}</div>
-        </div>
-      </div>
-
-      <van-cell-group v-if="syncComics.length" inset title="识别到的漫画">
-        <van-cell
-          v-for="comic in syncComics.slice(0, 20)"
-          :key="comic.id"
-          :title="comic.title || comic.id"
-          :label="`${comic.total_page || 0} 页 · ${comic.display?.teledrive?.path || ''}`"
-        />
-      </van-cell-group>
-
-      <van-cell-group v-if="syncVideos.length" inset title="识别到的视频">
-        <van-cell
-          v-for="video in syncVideos.slice(0, 20)"
-          :key="video.id"
-          :title="video.title || video.id"
-          :label="`${video.total_units || 0} 集 · ${video.display?.teledrive?.path || ''}`"
-        />
-      </van-cell-group>
-
-      <van-cell-group v-if="syncSkipped.length" inset title="跳过项">
-        <van-cell
-          v-for="(item, index) in syncSkipped.slice(0, 20)"
-          :key="`skip-${index}`"
-          :title="item.path || '-'"
-          :label="item.reason || ''"
-        />
-      </van-cell-group>
-    </section>
-
-    <section class="card-surface catalog-card">
-      <div class="section-title">
-        <h3>最近媒体</h3>
-        <van-button
-          plain
-          type="primary"
+          icon="replay"
           size="small"
-          :loading="loadingCatalog"
-          @click="loadCatalog"
+          plain
+          type="primary"
+          :loading="loadingStatus"
+          @click="refreshAll"
         >
           刷新
         </van-button>
-      </div>
+      </template>
+    </van-nav-bar>
 
-      <div v-if="activeVideoUrl" class="video-preview">
-        <video controls playsinline preload="metadata" :src="activeVideoUrl"></video>
+    <section class="topline">
+      <div class="title-block">
+        <h2>Telegram 媒体桥</h2>
+        <p>把频道里的图片、视频交给 TeleDrive 存储，再按固定目录同步到 Ultimate 预览库。</p>
       </div>
+      <div class="status-strip">
+        <div class="status-pill" :class="{ healthy: isHealthy, danger: status && !isHealthy }">
+          <van-icon :name="isHealthy ? 'passed' : 'warning-o'" />
+          <span>{{ statusLabel }}</span>
+        </div>
+        <span class="status-detail">{{ statusHint }}</span>
+      </div>
+    </section>
 
-      <van-empty v-if="!catalogItems.length && !loadingCatalog" description="暂无 TeleDrive 媒体" />
-      <div v-else class="catalog-list">
-        <article
-          v-for="item in catalogItems"
-          :key="item.id"
-          class="catalog-item"
-        >
-          <div class="thumb">
-            <van-image
-              v-if="itemKind(item) === 'image'"
-              :src="mediaUrl(item)"
-              fit="cover"
-            />
-            <van-icon v-else name="play-circle-o" />
-          </div>
-          <div class="catalog-info">
-            <strong>{{ item.name }}</strong>
-            <span>{{ itemKind(item) || '-' }} · {{ item.mime_type || '-' }}</span>
-            <small>{{ formatBytes(item.size) }}</small>
+    <section class="metrics">
+      <div class="metric">
+        <span>Bridge</span>
+        <strong>{{ bridgeBaseUrl || '-' }}</strong>
+      </div>
+      <div class="metric">
+        <span>最近导入</span>
+        <strong>{{ latestResult ? `${latestResult.imported || 0} 个新增` : '-' }}</strong>
+      </div>
+      <div class="metric">
+        <span>最近扫描</span>
+        <strong>{{ latestResult ? `${latestResult.scanned || 0} 条` : '-' }}</strong>
+      </div>
+      <div class="metric">
+        <span>预览库</span>
+        <strong>{{ syncResult ? `${syncStats.recognized_comics || 0} 漫画 / ${syncStats.recognized_videos || 0} 视频` : '待同步' }}</strong>
+      </div>
+    </section>
+
+    <section v-if="!isHealthy && status" class="notice-panel">
+      <van-icon name="info-o" />
+      <span>{{ statusHint }}</span>
+      <router-link to="/config">去配置</router-link>
+    </section>
+
+    <div class="workspace-grid">
+      <section class="panel workflow-panel">
+        <van-tabs v-model:active="activeWorkflow" shrink>
+          <van-tab title="频道导入" name="import">
+            <div class="workflow-head">
+              <div>
+                <h3>导入频道媒体</h3>
+                <p>读取已绑定频道的最近消息，补进 TeleDrive 文件表。</p>
+              </div>
+              <HelpPopover
+                text="用于处理你转发到 Telegram 频道里的媒体。普通 photo 可转存为 document，视频会保留可在线播放的文件记录。"
+              />
+            </div>
+
+            <van-cell-group inset>
+              <van-field
+                v-model.number="limit"
+                type="number"
+                label="扫描条数"
+                placeholder="100"
+                min="1"
+                max="1000"
+              />
+              <van-cell title="转存普通图片" label="让 Telegram photo 也能进入 TeleDrive 文件管理">
+                <template #right-icon>
+                  <van-switch v-model="convertPhotos" />
+                </template>
+              </van-cell>
+            </van-cell-group>
+
+            <div class="action-row">
+              <van-button
+                icon="search"
+                plain
+                type="primary"
+                :loading="previewing"
+                :disabled="running"
+                @click="previewImport"
+              >
+                预览
+              </van-button>
+              <van-button
+                icon="plus"
+                type="primary"
+                :loading="running"
+                :disabled="previewing"
+                @click="runImport"
+              >
+                导入
+              </van-button>
+            </div>
+          </van-tab>
+
+          <van-tab title="预览库同步" name="sync">
+            <div class="workflow-head">
+              <div>
+                <h3>同步固定目录</h3>
+                <p>扫描 TeleDrive 的 /comic 与 /video，写入 Ultimate 预览库。</p>
+              </div>
+              <HelpPopover
+                text="Ultimate 只识别固定目录：/comic/{作品}、/comic/{平台}/{作品}、/video/{视频}、/video/{平台}/{视频}。不符合结构的文件会跳过。"
+              />
+            </div>
+
+            <van-cell-group inset>
+              <van-field
+                v-model.number="syncLimit"
+                type="number"
+                label="扫描文件数"
+                placeholder="10000"
+                min="1"
+                max="50000"
+              />
+            </van-cell-group>
+
+            <div class="action-row">
+              <van-button
+                icon="search"
+                plain
+                type="primary"
+                :loading="syncPreviewing"
+                :disabled="syncing"
+                @click="previewLibrarySync"
+              >
+                预览
+              </van-button>
+              <van-button
+                icon="success"
+                type="primary"
+                :loading="syncing"
+                :disabled="syncPreviewing"
+                @click="runLibrarySync"
+              >
+                同步
+              </van-button>
+            </div>
+          </van-tab>
+        </van-tabs>
+
+        <ResultSummary
+          v-if="currentResult && activeWorkflow === 'import'"
+          title="导入结果"
+          :dry-run="Boolean(currentResult.dry_run)"
+          :items="importMetrics"
+          :details="importDetails"
+        />
+        <ResultSummary
+          v-if="syncResult && activeWorkflow === 'sync'"
+          title="同步结果"
+          :dry-run="Boolean(syncResult.dry_run)"
+          :items="syncMetrics"
+          :details="syncDetails"
+        />
+      </section>
+
+      <section class="panel media-panel">
+        <div class="panel-title">
+          <div>
+            <h3>最近媒体</h3>
+            <p>确认图片和视频是否能经 Ultimate 后端代理打开。</p>
           </div>
           <van-button
-            v-if="itemKind(item) === 'video'"
+            icon="replay"
             size="small"
             plain
             type="primary"
-            @click="playVideo(item)"
+            :loading="loadingCatalog"
+            @click="loadCatalog"
           >
-            播放
+            刷新
           </van-button>
-        </article>
+        </div>
+
+        <div v-if="activeVideoUrl" class="video-preview">
+          <video controls playsinline preload="metadata" :src="activeVideoUrl"></video>
+        </div>
+
+        <van-empty v-if="!catalogItems.length && !loadingCatalog" description="暂无 TeleDrive 媒体" />
+        <div v-else class="media-list">
+          <article v-for="item in catalogItems" :key="item.id" class="media-item">
+            <button class="thumb" type="button" @click="selectMedia(item)">
+              <van-image v-if="itemKind(item) === 'image'" :src="mediaUrl(item)" fit="cover" />
+              <van-icon v-else :name="itemKind(item) === 'video' ? 'play-circle-o' : 'description-o'" />
+            </button>
+            <div class="media-meta">
+              <strong>{{ item.name || item.id }}</strong>
+              <span>{{ itemKind(item) || 'file' }} · {{ formatBytes(item.size) }}</span>
+            </div>
+            <van-button
+              v-if="itemKind(item) === 'video'"
+              icon="play-circle-o"
+              size="small"
+              plain
+              type="primary"
+              @click="playVideo(item)"
+            >
+              播放
+            </van-button>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel console-panel">
+      <div class="panel-title">
+        <div>
+          <h3>TeleDrive 控制台</h3>
+          <p>需要调整目录时再打开；Ultimate 只按固定目录识别内容。</p>
+        </div>
+        <div class="console-actions">
+          <HelpPopover text="这里嵌入的是 TeleDrive 原生页面，主要用于移动文件夹或检查文件。同步规则仍由 Ultimate 的 /comic 与 /video 目录决定。" />
+          <van-button
+            v-if="teldriveWebUrl"
+            icon="link-o"
+            size="small"
+            plain
+            type="primary"
+            @click="openConsoleExternal"
+          >
+            新窗口
+          </van-button>
+          <van-button
+            icon="desktop-o"
+            size="small"
+            plain
+            type="primary"
+            @click="showConsole = !showConsole"
+          >
+            {{ showConsole ? '收起' : '打开' }}
+          </van-button>
+        </div>
+      </div>
+
+      <div v-if="showConsole" class="console-frame-wrap">
+        <iframe
+          v-if="teldriveWebUrl"
+          class="console-frame"
+          :src="teldriveWebUrl"
+          title="TeleDrive"
+        ></iframe>
+        <van-empty v-else description="未能推断 TeleDrive Web 地址" />
       </div>
     </section>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import { closeToast, showFailToast, showLoadingToast, showSuccessToast } from 'vant'
 import { teledriveApi } from '@/api'
+import { openExternalUrl } from '@/runtime/browser'
+
+const HelpPopover = defineComponent({
+  name: 'HelpPopover',
+  props: {
+    text: {
+      type: String,
+      required: true
+    }
+  },
+  setup(props) {
+    const show = ref(false)
+    return () => h('span', { class: 'help-wrap' }, [
+      h(
+        'button',
+        {
+          class: 'help-button',
+          type: 'button',
+          'aria-label': '说明',
+          onClick: () => { show.value = !show.value },
+          onBlur: () => { show.value = false }
+        },
+        '?'
+      ),
+      show.value ? h('span', { class: 'help-bubble' }, props.text) : null
+    ])
+  }
+})
+
+const ResultSummary = defineComponent({
+  name: 'ResultSummary',
+  props: {
+    title: {
+      type: String,
+      required: true
+    },
+    dryRun: {
+      type: Boolean,
+      default: false
+    },
+    items: {
+      type: Array,
+      default: () => []
+    },
+    details: {
+      type: Array,
+      default: () => []
+    }
+  },
+  setup(props) {
+    return () => h('div', { class: 'result-summary' }, [
+      h('div', { class: 'result-head' }, [
+        h('strong', props.title),
+        h('span', { class: ['result-badge', props.dryRun ? 'warning' : 'success'] }, props.dryRun ? '预览' : '已执行')
+      ]),
+      h('div', { class: 'result-metrics' }, props.items.map((item) => h('div', { class: 'result-metric', key: item.label }, [
+        h('span', item.label),
+        h('strong', { class: item.tone || '' }, String(item.value ?? 0))
+      ]))),
+      props.details.length
+        ? h('div', { class: 'result-details' }, props.details.map((detail) => h(
+          'details',
+          { key: detail.title },
+          [
+            h('summary', detail.title),
+            h('div', { class: 'detail-lines' }, detail.lines.map((line) => h('p', { key: line }, line)))
+          ]
+        )))
+        : null
+    ])
+  }
+})
 
 const loadingStatus = ref(false)
 const loadingCatalog = ref(false)
@@ -296,6 +343,8 @@ const previewing = ref(false)
 const running = ref(false)
 const syncPreviewing = ref(false)
 const syncing = ref(false)
+const showConsole = ref(false)
+const activeWorkflow = ref('sync')
 
 const status = ref(null)
 const catalogItems = ref([])
@@ -321,6 +370,20 @@ const bridgeBaseUrl = computed(() => {
   return data?.config?.bridge_base_url || data?.bridge_base_url || ''
 })
 
+const teldriveWebUrl = computed(() => {
+  const raw = String(bridgeBaseUrl.value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    if (url.port === '8892') {
+      url.port = '8787'
+    }
+    return url.origin
+  } catch (_error) {
+    return ''
+  }
+})
+
 const isHealthy = computed(() => {
   const data = status.value || {}
   if (data.enabled === false || data.configured === false) return false
@@ -330,46 +393,87 @@ const isHealthy = computed(() => {
 
 const statusLabel = computed(() => {
   if (!status.value) return '未检测'
-  return isHealthy.value ? '已连接' : '需检查'
+  return isHealthy.value ? '已连接' : '需配置'
 })
 
 const statusHint = computed(() => {
   if (!status.value) return '点击刷新状态'
-  if (isHealthy.value) return 'TeleDrive Bridge 可用'
+  if (isHealthy.value) return 'Bridge 正常，页面可用'
   return status.value?.error || status.value?.message || '请检查 Bridge 地址、Token 或 TeleDrive 服务'
 })
 
-const statusClass = computed(() => ({
-  success: isHealthy.value,
-  danger: status.value && !isHealthy.value
-}))
-
-const resultFiles = computed(() => {
-  const files = currentResult.value?.files
-  return Array.isArray(files) ? files : []
-})
-
-const resultErrors = computed(() => {
-  const errors = currentResult.value?.errors
-  return Array.isArray(errors) ? errors : []
-})
-
+const resultFiles = computed(() => Array.isArray(currentResult.value?.files) ? currentResult.value.files : [])
+const resultErrors = computed(() => Array.isArray(currentResult.value?.errors) ? currentResult.value.errors : [])
 const syncStats = computed(() => syncResult.value?.stats || {})
 const syncComics = computed(() => Array.isArray(syncResult.value?.comics) ? syncResult.value.comics : [])
 const syncVideos = computed(() => Array.isArray(syncResult.value?.videos) ? syncResult.value.videos : [])
 const syncSkipped = computed(() => Array.isArray(syncResult.value?.skipped) ? syncResult.value.skipped : [])
-const syncAddedCount = computed(() => {
-  const stats = syncStats.value
-  return Number(stats.comic_added || 0) + Number(stats.video_added || 0)
+const syncAddedCount = computed(() => Number(syncStats.value.comic_added || 0) + Number(syncStats.value.video_added || 0))
+const syncUpdatedCount = computed(() => Number(syncStats.value.comic_updated || 0) + Number(syncStats.value.video_updated || 0))
+
+const importMetrics = computed(() => [
+  { label: '扫描', value: currentResult.value?.scanned || 0 },
+  { label: '新增', value: currentResult.value?.imported || 0, tone: 'success' },
+  { label: '转存图片', value: currentResult.value?.converted_photos || 0 },
+  { label: '跳过', value: currentResult.value?.skipped || 0, tone: 'warning' },
+  { label: '错误', value: resultErrors.value.length, tone: 'danger' }
+])
+
+const syncMetrics = computed(() => [
+  { label: '漫画', value: syncStats.value.recognized_comics || 0, tone: 'success' },
+  { label: '视频', value: syncStats.value.recognized_videos || 0, tone: 'success' },
+  { label: '跳过', value: syncStats.value.skipped || 0, tone: 'warning' },
+  { label: '新增', value: syncAddedCount.value },
+  { label: '更新', value: syncUpdatedCount.value }
+])
+
+const importDetails = computed(() => {
+  const details = []
+  if (resultFiles.value.length) {
+    details.push({
+      title: `文件 ${resultFiles.value.length}`,
+      lines: resultFiles.value.slice(0, 12).map((file) => `${file.name || file.file_id || '-'} · ${file.category || '-'} · ${formatBytes(file.size)}`)
+    })
+  }
+  if (resultErrors.value.length) {
+    details.push({
+      title: `错误 ${resultErrors.value.length}`,
+      lines: resultErrors.value.slice(0, 12).map((error) => String(error))
+    })
+  }
+  return details
 })
-const syncUpdatedCount = computed(() => {
-  const stats = syncStats.value
-  return Number(stats.comic_updated || 0) + Number(stats.video_updated || 0)
+
+const syncDetails = computed(() => {
+  const details = []
+  if (syncComics.value.length) {
+    details.push({
+      title: `漫画 ${syncComics.value.length}`,
+      lines: syncComics.value.slice(0, 12).map((comic) => `${comic.title || comic.id} · ${comic.total_page || 0} 页`)
+    })
+  }
+  if (syncVideos.value.length) {
+    details.push({
+      title: `视频 ${syncVideos.value.length}`,
+      lines: syncVideos.value.slice(0, 12).map((video) => `${video.title || video.id} · ${video.total_units || 0} 集`)
+    })
+  }
+  if (syncSkipped.value.length) {
+    details.push({
+      title: `跳过 ${syncSkipped.value.length}`,
+      lines: syncSkipped.value.slice(0, 12).map((item) => `${item.path || '-'} · ${item.reason || ''}`)
+    })
+  }
+  return details
 })
 
 onMounted(async () => {
-  await Promise.all([loadStatus(), loadCatalog()])
+  await refreshAll()
 })
+
+async function refreshAll() {
+  await Promise.all([loadStatus(), loadCatalog()])
+}
 
 async function loadStatus() {
   loadingStatus.value = true
@@ -386,11 +490,11 @@ async function loadStatus() {
 async function loadCatalog() {
   loadingCatalog.value = true
   try {
-    const response = await teledriveApi.getCatalog({ limit: 40 })
+    const response = await teledriveApi.getCatalog({ limit: 24 })
     const data = response.data || {}
     catalogItems.value = data.items || data.catalog?.items || []
   } catch (error) {
-    showFailToast(error?.message || '读取 TeleDrive 媒体失败')
+    showFailToast(error?.message || '读取最近媒体失败')
   } finally {
     loadingCatalog.value = false
   }
@@ -415,13 +519,13 @@ async function previewImport() {
 
 async function runImport() {
   running.value = true
-  showLoadingToast({ message: '正在导入 TeleDrive 媒体...', duration: 0, forbidClick: true })
+  showLoadingToast({ message: '正在导入媒体...', duration: 0, forbidClick: true })
   try {
     const response = await teledriveApi.runImport(buildImportPayload())
     closeToast()
     currentResult.value = extractImportResult(response.data)
     showSuccessToast('导入完成')
-    await Promise.all([loadStatus(), loadCatalog()])
+    await refreshAll()
   } catch (error) {
     closeToast()
     showFailToast(error?.message || '导入失败')
@@ -437,7 +541,7 @@ async function previewLibrarySync() {
     const response = await teledriveApi.previewLibrarySync(buildLibrarySyncPayload())
     closeToast()
     syncResult.value = response.data || null
-    showSuccessToast('同步预览完成')
+    showSuccessToast('预览完成')
   } catch (error) {
     closeToast()
     showFailToast(error?.message || '同步预览失败')
@@ -453,10 +557,10 @@ async function runLibrarySync() {
     const response = await teledriveApi.runLibrarySync(buildLibrarySyncPayload())
     closeToast()
     syncResult.value = response.data || null
-    showSuccessToast('预览库同步完成')
+    showSuccessToast('同步完成')
   } catch (error) {
     closeToast()
-    showFailToast(error?.message || '预览库同步失败')
+    showFailToast(error?.message || '同步失败')
   } finally {
     syncing.value = false
   }
@@ -470,9 +574,7 @@ function buildImportPayload() {
 }
 
 function buildLibrarySyncPayload() {
-  return {
-    limit: syncLimit.value
-  }
+  return { limit: syncLimit.value }
 }
 
 function extractImportResult(data) {
@@ -486,6 +588,18 @@ function mediaUrl(item) {
 
 function playVideo(item) {
   activeVideoUrl.value = mediaUrl(item)
+}
+
+function selectMedia(item) {
+  if (itemKind(item) === 'video') {
+    playVideo(item)
+  }
+}
+
+function openConsoleExternal() {
+  if (teldriveWebUrl.value) {
+    openExternalUrl(teldriveWebUrl.value)
+  }
 }
 
 function itemKind(item) {
@@ -511,137 +625,322 @@ function formatBytes(value) {
 </script>
 
 <style scoped>
-.teledrive-import-page {
+.teledrive-page {
+  width: 100%;
+  max-width: 1180px;
+  min-width: 0;
   min-height: 100vh;
-  padding: 0 12px 80px;
-  background: var(--surface-0);
+  margin: 0 auto;
+  padding: 0 0 80px;
+  overflow-x: hidden;
+  color: var(--text-primary);
 }
 
-.card-surface {
-  margin-top: 12px;
-  padding: 14px;
+.teledrive-page.desktop-page-shell {
+  width: 100%;
+  min-width: 0;
+}
+
+.topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 2px 12px;
+  align-items: flex-end;
+}
+
+.title-block h2,
+.workflow-head h3,
+.panel-title h3 {
+  margin: 0;
+  color: var(--text-strong);
+  letter-spacing: 0;
+}
+
+.title-block h2 {
+  font-size: 22px;
+}
+
+.title-block p,
+.workflow-head p,
+.panel-title p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.status-strip {
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-pill.healthy {
+  color: #0f7a3a;
+  border-color: rgba(27, 143, 73, 0.28);
+  background: rgba(27, 143, 73, 0.08);
+}
+
+.status-pill.danger {
+  color: #b42318;
+  border-color: rgba(180, 35, 24, 0.24);
+  background: rgba(180, 35, 24, 0.08);
+}
+
+.status-detail {
+  max-width: 360px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.metric,
+.panel,
+.notice-panel {
+  border: 1px solid var(--border-soft);
   background: var(--surface-2);
   box-shadow: var(--shadow-sm);
 }
 
-.hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.metric {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 8px;
 }
 
-.hero h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--text-strong);
-}
-
-.hero p {
-  margin: 10px 0 0;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.status-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.status-label,
-.hint,
-.catalog-info span,
-.catalog-info small,
-.status-card small {
+.metric span {
+  display: block;
   color: var(--text-tertiary);
   font-size: 12px;
 }
 
-.status-card strong {
+.metric strong {
+  display: block;
+  margin-top: 6px;
   color: var(--text-primary);
-  font-size: 15px;
-  overflow-wrap: anywhere;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.status-card strong.success {
-  color: #0f8a35;
-}
-
-.status-card strong.danger {
-  color: #b42318;
-}
-
-.section-title {
+.notice-panel {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
-.section-title h3 {
-  margin: 0;
+.notice-panel a {
+  margin-left: auto;
+  color: var(--brand-600);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.panel {
+  min-width: 0;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.workflow-panel :deep(.van-tabs__wrap) {
+  margin-bottom: 12px;
+}
+
+.workflow-head,
+.panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.workflow-head h3,
+.panel-title h3 {
   font-size: 16px;
-  color: var(--text-strong);
 }
 
-.actions {
+.help-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.help-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.help-bubble {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  z-index: 20;
+  width: min(280px, calc(100vw - 44px));
+  max-width: 280px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(31, 41, 55, 0.96);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.action-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 12px;
 }
 
-.stats-grid {
-  margin-top: 12px;
+.result-summary {
+  margin-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.result-badge.success {
+  color: #0f7a3a;
+  background: rgba(27, 143, 73, 0.1);
+}
+
+.result-badge.warning {
+  color: #9a5d00;
+  background: rgba(154, 93, 0, 0.1);
+}
+
+.result-metrics {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
-.stat-item {
+.result-metric {
+  min-width: 0;
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  padding: 10px;
+  border-radius: 8px;
+  padding: 8px;
   background: var(--surface-1);
 }
 
-.stat-item .label {
-  font-size: 12px;
+.result-metric span {
+  display: block;
   color: var(--text-tertiary);
+  font-size: 12px;
 }
 
-.stat-item .value {
-  margin-top: 6px;
-  font-size: 16px;
-  font-weight: 600;
+.result-metric strong {
+  display: block;
+  margin-top: 4px;
   color: var(--text-primary);
+  font-size: 15px;
 }
 
-.stat-item .value.success {
-  color: #0f8a35;
+.result-metric strong.success {
+  color: #0f7a3a;
 }
 
-.stat-item .value.warning {
-  color: #a56200;
+.result-metric strong.warning {
+  color: #9a5d00;
 }
 
-.stat-item .value.danger {
+.result-metric strong.danger {
   color: #b42318;
+}
+
+.result-details {
+  margin-top: 8px;
+}
+
+.result-details details {
+  border-top: 1px solid var(--border-soft);
+  padding: 8px 0;
+}
+
+.result-details summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.detail-lines p {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .video-preview {
   margin-bottom: 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   background: #050505;
 }
@@ -649,35 +948,41 @@ function formatBytes(value) {
 .video-preview video {
   display: block;
   width: 100%;
-  max-height: 480px;
+  max-height: min(42vh, 420px);
 }
 
-.catalog-list {
+.media-list {
   display: grid;
   gap: 8px;
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  padding-right: 2px;
 }
 
-.catalog-item {
+.media-item {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+  min-width: 0;
   border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 8px;
   background: var(--surface-1);
 }
 
 .thumb {
-  width: 64px;
-  height: 48px;
-  border-radius: 8px;
+  width: 56px;
+  height: 42px;
+  border: 0;
+  border-radius: 6px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(89, 160, 255, 0.12);
   color: var(--brand-700);
+  cursor: pointer;
 }
 
 .thumb :deep(.van-image) {
@@ -686,35 +991,107 @@ function formatBytes(value) {
 }
 
 .thumb .van-icon {
-  font-size: 25px;
+  font-size: 24px;
 }
 
-.catalog-info {
+.media-meta {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
-.catalog-info strong {
-  color: var(--text-primary);
+.media-meta strong,
+.media-meta span {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@media (max-width: 1080px) {
-  .hero {
+.media-meta strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.media-meta span {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.console-panel {
+  margin-top: 12px;
+}
+
+.console-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.console-frame-wrap {
+  width: 100%;
+  height: clamp(380px, 62vh, 720px);
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.console-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+@media (max-width: 1180px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .teledrive-page {
+    padding: 0 12px 80px;
+  }
+
+  .topline {
     flex-direction: column;
+    align-items: stretch;
   }
 
-  .status-grid,
-  .stats-grid {
+  .status-strip {
+    align-items: flex-start;
+  }
+
+  .status-detail {
+    text-align: left;
+  }
+
+  .metrics,
+  .result-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .media-item {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .media-item .van-button {
+    grid-column: 1 / -1;
+  }
+
+  .action-row {
     grid-template-columns: 1fr;
   }
 
-  .actions {
-    grid-template-columns: 1fr;
+  .console-frame-wrap {
+    height: min(62vh, 560px);
+  }
+
+  .media-list {
+    max-height: 460px;
   }
 }
 </style>

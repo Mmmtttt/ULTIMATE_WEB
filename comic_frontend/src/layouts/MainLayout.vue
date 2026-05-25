@@ -20,7 +20,7 @@
           <van-icon name="fire-o" />
           <span>随机流</span>
         </router-link>
-        <router-link to="/teledrive-import" class="nav-item" active-class="active">
+        <router-link v-if="showTeleDriveNav" to="/teledrive-import" class="nav-item" active-class="active">
           <van-icon name="exchange" />
           <span>TeleDrive</span>
         </router-link>
@@ -73,7 +73,7 @@
       <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
       <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
       <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
-      <van-tabbar-item to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
+      <van-tabbar-item v-if="showTeleDriveNav" to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
       <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
       <van-tabbar-item to="/mine" icon="user-o">我的</van-tabbar-item>
     </van-tabbar>
@@ -81,13 +81,17 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
+import { comicApi } from '@/api/comic'
+import { useRuntimeStore } from '@/stores'
 
 const { isDesktop, isMobile } = useDevice()
 const route = useRoute()
+const runtimeStore = useRuntimeStore()
+const showTeleDriveNav = ref(false)
 const isRandomFeedRoute = computed(() => route.path === '/random-feed')
 
 const pageTitle = computed(() => {
@@ -103,6 +107,32 @@ const pageTitle = computed(() => {
     default: return 'Ultimate'
   }
 })
+
+onMounted(loadTeleDriveNavState)
+
+async function loadTeleDriveNavState() {
+  showTeleDriveNav.value = false
+  try {
+    await runtimeStore.fetchRuntime()
+    if (!runtimeStore.thirdPartyEnabled) {
+      return
+    }
+
+    const response = await comicApi.getThirdPartyConfig()
+    if (response.code !== 200) {
+      return
+    }
+    const data = response.data || {}
+    const adapters = data.adapters || {}
+    const schema = data.schema || {}
+    const order = Array.isArray(data.adapter_order) ? data.adapter_order : []
+    const hasTeleDrive = Boolean(adapters.teledrive || schema.teledrive || order.includes('teledrive'))
+    const enabled = adapters.teledrive?.enabled !== false
+    showTeleDriveNav.value = hasTeleDrive && enabled
+  } catch (_error) {
+    showTeleDriveNav.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -249,6 +279,7 @@ const pageTitle = computed(() => {
   flex: 1;
   min-height: 100vh;
   width: 100%;
+  min-width: 0;
 }
 
 .main-content.random-feed-immersive {
@@ -259,6 +290,7 @@ const pageTitle = computed(() => {
 
 .with-sidebar {
   margin-left: var(--sidebar-width);
+  width: calc(100% - var(--sidebar-width));
   padding: clamp(14px, 1.8vw, 24px);
 }
 
@@ -307,6 +339,7 @@ const pageTitle = computed(() => {
 
   .with-sidebar {
     margin-left: 0;
+    width: 100%;
     padding: 0;
   }
 }

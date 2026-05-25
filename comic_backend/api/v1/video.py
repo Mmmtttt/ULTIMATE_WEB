@@ -126,6 +126,36 @@ def _build_teledrive_video_sources(video: dict) -> list:
     return sources
 
 
+def _build_local_video_sources(video: dict) -> list:
+    display = video.get("display") if isinstance(video.get("display"), dict) else {}
+    episodes = display.get("local_episodes") if isinstance(display.get("local_episodes"), list) else []
+    sources = []
+    for index, episode in enumerate(episodes, start=1):
+        if not isinstance(episode, dict):
+            continue
+        url = str(episode.get("url") or "").strip()
+        if not url:
+            continue
+        sources.append({
+            "name": episode.get("relative_path") or episode.get("name") or f"第 {index} 集",
+            "url": url,
+            "type": "direct",
+            "source": "Local",
+        })
+    if sources:
+        return sources
+
+    local_video_path = str(video.get("local_video_path") or "").strip()
+    if local_video_path:
+        return [{
+            "name": video.get("title") or video.get("code") or "本地视频",
+            "url": local_video_path,
+            "type": "direct",
+            "source": "Local",
+        }]
+    return []
+
+
 @video_bp.route('/list', methods=['GET'])
 def video_list():
     try:
@@ -2675,6 +2705,15 @@ def get_video_play_urls(video_id):
             return error_response(404, "视频不存在")
         
         video = result.data
+        local_sources = _build_local_video_sources(video)
+        if local_sources:
+            return success_response({
+                'video_id': video_id,
+                'code': video.get('code', ''),
+                'title': video.get('title', ''),
+                'sources': local_sources
+            })
+
         code = video.get('code', '')
         
         if not code:

@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 import os
+import re
 import shutil
 from application.persisted_content_metadata import (
     build_persisted_annotation,
@@ -328,6 +329,155 @@ class RecommendationAppService:
         image_paths = file_parser.parse_comic_images(comic_id)
         return len(image_paths)
 
+    @staticmethod
+    def _get_teledrive_comic_payload(recommendation: Recommendation) -> Dict[str, Any]:
+        display = getattr(recommendation, "display", {}) if recommendation else {}
+        if not isinstance(display, dict):
+            return {}
+        teledrive = display.get("teledrive")
+        if not isinstance(teledrive, dict):
+            return {}
+        if str(teledrive.get("type") or "").strip().lower() != "comic":
+            return {}
+        pages = teledrive.get("pages")
+        if not isinstance(pages, list) or not pages:
+            return {}
+        return teledrive
+
+    @classmethod
+    def _is_teledrive_recommendation(cls, recommendation: Recommendation) -> bool:
+        return bool(cls._get_teledrive_comic_payload(recommendation))
+
+    @staticmethod
+    def _sanitize_local_fs_name(name: str, fallback: str = "item") -> str:
+        normalized = re.sub(r'[\\/:*?"<>|\x00-\x1F]+', "_", str(name or "").strip())
+        normalized = re.sub(r"\s+", " ", normalized).rstrip(" .")
+        if not normalized:
+            normalized = fallback
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        }
+        if normalized.upper() in reserved:
+            normalized = f"{normalized}_"
+        return normalized[:180]
+
+    @classmethod
+    def _safe_teledrive_relative_path(cls, raw_path: str, fallback_name: str) -> str:
+        raw = str(raw_path or "").replace("\\", "/").strip("/")
+        parts = [
+            cls._sanitize_local_fs_name(part, fallback="part")
+            for part in raw.split("/")
+            if part and part not in {".", ".."}
+        ]
+        if not parts:
+            parts = [cls._sanitize_local_fs_name(fallback_name, fallback="page.jpg")]
+        return os.path.join(*parts)
+
+    @classmethod
+    def _build_teledrive_local_comic_dir(
+        cls,
+        recommendation: Recommendation,
+        teledrive: Dict[str, Any],
+    ) -> str:
+        folder_id = str(teledrive.get("folder_id") or recommendation.id or "").strip()
+        suffix = cls._sanitize_local_fs_name(folder_id, fallback="folder")[:12]
+        label = (
+            str(teledrive.get("work_id") or "").strip()
+            or str(recommendation.title or "").strip()
+            or str(recommendation.id or "").strip()
+        )
+        dir_name = cls._sanitize_local_fs_name(label, fallback="comic")
+        if suffix and suffix.lower() not in dir_name.lower():
+            dir_name = f"{dir_name}__{suffix}"
+
+        base_dir = os.path.join(COMIC_DIR, "TeleDrive")
+        candidate = os.path.abspath(os.path.join(base_dir, dir_name))
+        if not os.path.exists(candidate):
+            return candidate
+
+        for index in range(2, 10_000):
+            next_candidate = os.path.abspath(os.path.join(base_dir, f"{dir_name}__{index}"))
+            if not os.path.exists(next_candidate):
+                return next_candidate
+        raise RuntimeError(f"failed to allocate TeleDrive comic directory: {candidate}")
+
+    @staticmethod
+    def _build_local_teledrive_origin_display(display: Dict[str, Any]) -> Dict[str, Any]:
+        local_display = dict(display or {})
+        teledrive = local_display.pop("teledrive", None)
+        if isinstance(teledrive, dict):
+            origin = {
+                key: teledrive.get(key)
+                for key in ("type", "root", "path", "folder_id", "work_id", "platform_segment")
+                if teledrive.get(key) not in (None, "", [], {})
+            }
+            origin["page_count"] = len(teledrive.get("pages") or [])
+            local_display["teledrive_origin"] = origin
+        return local_display
+
+    def _migrate_teledrive_content_to_local(self, recommendation: Recommendation) -> dict:
+        teledrive = self._get_teledrive_comic_payload(recommendation)
+        if not teledrive:
+            return {"success": False, "reason": "not_teledrive"}
+
+        local_dir = self._build_teledrive_local_comic_dir(recommendation, teledrive)
+        pages = [dict(page or {}) for page in (teledrive.get("pages") or []) if isinstance(page, dict)]
+        if not pages:
+            return {"success": False, "reason": "teledrive_pages_empty"}
+
+        from application.teledrive_app_service import get_teledrive_app_service
+
+        downloader = get_teledrive_app_service()
+        tmp_dir = f"{local_dir}.tmp"
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        downloaded = 0
+        try:
+            for index, page in enumerate(pages, start=1):
+                file_id = str(page.get("file_id") or "").strip()
+                if not file_id:
+                    raise RuntimeError(f"TeleDrive page has no file id: index={index}")
+                page_name = str(page.get("name") or "").strip() or f"{index:05d}.jpg"
+                relative = self._safe_teledrive_relative_path(
+                    str(page.get("relative_path") or page_name),
+                    page_name,
+                )
+                target_path = os.path.abspath(os.path.join(tmp_dir, relative))
+                tmp_root = os.path.abspath(tmp_dir)
+                try:
+                    if os.path.commonpath([tmp_root, target_path]) != tmp_root:
+                        raise RuntimeError("invalid TeleDrive page path")
+                except Exception as exc:
+                    raise RuntimeError("invalid TeleDrive page path") from exc
+
+                if os.path.exists(target_path):
+                    stem, ext = os.path.splitext(target_path)
+                    target_path = f"{stem}__{index}{ext or '.jpg'}"
+
+                downloader.download_file_to_path(file_id, target_path, name=page_name)
+                downloaded += 1
+
+            if os.path.isdir(local_dir):
+                shutil.rmtree(local_dir, ignore_errors=True)
+            os.makedirs(os.path.dirname(local_dir), exist_ok=True)
+            shutil.move(tmp_dir, local_dir)
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+        return {
+            "success": downloaded > 0,
+            "source": "teledrive",
+            "total_page": downloaded,
+            "local_dir": local_dir,
+            "cover_path": f"/api/v1/comic/image?comic_id={recommendation.id}&page_num=1",
+            "display": self._build_local_teledrive_origin_display(getattr(recommendation, "display", {}) or {}),
+        }
+
     def _migrate_cached_content_to_local(self, recommendation: Recommendation) -> dict:
         cache_dir = recommendation_cache_manager.get_cache_dir(recommendation.id)
         if not cache_dir:
@@ -435,7 +585,9 @@ class RecommendationAppService:
                         skipped_ids.append(recommendation_id)
                         continue
 
-                    if recommendation_cache_manager.is_cached(recommendation_id):
+                    if self._is_teledrive_recommendation(recommendation):
+                        content_result = self._migrate_teledrive_content_to_local(recommendation)
+                    elif recommendation_cache_manager.is_cached(recommendation_id):
                         content_result = self._migrate_cached_content_to_local(recommendation)
                     else:
                         content_result = self._download_content_to_local(recommendation)
@@ -461,13 +613,17 @@ class RecommendationAppService:
                     create_time = recommendation.create_time or get_current_time()
                     last_read_time = recommendation.last_read_time or create_time
 
+                    local_display = dict(getattr(recommendation, "display", {}) or {})
+                    if content_result.get("display") is not None:
+                        local_display = dict(content_result.get("display") or {})
+
                     local_comic = Comic(
                         id=recommendation.id,
                         title=recommendation.title or "",
                         title_jp=recommendation.title_jp or "",
                         creator=recommendation.author or "",
                         desc=recommendation.desc or "",
-                        cover_path=recommendation.cover_path or "",
+                        cover_path=content_result.get("cover_path") or recommendation.cover_path or "",
                         total_units=total_page,
                         current_unit=current_page,
                         score=recommendation.score,
@@ -479,10 +635,10 @@ class RecommendationAppService:
                         platform=recommendation.platform or "",
                         plugin_id=getattr(recommendation, "plugin_id", "") or "",
                         plugin_name=getattr(recommendation, "plugin_name", "") or "",
-                        display=dict(getattr(recommendation, "display", {}) or {}),
+                        display=local_display,
                     )
 
-                    local_dir = self._get_local_comic_dir(recommendation)
+                    local_dir = str(content_result.get("local_dir") or "").strip() or self._get_local_comic_dir(recommendation)
                     platform_key, _original_id, _manifest = split_prefixed_id(recommendation.id, media_type="comic")
                     persisted_updates = self._build_recommendation_persisted_metadata(
                         local_comic.to_dict(),

@@ -44,7 +44,10 @@ softref_comic_reader = require_softref_reader("comic")
 
 def _get_teledrive_comic_pages(comic_id: str):
     try:
-        return get_teledrive_app_service().get_teledrive_comic_pages(comic_id)
+        return get_teledrive_app_service().get_teledrive_comic_pages(
+            comic_id,
+            include_recommendation=False,
+        )
     except Exception as exc:
         error_logger.error(f"读取 TeleDrive 漫画页失败: {comic_id}, {exc}")
         return None

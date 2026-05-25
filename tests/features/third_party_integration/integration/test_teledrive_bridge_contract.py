@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
+
+from tests.shared.runtime_data import load_json, save_json
 
 
 class _FakeResponse:
@@ -315,3 +318,193 @@ def test_teledrive_service_builds_bridge_requests_and_auth_headers(third_party_c
     assert calls[2]["headers"].get("X-Other") is None
     assert calls[2]["timeout"] == (7, None)
     assert stream_response.status_code == 200
+
+
+@pytest.mark.integration
+def test_teledrive_recommendation_migrate_to_local_downloads_pages(third_party_client, monkeypatch):
+    from application.recommendation_app_service import RecommendationAppService
+    from application.persisted_content_metadata import resolve_data_relative_path
+    import application.teledrive_app_service as teledrive_service_module
+
+    comic_id = "TD-COMIC-folder-1"
+    meta_dir = third_party_client["meta_dir"]
+
+    recommendation_db_path = meta_dir / "recommendations_database.json"
+    recommendation_db = load_json(recommendation_db_path)
+    recommendation_db["recommendations"] = [
+        item
+        for item in recommendation_db.get("recommendations", [])
+        if str((item or {}).get("id", "")) != comic_id
+    ]
+    recommendation_db["recommendations"].append(
+        {
+            "id": comic_id,
+            "title": "TeleDrive Comic",
+            "title_jp": "",
+            "author": "",
+            "desc": "",
+            "cover_path": "/api/v1/comic/image?comic_id=TD-COMIC-folder-1&page_num=1",
+            "total_page": 2,
+            "current_page": 1,
+            "score": 8.0,
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": "2026-05-25T00:00:00",
+            "last_read_time": "2026-05-25T00:00:00",
+            "is_deleted": False,
+            "platform": "TeleDrive",
+            "plugin_id": "storage.teledrive",
+            "plugin_name": "TeleDrive",
+            "storage_path_relative": "teledrive://folder/folder-1",
+            "storage_path_kind": "teledrive_dir",
+            "display": {
+                "teledrive": {
+                    "type": "comic",
+                    "path": "/comic/JM/86233",
+                    "folder_id": "folder-1",
+                    "work_id": "86233",
+                    "pages": [
+                        {"file_id": "page-1", "name": "001.jpg", "relative_path": "1/001.jpg"},
+                        {"file_id": "page-2", "name": "002.jpg", "relative_path": "1/002.jpg"},
+                    ],
+                }
+            },
+        }
+    )
+    save_json(recommendation_db_path, recommendation_db)
+
+    comic_db_path = meta_dir / "comics_database.json"
+    comic_db = load_json(comic_db_path)
+    comic_db["comics"] = [
+        item
+        for item in comic_db.get("comics", [])
+        if str((item or {}).get("id", "")) != comic_id
+    ]
+    save_json(comic_db_path, comic_db)
+
+    class FakeTeleDriveService:
+        def download_file_to_path(self, file_id, target_path, *, name=""):
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with open(target_path, "wb") as file_obj:
+                file_obj.write(f"{file_id}:{name}".encode("utf-8"))
+            return {"path": target_path, "bytes": os.path.getsize(target_path)}
+
+    monkeypatch.setattr(teledrive_service_module, "get_teledrive_app_service", lambda: FakeTeleDriveService())
+
+    result = RecommendationAppService().migrate_to_local([comic_id])
+    assert result.success
+    assert result.data["imported_count"] == 1
+
+    service = RecommendationAppService()
+    local_comic = service._comic_repo.get_by_id(comic_id)
+    assert local_comic is not None
+    assert local_comic.storage_path_kind == "local_dir"
+    assert "teledrive" not in local_comic.display
+    assert local_comic.display["teledrive_origin"]["page_count"] == 2
+
+    local_dir = resolve_data_relative_path(local_comic.storage_path_relative)
+    assert os.path.isdir(local_dir)
+    assert os.path.exists(os.path.join(local_dir, "1", "001.jpg"))
+    assert os.path.exists(os.path.join(local_dir, "1", "002.jpg"))
+
+    teledrive_lookup = teledrive_service_module.TeleDriveAppService()
+    assert teledrive_lookup.get_teledrive_comic_pages(comic_id, include_recommendation=False) is None
+    assert len(teledrive_lookup.get_teledrive_comic_pages(comic_id)) == 2
+
+
+@pytest.mark.integration
+def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(third_party_client, monkeypatch):
+    from application.video_app_service import VideoAppService
+    import application.teledrive_app_service as teledrive_service_module
+
+    video_id = "TD-VIDEO-folder-2"
+    meta_dir = third_party_client["meta_dir"]
+
+    recommendation_db_path = meta_dir / "video_recommendations_database.json"
+    recommendation_db = load_json(recommendation_db_path)
+    recommendation_db["video_recommendations"] = [
+        item
+        for item in recommendation_db.get("video_recommendations", [])
+        if str((item or {}).get("id", "")) != video_id
+    ]
+    recommendation_db["video_recommendations"].append(
+        {
+            "id": video_id,
+            "title": "TeleDrive Video",
+            "title_jp": "",
+            "creator": "",
+            "desc": "",
+            "cover_path": "/api/v1/teledrive/files/cover/content?name=cover.jpg",
+            "total_units": 1,
+            "current_unit": 1,
+            "score": 8.0,
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": "2026-05-25T00:00:00",
+            "last_access_time": "2026-05-25T00:00:00",
+            "is_deleted": False,
+            "platform": "TeleDrive",
+            "plugin_id": "storage.teledrive",
+            "plugin_name": "TeleDrive",
+            "code": "td-video",
+            "thumbnail_images": ["/api/v1/teledrive/files/thumb/content?name=001.jpg"],
+            "preview_video": "/api/v1/teledrive/files/ep-1/content?name=01.mp4",
+            "display": {
+                "teledrive": {
+                    "type": "video",
+                    "path": "/video/td-video",
+                    "folder_id": "folder-2",
+                    "work_id": "td-video",
+                    "episodes": [
+                        {"file_id": "ep-1", "name": "01.mp4", "relative_path": "01.mp4"},
+                    ],
+                    "cover": {"file_id": "cover", "name": "cover.jpg", "relative_path": "cover.jpg"},
+                    "thumbnails": [
+                        {"file_id": "thumb", "name": "001.jpg", "relative_path": "thumbs/001.jpg"},
+                    ],
+                }
+            },
+        }
+    )
+    save_json(recommendation_db_path, recommendation_db)
+
+    video_db_path = meta_dir / "videos_database.json"
+    video_db = load_json(video_db_path)
+    video_db["videos"] = [
+        item
+        for item in video_db.get("videos", [])
+        if str((item or {}).get("id", "")) != video_id
+        and str((item or {}).get("code", "")) != "td-video"
+    ]
+    save_json(video_db_path, video_db)
+
+    class FakeTeleDriveService:
+        def download_file_to_path(self, file_id, target_path, *, name=""):
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with open(target_path, "wb") as file_obj:
+                file_obj.write(f"{file_id}:{name}".encode("utf-8"))
+            return {"path": target_path, "bytes": os.path.getsize(target_path)}
+
+    monkeypatch.setattr(teledrive_service_module, "get_teledrive_app_service", lambda: FakeTeleDriveService())
+
+    service = VideoAppService()
+    monkeypatch.setattr(service, "cache_cover_to_static_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, "cache_thumbnail_images_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, "cache_preview_video_async", lambda *args, **kwargs: None)
+
+    result = service.migrate_recommendations_to_local([video_id])
+    assert result.success
+    assert result.data["imported_count"] == 1
+
+    local_video = service._video_repo.get_by_id(video_id)
+    assert local_video is not None
+    assert local_video.local_video_path.startswith("/media/video/TeleDrive/")
+    assert local_video.preview_video_local == local_video.local_video_path
+    assert local_video.cover_path_local.startswith("/media/video/TeleDrive/")
+    assert local_video.thumbnail_images_local[0].startswith("/media/video/TeleDrive/")
+    assert "teledrive" not in local_video.display
+    assert local_video.display["teledrive_origin"]["episode_count"] == 1
+    assert local_video.display["local_episodes"][0]["url"] == local_video.local_video_path
+
+    resolved_video_path = service.resolve_local_video_file_path(video_id)
+    assert resolved_video_path and os.path.exists(resolved_video_path)
