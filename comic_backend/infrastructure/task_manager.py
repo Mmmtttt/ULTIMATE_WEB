@@ -439,6 +439,33 @@ class TaskManager:
             task.total_pages = len(item_ids)
             task.downloaded_pages = 0
             task.progress = 10
+            last_progress_save = 0.0
+
+            def update_migration_progress(update: Dict[str, Any]) -> None:
+                nonlocal last_progress_save
+                try:
+                    progress_value = update.get("progress")
+                    if progress_value is not None:
+                        task.progress = max(task.progress, min(94, int(progress_value)))
+
+                    completed_items = update.get("completed_items")
+                    if completed_items is not None:
+                        task.downloaded_pages = max(0, min(len(item_ids), int(completed_items)))
+
+                    total_items = update.get("total_items")
+                    if total_items is not None:
+                        task.total_pages = max(1, int(total_items))
+
+                    message = str(update.get("message") or "").strip()
+                    if message:
+                        task.message = message
+
+                    now = time.time()
+                    if bool(update.get("force")) or now - last_progress_save >= 1.0:
+                        last_progress_save = now
+                        self._save_tasks()
+                except Exception as progress_error:
+                    error_logger.error(f"更新预览迁移进度失败: {progress_error}")
 
             if content_type == "video":
                 from application.video_app_service import VideoAppService
@@ -447,7 +474,10 @@ class TaskManager:
                 task.message = "正在迁移预览视频到本地库..."
                 self._save_tasks()
 
-                result = VideoAppService().migrate_recommendations_to_local(item_ids)
+                result = VideoAppService().migrate_recommendations_to_local(
+                    item_ids,
+                    progress_callback=update_migration_progress,
+                )
             else:
                 from application.recommendation_app_service import RecommendationAppService
 

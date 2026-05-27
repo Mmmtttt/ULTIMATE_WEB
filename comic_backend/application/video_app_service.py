@@ -3,7 +3,7 @@
 Mmmtttt
 """
 
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Callable
 import base64
 import math
 import os
@@ -2263,6 +2263,20 @@ class VideoAppService(BaseContentAppService):
             parts = [cls._sanitize_local_fs_name(fallback_name, fallback="source.mp4")]
         return os.path.join(*parts)
 
+    @staticmethod
+    def _format_download_size(byte_count: int) -> str:
+        value = max(0, int(byte_count or 0))
+        units = ["B", "KB", "MB", "GB", "TB"]
+        size = float(value)
+        unit = units[0]
+        for unit in units:
+            if size < 1024 or unit == units[-1]:
+                break
+            size /= 1024
+        if unit == "B":
+            return f"{int(size)} {unit}"
+        return f"{size:.1f} {unit}"
+
     def _build_teledrive_local_video_dir(
         self,
         recommendation_video: VideoRecommendation,
@@ -2315,6 +2329,7 @@ class VideoAppService(BaseContentAppService):
         *,
         fallback_name: str,
         index: int,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         file_id = str(item.get("file_id") or "").strip()
         if not file_id:
@@ -2337,7 +2352,12 @@ class VideoAppService(BaseContentAppService):
             stem, ext = os.path.splitext(target_path)
             target_path = f"{stem}__{index}{ext or os.path.splitext(item_name)[1] or '.mp4'}"
 
-        downloader.download_file_to_path(file_id, target_path, name=item_name)
+        downloader.download_file_to_path(
+            file_id,
+            target_path,
+            name=item_name,
+            progress_callback=progress_callback,
+        )
         return {
             "name": item_name,
             "path": target_path,
@@ -2348,6 +2368,10 @@ class VideoAppService(BaseContentAppService):
         self,
         recommendation_video: VideoRecommendation,
         local_video: Video,
+        *,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        item_index: int = 1,
+        total_items: int = 1,
     ) -> dict:
         teledrive = self._get_teledrive_video_payload(recommendation_video)
         if not teledrive:
@@ -2363,17 +2387,101 @@ class VideoAppService(BaseContentAppService):
 
         downloader = get_teledrive_app_service()
         downloaded_episodes: List[Dict[str, Any]] = []
+        episodes = [item for item in (teledrive.get("episodes") or []) if isinstance(item, dict)]
+        cover = teledrive.get("cover") if isinstance(teledrive.get("cover"), dict) else {}
+        thumbnails = [item for item in (teledrive.get("thumbnails") or []) if isinstance(item, dict)]
+        asset_specs: List[Dict[str, Any]] = []
+        for index, episode in enumerate(episodes, start=1):
+            asset_specs.append({
+                "item": episode,
+                "label": f"视频 {index}/{len(episodes)}",
+            })
+        if cover:
+            asset_specs.append({"item": cover, "label": "封面"})
+        for index, thumb in enumerate(thumbnails, start=1):
+            asset_specs.append({
+                "item": thumb,
+                "label": f"预览图 {index}/{len(thumbnails)}",
+            })
+
+        total_known_bytes = sum(
+            max(0, int((spec.get("item") or {}).get("size") or 0))
+            for spec in asset_specs
+        )
+        completed_asset_bytes = 0
+        total_assets = max(len(asset_specs), 1)
+        normalized_total_items = max(1, int(total_items or 1))
+        normalized_item_index = min(max(1, int(item_index or 1)), normalized_total_items)
+        overall_start = 10 + ((normalized_item_index - 1) / normalized_total_items) * 80
+        overall_span = 80 / normalized_total_items
+
+        def emit_progress(progress: int, message: str, *, force: bool = False) -> None:
+            if not progress_callback:
+                return
+            try:
+                progress_callback({
+                    "progress": max(10, min(90, int(progress))),
+                    "message": message,
+                    "force": force,
+                })
+            except Exception as exc:
+                app_logger.warning(f"TeleDrive video migration progress callback failed: {exc}")
+
+        def build_file_progress(
+            item: Dict[str, Any],
+            *,
+            label: str,
+            asset_order: int,
+        ) -> Callable[[Dict[str, Any]], None]:
+            item_known_bytes = max(0, int(item.get("size") or 0))
+            item_name = str(item.get("name") or "").strip() or label
+
+            def on_file_progress(update: Dict[str, Any]) -> None:
+                nonlocal completed_asset_bytes
+                bytes_written = max(0, int((update or {}).get("bytes_written") or 0))
+                response_total = max(0, int((update or {}).get("total_bytes") or 0))
+                if total_known_bytes > 0:
+                    current_bytes = completed_asset_bytes + min(
+                        bytes_written,
+                        item_known_bytes or response_total or bytes_written,
+                    )
+                    fraction = min(1.0, current_bytes / max(total_known_bytes, 1))
+                else:
+                    fallback_total = response_total or item_known_bytes or max(bytes_written, 50 * 1024 * 1024)
+                    file_fraction = min(0.98, bytes_written / max(fallback_total, 1)) if bytes_written else 0.0
+                    fraction = min(0.99, ((asset_order - 1) + file_fraction) / total_assets)
+
+                progress = int(overall_start + fraction * overall_span)
+                total_text = response_total or item_known_bytes
+                if total_text:
+                    size_text = f"{self._format_download_size(bytes_written)}/{self._format_download_size(total_text)}"
+                else:
+                    size_text = self._format_download_size(bytes_written)
+                emit_progress(
+                    progress,
+                    f"正在下载 TeleDrive {label}: {item_name} ({size_text})",
+                    force=bool((update or {}).get("force")),
+                )
+
+            return on_file_progress
+
         try:
-            for index, episode in enumerate(teledrive.get("episodes") or [], start=1):
-                if not isinstance(episode, dict):
-                    continue
+            asset_order = 0
+            for index, episode in enumerate(episodes, start=1):
+                asset_order += 1
                 downloaded = self._download_teledrive_video_file(
                     downloader,
                     episode,
                     tmp_dir,
                     fallback_name=f"episode-{index:03d}.mp4",
                     index=index,
+                    progress_callback=build_file_progress(
+                        episode,
+                        label=f"视频 {index}/{len(episodes)}",
+                        asset_order=asset_order,
+                    ),
                 )
+                completed_asset_bytes += max(0, int(episode.get("size") or downloaded.get("bytes") or 0))
                 downloaded_episodes.append(downloaded)
 
             if not downloaded_episodes:
@@ -2381,28 +2489,39 @@ class VideoAppService(BaseContentAppService):
                 return {"success": False, "reason": "teledrive_episodes_empty"}
 
             cover_local_url = ""
-            cover = teledrive.get("cover") if isinstance(teledrive.get("cover"), dict) else {}
             if cover:
+                asset_order += 1
                 cover_download = self._download_teledrive_video_file(
                     downloader,
                     cover,
                     tmp_dir,
                     fallback_name="cover.jpg",
                     index=1,
+                    progress_callback=build_file_progress(
+                        cover,
+                        label="封面",
+                        asset_order=asset_order,
+                    ),
                 )
+                completed_asset_bytes += max(0, int(cover.get("size") or cover_download.get("bytes") or 0))
                 cover_local_url = self._to_media_url(cover_download["path"].replace(tmp_dir, local_dir, 1))
 
             thumbnail_local_urls: List[str] = []
-            for index, thumb in enumerate(teledrive.get("thumbnails") or [], start=1):
-                if not isinstance(thumb, dict):
-                    continue
+            for index, thumb in enumerate(thumbnails, start=1):
+                asset_order += 1
                 thumb_download = self._download_teledrive_video_file(
                     downloader,
                     thumb,
                     tmp_dir,
                     fallback_name=f"thumbs/thumb-{index:04d}.jpg",
                     index=index,
+                    progress_callback=build_file_progress(
+                        thumb,
+                        label=f"预览图 {index}/{len(thumbnails)}",
+                        asset_order=asset_order,
+                    ),
                 )
+                completed_asset_bytes += max(0, int(thumb.get("size") or thumb_download.get("bytes") or 0))
                 thumbnail_local_urls.append(
                     self._to_media_url(thumb_download["path"].replace(tmp_dir, local_dir, 1))
                 )
@@ -2456,11 +2575,16 @@ class VideoAppService(BaseContentAppService):
             "episode_count": len(local_episodes),
         }
 
-    def migrate_recommendations_to_local(self, video_ids: List[str]) -> ServiceResult:
+    def migrate_recommendations_to_local(
+        self,
+        video_ids: List[str],
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> ServiceResult:
         try:
             if not video_ids:
                 return ServiceResult.error("video_ids is required")
 
+            total_items = max(1, len(video_ids))
             imported_count = 0
             skipped_count = 0
             failed_count = 0
@@ -2468,7 +2592,25 @@ class VideoAppService(BaseContentAppService):
             skipped_items = []
             failed_items = []
 
-            for video_id in video_ids:
+            def emit_progress(update: Dict[str, Any]) -> None:
+                if not progress_callback:
+                    return
+                try:
+                    progress_callback(update)
+                except Exception as exc:
+                    app_logger.warning(f"video migration progress callback failed: {exc}")
+
+            def emit_item_progress(index: int, message: str, *, force: bool = False) -> None:
+                progress = 10 + int((min(max(index, 0), total_items) / total_items) * 80)
+                emit_progress({
+                    "progress": min(90, max(10, progress)),
+                    "message": message,
+                    "completed_items": imported_count + skipped_count + failed_count,
+                    "total_items": total_items,
+                    "force": force,
+                })
+
+            for item_index, video_id in enumerate(video_ids, start=1):
                 try:
                     recommendation_video = self._video_rec_repo.get_by_id(video_id)
                     if not recommendation_video or recommendation_video.is_deleted:
@@ -2477,7 +2619,18 @@ class VideoAppService(BaseContentAppService):
                             "id": video_id,
                             "reason": "not_found_or_deleted"
                         })
+                        emit_item_progress(item_index, f"跳过不存在的预览视频: {video_id}", force=True)
                         continue
+
+                    display_title = (
+                        str(getattr(recommendation_video, "title", "") or "").strip()
+                        or str(video_id or "").strip()
+                    )
+                    emit_item_progress(
+                        item_index - 1,
+                        f"正在迁移预览视频 {item_index}/{total_items}: {display_title}",
+                        force=True,
+                    )
 
                     duplicate_id = self._find_local_video_duplicate(
                         recommendation_video.id,
@@ -2490,6 +2643,7 @@ class VideoAppService(BaseContentAppService):
                             "reason": "duplicate_in_local",
                             "duplicate_id": duplicate_id
                         })
+                        emit_item_progress(item_index, f"已跳过本地已存在的视频: {display_title}", force=True)
                         continue
 
                     create_time = recommendation_video.create_time or get_current_time()
@@ -2533,7 +2687,13 @@ class VideoAppService(BaseContentAppService):
                     )
                     local_video.actors = list(recommendation_video.actors or [])
 
-                    assets_result = self._migrate_teledrive_video_content_to_local(recommendation_video, local_video)
+                    assets_result = self._migrate_teledrive_video_content_to_local(
+                        recommendation_video,
+                        local_video,
+                        progress_callback=emit_progress,
+                        item_index=item_index,
+                        total_items=total_items,
+                    )
                     if assets_result.get("success") and not assets_result.get("handled"):
                         assets_result = self._migrate_recommendation_assets_to_local(recommendation_video, local_video)
                     if not assets_result.get("success"):
@@ -2542,6 +2702,7 @@ class VideoAppService(BaseContentAppService):
                             "id": video_id,
                             "reason": assets_result.get("reason", "asset_migrate_failed")
                         })
+                        emit_item_progress(item_index, f"迁移失败: {display_title}", force=True)
                         continue
 
                     self._refresh_video_persisted_metadata(local_video, source="local")
@@ -2552,6 +2713,7 @@ class VideoAppService(BaseContentAppService):
                             "id": video_id,
                             "reason": "save_local_failed"
                         })
+                        emit_item_progress(item_index, f"保存本地视频失败: {display_title}", force=True)
                         continue
 
                     if local_video.cover_path and not local_video.cover_path_local:
@@ -2581,12 +2743,14 @@ class VideoAppService(BaseContentAppService):
 
                     imported_count += 1
                     imported_ids.append(video_id)
+                    emit_item_progress(item_index, f"已迁移预览视频 {item_index}/{total_items}: {display_title}", force=True)
                 except Exception as item_error:
                     failed_count += 1
                     failed_items.append({
                         "id": video_id,
                         "reason": str(item_error)
                     })
+                    emit_item_progress(item_index, f"迁移异常: {video_id}", force=True)
                     error_logger.error(f"migrate recommendation video failed: {video_id}, {item_error}")
 
             app_logger.info(

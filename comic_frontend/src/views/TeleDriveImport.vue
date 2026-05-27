@@ -275,20 +275,18 @@ const HelpPopover = defineComponent({
     }
   },
   setup(props) {
-    const show = ref(false)
     return () => h('span', { class: 'help-wrap' }, [
       h(
-        'button',
+        'span',
         {
           class: 'help-button',
-          type: 'button',
+          role: 'button',
+          tabindex: '0',
           'aria-label': '说明',
-          onClick: () => { show.value = !show.value },
-          onBlur: () => { show.value = false }
         },
         '?'
       ),
-      show.value ? h('span', { class: 'help-bubble' }, props.text) : null
+      h('span', { class: 'help-bubble', role: 'tooltip' }, props.text)
     ])
   }
 })
@@ -801,38 +799,73 @@ function formatBytes(value) {
 .help-wrap {
   position: relative;
   display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
 .help-button {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border-soft);
-  border-radius: 50%;
-  color: var(--text-secondary);
-  background: var(--surface-1);
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  border-radius: 999px;
+  color: #64748b;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  font-size: 16px;
-  font-weight: 800;
+  cursor: help;
+  font-size: 13px;
+  font-weight: 700;
   line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.help-wrap:hover .help-button,
+.help-wrap:focus-within .help-button {
+  border-color: rgba(37, 99, 235, 0.7);
+  color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1), 0 2px 8px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
 }
 
 .help-bubble {
   position: absolute;
   right: 0;
-  top: 36px;
+  top: 30px;
   z-index: 20;
   width: min(280px, calc(100vw - 44px));
   max-width: 280px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   border-radius: 8px;
   color: #fff;
-  background: rgba(31, 41, 55, 0.96);
+  background: rgba(17, 24, 39, 0.96);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
   line-height: 1.55;
   font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  visibility: hidden;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+}
+
+.help-bubble::before {
+  content: '';
+  position: absolute;
+  right: 7px;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  background: rgba(17, 24, 39, 0.96);
+  transform: rotate(45deg);
+}
+
+.help-wrap:hover .help-bubble,
+.help-wrap:focus-within .help-bubble {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .action-row {

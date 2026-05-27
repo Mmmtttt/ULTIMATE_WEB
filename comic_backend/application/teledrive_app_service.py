@@ -4,7 +4,7 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlencode
 
 import requests
@@ -1001,6 +1001,7 @@ class TeleDriveAppService:
         method: str,
         query_string: str = "",
         incoming_headers: Optional[Dict[str, Any]] = None,
+        read_timeout_seconds: Optional[int] = None,
     ):
         config = self.get_config()
         self._ensure_ready(config)
@@ -1017,24 +1018,61 @@ class TeleDriveAppService:
                 url=url,
                 headers=headers,
                 stream=True,
-                timeout=(config.timeout_seconds, None),
+                timeout=(config.timeout_seconds, read_timeout_seconds),
             )
         except requests.RequestException as exc:
             raise TeleDriveBridgeError(f"TeleDrive Bridge stream failed: {exc}", status_code=502) from exc
 
-    def download_file_to_path(self, file_id: str, target_path: str, *, name: str = "") -> Dict[str, Any]:
+    def download_file_to_path(
+        self,
+        file_id: str,
+        target_path: str,
+        *,
+        name: str = "",
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
         normalized_target = os.path.abspath(str(target_path or "").strip())
         if not normalized_target:
             raise TeleDriveBridgeError("Missing target path.", status_code=400)
 
+        config = self.get_config()
+        read_timeout = max(int(config.timeout_seconds or DEFAULT_TIMEOUT_SECONDS), 300)
         upstream = self.proxy_file_content(
             file_id,
             method="GET",
             query_string=urlencode({"name": str(name or "")}) if name else "",
             incoming_headers=None,
+            read_timeout_seconds=read_timeout,
         )
         tmp_path = f"{normalized_target}.tmp"
         written = 0
+        content_type = ""
+        content_length = 0
+        last_progress_emit = 0.0
+
+        def emit_progress(force: bool = False) -> None:
+            nonlocal last_progress_emit
+            if not progress_callback:
+                return
+            now = os.times().elapsed
+            if not force and now - last_progress_emit < 0.75:
+                return
+            last_progress_emit = now
+            try:
+                progress_callback(
+                    {
+                        "file_id": str(file_id or ""),
+                        "name": str(name or ""),
+                        "path": normalized_target,
+                        "bytes_written": written,
+                        "total_bytes": content_length,
+                        "content_type": content_type,
+                        "force": force,
+                    }
+                )
+            except Exception as exc:
+                app_logger.warning(f"TeleDrive download progress callback failed: {exc}")
+
         try:
             status_code = int(getattr(upstream, "status_code", 200) or 200)
             if status_code >= 400:
@@ -1043,18 +1081,28 @@ class TeleDriveAppService:
                     status_code=status_code,
                 )
 
+            response_headers = getattr(upstream, "headers", {}) or {}
+            content_type = str(response_headers.get("Content-Type") or "")
+            try:
+                content_length = int(response_headers.get("Content-Length") or 0)
+            except Exception:
+                content_length = 0
+
             os.makedirs(os.path.dirname(normalized_target) or ".", exist_ok=True)
             with open(tmp_path, "wb") as file_obj:
+                emit_progress(force=True)
                 for chunk in upstream.iter_content(chunk_size=1024 * 512):
                     if not chunk:
                         continue
                     file_obj.write(chunk)
                     written += len(chunk)
+                    emit_progress()
             os.replace(tmp_path, normalized_target)
+            emit_progress(force=True)
             return {
                 "path": normalized_target,
                 "bytes": written,
-                "content_type": str(getattr(upstream, "headers", {}).get("Content-Type") or ""),
+                "content_type": content_type,
             }
         except Exception:
             try:

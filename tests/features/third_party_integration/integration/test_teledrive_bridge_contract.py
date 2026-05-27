@@ -383,10 +383,16 @@ def test_teledrive_recommendation_migrate_to_local_downloads_pages(third_party_c
     save_json(comic_db_path, comic_db)
 
     class FakeTeleDriveService:
-        def download_file_to_path(self, file_id, target_path, *, name=""):
+        def download_file_to_path(self, file_id, target_path, *, name="", progress_callback=None):
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             with open(target_path, "wb") as file_obj:
                 file_obj.write(f"{file_id}:{name}".encode("utf-8"))
+            if progress_callback:
+                progress_callback({
+                    "bytes_written": os.path.getsize(target_path),
+                    "total_bytes": os.path.getsize(target_path),
+                    "force": True,
+                })
             return {"path": target_path, "bytes": os.path.getsize(target_path)}
 
     monkeypatch.setattr(teledrive_service_module, "get_teledrive_app_service", lambda: FakeTeleDriveService())
@@ -479,10 +485,16 @@ def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(third_par
     save_json(video_db_path, video_db)
 
     class FakeTeleDriveService:
-        def download_file_to_path(self, file_id, target_path, *, name=""):
+        def download_file_to_path(self, file_id, target_path, *, name="", progress_callback=None):
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             with open(target_path, "wb") as file_obj:
                 file_obj.write(f"{file_id}:{name}".encode("utf-8"))
+            if progress_callback:
+                progress_callback({
+                    "bytes_written": os.path.getsize(target_path),
+                    "total_bytes": os.path.getsize(target_path),
+                    "force": True,
+                })
             return {"path": target_path, "bytes": os.path.getsize(target_path)}
 
     monkeypatch.setattr(teledrive_service_module, "get_teledrive_app_service", lambda: FakeTeleDriveService())
@@ -492,9 +504,15 @@ def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(third_par
     monkeypatch.setattr(service, "cache_thumbnail_images_async", lambda *args, **kwargs: None)
     monkeypatch.setattr(service, "cache_preview_video_async", lambda *args, **kwargs: None)
 
-    result = service.migrate_recommendations_to_local([video_id])
+    progress_events = []
+    result = service.migrate_recommendations_to_local(
+        [video_id],
+        progress_callback=lambda update: progress_events.append(dict(update or {})),
+    )
     assert result.success
     assert result.data["imported_count"] == 1
+    assert any(event.get("progress", 0) > 10 for event in progress_events)
+    assert any("正在下载 TeleDrive 视频" in str(event.get("message", "")) for event in progress_events)
 
     local_video = service._video_repo.get_by_id(video_id)
     assert local_video is not None
