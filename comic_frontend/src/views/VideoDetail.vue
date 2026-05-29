@@ -514,7 +514,7 @@ import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/store
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, toBackendApiUrl, toBackendUrl } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -852,36 +852,36 @@ function resolvePreviewVideoUrl(rawUrl) {
   }
 
   if (url.startsWith('/api/v1/video/proxy2')) {
-    return toBackendUrl(url)
+    return url
   }
 
   if (url.startsWith('/v1/video/proxy2')) {
-    return toBackendUrl(`/api${url}`)
+    return `/api${url}`
   }
 
   if (url.startsWith('/proxy2?') || url.startsWith('/proxy/')) {
-    return toBackendApiUrl(`/v1/video${url}`)
+    return `/api/v1/video${url}`
   }
 
   if (/^https?:\/\//i.test(url)) {
     if (!isLikelyPreviewMediaUrl(url)) {
       return ''
     }
-    return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(url)}`)
+    return `/api/v1/video/proxy2?url=${encodeURIComponent(url)}`
   }
 
   if (url.startsWith('/')) {
     if (!isLikelyPreviewMediaUrl(url)) {
       return ''
     }
-    return toBackendUrl(url)
+    return url
   }
 
   if (!isLikelyPreviewMediaUrl(url)) {
     return ''
   }
 
-  return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`)
+  return `/api/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`
 }
 
 function resolveLocalVideoUrl(rawUrl) {
@@ -899,7 +899,7 @@ function resolveLocalVideoUrl(rawUrl) {
   }
 
   if (url.startsWith('/')) {
-    return toBackendUrl(url)
+    return url
   }
 
   return ''
@@ -1612,23 +1612,23 @@ function normalizePlayableUrl(rawUrl) {
   }
 
   if (url.startsWith('/proxy2?') || url.startsWith('/proxy/')) {
-    return toBackendApiUrl(`/v1/video${url}`)
+    return `/api/v1/video${url}`
   }
 
   if (url.startsWith('/v1/')) {
-    return toBackendApiUrl(url)
+    return `/api${url}`
   }
 
   if (url.startsWith('/api/')) {
-    return toBackendUrl(url)
+    return url
   }
 
   if (url.startsWith('/')) {
-    return toBackendUrl(url)
+    return url
   }
 
   if (/^[^\\/:?#]+\.[^\\/:?#]+\/.+/.test(url)) {
-    return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`)
+    return `/api/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`
   }
 
   return ''
