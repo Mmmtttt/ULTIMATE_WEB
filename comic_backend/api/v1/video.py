@@ -102,6 +102,41 @@ def _build_teledrive_file_url(file_id: str, name: str) -> str:
     return f"/api/v1/teledrive/files/{quote(normalized_id, safe='')}/content?{query}"
 
 
+def _build_direct_video_source(source_key: str, name: str, url: str, *, origin: str) -> dict:
+    source_name = str(name or "").strip() or origin or "视频"
+    return {
+        "name": source_name,
+        "available": True,
+        "type": "direct",
+        "source": str(source_key or source_name).strip(),
+        "currentResolution": "原始",
+        "streams": [
+            {
+                "resolution": "原始",
+                "url": str(url or "").strip(),
+                "type": "direct",
+                "source": str(origin or "").strip(),
+            }
+        ],
+    }
+
+
+def _build_local_stream_url(video_id: str, episode_index: int = 0) -> str:
+    normalized_id = str(video_id or "").strip()
+    if not normalized_id:
+        return ""
+    suffix = f"?episode={int(episode_index)}" if int(episode_index or 0) > 0 else ""
+    return f"/api/v1/video/local-stream/{quote(normalized_id, safe='')}{suffix}"
+
+
+def _build_local_play_url(video_id: str, raw_url: str, episode_index: int = 0) -> str:
+    url = str(raw_url or "").strip()
+    lowered = url.lower()
+    if lowered.startswith(("http://", "https://", "/media/", "/api/v1/video/local-stream/", "/v1/video/local-stream/")):
+        return url
+    return _build_local_stream_url(video_id, episode_index)
+
+
 def _build_teledrive_video_sources(video: dict) -> list:
     display = video.get("display") if isinstance(video.get("display"), dict) else {}
     teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
@@ -117,42 +152,44 @@ def _build_teledrive_video_sources(video: dict) -> list:
         url = _build_teledrive_file_url(file_id, name)
         if not url:
             continue
-        sources.append({
-            "name": episode.get("relative_path") or name or f"第 {index} 集",
-            "url": url,
-            "type": "direct",
-            "source": "TeleDrive",
-        })
+        sources.append(_build_direct_video_source(
+            f"teledrive_episode_{index}",
+            episode.get("relative_path") or name or f"第 {index} 集",
+            url,
+            origin="TeleDrive",
+        ))
     return sources
 
 
 def _build_local_video_sources(video: dict) -> list:
+    video_id = str(video.get("id") or "").strip()
     display = video.get("display") if isinstance(video.get("display"), dict) else {}
     episodes = display.get("local_episodes") if isinstance(display.get("local_episodes"), list) else []
     sources = []
     for index, episode in enumerate(episodes, start=1):
         if not isinstance(episode, dict):
             continue
-        url = str(episode.get("url") or "").strip()
+        url = _build_local_play_url(video_id, episode.get("url"), index)
         if not url:
             continue
-        sources.append({
-            "name": episode.get("relative_path") or episode.get("name") or f"第 {index} 集",
-            "url": url,
-            "type": "direct",
-            "source": "Local",
-        })
+        sources.append(_build_direct_video_source(
+            f"local_episode_{index}",
+            episode.get("relative_path") or episode.get("name") or f"第 {index} 集",
+            url,
+            origin="Local",
+        ))
     if sources:
         return sources
 
     local_video_path = str(video.get("local_video_path") or "").strip()
-    if local_video_path:
-        return [{
-            "name": video.get("title") or video.get("code") or "本地视频",
-            "url": local_video_path,
-            "type": "direct",
-            "source": "Local",
-        }]
+    local_source_path = str(video.get("local_source_path") or "").strip()
+    if local_video_path or local_source_path:
+        return [_build_direct_video_source(
+            "local_episode_1",
+            video.get("title") or video.get("code") or "本地视频",
+            _build_local_play_url(video_id, local_video_path, 0),
+            origin="Local",
+        )]
     return []
 
 
@@ -623,7 +660,8 @@ def local_import_from_path():
 @video_bp.route('/local-stream/<video_id>', methods=['GET'])
 def stream_local_video(video_id):
     try:
-        resolved = video_service.resolve_local_video_file_path(video_id)
+        episode_index = request.args.get("episode", default=0, type=int) or 0
+        resolved = video_service.resolve_local_video_file_path(video_id, episode_index=episode_index)
         if not resolved or not os.path.isfile(resolved):
             return make_response("Not Found", 404)
 
@@ -2696,7 +2734,6 @@ def get_video_recommendation_play_urls(video_id):
         return error_response(500, "服务器内部错误")
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
-@require_third_party(error_response)
 def get_video_play_urls(video_id):
     """获取视频播放链接（从 MissAV 和 Jable 提取）"""
     try:
@@ -2718,6 +2755,12 @@ def get_video_play_urls(video_id):
         
         if not code:
             return error_response(400, "视频没有番号信息")
+
+        if not is_third_party_enabled():
+            return error_response(
+                503,
+                f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+            )
         
         sources = _build_play_sources(code)
         

@@ -142,6 +142,183 @@ def test_video_batch_import_creates_multiple_videos(integration_runtime):
 
 
 @pytest.mark.integration
+def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 验证同一文件夹下多个本地视频会作为同一作品的多集视频导入。
+    - 测试步骤:
+      1. 在临时目录创建包含两个视频文件的文件夹。
+      2. 调用本地视频路径导入接口。
+      3. 获取导入后的视频详情。
+    - 预期结果:
+      1. 只创建一个视频条目。
+      2. 详情中包含两个 local_episodes，可用于前端选集播放。
+    """
+    base_url = integration_runtime["base_url"]
+
+    series_dir = tmp_path / "Local Series"
+    series_dir.mkdir()
+    (series_dir / "Episode 01.mp4").write_bytes(b"episode-1")
+    (series_dir / "Episode 02.mp4").write_bytes(b"episode-2")
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(series_dir),
+            "import_mode": "hardlink_move",
+        },
+        timeout=10,
+    )
+
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    data = import_payload["data"] or {}
+    assert data.get("imported_count") == 1
+    imported_ids = data.get("imported_ids") or []
+    assert len(imported_ids) == 1
+
+    detail_response = requests.get(
+        f"{base_url}/api/v1/video/detail",
+        params={"video_id": imported_ids[0]},
+        timeout=5,
+    )
+
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["code"] == 200
+    detail = detail_payload["data"] or {}
+    episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    assert detail.get("total_units") == 2
+    assert [item.get("name") for item in episodes] == ["Episode 01.mp4", "Episode 02.mp4"]
+    assert all(str(item.get("url") or "").startswith("/media/") for item in episodes)
+
+    play_response = requests.get(
+        f"{base_url}/api/v1/video/{imported_ids[0]}/play-urls",
+        timeout=5,
+    )
+
+    assert play_response.status_code == 200
+    play_payload = play_response.json()
+    assert play_payload["code"] == 200
+    sources = play_payload["data"]["sources"]
+    assert [item.get("name") for item in sources] == ["Episode 01.mp4", "Episode 02.mp4"]
+    assert all(item.get("available") is True for item in sources)
+
+
+@pytest.mark.integration
+def test_video_play_urls_for_local_source_never_exposes_filesystem_path(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 防止本地库播放接口把 Windows/Linux 文件路径直接返回给前端播放器。
+    - 测试步骤:
+      1. 创建带本地文件路径的视频记录。
+      2. 调用 GET /api/v1/video/{id}/play-urls。
+      3. 检查播放 URL 走后端 local-stream。
+    - 预期结果:
+      1. HTTP 200 且业务 code=200。
+      2. source stream URL 不包含真实文件路径。
+    """
+    base_url = integration_runtime["base_url"]
+
+    source_dir = tmp_path / "softlink-source"
+    source_dir.mkdir()
+    video_file = source_dir / "legacy local source.mp4"
+    video_file.write_bytes(b"video")
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "softlink_ref",
+        },
+        timeout=5,
+    )
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    created_id = import_payload["data"]["imported_ids"][0]
+
+    play_response = requests.get(
+        f"{base_url}/api/v1/video/{created_id}/play-urls",
+        timeout=5,
+    )
+    assert play_response.status_code == 200
+    play_payload = play_response.json()
+    assert play_payload["code"] == 200
+
+    stream_url = play_payload["data"]["sources"][0]["streams"][0]["url"]
+    assert stream_url.startswith(f"/api/v1/video/local-stream/{created_id}")
+    assert str(video_file) not in stream_url
+
+
+@pytest.mark.integration
+def test_video_detail_ignores_preview_hls_segments_for_softlink_local_source(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 防止本地视频详情把预览缓存 HLS 分片误识别为“多集视频”，并在 Windows 多盘符场景下触发详情失败。
+    - 测试步骤:
+      1. 通过 softlink_ref 导入一个单文件本地视频。
+      2. 在对应预览缓存目录下伪造 hls/index.m3u8 与 seg-0001.ts。
+      3. 调用详情与播放链接接口。
+    - 预期结果:
+      1. 详情接口仍然成功返回。
+      2. local_episodes 只包含原始视频，不包含 HLS 分片。
+      3. 播放链接仍然走 local-stream。
+    """
+    base_url = integration_runtime["base_url"]
+    data_dir = integration_runtime["data_dir"]
+
+    source_dir = tmp_path / "softlink-preview-source"
+    source_dir.mkdir()
+    video_file = source_dir / "single episode.mp4"
+    video_file.write_bytes(b"video")
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "softlink_ref",
+        },
+        timeout=5,
+    )
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    created_id = import_payload["data"]["imported_ids"][0]
+
+    hls_dir = data_dir / "media" / "video" / "LOCAL" / created_id / "hls"
+    hls_dir.mkdir(parents=True, exist_ok=True)
+    (hls_dir / "index.m3u8").write_text("#EXTM3U\n#EXTINF:3,\nseg-0001.ts\n", encoding="utf-8")
+    (hls_dir / "seg-0001.ts").write_bytes(b"segment")
+
+    detail_response = requests.get(
+        f"{base_url}/api/v1/video/detail",
+        params={"video_id": created_id},
+        timeout=5,
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["code"] == 200
+
+    detail = detail_payload["data"] or {}
+    episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    assert len(episodes) == 1
+    assert episodes[0]["name"] == "single episode.mp4"
+    assert all(not str(item.get("name") or "").endswith(".ts") for item in episodes)
+
+    play_response = requests.get(
+        f"{base_url}/api/v1/video/{created_id}/play-urls",
+        timeout=5,
+    )
+    assert play_response.status_code == 200
+    play_payload = play_response.json()
+    assert play_payload["code"] == 200
+    stream_url = play_payload["data"]["sources"][0]["streams"][0]["url"]
+    assert stream_url.startswith(f"/api/v1/video/local-stream/{created_id}")
+
+
+@pytest.mark.integration
 def test_video_detail_returns_full_info(integration_runtime):
     """
     用例描述:

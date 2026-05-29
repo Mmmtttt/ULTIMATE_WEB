@@ -165,19 +165,6 @@ class ComicAppService:
             
             comic_list = []
             for c in comics:
-                try:
-                    if (not str(getattr(c, "storage_path_relative", "") or "").strip()) or (not str(getattr(c, "storage_path_kind", "") or "").strip()):
-                        if self._refresh_comic_persisted_metadata(c, source="local"):
-                            self._comic_repo.save(c)
-                except Exception as persisted_error:
-                    error_logger.error(f"回填漫画存储路径失败（列表）: {c.id}, {persisted_error}")
-
-                # 确保封面存在（对未落地封面的内容，必要时用第 1 张图片生成）
-                try:
-                    self._ensure_cover(c)
-                except Exception as e:
-                    error_logger.error(f"确保漫画封面失败（列表）: {c.id}, {e}")
-
                 comic_list.append(self._comic_to_summary_dict(c, tag_map))
             
             app_logger.info(f"获取漫画列表成功，共 {len(comic_list)} 个漫画")

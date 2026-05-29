@@ -112,6 +112,8 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     plugin_ids = set(plugin_map.keys())
     assert {"comic.jmcomic", "comic.picacomic", "video.javdb"}.issubset(plugin_ids)
     assert data.get("adapter_order") == ["jmcomic", "picacomic", "javdb"]
+    assert "teledrive" not in data.get("adapter_order", [])
+    assert "teledrive" in data.get("config_order", [])
     helper_urls = data.get("helper_urls") or {}
     helper_url = helper_urls.get("javdb_cookie_guide")
     assert helper_url == "/api/v1/config/plugin-helpers/javdb/javdb_cookie_guide/"

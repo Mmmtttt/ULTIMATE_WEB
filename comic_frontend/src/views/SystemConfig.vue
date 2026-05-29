@@ -401,7 +401,7 @@ async function loadThirdPartyConfig() {
 
     const data = response.data || {}
     thirdPartySchema.value = data.schema || {}
-    thirdPartyAdapterOrder.value = data.adapter_order || []
+    thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
 
     const adapters = data.adapters || {}
 

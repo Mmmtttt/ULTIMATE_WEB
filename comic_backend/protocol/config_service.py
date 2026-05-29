@@ -35,19 +35,33 @@ class PluginConfigService:
         normalized_helper_key = str(helper_key or "").strip()
         return f"/api/v1/config/plugin-helpers/{normalized_config_key}/{normalized_helper_key}/"
 
+    @staticmethod
+    def _is_adapter_order_plugin(manifest) -> bool:
+        capability_keys = set(manifest.capability_keys)
+        return any(
+            key == "catalog.search"
+            or key == "catalog.detail"
+            or key == "catalog.by_code"
+            or key.startswith("collection.")
+            for key in capability_keys
+        )
+
     def build_response(self) -> dict:
         self._config_store.reload()
         manifests = self._gateway.list_manifests()
         configurable = self._collect_configurable_plugins()
 
         adapter_order: List[str] = []
+        config_order: List[str] = []
         schema: Dict[str, dict] = {}
         adapters: Dict[str, dict] = {}
         helper_urls: Dict[str, str] = {}
 
         for manifest in configurable:
             config_key = manifest.config_key
-            adapter_order.append(config_key)
+            config_order.append(config_key)
+            if self._is_adapter_order_plugin(manifest):
+                adapter_order.append(config_key)
 
             fields = manifest.list_configuration_fields()
             helper_definitions = manifest.list_helpers()
@@ -95,6 +109,7 @@ class PluginConfigService:
         response = {
             "default_adapter": self._config_store.get_default_config_key(),
             "adapter_order": adapter_order,
+            "config_order": config_order,
             "schema": schema,
             "adapters": adapters,
             "helper_urls": helper_urls,

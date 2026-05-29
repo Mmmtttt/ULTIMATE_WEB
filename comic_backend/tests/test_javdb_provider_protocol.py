@@ -84,6 +84,41 @@ def test_javdb_provider_normalizes_raw_session_cookie_and_applies_to_api():
     assert cookies["over18"] == "1"
 
 
+def test_javdb_api_clamps_out_of_range_domain_index():
+    JavdbAPI = _load_javdb_api_class()
+    module = sys.modules[JavdbAPI.__module__]
+    domains = list(module.config.JAVDB.get("domains") or [])
+    fallback = int(module.config.JAVDB.get("default_domain_index", 0) or 0)
+
+    api = JavdbAPI(domain_index=len(domains))
+
+    assert domains
+    assert api.domain_index == fallback
+    assert api.base_url == f"https://{domains[fallback]}"
+
+
+def test_javdb_provider_normalizes_out_of_range_domain_index_config():
+    JavdbProvider, provider_path = _load_javdb_provider_class()
+    provider = JavdbProvider({}, provider_path)
+    module = sys.modules[JavdbProvider.__module__]
+    api_module = sys.modules[module.JavdbAPI.__module__]
+    domains = list(api_module.config.JAVDB.get("domains") or [])
+    fallback = int(api_module.config.JAVDB.get("default_domain_index", 0) or 0)
+
+    config = provider.normalize_config(
+        {
+            "enabled": True,
+            "domain_index": len(domains),
+            "cookie_string": "session-token-only",
+        }
+    )
+    api = provider._get_collection_api(config)
+
+    assert domains
+    assert config["domain_index"] == fallback
+    assert api.domain_index == fallback
+
+
 def test_javdb_provider_taxonomy_tags_filters_keyword_and_category(monkeypatch):
     JavdbProvider, provider_path = _load_javdb_provider_class()
     provider = JavdbProvider({}, provider_path)

@@ -166,13 +166,6 @@ class RecommendationAppService:
             # 构建返回数据
             recommendation_list = []
             for r in recommendations:
-                try:
-                    if (not str(getattr(r, "storage_path_relative", "") or "").strip()) or (not str(getattr(r, "storage_path_kind", "") or "").strip()):
-                        if self._refresh_recommendation_persisted_metadata(r):
-                            self._recommendation_repo.save(r)
-                except Exception as persisted_error:
-                    error_logger.error(f"回填推荐漫画存储路径失败（列表）: {r.id}, {persisted_error}")
-
                 rec_info = self._recommendation_to_summary_dict(r, tag_map)
                 rec_info["total_page"] = normalize_total_page(r.total_page)
                 recommendation_list.append(rec_info)

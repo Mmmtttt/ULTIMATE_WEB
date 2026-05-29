@@ -24,11 +24,13 @@
         </div>
         <div class="player-controls">
           <div class="source-selector">
+            <span v-if="availableSources.length > 1" class="source-label">选集</span>
             <van-button 
               v-for="source in availableSources" 
-              :key="source.source"
-              :type="currentSource === source.source ? 'primary' : 'default'"
+              :key="sourceKey(source)"
+              :type="currentSource === sourceKey(source) ? 'primary' : 'default'"
               size="small"
+              class="episode-button"
               @click="switchSource(source)"
             >
               {{ source.name }}
@@ -54,10 +56,15 @@
       <div v-else class="video-preview" @click="loadPlayUrls">
         <div class="cover-container">
           <van-image 
-            :src="getCoverUrl(preferredCoverPath)" 
+            v-if="preferredCoverUrl"
+            :src="preferredCoverUrl" 
             fit="cover"
             class="cover-image"
           />
+          <div v-else class="cover-placeholder">
+            <van-icon name="video-o" />
+            <span>暂无封面</span>
+          </div>
           <van-tag
             type="primary"
             size="small"
@@ -67,6 +74,26 @@
         <div class="play-overlay">
           <van-icon name="play-circle-o" class="play-icon" />
           <span class="play-text">点击播放</span>
+        </div>
+      </div>
+
+      <div v-if="detailEpisodeList.length > 1" class="episode-section">
+        <div class="episode-section-header">
+          <span>选集</span>
+          <span>{{ detailEpisodeList.length }} 集</span>
+        </div>
+        <div class="episode-grid">
+          <button
+            v-for="episode in detailEpisodeList"
+            :key="episode.index"
+            type="button"
+            class="episode-card"
+            :class="{ 'is-active': currentEpisodeIndex === episode.index }"
+            @click="playEpisode(episode)"
+          >
+            <span class="episode-index">{{ episode.index }}</span>
+            <span class="episode-name">{{ episode.name }}</span>
+          </button>
         </div>
       </div>
       
@@ -449,6 +476,7 @@ const preferredCoverPath = computed(() => {
   const remotePath = String(recommendation.value?.cover_path || '').trim()
   return localPath || remotePath
 })
+const preferredCoverUrl = computed(() => getCoverUrl(preferredCoverPath.value))
 const preferredThumbnailImages = computed(() => {
   const local = Array.isArray(recommendation.value?.thumbnail_images_local) ? recommendation.value.thumbnail_images_local : []
   const remote = Array.isArray(recommendation.value?.thumbnail_images) ? recommendation.value.thumbnail_images : []
@@ -475,6 +503,32 @@ const previewVideoPlayerUrl = computed(() => {
   return resolvePreviewVideoUrl(localPreview || remotePreview)
 })
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
+const detailEpisodeList = computed(() => {
+  const display = recommendation.value?.display && typeof recommendation.value.display === 'object'
+    ? recommendation.value.display
+    : {}
+  const localEpisodes = Array.isArray(display.local_episodes) ? display.local_episodes : []
+  const teledriveEpisodes = display.teledrive && Array.isArray(display.teledrive.episodes)
+    ? display.teledrive.episodes
+    : []
+  const episodes = localEpisodes.length ? localEpisodes : teledriveEpisodes
+  return episodes
+    .map((episode, index) => {
+      const fallbackIndex = index + 1
+      const normalizedIndex = Number(episode?.index) || fallbackIndex
+      const name = String(
+        episode?.name ||
+        episode?.relative_path ||
+        episode?.title ||
+        `第 ${normalizedIndex} 集`
+      ).trim()
+      return {
+        index: normalizedIndex,
+        name: name || `第 ${normalizedIndex} 集`
+      }
+    })
+    .filter((episode) => episode.index > 0)
+})
 
 function isLikelyPreviewMediaUrl(url) {
   if (!url || typeof url !== 'string') {
@@ -946,8 +1000,40 @@ const qualityOptions = computed(() => {
   }))
 })
 
-async function loadPlayUrls() {
-  if (!recommendation.value?.code) {
+const currentEpisodeIndex = computed(() => {
+  const matched = String(currentSource.value || '').match(/(?:local|teledrive)_episode_(\d+)/)
+  return matched ? Number(matched[1]) || 0 : 0
+})
+
+function findSourceByEpisodeIndex(index) {
+  const normalizedIndex = Number(index) || 0
+  if (normalizedIndex <= 0) {
+    return null
+  }
+  return availableSources.value.find((source) => {
+    return String(sourceKey(source)).endsWith(`_episode_${normalizedIndex}`)
+  }) || availableSources.value[normalizedIndex - 1] || null
+}
+
+async function playEpisode(episode) {
+  const episodeIndex = Number(episode?.index) || 1
+  if (!playSources.value.length) {
+    await loadPlayUrls({ episodeIndex })
+    return
+  }
+
+  const source = findSourceByEpisodeIndex(episodeIndex)
+  if (!source) {
+    await loadPlayUrls({ episodeIndex })
+    return
+  }
+
+  showPlayer.value = true
+  await switchSource(source)
+}
+
+async function loadPlayUrls(options = {}) {
+  if (!recommendation.value?.code && detailEpisodeList.value.length === 0) {
     showFailToast('视频没有番号信息')
     return
   }
@@ -973,9 +1059,8 @@ async function loadPlayUrls() {
       // 显示播放器
       showPlayer.value = true
       
-      // 默认选择第一个可用源
-      const firstSource = available[0]
-      await switchSource(firstSource)
+      const selectedSource = findSourceByEpisodeIndex(options.episodeIndex) || available[0]
+      await switchSource(selectedSource)
     } else {
       showFailToast(response.msg || '加载失败')
     }
@@ -987,8 +1072,10 @@ async function loadPlayUrls() {
 }
 
 async function switchSource(source) {
-  currentSource.value = source.source
-  currentStreams.value = source.streams || []
+  currentSource.value = sourceKey(source)
+  currentStreams.value = Array.isArray(source.streams) && source.streams.length
+    ? source.streams
+    : (source.url ? [{ url: source.url, resolution: source.currentResolution || '原始', type: source.type || 'direct' }] : [])
   
   if (currentStreams.value.length > 0) {
     // 默认选择最高画质
@@ -997,6 +1084,62 @@ async function switchSource(source) {
     await nextTick()
     await playStream(currentStreams.value[0])
   }
+}
+
+function sourceKey(source) {
+  return String(source?.source || source?.name || source?.url || '')
+}
+
+function normalizePlayableUrl(rawUrl) {
+  let url = String(rawUrl || '').trim()
+  if (!url || url.startsWith('blob:')) {
+    return ''
+  }
+
+  if (url.startsWith('//')) {
+    return `https:${url}`
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    return url
+  }
+
+  if (url.startsWith('/proxy2?') || url.startsWith('/proxy/')) {
+    return toBackendApiUrl(`/v1/video${url}`)
+  }
+
+  if (url.startsWith('/v1/')) {
+    return toBackendApiUrl(url)
+  }
+
+  if (url.startsWith('/api/')) {
+    return toBackendUrl(url)
+  }
+
+  if (url.startsWith('/')) {
+    return toBackendUrl(url)
+  }
+
+  if (/^[^\\/:?#]+\.[^\\/:?#]+\/.+/.test(url)) {
+    return toBackendApiUrl(`/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`)
+  }
+
+  return ''
+}
+
+function resolvePlayableStreamUrl(stream) {
+  if (!stream || typeof stream !== 'object') {
+    return ''
+  }
+
+  let url = String(stream.url || '').trim()
+  const proxyUrl = String(stream.proxy_url || '').trim()
+  if (proxyUrl) {
+    url = proxyUrl.startsWith('/proxy2') || proxyUrl.startsWith('/proxy/')
+      ? `/v1/video${proxyUrl}`
+      : proxyUrl
+  }
+  return normalizePlayableUrl(url)
 }
 
 async function changeQuality(index) {
@@ -1012,17 +1155,11 @@ async function playStream(stream) {
     return
   }
   
-  // 使用代理URL解决跨域问题
-  let url = stream.url
-  if (stream.proxy_url) {
-    // 直接使用返回的 proxy_url，已经包含正确的路径
-    if (stream.proxy_url.startsWith('http')) {
-      url = stream.proxy_url
-    } else if (stream.proxy_url.startsWith('/proxy2') || stream.proxy_url.startsWith('/proxy/')) {
-      url = `/api/v1/video${stream.proxy_url}`
-    } else {
-      url = stream.proxy_url
-    }
+  const url = resolvePlayableStreamUrl(stream)
+  if (!url) {
+    showFailToast('播放地址不可用')
+    console.warn('播放地址不可用', stream)
+    return
   }
   
   console.log('播放URL:', url)
@@ -1061,14 +1198,14 @@ async function playStream(stream) {
       })
     } else if (videoPlayer.value.canPlayType('application/vnd.apple.mpegurl')) {
       videoPlayer.value.src = url
-      videoPlayer.value.play()
+      videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
     } else {
       showFailToast('当前浏览器不支持播放此格式')
     }
   } else {
     // 普通视频格式
     videoPlayer.value.src = url
-    videoPlayer.value.play()
+    videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
   }
 }
 
@@ -1134,6 +1271,7 @@ onUnmounted(() => {
   justify-content: center;
   position: relative;
   cursor: pointer;
+  min-height: 220px;
 }
 
 .cover-container {
@@ -1141,6 +1279,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
   position: relative;
+  min-height: inherit;
 }
 
 .source-tag {
@@ -1152,8 +1291,34 @@ onUnmounted(() => {
 
 .cover-image {
   width: 100%;
+  min-height: 220px;
   max-height: 340px;
   object-fit: cover;
+}
+
+.cover-placeholder {
+  width: 100%;
+  min-height: 220px;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  background:
+    linear-gradient(135deg, rgba(42, 105, 188, 0.14), rgba(42, 105, 188, 0.03)),
+    var(--surface-2);
+}
+
+.cover-placeholder .van-icon {
+  font-size: 42px;
+  color: rgba(42, 105, 188, 0.82);
+}
+
+.cover-placeholder span {
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .play-overlay {
@@ -1219,8 +1384,26 @@ onUnmounted(() => {
 
 .source-selector {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.source-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.episode-button {
+  max-width: min(260px, 100%);
+}
+
+.episode-button :deep(.van-button__text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resolution-badge {
@@ -1231,6 +1414,77 @@ onUnmounted(() => {
   border: 1px solid var(--border-soft);
   color: var(--text-secondary);
   border-radius: 4px;
+}
+
+.episode-section {
+  margin-top: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.episode-section-header {
+  height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.episode-section-header span:last-child {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.episode-grid {
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.episode-card {
+  min-width: 0;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color var(--motion-base) var(--ease-standard), background var(--motion-base) var(--ease-standard);
+}
+
+.episode-card.is-active {
+  border-color: rgba(42, 105, 188, 0.56);
+  background: rgba(42, 105, 188, 0.12);
+  color: #1f5fb8;
+}
+
+.episode-index {
+  flex: 0 0 auto;
+  min-width: 22px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.episode-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
 }
 
 .quality-selector {
@@ -1552,6 +1806,7 @@ onUnmounted(() => {
 
   .video-preview,
   .video-player-section,
+  .episode-section,
   .video-info,
   .magnets-section,
   .preview-video-section,
@@ -1560,7 +1815,12 @@ onUnmounted(() => {
   }
 
   .cover-image {
+    min-height: 180px;
     max-height: 250px;
+  }
+
+  .cover-placeholder {
+    min-height: 180px;
   }
 
   .play-icon {
@@ -1593,6 +1853,12 @@ onUnmounted(() => {
   .preview-video-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .episode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px;
   }
 
   .thumbnail-grid {
