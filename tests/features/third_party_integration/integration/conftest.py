@@ -28,9 +28,33 @@ def _reset_backend_modules() -> None:
         "api.v1.actor",
         "api.v1.organize",
         "api.v1.recommendation",
+        "api.v1.config",
+        "api.v1.tag",
+        "api.v1.feed",
+        "api.v1.sync",
+        "api.v1.ui_state",
         "application",
+        "application.base",
+        "application.base.content_app_service",
+        "application.config_app_service",
+        "application.persisted_content_metadata",
+        "application.tag_content_type_guard",
+        "application.local_comic_import_service",
+        "application.local_video_thumbnail_service",
+        "application.softref_comic_reader",
+        "application.softref_reader_protocol",
+        "application.sync_app_service",
+        "application.sync_directional_service",
+        "application.ui_state_app_service",
+        "application.random_feed_service",
+        "application.tag_app_service",
         "core.constants",
         "core.runtime_profile",
+        "core.host_platform_fallback",
+        "core.utils",
+        "domain",
+        "domain.tag",
+        "domain.tag.entity",
         "application.database_organize_service",
         "application.comic_app_service",
         "application.list_app_service",
@@ -47,13 +71,25 @@ def _reset_backend_modules() -> None:
         "protocol.runtime_config",
         "protocol.platform_service",
         "protocol.compatibility",
+        "protocol.host_service",
+        "protocol.credential_guard",
+        "protocol.config_service",
+        "protocol.adapter_api",
+        "protocol.presentation",
         "third_party",
         "third_party.external_api",
         "third_party.platform_service",
+        "infrastructure",
+        "infrastructure.common",
+        "infrastructure.common.result",
+        "infrastructure.logger",
+        "infrastructure.persistence",
+        "infrastructure.persistence.repositories",
+        "infrastructure.persistence.repositories.tag_repository_impl",
+        "infrastructure.recommendation_cache_manager",
         "utils",
         "utils.file_parser",
         "utils.image_handler",
-        "infrastructure.recommendation_cache_manager",
     ]
     for name in module_names:
         sys.modules.pop(name, None)
@@ -64,6 +100,14 @@ def _reset_backend_modules() -> None:
             or name.startswith("protocol.")
             or name == "third_party"
             or name.startswith("third_party.")
+            or name == "application"
+            or name.startswith("application.")
+            or name == "infrastructure"
+            or name.startswith("infrastructure.")
+            or name == "domain"
+            or name.startswith("domain.")
+            or name == "core"
+            or name.startswith("core.")
         ):
             sys.modules.pop(name, None)
 

@@ -58,7 +58,8 @@ def test_teledrive_manifest_config_defaults_and_token_redaction(third_party_clie
     assert response.status_code == 200
     assert payload["code"] == 200
     data = payload["data"] or {}
-    assert "teledrive" in (data.get("adapter_order") or [])
+    assert "teledrive" not in (data.get("adapter_order") or [])
+    assert "teledrive" in (data.get("config_order") or [])
     assert ((data.get("schema") or {}).get("teledrive") or {}).get("label") == "TeleDrive"
     teledrive_config = ((data.get("adapters") or {}).get("teledrive") or {})
     assert teledrive_config["enabled"] is True

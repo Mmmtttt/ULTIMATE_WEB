@@ -338,13 +338,17 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
     original_videos = load_json(videos_path)
 
     source_root = runtime_root / "video_local_import_source"
-    nested = source_root / "nested"
-    nested.mkdir(parents=True, exist_ok=True)
+    dir_a = source_root / "dir_a"
+    dir_b = source_root / "dir_b"
+    dir_c = source_root / "dir_c"
+    dir_d = source_root / "dir_d"
+    for d in (dir_a, dir_b, dir_c, dir_d):
+        d.mkdir(parents=True, exist_ok=True)
 
-    (source_root / "ABP-123 demo.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
-    (source_root / "fc2_ppv_123456 clip.mkv").write_bytes(b"\x1A\x45\xDF\xA3")
-    (nested / "XYZ999 trailer.avi").write_bytes(b"RIFF")
-    (nested / "no_code_sample.webm").write_bytes(b"\x1A\x45\xDF\xA3")
+    (dir_a / "ABP-123 demo.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    (dir_b / "fc2_ppv_123456 clip.mkv").write_bytes(b"\x1A\x45\xDF\xA3")
+    (dir_c / "XYZ999 trailer.avi").write_bytes(b"RIFF")
+    (dir_d / "no_code_sample.webm").write_bytes(b"\x1A\x45\xDF\xA3")
     (source_root / "archive.zip").write_bytes(b"PK\x03\x04")
     (source_root / "readme.txt").write_text("ignore", encoding="utf-8")
 
@@ -390,10 +394,10 @@ def test_video_local_import_from_path_supports_recursive_scan_and_code_extract(i
             abs_path = data_dir / rel
             assert abs_path.exists(), f"missing imported file: {abs_path}"
 
-        assert not (source_root / "ABP-123 demo.mp4").exists()
-        assert not (source_root / "fc2_ppv_123456 clip.mkv").exists()
-        assert not (nested / "XYZ999 trailer.avi").exists()
-        assert not (nested / "no_code_sample.webm").exists()
+        assert not (dir_a / "ABP-123 demo.mp4").exists()
+        assert not (dir_b / "fc2_ppv_123456 clip.mkv").exists()
+        assert not (dir_c / "XYZ999 trailer.avi").exists()
+        assert not (dir_d / "no_code_sample.webm").exists()
     finally:
         save_json(videos_path, original_videos)
 
