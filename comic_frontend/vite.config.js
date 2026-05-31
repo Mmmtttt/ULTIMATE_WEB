@@ -43,6 +43,10 @@ export default defineConfig({
       '/static': {
         target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendPort}`,
         changeOrigin: true
+      },
+      '/media': {
+        target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendPort}`,
+        changeOrigin: true
       }
     }
   },

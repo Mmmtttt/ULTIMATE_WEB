@@ -3875,6 +3875,21 @@ class VideoAppService(BaseContentAppService):
         if lowered.startswith("http://") or lowered.startswith("https://"):
             return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
 
+        relative = normalize_data_relative_path(url)
+        if not relative:
+            normalized_candidate = url.replace("\\", "/").lstrip("/").strip()
+            if normalized_candidate and "://" not in normalized_candidate and not url.startswith("//"):
+                candidate_abs = os.path.abspath(os.path.join(DATA_DIR, normalized_candidate.replace("/", os.sep)))
+                data_root = os.path.abspath(DATA_DIR)
+                try:
+                    if os.path.commonpath([data_root, candidate_abs]) == data_root and os.path.exists(candidate_abs):
+                        relative = normalized_candidate
+                except Exception:
+                    relative = ""
+        if relative:
+            media_url = f"/media/{str(relative or '').lstrip('/')}"
+            return media_url if any(ext in media_url.lower() for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
+
         return url if any(ext in lowered for ext in cls.PREVIEW_VIDEO_EXTENSIONS) else ""
 
     @staticmethod

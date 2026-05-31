@@ -941,3 +941,74 @@ def test_video_search_rejects_missing_keyword(integration_runtime):
     assert response.status_code == 200
     payload = response.json()
     assert payload["code"] == 400
+
+
+@pytest.mark.integration
+def test_video_detail_preview_assets_normalize_local_relative_path(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    data_dir = integration_runtime["data_dir"]
+    meta_dir = integration_runtime["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+
+    original_payload = load_json(videos_path)
+    video_id = "JAVDBLOCALPREVIEW900004"
+    preview_relative_path = f"video/JAVDB/{video_id}/hls/index.m3u8"
+    preview_abs_path = data_dir / "video" / "JAVDB" / video_id / "hls" / "index.m3u8"
+    preview_abs_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_abs_path.write_text("#EXTM3U\n", encoding="utf-8")
+
+    try:
+        payload = dict(original_payload or {})
+        videos = list(payload.get("videos") or [])
+        videos.append(
+            {
+                "id": video_id,
+                "title": "Local Preview Asset Video",
+                "title_jp": "",
+                "creator": "",
+                "desc": "Local preview path normalization case",
+                "cover_path": "",
+                "total_units": 1,
+                "current_unit": 0,
+                "score": 0,
+                "tag_ids": [],
+                "list_ids": [],
+                "create_time": "2026-06-01T00:00:00",
+                "last_access_time": "2026-06-01T00:00:00",
+                "is_deleted": False,
+                "code": "LP-900004",
+                "date": "",
+                "series": "",
+                "magnets": [],
+                "thumbnail_images": [],
+                "preview_video": "https://media.example/local-preview-900004.m3u8",
+                "preview_video_local": preview_relative_path,
+                "cover_path_local": "",
+                "thumbnail_images_local": [],
+                "platform": "JAVDB",
+                "plugin_id": "video.javdb",
+                "plugin_name": "JAVDB",
+            }
+        )
+        payload["videos"] = videos
+        save_json(videos_path, payload)
+
+        response = requests.get(
+            f"{base_url}/api/v1/video/detail",
+            params={"video_id": video_id},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == 200
+        detail = data["data"] or {}
+        preview = (detail.get("playback") or {}).get("preview") or {}
+        assets = preview.get("assets") or []
+        assert preview.get("available") is True
+        assert preview.get("default_asset_key") == "preview_local"
+        assert [asset.get("key") for asset in assets] == ["preview_local", "preview_remote"]
+        assert assets[0]["url"] == f"/media/{preview_relative_path}"
+        assert assets[1]["url"] == "https://media.example/local-preview-900004.m3u8"
+    finally:
+        save_json(videos_path, original_payload)

@@ -522,6 +522,7 @@ import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import { toBackendUrl } from '@/utils/url'
 import {
   buildEpisodeListFromPlayableSources,
   resolvePlayProviderGroups,
@@ -849,6 +850,20 @@ function isLocalPreviewAssetPath(path) {
   return path.startsWith('/media/')
 }
 
+function hasPendingPreviewAssetDownload(detail) {
+  const model = resolveVideoPlaybackModel(detail)
+  const assets = Array.isArray(model?.preview?.assets) ? model.preview.assets : []
+  const hasRemoteAsset = assets.some((asset) => {
+    const url = String(asset?.url || '').trim()
+    return Boolean(url) && String(asset?.origin || '').trim().toLowerCase() === 'remote'
+  })
+  const hasLocalAsset = assets.some((asset) => {
+    const url = String(asset?.url || '').trim()
+    return Boolean(url) && String(asset?.origin || '').trim().toLowerCase() === 'local' && isLocalPreviewAssetPath(url)
+  })
+  return hasRemoteAsset && !hasLocalAsset
+}
+
 function hasPendingLocalAssets(detail) {
   if (!detail || typeof detail !== 'object') {
     return false
@@ -867,8 +882,9 @@ function hasPendingLocalAssets(detail) {
     const value = String(item || '').trim()
     return Boolean(value) && !isLocalPreviewAssetPath(value)
   })
+  const previewNeedsRefresh = hasPendingPreviewAssetDownload(detail)
 
-  return coverNeedsRefresh || thumbsNeedRefresh
+  return coverNeedsRefresh || thumbsNeedRefresh || previewNeedsRefresh
 }
 
 function scheduleLocalAssetRefresh() {
@@ -959,7 +975,7 @@ function resolvePreviewVideoUrl(rawUrl) {
     if (!isLikelyPreviewMediaUrl(url)) {
       return ''
     }
-    return url
+    return toBackendUrl(url)
   }
 
   if (!isLikelyPreviewMediaUrl(url)) {

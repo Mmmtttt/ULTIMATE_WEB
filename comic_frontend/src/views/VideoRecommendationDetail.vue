@@ -433,6 +433,7 @@ import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import { toBackendUrl } from '@/utils/url'
 import {
   buildEpisodeListFromPlayableSources,
   resolvePlayProviderGroups,
@@ -474,9 +475,14 @@ const activeProviderKey = ref('')
 const previewVideoPlayer = ref(null)
 const activePreviewAssetKey = ref('')
 const refreshingPreviewVideo = ref(false)
+const assetRefreshTimer = ref(null)
+const assetRefreshAttempts = ref(0)
 
 const hls = ref(null)
 const previewHls = ref(null)
+
+const MAX_ASSET_REFRESH_ATTEMPTS = 4
+const ASSET_REFRESH_DELAY_MS = 2500
 
 const editForm = ref({
   title: '',
@@ -645,12 +651,73 @@ function syncPrimarySourceSelection(detail = recommendation.value) {
   activePrimarySourceKey.value = String(activeGroup?.key || '').trim()
 }
 
+function clearAssetRefreshTimer() {
+  if (assetRefreshTimer.value) {
+    clearTimeout(assetRefreshTimer.value)
+    assetRefreshTimer.value = null
+  }
+}
+
 function selectPreviewAsset(assetKey) {
   const normalizedKey = String(assetKey || '').trim()
   if (!normalizedKey || normalizedKey === activePreviewAssetKey.value) {
     return
   }
   activePreviewAssetKey.value = normalizedKey
+}
+
+function isLocalPreviewAssetPath(path) {
+  if (!path || typeof path !== 'string') {
+    return false
+  }
+  return path.startsWith('/media/')
+}
+
+function hasPendingPreviewAssetDownload(detail) {
+  const model = resolveVideoPlaybackModel(detail)
+  const assets = Array.isArray(model?.preview?.assets) ? model.preview.assets : []
+  const hasRemoteAsset = assets.some((asset) => {
+    const url = String(asset?.url || '').trim()
+    return Boolean(url) && String(asset?.origin || '').trim().toLowerCase() === 'remote'
+  })
+  const hasLocalAsset = assets.some((asset) => {
+    const url = String(asset?.url || '').trim()
+    return Boolean(url) && String(asset?.origin || '').trim().toLowerCase() === 'local' && isLocalPreviewAssetPath(url)
+  })
+  return hasRemoteAsset && !hasLocalAsset
+}
+
+function schedulePreviewAssetRefresh() {
+  clearAssetRefreshTimer()
+
+  if (!recommendationId.value || !recommendation.value || !hasPendingPreviewAssetDownload(recommendation.value)) {
+    return
+  }
+
+  if (assetRefreshAttempts.value >= MAX_ASSET_REFRESH_ATTEMPTS) {
+    return
+  }
+
+  assetRefreshAttempts.value += 1
+  assetRefreshTimer.value = setTimeout(async () => {
+    try {
+      const detail = await videoRecommendationStore.fetchDetailSnapshot(recommendationId.value)
+      if (detail) {
+        recommendation.value = detail
+        syncPrimarySourceSelection(detail)
+        syncPreviewAssetSelection(detail)
+        if (detail?.score) {
+          scoreValue.value = detail.score
+        }
+      }
+    } catch (error) {
+      console.warn('刷新预览资源失败:', error)
+    } finally {
+      if (hasPendingPreviewAssetDownload(recommendation.value)) {
+        schedulePreviewAssetRefresh()
+      }
+    }
+  }, ASSET_REFRESH_DELAY_MS)
 }
 
 function resolvePreviewVideoUrl(rawUrl) {
@@ -690,7 +757,7 @@ function resolvePreviewVideoUrl(rawUrl) {
     if (!isLikelyPreviewMediaUrl(url)) {
       return ''
     }
-    return url
+    return toBackendUrl(url)
   }
 
   if (!isLikelyPreviewMediaUrl(url)) {
@@ -777,6 +844,8 @@ async function refreshPreviewVideo() {
     return
   }
 
+  clearAssetRefreshTimer()
+  assetRefreshAttempts.value = 0
   refreshingPreviewVideo.value = true
   showLoadingToast({
     message: '正在更新预览视频...',
@@ -799,6 +868,7 @@ async function refreshPreviewVideo() {
     if (response.data?.score) {
       scoreValue.value = response.data.score
     }
+    schedulePreviewAssetRefresh()
     await mountPreviewVideoSource()
     showSuccessToast('预览视频链接已刷新，后台正在重新下载')
   } catch (error) {
@@ -812,6 +882,8 @@ async function refreshPreviewVideo() {
 
 async function loadVideo() {
   loading.value = true
+  clearAssetRefreshTimer()
+  assetRefreshAttempts.value = 0
   try {
     const data = await videoRecommendationStore.fetchDetail(recommendationId.value)
     recommendation.value = data
@@ -827,6 +899,8 @@ async function loadVideo() {
   } finally {
     loading.value = false
   }
+
+  schedulePreviewAssetRefresh()
 
   Promise.allSettled([
     listStore.fetchLists('video'),
@@ -1446,6 +1520,7 @@ watch(
 )
 
 onUnmounted(() => {
+  clearAssetRefreshTimer()
   // 清理 HLS 实例
   if (hls.value) {
     hls.value.destroy()

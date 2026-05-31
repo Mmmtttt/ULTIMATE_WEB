@@ -74,6 +74,67 @@ def test_video_recommendation_list_exposes_protocol_display_metadata(integration
 
 
 @pytest.mark.integration
+def test_video_recommendation_detail_exposes_local_and_remote_preview_assets(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    data_dir = integration_runtime["data_dir"]
+    meta_dir = integration_runtime["meta_dir"]
+    db_path = meta_dir / "video_recommendations_database.json"
+
+    original_payload = load_json(db_path)
+    preview_relative_path = "video/JAVDB/JAVDBDETAILLOCAL900003/hls/index.m3u8"
+    preview_abs_path = data_dir / "video" / "JAVDB" / "JAVDBDETAILLOCAL900003" / "hls" / "index.m3u8"
+    preview_abs_path.parent.mkdir(parents=True, exist_ok=True)
+    preview_abs_path.write_text("#EXTM3U\n", encoding="utf-8")
+
+    try:
+        payload = {
+            "collection_name": "Test Video Recommendations",
+            "user": "test-user",
+            "total_video_recommendations": 1,
+            "last_updated": "2026-04-23",
+            "video_recommendations": [
+                {
+                    "id": "JAVDBDETAILLOCAL900003",
+                    "code": "PRE-900003",
+                    "title": "Preview Detail Javdb Local Video",
+                    "creator": "Preview Creator Local Detail",
+                    "actors": ["Actor Local Detail"],
+                    "cover_path": "/static/cover/JAVDB/900003.jpg",
+                    "preview_video": "https://media.example/javdb-preview-900003.m3u8",
+                    "preview_video_local": preview_relative_path,
+                    "thumbnail_images": [],
+                    "tag_ids": [],
+                    "list_ids": [],
+                    "create_time": "2026-04-23T12:03:00",
+                    "last_read_time": "2026-04-23T12:03:00",
+                    "is_deleted": False,
+                },
+            ],
+        }
+        save_json(db_path, payload)
+
+        response = requests.get(
+            f"{base_url}/api/v1/video/recommendation/detail",
+            params={"video_id": "JAVDBDETAILLOCAL900003"},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == 200
+        detail = data["data"] or {}
+        preview = (detail.get("playback") or {}).get("preview") or {}
+        assets = preview.get("assets") or []
+        assert preview.get("available") is True
+        assert preview.get("default_asset_key") == "preview_local"
+        assert [asset.get("key") for asset in assets] == ["preview_local", "preview_remote"]
+        assert assets[0]["url"] == "/media/video/JAVDB/JAVDBDETAILLOCAL900003/hls/index.m3u8"
+        assert assets[1]["url"] == "https://media.example/javdb-preview-900003.m3u8"
+    finally:
+        save_json(db_path, original_payload)
+
+
+@pytest.mark.integration
 def test_video_recommendation_detail_exposes_protocol_display_metadata(integration_runtime):
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]

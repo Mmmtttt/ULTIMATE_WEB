@@ -21,7 +21,7 @@ from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from core.host_platform_fallback import infer_host_video_platform, merge_host_video_display
-from core.constants import VIDEO_RECOMMENDATION_JSON_FILE
+from core.constants import DATA_DIR, VIDEO_RECOMMENDATION_JSON_FILE
 from core.utils import get_current_time
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from domain.tag.entity import ContentType
@@ -76,6 +76,7 @@ def _decorate_local_video_payload_dict(video_data: dict) -> dict:
     detail = _ensure_preview_video_detail(detail, source="local")
     detail = _attach_video_playback_projection(detail, source="local")
     _schedule_local_cover_thumbnail_cache(detail, source="local")
+    _schedule_preview_video_local_cache(detail, source="local")
     return detail
 
 
@@ -1212,6 +1213,29 @@ def to_proxy_image_url(
 _PREVIEW_VIDEO_MEDIA_MARKERS = (".mp4", ".m3u8", ".webm", ".mov", ".m4v")
 
 
+def _normalize_preview_media_path(raw_path: str) -> str:
+    candidate = str(raw_path or "").strip()
+    if not candidate:
+        return ""
+
+    relative = normalize_data_relative_path(candidate)
+    if not relative:
+        normalized_candidate = candidate.replace("\\", "/").lstrip("/").strip()
+        if not normalized_candidate or "://" in normalized_candidate or candidate.startswith("//"):
+            return ""
+
+        joined_abs = os.path.abspath(os.path.join(DATA_DIR, normalized_candidate.replace("/", os.sep)))
+        data_root = os.path.abspath(DATA_DIR)
+        try:
+            if os.path.commonpath([data_root, joined_abs]) != data_root or not os.path.exists(joined_abs):
+                return ""
+        except Exception:
+            return ""
+        relative = normalized_candidate
+
+    return f"/media/{str(relative or '').lstrip('/')}"
+
+
 def _normalize_str_list(value) -> list:
     if not isinstance(value, list):
         return []
@@ -1253,6 +1277,11 @@ def _sanitize_preview_video_value(raw_url: str) -> str:
 
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
+
+    media_url = _normalize_preview_media_path(url)
+    if media_url:
+        lowered_media = media_url.lower()
+        return media_url if any(marker in lowered_media for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
 
     return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
 
@@ -1765,6 +1794,8 @@ def _decorate_video_recommendation_item(
         decorated = annotated
 
     decorated = _attach_video_playback_projection(decorated, source="preview")
+    if include_preview_detail:
+        _schedule_preview_video_local_cache(decorated, source="preview")
     return decorated
 
 
@@ -1926,6 +1957,51 @@ def _schedule_local_cover_thumbnail_cache(video_data: dict, source: str = "local
         thumbnail_images=thumbnails if should_cache_thumbs else [],
         allow_cover=should_cache_cover,
         allow_preview_video=False,
+    )
+
+
+def _schedule_preview_video_local_cache(video_data: dict, source: str = "local"):
+    if not isinstance(video_data, dict):
+        return
+
+    video_id = str(video_data.get("id") or "").strip()
+    if not video_id:
+        return
+
+    preview_assets = _build_preview_playback_assets(video_data)
+    if not preview_assets:
+        return
+
+    has_local_asset = any(
+        str(asset.get("origin") or "").strip().lower() == "local"
+        and _is_source_preview_asset(asset.get("url"))
+        for asset in preview_assets
+    )
+    if has_local_asset:
+        return
+
+    remote_asset = next(
+        (
+            asset
+            for asset in preview_assets
+            if str(asset.get("origin") or "").strip().lower() == "remote"
+            and str(asset.get("url") or "").strip()
+        ),
+        None,
+    )
+    if not remote_asset:
+        return
+
+    platform_name = str(video_data.get("platform") or "").strip().lower()
+    if not _platform_allows_preview_video_download(platform=platform_name, video_id=video_id):
+        return
+
+    _schedule_video_asset_cache(
+        video_id=video_id,
+        source=source,
+        preview_video=str(remote_asset.get("url") or "").strip(),
+        allow_cover=False,
+        allow_preview_video=True,
     )
 
 
