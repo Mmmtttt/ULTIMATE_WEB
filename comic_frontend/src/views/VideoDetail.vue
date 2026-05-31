@@ -20,23 +20,37 @@
             ref="videoPlayer"
             controls
             class="video-element"
+            @error="handlePlayerElementError"
           ></video>
         </div>
         <div class="player-controls">
-          <div class="source-selector">
-            <span v-if="availableSources.length > 1" class="source-label">选集</span>
-            <van-button 
-              v-for="source in availableSources" 
-              :key="sourceKey(source)"
-              :type="currentSource === sourceKey(source) ? 'primary' : 'default'"
+          <div v-if="primarySourceGroups.length > 1" class="source-selector">
+            <span class="source-label">播放源</span>
+            <van-button
+              v-for="group in primarySourceGroups"
+              :key="group.key"
+              :type="activePrimarySourceKey === group.key ? 'primary' : 'default'"
               size="small"
               class="episode-button"
-              @click="switchSource(source)"
+              @click="switchPrimarySourceGroup(group)"
             >
-              {{ source.name }}
-              <span v-if="source.currentResolution" class="resolution-badge">
-                {{ source.currentResolution }}
+              {{ group.label }}
+              <span v-if="!group.available" class="resolution-badge">
+                不可用
               </span>
+            </van-button>
+          </div>
+          <div v-if="currentProviderGroups.length > 1" class="source-selector">
+            <span class="source-label">{{ activePrimarySourceKey === 'remote' ? '远程平台' : '播放平台' }}</span>
+            <van-button 
+              v-for="group in currentProviderGroups"
+              :key="group.key"
+              :type="activeProviderKey === group.key ? 'primary' : 'default'"
+              size="small"
+              class="episode-button"
+              @click="switchProviderGroup(group)"
+            >
+              {{ group.label }}
             </van-button>
           </div>
           <div class="quality-selector" v-if="currentStreams.length > 1">
@@ -86,7 +100,7 @@
 
       <div v-if="detailEpisodeList.length > 1" class="episode-section">
         <div class="episode-section-header">
-          <span>选集</span>
+          <span>{{ activePrimarySourceLabel }}选集</span>
           <span>{{ detailEpisodeList.length }} 集</span>
         </div>
         <div class="episode-grid">
@@ -508,7 +522,11 @@ import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
-import { resolveVideoPlaybackModel } from '@/utils/videoPlaybackModel'
+import {
+  buildEpisodeListFromPlayableSources,
+  resolvePlayProviderGroups,
+  resolveVideoPlaybackModel
+} from '@/utils/videoPlaybackModel'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -547,9 +565,13 @@ const editForm = ref({
 const showPlayer = ref(false)
 const videoPlayer = ref(null)
 const playSources = ref([])
+const playerProviderGroups = ref([])
+const loadedPlaybackSourceKey = ref('')
 const currentSource = ref('')
 const currentStreams = ref([])
 const currentQuality = ref(0)
+const activePrimarySourceKey = ref('')
+const activeProviderKey = ref('')
 const previewVideoPlayer = ref(null)
 const activePreviewAssetKey = ref('')
 const assetRefreshTimer = ref(null)
@@ -641,6 +663,30 @@ const preferredThumbnailImages = computed(() => {
 const playbackModel = computed(() => resolveVideoPlaybackModel(video.value))
 const primaryPlayback = computed(() => playbackModel.value.primary || {})
 const previewPlayback = computed(() => playbackModel.value.preview || {})
+const primarySourceGroups = computed(() => {
+  const groups = Array.isArray(primaryPlayback.value.source_groups) ? primaryPlayback.value.source_groups : []
+  return groups.filter((group) => group && group.available)
+})
+const activePrimarySourceGroup = computed(() => {
+  const groups = primarySourceGroups.value
+  if (!groups.length) {
+    return null
+  }
+  return groups.find((group) => group.key === activePrimarySourceKey.value) || groups[0]
+})
+const activePrimarySourceLabel = computed(() => {
+  return String(activePrimarySourceGroup.value?.label || '当前').trim() || '当前'
+})
+const currentProviderGroups = computed(() => {
+  return playerProviderGroups.value.filter((group) => group)
+})
+const activeProviderGroup = computed(() => {
+  const groups = currentProviderGroups.value
+  if (!groups.length) {
+    return null
+  }
+  return groups.find((group) => group.key === activeProviderKey.value) || groups[0]
+})
 const previewAssetList = computed(() => {
   const assets = Array.isArray(previewPlayback.value.assets) ? previewPlayback.value.assets : []
   return assets.filter((asset) => String(asset?.url || '').trim())
@@ -658,7 +704,15 @@ const previewVideoPlayerUrl = computed(() => {
 const previewRefreshSource = computed(() => (video.value?.source === 'preview' ? 'preview' : 'local'))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
 const detailEpisodeList = computed(() => {
-  const episodes = Array.isArray(primaryPlayback.value.episodes) ? primaryPlayback.value.episodes : []
+  if (showPlayer.value && loadedPlaybackSourceKey.value === activePrimarySourceKey.value) {
+    const providerGroup = activeProviderGroup.value
+    if (providerGroup?.selection_mode === 'episodes') {
+      return buildEpisodeListFromPlayableSources(providerGroup.sources)
+    }
+    return []
+  }
+
+  const episodes = Array.isArray(activePrimarySourceGroup.value?.episodes) ? activePrimarySourceGroup.value.episodes : []
   return episodes
     .map((episode, index) => {
       const fallbackIndex = index + 1
@@ -673,7 +727,7 @@ const detailEpisodeList = computed(() => {
 })
 const hasLocalPlayableSource = computed(() => {
   return Boolean(
-    primaryPlayback.value.available ||
+    primarySourceGroups.value.length > 0 ||
     detailEpisodeList.value.length > 0 ||
     String(video.value?.local_source_path || video.value?.storage_path || '').trim()
   )
@@ -766,6 +820,20 @@ function syncPreviewAssetSelection(detail = video.value) {
   activePreviewAssetKey.value = String(model?.preview?.default_asset_key || assets[0]?.key || '').trim()
 }
 
+function syncPrimarySourceSelection(detail = video.value) {
+  const model = resolveVideoPlaybackModel(detail)
+  const groups = Array.isArray(model?.primary?.source_groups) ? model.primary.source_groups : []
+  if (!groups.length) {
+    activePrimarySourceKey.value = ''
+    return
+  }
+
+  const defaultSourceKey = String(model?.primary?.default_source_key || groups[0]?.key || '').trim()
+  const matchedGroup = groups.find((group) => group.key === activePrimarySourceKey.value)
+  const activeGroup = matchedGroup || groups.find((group) => group.key === defaultSourceKey) || groups[0]
+  activePrimarySourceKey.value = String(activeGroup?.key || '').trim()
+}
+
 function selectPreviewAsset(assetKey) {
   const normalizedKey = String(assetKey || '').trim()
   if (!normalizedKey || normalizedKey === activePreviewAssetKey.value) {
@@ -820,6 +888,7 @@ function scheduleLocalAssetRefresh() {
       const detail = await videoStore.fetchDetailSnapshot(videoId.value)
       if (detail) {
         video.value = detail
+        syncPrimarySourceSelection(detail)
         syncPreviewAssetSelection(detail)
         if (detail?.score) {
           scoreValue.value = detail.score
@@ -994,6 +1063,7 @@ async function refreshPreviewVideo() {
 
     video.value = response.data
     showMagnets.value = false
+    syncPrimarySourceSelection(response.data)
     syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
@@ -1034,6 +1104,7 @@ async function refreshLocalMetadata() {
     video.value = response.data
     selectedTagIds.value = [...(response.data?.tag_ids || [])]
     syncEditFormFromVideo(response.data)
+    syncPrimarySourceSelection(response.data)
     syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
@@ -1078,6 +1149,7 @@ async function generateLocalThumbnails() {
     }
 
     video.value = response.data
+    syncPrimarySourceSelection(response.data)
     syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     showMagnets.value = false
@@ -1116,6 +1188,7 @@ async function saveThumbnailCoverSelection() {
     }
 
     video.value = response.data
+    syncPrimarySourceSelection(response.data)
     syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     showThumbnailPicker.value = false
@@ -1169,6 +1242,7 @@ async function loadVideo() {
     }
     selectedTagIds.value = [...(data?.tag_ids || [])]
     syncEditFormFromVideo(data)
+    syncPrimarySourceSelection(data)
     syncPreviewAssetSelection(data)
     syncThumbnailSelectionState(data)
     scheduleLocalAssetRefresh()
@@ -1500,30 +1574,47 @@ const qualityOptions = computed(() => {
 })
 
 const currentEpisodeIndex = computed(() => {
-  const matched = String(currentSource.value || '').match(/(?:local|teledrive)_episode_(\d+)/)
+  const matchedSource = availableSources.value.find((source) => sourceKey(source) === currentSource.value)
+  if (matchedSource) {
+    return Number(matchedSource.episode_index) || 0
+  }
+  const matched = String(currentSource.value || '').match(/_episode_(\d+)$/)
   return matched ? Number(matched[1]) || 0 : 0
 })
 
-function findSourceByEpisodeIndex(index) {
+function findSourceByEpisodeIndex(index, sources = availableSources.value) {
   const normalizedIndex = Number(index) || 0
   if (normalizedIndex <= 0) {
     return null
   }
-  return availableSources.value.find((source) => {
-    return String(sourceKey(source)).endsWith(`_episode_${normalizedIndex}`)
-  }) || availableSources.value[normalizedIndex - 1] || null
+  return sources.find((source) => {
+    return Number(source?.episode_index) === normalizedIndex || String(sourceKey(source)).endsWith(`_episode_${normalizedIndex}`)
+  }) || sources[normalizedIndex - 1] || null
+}
+
+function resolveInitialPlaybackSourceKey() {
+  if (activePrimarySourceKey.value) {
+    return activePrimarySourceKey.value
+  }
+  return String(primaryPlayback.value?.default_source_key || primarySourceGroups.value[0]?.key || '').trim()
 }
 
 async function playEpisode(episode) {
   const episodeIndex = Number(episode?.index) || 1
   if (!playSources.value.length) {
-    await loadPlayUrls({ episodeIndex })
+    await loadPlayUrls({
+      playbackSource: resolveInitialPlaybackSourceKey(),
+      episodeIndex
+    })
     return
   }
 
   const source = findSourceByEpisodeIndex(episodeIndex)
   if (!source) {
-    await loadPlayUrls({ episodeIndex })
+    await loadPlayUrls({
+      playbackSource: resolveInitialPlaybackSourceKey(),
+      episodeIndex
+    })
     return
   }
 
@@ -1532,42 +1623,97 @@ async function playEpisode(episode) {
 }
 
 async function loadPlayUrls(options = {}) {
+  const playbackSource = String(options.playbackSource || resolveInitialPlaybackSourceKey()).trim()
   if (!video.value?.code && !hasLocalPlayableSource.value) {
     showFailToast('视频没有番号信息')
     return
   }
-  
-  showLoadingToast({
-    message: '加载播放链接...',
-    forbidClick: true
-  })
+
+  if (!options.silentLoading) {
+    showLoadingToast({
+      message: playbackSource === 'remote' ? '加载远程播放源...' : '加载播放链接...',
+      forbidClick: true
+    })
+  }
   
   try {
-    const response = await videoStore.getPlayUrls(videoId.value)
-    closeToast()
+    const params = {}
+    if (playbackSource) {
+      params.playback_source = playbackSource
+    }
+    if (playbackSource === 'remote' && options.providerKey) {
+      params.remote_provider = options.providerKey
+    }
+    const response = await videoStore.getPlayUrls(videoId.value, params)
+    if (!options.silentLoading) {
+      closeToast()
+    }
     
     if (response.code === 200 && response.data) {
-      playSources.value = response.data.sources || []
-      
-      const available = playSources.value.filter(s => s.available)
-      if (available.length === 0) {
-        showFailToast('暂无可用播放源')
+      const { providerGroups, defaultProviderKey } = resolvePlayProviderGroups(response.data)
+      if (!providerGroups.length) {
+        playSources.value = []
+        playerProviderGroups.value = []
+        activeProviderKey.value = ''
+        showFailToast('暂无可用播放平台')
         return
       }
-      
-      // 显示播放器
+
+      playerProviderGroups.value = providerGroups
+      loadedPlaybackSourceKey.value = playbackSource || resolveInitialPlaybackSourceKey()
+      activePrimarySourceKey.value = loadedPlaybackSourceKey.value
+      activeProviderKey.value = String(options.providerKey || defaultProviderKey || providerGroups[0]?.key || '').trim()
+
       showPlayer.value = true
-      
-      const selectedSource = findSourceByEpisodeIndex(options.episodeIndex) || available[0]
-      await switchSource(selectedSource)
+      const providerGroup = providerGroups.find((group) => group.key === activeProviderKey.value) || providerGroups[0]
+      await switchProviderGroup(providerGroup, {
+        episodeIndex: options.episodeIndex,
+        force: true
+      })
     } else {
       showFailToast(response.msg || '加载失败')
     }
   } catch (error) {
-    closeToast()
+    if (!options.silentLoading) {
+      closeToast()
+    }
     showFailToast('加载播放链接失败')
     console.error(error)
+    throw error
   }
+}
+
+async function switchProviderGroup(group, options = {}) {
+  const normalizedGroup = group && typeof group === 'object' ? group : null
+  if (!normalizedGroup) {
+    return
+  }
+
+  const providerSources = Array.isArray(normalizedGroup.available_sources)
+    ? normalizedGroup.available_sources
+    : []
+  if (!providerSources.length) {
+    showFailToast(normalizedGroup.error || '当前平台暂不可用')
+    return
+  }
+
+  activeProviderKey.value = String(normalizedGroup.key || '').trim()
+  playSources.value = providerSources
+
+  const preferredEpisodeIndex = Number(options.episodeIndex) || currentEpisodeIndex.value || 0
+  const selectedSource = normalizedGroup.selection_mode === 'episodes'
+    ? (findSourceByEpisodeIndex(preferredEpisodeIndex, providerSources) || providerSources[0])
+    : providerSources[0]
+
+  if (!selectedSource) {
+    showFailToast('当前平台暂无可播放内容')
+    return
+  }
+
+  if (!showPlayer.value) {
+    showPlayer.value = true
+  }
+  await switchSource(selectedSource)
 }
 
 async function switchSource(source) {
@@ -1585,8 +1731,27 @@ async function switchSource(source) {
   }
 }
 
+async function switchPrimarySourceGroup(group) {
+  const sourceKeyValue = String(group?.key || '').trim()
+  if (!sourceKeyValue) {
+    return
+  }
+
+  const preferredEpisodeIndex = currentEpisodeIndex.value || Number(group?.default_episode_index || 1) || 1
+  activePrimarySourceKey.value = sourceKeyValue
+
+  if (!showPlayer.value) {
+    return
+  }
+
+  await loadPlayUrls({
+    playbackSource: sourceKeyValue,
+    episodeIndex: preferredEpisodeIndex
+  })
+}
+
 function sourceKey(source) {
-  return String(source?.source || source?.name || source?.url || '')
+  return String(source?.key || source?.source || source?.name || source?.url || '')
 }
 
 function normalizePlayableUrl(rawUrl) {
@@ -1692,7 +1857,7 @@ async function playStream(stream) {
       hls.value.on(Hls.Events.ERROR, (event, data) => {
         console.error('HLS 错误:', event, data)
         if (data.fatal) {
-          showFailToast('播放错误，请尝试切换源或清晰度')
+          showFailToast('当前平台播放失败，请手动切换播放平台或清晰度')
         }
       })
     } else if (videoPlayer.value.canPlayType('application/vnd.apple.mpegurl')) {
@@ -1706,6 +1871,18 @@ async function playStream(stream) {
     videoPlayer.value.src = url
     videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
   }
+}
+
+async function handlePlayerElementError(event) {
+  const mediaErrorCode = event?.target?.error?.code
+  console.error('主播放器加载失败', {
+    videoId: videoId.value,
+    activeSource: activePrimarySourceKey.value,
+    providerKey: activeProviderKey.value,
+    currentSource: currentSource.value,
+    mediaErrorCode
+  })
+  showFailToast('当前平台播放失败，请手动切换播放平台')
 }
 
 onMounted(() => {

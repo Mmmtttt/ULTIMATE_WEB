@@ -126,12 +126,12 @@ export const videoApi = {
     return request.post('/v1/video/third-party/import', { video_id: videoIdOrCode, target, platform })
   },
   
-  getPlayUrls(videoId) {
-    return request.get(`/v1/video/${videoId}/play-urls`)
+  getPlayUrls(videoId, params = {}) {
+    return request.get(`/v1/video/${videoId}/play-urls`, { params })
   },
   
-  getRecommendationPlayUrls(videoId) {
-    return request.get(`/v1/video/recommendation/${videoId}/play-urls`)
+  getRecommendationPlayUrls(videoId, params = {}) {
+    return request.get(`/v1/video/recommendation/${videoId}/play-urls`, { params })
   },
 
   refreshPreviewVideo(videoId, source = 'local') {

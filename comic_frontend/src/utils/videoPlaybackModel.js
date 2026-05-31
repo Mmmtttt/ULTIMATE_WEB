@@ -81,7 +81,7 @@ function buildLegacyPrimary(item) {
         supports_episode_selection: episodes.length > 1,
         default_episode_index: episodes[0]?.index || 1,
         episodes,
-        sources: [{ key: 'primary_teledrive', label: 'TeleDrive 正片', kind: 'storage_remote' }]
+        sources: [{ key: 'primary_remote', label: '远程正片', kind: 'storage_remote' }]
       }
     }
   }
@@ -148,6 +148,163 @@ function normalizePreviewAsset(asset, fallbackIndex = 1) {
   }
 }
 
+function normalizePlayStream(stream, fallbackSource = '') {
+  if (!stream || typeof stream !== 'object') {
+    return null
+  }
+  const url = normalizeString(stream.url || stream.proxy_url)
+  if (!url) {
+    return null
+  }
+  return {
+    ...stream,
+    url,
+    resolution: normalizeString(stream.resolution) || '原始',
+    type: normalizeString(stream.type) || 'direct',
+    source: normalizeString(stream.source) || fallbackSource
+  }
+}
+
+function guessEpisodeIndex(source, fallbackIndex = 0) {
+  const direct = Number(source?.episode_index)
+  if (direct > 0) {
+    return direct
+  }
+  const key = normalizeString(source?.key || source?.source || '')
+  const matched = key.match(/(?:^|_episode_)(\d+)$/)
+  if (matched) {
+    return Number(matched[1]) || fallbackIndex
+  }
+  return fallbackIndex
+}
+
+function normalizePlayableSource(source, fallbackIndex = 1) {
+  const key = normalizeString(source?.key || source?.source || source?.name) || `play_source_${fallbackIndex}`
+  const streams = Array.isArray(source?.streams)
+    ? source.streams.map((stream) => normalizePlayStream(stream, key)).filter(Boolean)
+    : []
+  const directUrl = normalizeString(source?.url)
+  const normalizedStreams = streams.length > 0
+    ? streams
+    : (directUrl ? [{
+        url: directUrl,
+        resolution: normalizeString(source?.currentResolution) || '原始',
+        type: normalizeString(source?.type) || 'direct',
+        source: key
+      }] : [])
+  const episodeIndex = guessEpisodeIndex(source, fallbackIndex)
+  return {
+    ...source,
+    key,
+    source: normalizeString(source?.source) || key,
+    name: normalizeString(source?.name || source?.label) || `播放项 ${fallbackIndex}`,
+    type: normalizeString(source?.type) || 'direct',
+    available: Boolean(source?.available !== false && normalizedStreams.length > 0),
+    currentResolution: normalizeString(source?.currentResolution),
+    episode_index: episodeIndex > 0 ? episodeIndex : 0,
+    streams: normalizedStreams
+  }
+}
+
+function normalizePlayProviderGroup(group, fallbackIndex = 1) {
+  const key = normalizeString(group?.key || group?.provider_key || group?.provider || group?.label) || `provider_${fallbackIndex}`
+  const sources = Array.isArray(group?.sources)
+    ? group.sources.map((source, index) => normalizePlayableSource(source, index + 1))
+    : []
+  const availableSources = sources.filter((source) => source.available)
+  return {
+    key,
+    label: normalizeString(group?.label || group?.provider_label) || `平台 ${fallbackIndex}`,
+    kind: normalizeString(group?.kind || group?.mode) || 'remote',
+    selection_mode: normalizeString(group?.selection_mode) === 'episodes' ? 'episodes' : 'streams',
+    available: typeof group?.available === 'boolean' ? group.available : availableSources.length > 0,
+    supports_episode_selection: typeof group?.supports_episode_selection === 'boolean'
+      ? group.supports_episode_selection
+      : (normalizeString(group?.selection_mode) === 'episodes' && availableSources.length > 1),
+    default_source_key: normalizeString(group?.default_source_key) || availableSources[0]?.key || '',
+    error: normalizeString(group?.error),
+    sources,
+    available_sources: availableSources
+  }
+}
+
+export function resolvePlayProviderGroups(payload) {
+  const providerGroups = Array.isArray(payload?.provider_groups)
+    ? payload.provider_groups.map((group, index) => normalizePlayProviderGroup(group, index + 1)).filter((group) => group.sources.length > 0)
+    : []
+  const defaultProviderKey = normalizeString(payload?.default_provider_key) || providerGroups[0]?.key || ''
+  return {
+    providerGroups,
+    defaultProviderKey
+  }
+}
+
+export function buildEpisodeListFromPlayableSources(sources) {
+  if (!Array.isArray(sources)) {
+    return []
+  }
+  return sources
+    .map((source, index) => {
+      const episodeIndex = guessEpisodeIndex(source, index + 1)
+      if (episodeIndex <= 0) {
+        return null
+      }
+      return {
+        index: episodeIndex,
+        name: normalizeString(source?.name) || `第 ${episodeIndex} 集`
+      }
+    })
+    .filter(Boolean)
+}
+
+function normalizeSourceSummary(source, fallbackIndex = 1) {
+  return {
+    key: normalizeString(source?.key) || `primary_source_${fallbackIndex}`,
+    label: normalizeString(source?.label) || `播放源 ${fallbackIndex}`,
+    kind: normalizeString(source?.kind || source?.mode)
+  }
+}
+
+function normalizeSourceGroup(group, fallbackIndex = 1) {
+  const episodes = Array.isArray(group?.episodes)
+    ? group.episodes.map((episode, index) => normalizeEpisode(episode, index + 1)).filter((episode) => episode.url)
+    : []
+  const key = normalizeString(group?.key) || `primary_source_${fallbackIndex}`
+  return {
+    key,
+    label: normalizeString(group?.label) || `播放源 ${fallbackIndex}`,
+    mode: normalizeString(group?.mode) || 'none',
+    available: typeof group?.available === 'boolean' ? group.available : Boolean(episodes.length || key),
+    supports_play_session: typeof group?.supports_play_session === 'boolean'
+      ? group.supports_play_session
+      : Boolean(episodes.length || normalizeString(group?.provider)),
+    supports_episode_selection: typeof group?.supports_episode_selection === 'boolean'
+      ? group.supports_episode_selection
+      : episodes.length > 1,
+    default_episode_index: Number(group?.default_episode_index) || (episodes[0]?.index || 1),
+    episodes
+  }
+}
+
+function buildLegacySourceGroups(item, legacyPrimary) {
+  const groups = []
+  if (legacyPrimary?.available) {
+    const mode = normalizeString(legacyPrimary.mode) || 'none'
+    const isRemote = mode === 'storage_remote' || mode === 'online'
+    groups.push({
+      key: isRemote ? 'remote' : 'local',
+      label: isRemote ? '远程' : '本地',
+      mode,
+      available: true,
+      supports_play_session: Boolean(legacyPrimary.supports_play_session),
+      supports_episode_selection: Boolean(legacyPrimary.supports_episode_selection),
+      default_episode_index: Number(legacyPrimary.default_episode_index) || (legacyPrimary.episodes?.[0]?.index || 1),
+      episodes: Array.isArray(legacyPrimary.episodes) ? legacyPrimary.episodes : []
+    })
+  }
+  return groups
+}
+
 export function resolveVideoPlaybackModel(item) {
   const rawPlayback = item?.playback && typeof item.playback === 'object' ? item.playback : null
   const hasPlaybackProjection = Boolean(rawPlayback && (rawPlayback.primary || rawPlayback.preview || rawPlayback.bucket))
@@ -164,6 +321,16 @@ export function resolveVideoPlaybackModel(item) {
     ? (Array.isArray(rawPreview.assets) ? rawPreview.assets.map((asset, index) => normalizePreviewAsset(asset, index + 1)).filter((asset) => asset.url) : [])
     : buildLegacyPreviewAssets(item, primaryEpisodes)
 
+  const sourceGroups = hasPlaybackProjection
+    ? (Array.isArray(rawPrimary.source_groups)
+      ? rawPrimary.source_groups.map((group, index) => normalizeSourceGroup(group, index + 1)).filter((group) => group.available)
+      : [])
+    : buildLegacySourceGroups(item, legacyPrimary)
+
+  const defaultSourceKey = hasPlaybackProjection
+    ? (normalizeString(rawPrimary.default_source_key) || sourceGroups[0]?.key || '')
+    : (sourceGroups[0]?.key || '')
+
   const primary = hasPlaybackProjection
     ? {
         available: typeof rawPrimary.available === 'boolean' ? rawPrimary.available : Boolean(primaryEpisodes.length),
@@ -175,10 +342,19 @@ export function resolveVideoPlaybackModel(item) {
           ? rawPrimary.supports_episode_selection
           : primaryEpisodes.length > 1,
         default_episode_index: Number(rawPrimary.default_episode_index) || (primaryEpisodes[0]?.index || 1),
+        default_source_key: defaultSourceKey,
         episodes: primaryEpisodes,
-        sources: Array.isArray(rawPrimary.sources) ? rawPrimary.sources : []
+        source_groups: sourceGroups,
+        sources: Array.isArray(rawPrimary.sources)
+          ? rawPrimary.sources.map((source, index) => normalizeSourceSummary(source, index + 1))
+          : sourceGroups.map((group, index) => normalizeSourceSummary(group, index + 1))
       }
-    : legacyPrimary
+    : {
+        ...legacyPrimary,
+        default_source_key: defaultSourceKey,
+        source_groups: sourceGroups,
+        sources: sourceGroups.map((group, index) => normalizeSourceSummary(group, index + 1))
+      }
 
   const preview = {
     available: hasPlaybackProjection

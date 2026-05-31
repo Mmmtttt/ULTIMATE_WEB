@@ -30,6 +30,7 @@ import threading
 import time
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 import mimetypes
+import re
 from .runtime_guard import require_third_party
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_item, annotate_items
@@ -108,13 +109,22 @@ def _build_teledrive_file_url(file_id: str, name: str) -> str:
     return f"/api/v1/teledrive/files/{quote(normalized_id, safe='')}/content?{query}"
 
 
-def _build_direct_video_source(source_key: str, name: str, url: str, *, origin: str) -> dict:
+def _build_direct_video_source(
+    source_key: str,
+    name: str,
+    url: str,
+    *,
+    origin: str,
+    episode_index: int = 0,
+) -> dict:
     source_name = str(name or "").strip() or origin or "视频"
     return {
+        "key": str(source_key or source_name).strip(),
         "name": source_name,
         "available": True,
         "type": "direct",
         "source": str(source_key or source_name).strip(),
+        "episode_index": int(episode_index or 0),
         "currentResolution": "原始",
         "streams": [
             {
@@ -162,7 +172,8 @@ def _build_teledrive_video_sources(video: dict) -> list:
             f"teledrive_episode_{index}",
             episode.get("relative_path") or name or f"第 {index} 集",
             url,
-            origin="TeleDrive",
+            origin="remote_storage",
+            episode_index=index,
         ))
     return sources
 
@@ -182,7 +193,8 @@ def _build_local_video_sources(video: dict) -> list:
             f"local_episode_{index}",
             episode.get("relative_path") or episode.get("name") or f"第 {index} 集",
             url,
-            origin="Local",
+            origin="local",
+            episode_index=index,
         ))
     if sources:
         return sources
@@ -194,9 +206,246 @@ def _build_local_video_sources(video: dict) -> list:
             "local_episode_1",
             video.get("title") or video.get("code") or "本地视频",
             _build_local_play_url(video_id, local_video_path, 0),
-            origin="Local",
+            origin="local",
+            episode_index=1,
         )]
     return []
+
+
+def _normalize_playback_source_arg(raw_value: str) -> str:
+    normalized = str(raw_value or "").strip().lower()
+    return normalized if normalized in {"local", "remote"} else ""
+
+
+def _normalize_remote_provider_arg(raw_value: str) -> str:
+    normalized = str(raw_value or "").strip().lower()
+    return "" if normalized in {"", "auto"} else normalized
+
+
+def _normalize_provider_key(raw_value: str, fallback: str) -> str:
+    normalized = re.sub(r"[^a-z0-9._-]+", "_", str(raw_value or "").strip().lower()).strip("._-")
+    return normalized or fallback
+
+
+def _pick_provider_label(raw_item: dict, fallback: str) -> str:
+    for key in ("provider_label", "plugin_name", "name", "label", "platform", "source"):
+        value = str((raw_item or {}).get(key) or "").strip()
+        if value:
+            return value
+    return str(fallback or "").strip() or "远程平台"
+
+
+def _build_provider_group(
+    *,
+    key: str,
+    label: str,
+    kind: str,
+    selection_mode: str,
+    sources: list,
+    error: str = "",
+) -> dict:
+    normalized_sources = []
+    available_sources = []
+    for fallback_index, source in enumerate(sources or [], start=1):
+        if not isinstance(source, dict):
+            continue
+        source_key = str(source.get("key") or source.get("source") or source.get("name") or f"{key}_source_{fallback_index}").strip()
+        normalized_source = dict(source)
+        normalized_source["key"] = source_key
+        normalized_source["source"] = str(normalized_source.get("source") or source_key).strip()
+        normalized_source["name"] = str(normalized_source.get("name") or label or f"播放项 {fallback_index}").strip()
+        streams = normalized_source.get("streams")
+        if not isinstance(streams, list):
+            streams = []
+        normalized_source["streams"] = [item for item in streams if isinstance(item, dict)]
+        normalized_source["available"] = bool(
+            normalized_source.get("available", True)
+            and (
+                normalized_source["streams"]
+                or str(normalized_source.get("url") or "").strip()
+            )
+        )
+        normalized_sources.append(normalized_source)
+        if normalized_source["available"]:
+            available_sources.append(normalized_source)
+    default_source_key = str((available_sources[0] if available_sources else {}).get("key") or "").strip()
+    return {
+        "key": str(key or "").strip(),
+        "label": str(label or "").strip() or "播放平台",
+        "kind": str(kind or "").strip() or "remote",
+        "selection_mode": "episodes" if selection_mode == "episodes" else "streams",
+        "available": bool(available_sources),
+        "supports_episode_selection": selection_mode == "episodes" and len(available_sources) > 1,
+        "default_source_key": default_source_key,
+        "sources": normalized_sources,
+        "error": str(error or "").strip(),
+    }
+
+
+def _resolve_storage_provider_meta(video: dict) -> dict:
+    display = video.get("display") if isinstance(video.get("display"), dict) else {}
+    teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
+    teledrive_origin = display.get("teledrive_origin") if isinstance(display.get("teledrive_origin"), dict) else {}
+    candidates = [teledrive, teledrive_origin, video]
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        raw_key = (
+            candidate.get("provider_key")
+            or candidate.get("plugin_id")
+            or candidate.get("source")
+            or ""
+        )
+        raw_label = _pick_provider_label(candidate, "")
+        if str(raw_key or "").strip() or raw_label:
+            key = _normalize_provider_key(str(raw_key or "").strip(), "remote_storage")
+            label = raw_label or key
+            return {"key": key, "label": label, "kind": "storage_remote"}
+
+    return {"key": "remote_storage", "label": "远端文件", "kind": "storage_remote"}
+
+
+def _normalize_online_source_entry(entry: dict, fallback_index: int) -> dict | None:
+    if not isinstance(entry, dict):
+        return None
+
+    provider_key = _normalize_provider_key(
+        str(entry.get("source") or entry.get("platform") or entry.get("name") or "").strip(),
+        f"remote_provider_{fallback_index}",
+    )
+    provider_label = _pick_provider_label(entry, f"远程平台 {fallback_index}")
+
+    streams = entry.get("streams")
+    if not isinstance(streams, list):
+        streams = []
+    normalized_streams = [item for item in streams if isinstance(item, dict)]
+
+    fallback_url = str(entry.get("proxy_url") or entry.get("url") or "").strip()
+    if not normalized_streams and fallback_url:
+        normalized_streams = [{
+            "resolution": str(entry.get("currentResolution") or "原始").strip() or "原始",
+            "url": fallback_url,
+            "type": str(entry.get("type") or "direct").strip() or "direct",
+            "source": provider_key,
+        }]
+
+    available = bool(entry.get("available", True) and normalized_streams)
+    return {
+        "key": provider_key,
+        "name": provider_label,
+        "available": available,
+        "type": str(entry.get("type") or "direct").strip() or "direct",
+        "source": provider_key,
+        "currentResolution": str(entry.get("currentResolution") or "").strip(),
+        "streams": normalized_streams,
+        "page_url": str(entry.get("page_url") or "").strip(),
+        "error": str(entry.get("error") or "").strip(),
+        "raw": dict(entry),
+    }
+
+
+def _build_online_provider_groups(code: str) -> list[dict]:
+    provider_groups = []
+    for fallback_index, entry in enumerate(_build_play_sources(code), start=1):
+        normalized_source = _normalize_online_source_entry(entry, fallback_index)
+        if not normalized_source:
+            continue
+        provider_groups.append(
+            _build_provider_group(
+                key=str(normalized_source.get("source") or ""),
+                label=str(normalized_source.get("name") or ""),
+                kind="online",
+                selection_mode="streams",
+                sources=[normalized_source],
+                error=str(normalized_source.get("error") or ""),
+            )
+        )
+    return provider_groups
+
+
+def _build_play_urls_payload(
+    *,
+    video_id: str,
+    code: str,
+    title: str,
+    playback_source: str,
+    provider_groups: list,
+    requested_provider_key: str = "",
+) -> dict:
+    normalized_groups = [item for item in provider_groups if isinstance(item, dict)]
+    available_groups = [item for item in normalized_groups if item.get("available")]
+    selected_group = None
+    requested_key = _normalize_provider_key(requested_provider_key, "") if requested_provider_key else ""
+    if requested_key:
+        selected_group = next(
+            (item for item in normalized_groups if str(item.get("key") or "").strip().lower() == requested_key),
+            None,
+        )
+    if selected_group is None and available_groups:
+        selected_group = available_groups[0]
+    selected_sources = [item for item in list((selected_group or {}).get("sources") or []) if item.get("available")]
+    selected_provider_key = str((selected_group or {}).get("key") or "").strip()
+    selected_provider_label = str((selected_group or {}).get("label") or "").strip()
+    return {
+        "video_id": video_id,
+        "code": code,
+        "title": title,
+        "playback_source": playback_source,
+        "provider": selected_provider_key,
+        "provider_key": selected_provider_key,
+        "provider_label": selected_provider_label,
+        "default_provider_key": selected_provider_key,
+        "provider_groups": normalized_groups,
+        "sources": selected_sources,
+    }
+
+
+def _resolve_remote_video_sources(video_id: str, video: dict, *, remote_provider: str = "") -> ServiceResult:
+    code = str(video.get("code") or "").strip()
+    title = str(video.get("title") or "").strip()
+    requested_provider = _normalize_remote_provider_arg(remote_provider)
+    teledrive_sources = _build_teledrive_video_sources(video)
+    provider_groups = []
+
+    if teledrive_sources:
+        storage_meta = _resolve_storage_provider_meta(video)
+        provider_groups.append(
+            _build_provider_group(
+                key=str(storage_meta.get("key") or ""),
+                label=str(storage_meta.get("label") or ""),
+                kind=str(storage_meta.get("kind") or "storage_remote"),
+                selection_mode="episodes",
+                sources=teledrive_sources,
+            )
+        )
+
+    if code:
+        try:
+            provider_groups.extend(_build_online_provider_groups(code))
+        except Exception as e:
+            error_logger.error(f"build remote online sources failed: video_id={video_id}, code={code}, error={e}")
+            if not provider_groups:
+                return ServiceResult.error("在线播放源加载失败")
+
+    if not provider_groups:
+        return ServiceResult.error("远程播放源不可用")
+
+    if requested_provider:
+        app_logger.info(
+            f"remote provider requested: video_id={video_id}, code={code}, provider={requested_provider}"
+        )
+
+    return ServiceResult.ok(
+        _build_play_urls_payload(
+            video_id=video_id,
+            code=code,
+            title=title,
+            playback_source="remote",
+            provider_groups=provider_groups,
+            requested_provider_key=requested_provider,
+        )
+    )
 
 
 @video_bp.route('/list', methods=['GET'])
@@ -1076,42 +1325,84 @@ def _build_primary_teledrive_episodes(video_data: dict) -> list[dict]:
     return [item for item in normalized if str(item.get("url") or "").strip()]
 
 
-def _build_primary_playback_summary(video_data: dict, *, source: str = "local") -> dict:
-    local_episodes = _build_primary_local_episodes(video_data)
+def _build_remote_playback_group(video_data: dict) -> dict:
     teledrive_episodes = _build_primary_teledrive_episodes(video_data)
     code = str(video_data.get("code") or "").strip()
-
-    if local_episodes:
-        return {
-            "available": True,
-            "mode": "local",
-            "supports_play_session": True,
-            "supports_episode_selection": len(local_episodes) > 1,
-            "default_episode_index": int(local_episodes[0].get("index") or 1),
-            "episodes": local_episodes,
-            "sources": [{
-                "key": "primary_local",
-                "label": "本地正片",
-                "kind": "local",
-            }],
-        }
-
     if teledrive_episodes:
         return {
-            "available": True,
+            "key": "remote",
+            "label": "远程",
             "mode": "storage_remote",
+            "available": True,
             "supports_play_session": True,
             "supports_episode_selection": len(teledrive_episodes) > 1,
             "default_episode_index": int(teledrive_episodes[0].get("index") or 1),
             "episodes": teledrive_episodes,
-            "sources": [{
-                "key": "primary_teledrive",
-                "label": "TeleDrive 正片",
-                "kind": "storage_remote",
-            }],
         }
 
-    online_available = bool(code)
+    if code:
+        return {
+            "key": "remote",
+            "label": "远程",
+            "mode": "online",
+            "available": True,
+            "supports_play_session": True,
+            "supports_episode_selection": False,
+            "default_episode_index": 1,
+            "episodes": [],
+        }
+
+    return {}
+
+
+def _build_primary_source_groups(video_data: dict) -> list[dict]:
+    groups = []
+    local_episodes = _build_primary_local_episodes(video_data)
+    if local_episodes:
+        groups.append(
+            {
+                "key": "local",
+                "label": "本地",
+                "mode": "local",
+                "available": True,
+                "supports_play_session": True,
+                "supports_episode_selection": len(local_episodes) > 1,
+                "default_episode_index": int(local_episodes[0].get("index") or 1),
+                "episodes": local_episodes,
+            }
+        )
+
+    remote_group = _build_remote_playback_group(video_data)
+    if remote_group:
+        groups.append(remote_group)
+    return groups
+
+
+def _build_primary_playback_summary(video_data: dict, *, source: str = "local") -> dict:
+    source_groups = _build_primary_source_groups(video_data)
+    default_group = source_groups[0] if source_groups else {}
+    online_available = bool(str(video_data.get("code") or "").strip())
+
+    if source_groups:
+        return {
+            "available": True,
+            "mode": str(default_group.get("mode") or "none"),
+            "supports_play_session": bool(default_group.get("supports_play_session", False)),
+            "supports_episode_selection": bool(default_group.get("supports_episode_selection", False)),
+            "default_episode_index": int(default_group.get("default_episode_index") or 1),
+            "episodes": list(default_group.get("episodes") or []),
+            "default_source_key": str(default_group.get("key") or ""),
+            "source_groups": source_groups,
+            "sources": [
+                {
+                    "key": str(group.get("key") or ""),
+                    "label": str(group.get("label") or ""),
+                    "kind": str(group.get("mode") or ""),
+                }
+                for group in source_groups
+            ],
+        }
+
     return {
         "available": online_available,
         "mode": "online" if online_available else "none",
@@ -1119,9 +1410,20 @@ def _build_primary_playback_summary(video_data: dict, *, source: str = "local") 
         "supports_episode_selection": False,
         "default_episode_index": 1,
         "episodes": [],
+        "default_source_key": "remote" if online_available else "",
+        "source_groups": ([{
+            "key": "remote",
+            "label": "远程",
+            "mode": "online",
+            "available": True,
+            "supports_play_session": True,
+            "supports_episode_selection": False,
+            "default_episode_index": 1,
+            "episodes": [],
+        }] if online_available else []),
         "sources": ([{
-            "key": "primary_online",
-            "label": "在线播放",
+            "key": "remote",
+            "label": "远程",
             "kind": "online",
         }] if online_available else []),
     }
@@ -2883,8 +3185,10 @@ def filter_video_recommendations():
 @video_bp.route('/recommendation/<video_id>/play-urls', methods=['GET'])
 @require_third_party(error_response)
 def get_video_recommendation_play_urls(video_id):
-    """获取推荐视频播放链接（从 MissAV 和 Jable 提取）"""
+    """获取推荐视频播放链接"""
     try:
+        playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
+        remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
@@ -2898,28 +3202,13 @@ def get_video_recommendation_play_urls(video_id):
         if not video:
             return error_response(404, "视频不存在")
 
-        teledrive_sources = _build_teledrive_video_sources(video)
-        if teledrive_sources:
-            return success_response({
-                'video_id': video_id,
-                'code': video.get('code', ''),
-                'title': video.get('title', ''),
-                'sources': teledrive_sources
-            })
-        
-        code = video.get('code', '')
-        
-        if not code:
-            return error_response(400, "视频没有番号信息")
-        
-        sources = _build_play_sources(code)
-        
-        return success_response({
-            'video_id': video_id,
-            'code': code,
-            'title': video.get('title', ''),
-            'sources': sources
-        })
+        if playback_source == "local":
+            return error_response(400, "推荐库视频不支持本地播放源")
+
+        remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
+        if remote_result.success:
+            return success_response(remote_result.data)
+        return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
         error_logger.error(f"获取播放链接失败: {e}")
@@ -2927,24 +3216,70 @@ def get_video_recommendation_play_urls(video_id):
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
 def get_video_play_urls(video_id):
-    """获取视频播放链接（从 MissAV 和 Jable 提取）"""
+    """获取视频播放链接"""
     try:
+        playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
+        remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
         result = video_service.get_video_detail(video_id)
         if not result.success or not result.data:
             return error_response(404, "视频不存在")
         
         video = result.data
+        code = str(video.get('code', '') or '').strip()
+        title = str(video.get('title', '') or '').strip()
+
+        if playback_source == "local":
+            local_sources = _build_local_video_sources(video)
+            if local_sources:
+                local_provider_groups = [
+                    _build_provider_group(
+                        key="local",
+                        label="本地文件",
+                        kind="local",
+                        selection_mode="episodes",
+                        sources=local_sources,
+                    )
+                ]
+                return success_response(
+                    _build_play_urls_payload(
+                        video_id=video_id,
+                        code=code,
+                        title=title,
+                        playback_source="local",
+                        provider_groups=local_provider_groups,
+                        requested_provider_key="local",
+                    )
+                )
+            return error_response(400, "本地播放源不可用")
+
+        if playback_source == "remote":
+            remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
+            if remote_result.success:
+                return success_response(remote_result.data)
+            return error_response(400, remote_result.message or "远程播放源不可用")
+
         local_sources = _build_local_video_sources(video)
         if local_sources:
-            return success_response({
-                'video_id': video_id,
-                'code': video.get('code', ''),
-                'title': video.get('title', ''),
-                'sources': local_sources
-            })
+            local_provider_groups = [
+                _build_provider_group(
+                    key="local",
+                    label="本地文件",
+                    kind="local",
+                    selection_mode="episodes",
+                    sources=local_sources,
+                )
+            ]
+            return success_response(
+                _build_play_urls_payload(
+                    video_id=video_id,
+                    code=code,
+                    title=title,
+                    playback_source="local",
+                    provider_groups=local_provider_groups,
+                    requested_provider_key="local",
+                )
+            )
 
-        code = video.get('code', '')
-        
         if not code:
             return error_response(400, "视频没有番号信息")
 
@@ -2953,15 +3288,11 @@ def get_video_play_urls(video_id):
                 503,
                 f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
             )
-        
-        sources = _build_play_sources(code)
-        
-        return success_response({
-            'video_id': video_id,
-            'code': code,
-            'title': video.get('title', ''),
-            'sources': sources
-        })
+
+        remote_result = _resolve_remote_video_sources(video_id, video, remote_provider="")
+        if remote_result.success:
+            return success_response(remote_result.data)
+        return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
         error_logger.error(f"获取播放链接失败: {e}")

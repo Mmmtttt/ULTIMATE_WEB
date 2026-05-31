@@ -639,6 +639,10 @@ def test_teledrive_migrated_local_video_play_urls_normalize_media_episodes_to_lo
         primary = playback.get("primary") or {}
         preview = playback.get("preview") or {}
         assert primary.get("mode") == "local"
+        assert primary.get("default_source_key") == "local"
+        source_groups = primary.get("source_groups") or []
+        assert [item.get("key") for item in source_groups] == ["local", "remote"]
+        assert source_groups[1].get("mode") == "online"
         assert [item.get("name") for item in (primary.get("episodes") or [])] == ["ep-1.mp4", "ep-2.mp4"]
         assert preview.get("available") is False
 
@@ -649,6 +653,9 @@ def test_teledrive_migrated_local_video_play_urls_normalize_media_episodes_to_lo
         assert play_response.status_code == 200
         play_payload = play_response.json()
         assert play_payload["code"] == 200
+        assert play_payload["data"]["default_provider_key"] == "local"
+        provider_groups = play_payload["data"]["provider_groups"] or []
+        assert [item.get("key") for item in provider_groups] == ["local"]
         sources = play_payload["data"]["sources"] or []
         assert [item.get("name") for item in sources] == ["ep-1.mp4", "ep-2.mp4"]
         assert sources[0]["streams"][0]["url"] == f"/api/v1/video/local-stream/{video_id}?episode=1"

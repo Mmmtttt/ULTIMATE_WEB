@@ -318,16 +318,254 @@ def test_video_play_urls_routes_forward_code_to_missav_client(third_party_client
     assert local_resp.status_code == 200
     assert local_payload["code"] == 200
     assert local_payload["data"]["code"] == "TEST-900001"
-    assert local_payload["data"]["sources"][0]["platform"] == "missav"
+    assert local_payload["data"]["provider"] == "missav"
+    assert local_payload["data"]["sources"][0]["source"] == "missav"
+    assert local_payload["data"]["sources"][0]["streams"][0]["url"] == "https://play.example/TEST-900001"
 
     rec_resp = client.get("/api/v1/video/recommendation/JAVDBREC001/play-urls")
     rec_payload = rec_resp.get_json()
     assert rec_resp.status_code == 200
     assert rec_payload["code"] == 200
     assert rec_payload["data"]["code"] == "REC-001"
-    assert rec_payload["data"]["sources"][0]["platform"] == "missav"
+    assert rec_payload["data"]["provider"] == "missav"
+    assert rec_payload["data"]["sources"][0]["source"] == "missav"
+    assert rec_payload["data"]["sources"][0]["streams"][0]["url"] == "https://play.example/REC-001"
 
     assert calls == ["TEST-900001", "REC-001"]
+
+
+@pytest.mark.integration
+def test_video_play_urls_remote_source_still_uses_online_provider_when_local_source_exists(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+    meta_dir = third_party_client["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+    original_payload = load_json(videos_path)
+    calls = []
+
+    class FakeMissavClient:
+        def build_sources(self, code):
+            calls.append(code)
+            return [{"platform": "missav", "url": f"https://play.example/{code}"}]
+
+    payload = load_json(videos_path)
+    for item in payload.get("videos", []):
+        if item.get("id") != "JAVDB900001":
+            continue
+        item["local_video_path"] = "/media/video/JAVDB/900001/source.mp4"
+        item["local_source_path"] = r"D:\runtime\video\JAVDB\900001\source.mp4"
+        item["display"] = {
+            "local_episodes": [
+                {
+                    "name": "source.mp4",
+                    "relative_path": "source.mp4",
+                    "url": "/media/video/JAVDB/900001/source.mp4",
+                    "index": 1,
+                }
+            ]
+        }
+    save_json(videos_path, payload)
+
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
+
+    try:
+        response = client.get(
+            "/api/v1/video/JAVDB900001/play-urls",
+            query_string={"playback_source": "remote"},
+        )
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["code"] == 200
+        assert payload["data"]["playback_source"] == "remote"
+        assert payload["data"]["provider"] == "missav"
+        assert payload["data"]["default_provider_key"] == "missav"
+        provider_groups = payload["data"]["provider_groups"] or []
+        assert [item.get("key") for item in provider_groups] == ["missav"]
+        assert provider_groups[0].get("selection_mode") == "streams"
+        assert payload["data"]["sources"][0]["source"] == "missav"
+        assert payload["data"]["sources"][0]["streams"][0]["url"] == "https://play.example/TEST-900001"
+        assert calls == ["TEST-900001"]
+    finally:
+        save_json(videos_path, original_payload)
+
+
+@pytest.mark.integration
+def test_video_play_urls_remote_source_prefers_teledrive_and_can_fallback_to_online(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+    meta_dir = third_party_client["meta_dir"]
+    videos_path = meta_dir / "videos_database.json"
+    original_payload = load_json(videos_path)
+    calls = []
+
+    class FakeMissavClient:
+        def build_sources(self, code):
+            calls.append(code)
+            return [{"platform": "missav", "url": f"https://play.example/{code}"}]
+
+    payload = load_json(videos_path)
+    payload.setdefault("videos", []).append(
+        {
+            "id": "LOCAL_REMOTE_001",
+            "title": "Local Remote Video",
+            "code": "MIDV-995",
+            "local_video_path": "/media/video/LOCAL/LOCAL_REMOTE_001/local.mp4",
+            "local_source_path": r"D:\runtime\video\LOCAL\LOCAL_REMOTE_001\local.mp4",
+            "preview_video": "",
+            "preview_video_local": "",
+            "thumbnail_images": [],
+            "thumbnail_images_local": [],
+            "cover_path": "",
+            "cover_path_local": "",
+            "actors": [],
+            "tag_ids": [],
+            "list_ids": [],
+            "magnets": [],
+            "create_time": "2026-05-31T00:00:00",
+            "last_access_time": "2026-05-31T00:00:00",
+            "is_deleted": False,
+            "display": {
+                "local_episodes": [
+                    {
+                        "name": "local.mp4",
+                        "relative_path": "local.mp4",
+                        "url": "/media/video/LOCAL/LOCAL_REMOTE_001/local.mp4",
+                        "index": 1,
+                    }
+                ],
+                "teledrive": {
+                    "type": "video",
+                    "episodes": [
+                        {
+                            "file_id": "td-ep-1",
+                            "name": "01.mp4",
+                            "relative_path": "01.mp4",
+                            "index": 1,
+                        }
+                    ],
+                },
+            },
+        }
+    )
+    save_json(videos_path, payload)
+
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
+
+    try:
+        remote_resp = client.get(
+            "/api/v1/video/LOCAL_REMOTE_001/play-urls",
+            query_string={"playback_source": "remote"},
+        )
+        remote_payload = remote_resp.get_json()
+        assert remote_resp.status_code == 200
+        assert remote_payload["code"] == 200
+        assert remote_payload["data"]["playback_source"] == "remote"
+        remote_groups = remote_payload["data"]["provider_groups"] or []
+        assert len(remote_groups) == 2
+        assert remote_groups[0].get("selection_mode") == "episodes"
+        assert remote_groups[0]["sources"][0]["streams"][0]["url"].startswith("/api/v1/teledrive/files/td-ep-1/content")
+        assert remote_groups[1].get("key") == "missav"
+        assert remote_groups[1].get("selection_mode") == "streams"
+        assert remote_payload["data"]["provider"] == remote_groups[0].get("key")
+
+        fallback_resp = client.get(
+            "/api/v1/video/LOCAL_REMOTE_001/play-urls",
+            query_string={"playback_source": "remote", "remote_provider": "missav"},
+        )
+        fallback_payload = fallback_resp.get_json()
+        assert fallback_resp.status_code == 200
+        assert fallback_payload["code"] == 200
+        assert fallback_payload["data"]["provider"] == "missav"
+        assert fallback_payload["data"]["default_provider_key"] == "missav"
+        assert fallback_payload["data"]["sources"][0]["source"] == "missav"
+        assert calls == ["MIDV-995", "MIDV-995"]
+    finally:
+        save_json(videos_path, original_payload)
+
+
+@pytest.mark.integration
+def test_video_play_urls_remote_source_keeps_unavailable_online_provider_visible(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+
+    class FakeMissavClient:
+        def build_sources(self, code):
+            return [
+                {
+                    "name": "MissAV",
+                    "source": "missav",
+                    "available": False,
+                    "error": "upstream timeout",
+                },
+                {
+                    "name": "Jable",
+                    "source": "jable",
+                    "available": True,
+                    "streams": [{"url": f"https://play.example/{code}/jable.m3u8", "resolution": "720p"}],
+                },
+            ]
+
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
+
+    response = client.get(
+        "/api/v1/video/JAVDB900001/play-urls",
+        query_string={"playback_source": "remote"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    data = payload["data"] or {}
+    assert data.get("provider") == "jable"
+    assert data.get("default_provider_key") == "jable"
+    provider_groups = data.get("provider_groups") or []
+    assert [item.get("key") for item in provider_groups] == ["missav", "jable"]
+    assert provider_groups[0].get("available") is False
+    assert provider_groups[0].get("error") == "upstream timeout"
+    assert provider_groups[1].get("available") is True
+    assert data.get("sources")[0].get("source") == "jable"
+
+
+@pytest.mark.integration
+def test_video_play_urls_remote_source_explicit_provider_does_not_auto_switch(third_party_client, monkeypatch):
+    client = third_party_client["client"]
+    video_api = third_party_client["video_api"]
+
+    class FakeMissavClient:
+        def build_sources(self, code):
+            return [
+                {
+                    "name": "MissAV",
+                    "source": "missav",
+                    "available": False,
+                    "error": "upstream timeout",
+                },
+                {
+                    "name": "Jable",
+                    "source": "jable",
+                    "available": True,
+                    "streams": [{"url": f"https://play.example/{code}/jable.m3u8", "resolution": "720p"}],
+                },
+            ]
+
+    monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
+
+    response = client.get(
+        "/api/v1/video/JAVDB900001/play-urls",
+        query_string={"playback_source": "remote", "remote_provider": "missav"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    data = payload["data"] or {}
+    assert data.get("provider") == "missav"
+    assert data.get("default_provider_key") == "missav"
+    assert data.get("sources") == []
+    provider_groups = data.get("provider_groups") or []
+    assert [item.get("key") for item in provider_groups] == ["missav", "jable"]
+    assert provider_groups[0].get("available") is False
+    assert provider_groups[1].get("available") is True
 
 
 @pytest.mark.integration

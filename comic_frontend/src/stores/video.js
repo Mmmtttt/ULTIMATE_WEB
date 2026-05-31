@@ -265,8 +265,8 @@ export const useVideoStore = defineStore('video', () => {
     return response
   }
 
-  async function getPlayUrls(videoId) {
-    return videoApi.getPlayUrls(videoId)
+  async function getPlayUrls(videoId, params = {}) {
+    return videoApi.getPlayUrls(videoId, params)
   }
   
   async function filterByTags(includeTags = [], excludeTags = []) {

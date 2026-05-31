@@ -584,6 +584,10 @@ class TeleDriveAppService:
                     "storage_path_kind": TELEDRIVE_STORAGE_KIND_DIR,
                     "display": {
                         "teledrive": {
+                            "provider_key": TELEDRIVE_PLUGIN_ID,
+                            "provider_label": TELEDRIVE_PLUGIN_NAME,
+                            "plugin_id": TELEDRIVE_PLUGIN_ID,
+                            "plugin_name": TELEDRIVE_PLUGIN_NAME,
                             "type": "comic",
                             "root": TELEDRIVE_COMIC_ROOT,
                             "path": work_path,
@@ -731,6 +735,10 @@ class TeleDriveAppService:
                     "actors": [],
                     "display": {
                         "teledrive": {
+                            "provider_key": TELEDRIVE_PLUGIN_ID,
+                            "provider_label": TELEDRIVE_PLUGIN_NAME,
+                            "plugin_id": TELEDRIVE_PLUGIN_ID,
+                            "plugin_name": TELEDRIVE_PLUGIN_NAME,
                             "type": "video",
                             "root": TELEDRIVE_VIDEO_ROOT,
                             "path": work_path,

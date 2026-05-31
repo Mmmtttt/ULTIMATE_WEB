@@ -2869,7 +2869,18 @@ class VideoAppService(BaseContentAppService):
         if isinstance(teledrive, dict):
             origin = {
                 key: teledrive.get(key)
-                for key in ("type", "root", "path", "folder_id", "work_id", "platform_segment")
+                for key in (
+                    "type",
+                    "root",
+                    "path",
+                    "folder_id",
+                    "work_id",
+                    "platform_segment",
+                    "provider_key",
+                    "provider_label",
+                    "plugin_id",
+                    "plugin_name",
+                )
                 if teledrive.get(key) not in (None, "", [], {})
             }
             origin["episode_count"] = len(teledrive.get("episodes") or [])

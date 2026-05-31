@@ -285,8 +285,8 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     return response
   }
 
-  async function getPlayUrls(videoId) {
-    return videoApi.getRecommendationPlayUrls(videoId)
+  async function getPlayUrls(videoId, params = {}) {
+    return videoApi.getRecommendationPlayUrls(videoId, params)
   }
 
   async function filterByTags(includeTagIds = [], excludeTagIds = []) {
