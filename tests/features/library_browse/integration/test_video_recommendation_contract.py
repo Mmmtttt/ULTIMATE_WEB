@@ -121,5 +121,16 @@ def test_video_recommendation_detail_exposes_protocol_display_metadata(integrati
         assert detail["plugin_id"] == "video.javdb"
         assert detail["source"] == "preview"
         assert ((((detail.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
+        playback = detail.get("playback") or {}
+        primary = playback.get("primary") or {}
+        preview = playback.get("preview") or {}
+        assert playback.get("bucket") == "candidate"
+        assert primary.get("mode") == "online"
+        assert primary.get("supports_play_session") is True
+        assert preview.get("available") is True
+        assets = preview.get("assets") or []
+        assert len(assets) == 1
+        assert assets[0]["key"] == "preview_remote"
+        assert assets[0]["url"] == "https://media.example/javdb-preview-900002.mp4"
     finally:
         save_json(db_path, original_payload)

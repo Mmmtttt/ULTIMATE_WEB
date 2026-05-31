@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 import requests
 
-from tests.shared.runtime_data import find_by_id, load_json
+from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
 @pytest.mark.integration
@@ -189,9 +189,16 @@ def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(int
     assert detail_payload["code"] == 200
     detail = detail_payload["data"] or {}
     episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    playback = detail.get("playback") or {}
+    primary = playback.get("primary") or {}
+    preview = playback.get("preview") or {}
     assert detail.get("total_units") == 2
     assert [item.get("name") for item in episodes] == ["Episode 01.mp4", "Episode 02.mp4"]
     assert all(str(item.get("url") or "").startswith("/media/") for item in episodes)
+    assert primary.get("mode") == "local"
+    assert primary.get("supports_episode_selection") is True
+    assert [item.get("name") for item in (primary.get("episodes") or [])] == ["Episode 01.mp4", "Episode 02.mp4"]
+    assert preview.get("available") is False
 
     play_response = requests.get(
         f"{base_url}/api/v1/video/{imported_ids[0]}/play-urls",
@@ -204,6 +211,10 @@ def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(int
     sources = play_payload["data"]["sources"]
     assert [item.get("name") for item in sources] == ["Episode 01.mp4", "Episode 02.mp4"]
     assert all(item.get("available") is True for item in sources)
+    assert all(
+        str(((item.get("streams") or [{}])[0].get("url") or "")).startswith(f"/api/v1/video/local-stream/{imported_ids[0]}")
+        for item in sources
+    )
 
 
 @pytest.mark.integration
@@ -303,9 +314,15 @@ def test_video_detail_ignores_preview_hls_segments_for_softlink_local_source(int
 
     detail = detail_payload["data"] or {}
     episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    playback = detail.get("playback") or {}
+    primary = playback.get("primary") or {}
+    preview = playback.get("preview") or {}
     assert len(episodes) == 1
     assert episodes[0]["name"] == "single episode.mp4"
     assert all(not str(item.get("name") or "").endswith(".ts") for item in episodes)
+    assert primary.get("mode") == "local"
+    assert [item.get("name") for item in (primary.get("episodes") or [])] == ["single episode.mp4"]
+    assert preview.get("available") is False
 
     play_response = requests.get(
         f"{base_url}/api/v1/video/{created_id}/play-urls",
@@ -316,6 +333,146 @@ def test_video_detail_ignores_preview_hls_segments_for_softlink_local_source(int
     assert play_payload["code"] == 200
     stream_url = play_payload["data"]["sources"][0]["streams"][0]["url"]
     assert stream_url.startswith(f"/api/v1/video/local-stream/{created_id}")
+
+
+@pytest.mark.integration
+def test_teledrive_migrated_local_video_play_urls_normalize_media_episodes_to_local_stream(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 看护 TeleDrive 迁入本地后的历史视频记录即使仍保存 `/media/...` 分集 URL，主播放器也必须统一走 local-stream。
+    - 测试步骤:
+      1. 手工写入一条带多集 `/media/...` URL 的 TeleDrive 本地视频记录。
+      2. 调用详情与播放链接接口。
+      3. 请求返回的第 2 集 local-stream 地址。
+    - 预期结果:
+      1. detail.playback.primary.mode=local，preview 不把远端正片误判成预览视频。
+      2. play-urls 返回的每一集都走 `/api/v1/video/local-stream/{id}?episode=n`。
+      3. 第 2 集 local-stream 能成功回放本地文件。
+    """
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+    data_dir = integration_runtime["data_dir"]
+    videos_path = meta_dir / "videos_database.json"
+    original_payload = load_json(videos_path)
+
+    video_id = f"TD-VIDEO-{uuid4().hex[:12]}"
+    asset_dir = data_dir / "video" / "TeleDrive" / f"td-case-{uuid4().hex[:8]}"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    episode_one = asset_dir / "ep-1.mp4"
+    episode_two = asset_dir / "ep-2.mp4"
+    episode_one.write_bytes(b"episode-one")
+    episode_two.write_bytes(b"episode-two")
+
+    media_root = asset_dir.relative_to(data_dir).as_posix()
+    payload = load_json(videos_path)
+    payload["videos"] = [
+        item for item in (payload.get("videos") or [])
+        if str((item or {}).get("id", "")) != video_id
+    ]
+    payload["videos"].append(
+        {
+            "id": video_id,
+            "title": "TeleDrive Local Multi Episode",
+            "title_jp": "",
+            "creator": "",
+            "desc": "TeleDrive migrated local case",
+            "cover_path": "",
+            "total_units": 2,
+            "current_unit": 1,
+            "score": 8.0,
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": "2026-05-31T00:00:00",
+            "last_access_time": "2026-05-31T00:00:00",
+            "is_deleted": False,
+            "code": "TD-LOCAL-CASE",
+            "date": "",
+            "series": "",
+            "magnets": [],
+            "thumbnail_images": [],
+            "preview_video": "/api/v1/teledrive/files/remote-ep-1/content?name=ep-1.mp4",
+            "cover_path_local": "",
+            "thumbnail_images_local": [],
+            "preview_video_local": f"/media/{media_root}/ep-1.mp4",
+            "platform": "TeleDrive",
+            "plugin_id": "storage.teledrive",
+            "plugin_name": "TeleDrive",
+            "display": {
+                "local_episodes": [
+                    {
+                        "name": "ep-1.mp4",
+                        "relative_path": "ep-1.mp4",
+                        "url": f"/media/{media_root}/ep-1.mp4",
+                        "index": 1,
+                    },
+                    {
+                        "name": "ep-2.mp4",
+                        "relative_path": "ep-2.mp4",
+                        "url": f"/media/{media_root}/ep-2.mp4",
+                        "index": 2,
+                    },
+                ],
+                "teledrive_origin": {
+                    "type": "video",
+                    "root": "/video",
+                    "path": "/video/td-local-case",
+                    "folder_id": "folder-case",
+                    "work_id": "td-local-case",
+                    "episode_count": 2,
+                    "thumbnail_count": 0,
+                },
+            },
+            "storage_path_relative": f"{media_root}/ep-1.mp4",
+            "storage_path_kind": "local_file",
+            "source_origin": "teledrive_migrate",
+            "source_updated_time": "2026-05-31T00:00:00",
+            "local_asset_dir_name": asset_dir.name,
+            "local_source_filename": "ep-1.mp4",
+            "local_source_path": str(episode_one),
+            "local_video_path": f"/media/{media_root}/ep-1.mp4",
+            "actors": [],
+            "actor_refs": [],
+        }
+    )
+    save_json(videos_path, payload)
+
+    try:
+        detail_response = requests.get(
+            f"{base_url}/api/v1/video/detail",
+            params={"video_id": video_id},
+            timeout=5,
+        )
+        assert detail_response.status_code == 200
+        detail_payload = detail_response.json()
+        assert detail_payload["code"] == 200
+        detail = detail_payload["data"] or {}
+        playback = detail.get("playback") or {}
+        primary = playback.get("primary") or {}
+        preview = playback.get("preview") or {}
+        assert primary.get("mode") == "local"
+        assert [item.get("name") for item in (primary.get("episodes") or [])] == ["ep-1.mp4", "ep-2.mp4"]
+        assert preview.get("available") is False
+
+        play_response = requests.get(
+            f"{base_url}/api/v1/video/{video_id}/play-urls",
+            timeout=5,
+        )
+        assert play_response.status_code == 200
+        play_payload = play_response.json()
+        assert play_payload["code"] == 200
+        sources = play_payload["data"]["sources"] or []
+        assert [item.get("name") for item in sources] == ["ep-1.mp4", "ep-2.mp4"]
+        assert sources[0]["streams"][0]["url"] == f"/api/v1/video/local-stream/{video_id}?episode=1"
+        assert sources[1]["streams"][0]["url"] == f"/api/v1/video/local-stream/{video_id}?episode=2"
+
+        episode_two_response = requests.get(
+            f"{base_url}{sources[1]['streams'][0]['url']}",
+            timeout=10,
+        )
+        assert episode_two_response.status_code == 200
+        assert episode_two_response.content == b"episode-two"
+    finally:
+        save_json(videos_path, original_payload)
 
 
 @pytest.mark.integration

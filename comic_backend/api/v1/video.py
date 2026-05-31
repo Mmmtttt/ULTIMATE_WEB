@@ -66,10 +66,16 @@ def _build_local_video_detail_payload(video_id: str):
     if not result.success:
         return result
 
-    detail = dict(result.data or {})
-    detail = _ensure_preview_video_detail(detail, source="local")
-    _schedule_local_cover_thumbnail_cache(detail, source="local")
+    detail = _decorate_local_video_payload_dict(result.data or {})
     return ServiceResult.ok(detail, result.message or "成功")
+
+
+def _decorate_local_video_payload_dict(video_data: dict) -> dict:
+    detail = dict(video_data or {})
+    detail = _ensure_preview_video_detail(detail, source="local")
+    detail = _attach_video_playback_projection(detail, source="local")
+    _schedule_local_cover_thumbnail_cache(detail, source="local")
+    return detail
 
 
 def _get_video_proxy_client():
@@ -132,7 +138,7 @@ def _build_local_stream_url(video_id: str, episode_index: int = 0) -> str:
 def _build_local_play_url(video_id: str, raw_url: str, episode_index: int = 0) -> str:
     url = str(raw_url or "").strip()
     lowered = url.lower()
-    if lowered.startswith(("http://", "https://", "/media/", "/api/v1/video/local-stream/", "/v1/video/local-stream/")):
+    if lowered.startswith(("http://", "https://", "/api/v1/video/local-stream/", "/v1/video/local-stream/")):
         return url
     return _build_local_stream_url(video_id, episode_index)
 
@@ -267,7 +273,8 @@ def refresh_local_video_metadata():
 
         result = video_service.refresh_local_video_metadata(video_id)
         if result.success:
-            return success_response(result.data, result.message or "LOCAL 视频详情已更新")
+            payload = _decorate_local_video_payload_dict(result.data or {}) if isinstance(result.data, dict) else result.data
+            return success_response(payload, result.message or "LOCAL 视频详情已更新")
         return error_response(400, result.message or "LOCAL 视频详情更新失败")
     except Exception as e:
         error_logger.error(f"refresh local video metadata api failed: {e}")
@@ -317,7 +324,8 @@ def generate_local_video_thumbnails():
 
         result = video_service.generate_local_video_thumbnails(video_id)
         if result.success:
-            return success_response(result.data, result.message or "缩略图生成成功")
+            payload = _decorate_local_video_payload_dict(result.data or {}) if isinstance(result.data, dict) else result.data
+            return success_response(payload, result.message or "缩略图生成成功")
         return error_response(400, result.message or "生成缩略图失败")
     except Exception as e:
         error_logger.error(f"generate local video thumbnails api failed: {e}")
@@ -371,7 +379,8 @@ def select_local_thumbnail_cover():
 
         result = video_service.select_local_thumbnail_as_cover(video_id, thumbnail_index)
         if result.success:
-            return success_response(result.data, result.message or "封面已更新")
+            payload = _decorate_local_video_payload_dict(result.data or {}) if isinstance(result.data, dict) else result.data
+            return success_response(payload, result.message or "封面已更新")
         return error_response(400, result.message or "设置封面失败")
     except Exception as e:
         error_logger.error(f"select local thumbnail cover api failed: {e}")
@@ -994,6 +1003,182 @@ def _sanitize_preview_video_value(raw_url: str) -> str:
     return url if any(marker in lowered for marker in _PREVIEW_VIDEO_MEDIA_MARKERS) else ""
 
 
+def _normalize_playback_episode_name(episode: dict, fallback_index: int) -> str:
+    if not isinstance(episode, dict):
+        return f"第 {fallback_index} 集"
+    name = str(
+        episode.get("name")
+        or episode.get("relative_path")
+        or episode.get("title")
+        or f"第 {fallback_index} 集"
+    ).strip()
+    return name or f"第 {fallback_index} 集"
+
+
+def _normalize_playback_episode_index(episode: dict, fallback_index: int) -> int:
+    if not isinstance(episode, dict):
+        return fallback_index
+    try:
+        normalized = int(episode.get("index") or fallback_index)
+    except Exception:
+        normalized = fallback_index
+    return normalized if normalized > 0 else fallback_index
+
+
+def _build_primary_local_episodes(video_data: dict) -> list[dict]:
+    display = video_data.get("display") if isinstance(video_data.get("display"), dict) else {}
+    local_episodes = display.get("local_episodes") if isinstance(display.get("local_episodes"), list) else []
+    if local_episodes:
+        return [
+            {
+                "index": _normalize_playback_episode_index(episode, fallback_index),
+                "name": _normalize_playback_episode_name(episode, fallback_index),
+                "url": str((episode or {}).get("url") or "").strip(),
+                "kind": "local_episode",
+            }
+            for fallback_index, episode in enumerate(local_episodes, start=1)
+            if isinstance(episode, dict)
+        ]
+
+    local_video_path = str(video_data.get("local_video_path") or "").strip()
+    if not local_video_path:
+        return []
+
+    return [{
+        "index": 1,
+        "name": str(video_data.get("title") or video_data.get("code") or "第 1 集").strip() or "第 1 集",
+        "url": local_video_path,
+        "kind": "local_episode",
+    }]
+
+
+def _build_primary_teledrive_episodes(video_data: dict) -> list[dict]:
+    display = video_data.get("display") if isinstance(video_data.get("display"), dict) else {}
+    teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
+    episodes = teledrive.get("episodes") if isinstance(teledrive.get("episodes"), list) else []
+    normalized = []
+    for fallback_index, episode in enumerate(episodes, start=1):
+        if not isinstance(episode, dict):
+            continue
+        file_id = str(episode.get("file_id") or "").strip()
+        name = str(episode.get("name") or "").strip()
+        normalized.append({
+            "index": _normalize_playback_episode_index(episode, fallback_index),
+            "name": _normalize_playback_episode_name(episode, fallback_index),
+            "url": _build_teledrive_file_url(file_id, name),
+            "kind": "teledrive_episode",
+        })
+    return [item for item in normalized if str(item.get("url") or "").strip()]
+
+
+def _build_primary_playback_summary(video_data: dict, *, source: str = "local") -> dict:
+    local_episodes = _build_primary_local_episodes(video_data)
+    teledrive_episodes = _build_primary_teledrive_episodes(video_data)
+    code = str(video_data.get("code") or "").strip()
+
+    if local_episodes:
+        return {
+            "available": True,
+            "mode": "local",
+            "supports_play_session": True,
+            "supports_episode_selection": len(local_episodes) > 1,
+            "default_episode_index": int(local_episodes[0].get("index") or 1),
+            "episodes": local_episodes,
+            "sources": [{
+                "key": "primary_local",
+                "label": "本地正片",
+                "kind": "local",
+            }],
+        }
+
+    if teledrive_episodes:
+        return {
+            "available": True,
+            "mode": "storage_remote",
+            "supports_play_session": True,
+            "supports_episode_selection": len(teledrive_episodes) > 1,
+            "default_episode_index": int(teledrive_episodes[0].get("index") or 1),
+            "episodes": teledrive_episodes,
+            "sources": [{
+                "key": "primary_teledrive",
+                "label": "TeleDrive 正片",
+                "kind": "storage_remote",
+            }],
+        }
+
+    online_available = bool(code)
+    return {
+        "available": online_available,
+        "mode": "online" if online_available else "none",
+        "supports_play_session": online_available,
+        "supports_episode_selection": False,
+        "default_episode_index": 1,
+        "episodes": [],
+        "sources": ([{
+            "key": "primary_online",
+            "label": "在线播放",
+            "kind": "online",
+        }] if online_available else []),
+    }
+
+
+def _build_preview_playback_assets(video_data: dict) -> list[dict]:
+    _ensure_local_asset_fields(video_data)
+
+    local_preview = _sanitize_preview_video_value(video_data.get("preview_video_local", ""))
+    remote_preview = _sanitize_preview_video_value(video_data.get("preview_video", ""))
+    source_origin = str(video_data.get("source_origin") or "").strip().lower()
+    primary_episode_urls = {
+        str(item.get("url") or "").strip()
+        for item in (_build_primary_local_episodes(video_data) + _build_primary_teledrive_episodes(video_data))
+        if str(item.get("url") or "").strip()
+    }
+    if str(video_data.get("local_video_path") or "").strip():
+        primary_episode_urls.add(str(video_data.get("local_video_path") or "").strip())
+    if source_origin == "teledrive_migrate" and remote_preview:
+        primary_episode_urls.add(remote_preview)
+
+    assets = []
+    seen_urls = set()
+
+    def add_asset(key: str, label: str, raw_url: str, origin: str) -> None:
+        url = _sanitize_preview_video_value(raw_url)
+        if not url or url in primary_episode_urls or url in seen_urls:
+            return
+        seen_urls.add(url)
+        lower = url.lower()
+        assets.append({
+            "key": key,
+            "label": label,
+            "url": url,
+            "transport": "hls" if (".m3u8" in lower or "m3u8" in lower) else "direct",
+            "origin": origin,
+        })
+
+    add_asset("preview_local", "本地预览", local_preview, "local")
+    add_asset("preview_remote", "远端预览", remote_preview, "remote")
+    return assets
+
+
+def _attach_video_playback_projection(video_data: dict, *, source: str = "local") -> dict:
+    if not isinstance(video_data, dict):
+        return video_data
+
+    primary = _build_primary_playback_summary(video_data, source=source)
+    preview_assets = _build_preview_playback_assets(video_data)
+    playback = {
+        "bucket": "candidate" if str(source or "").strip().lower() == "preview" else "local",
+        "primary": primary,
+        "preview": {
+            "available": bool(preview_assets),
+            "default_asset_key": preview_assets[0]["key"] if preview_assets else "",
+            "assets": preview_assets,
+        },
+    }
+    video_data["playback"] = playback
+    return video_data
+
+
 def _should_refresh_preview_video_url(url: str) -> bool:
     normalized = _sanitize_preview_video_value(url)
     if not normalized:
@@ -1178,6 +1363,7 @@ def _refresh_preview_video_now(video_id: str, source: str = "local", force_downl
     latest_video = repo.get_by_id(video_id)
     latest_data = latest_video.to_dict() if latest_video and hasattr(latest_video, "to_dict") else {}
     latest_data = _ensure_preview_video_detail(latest_data, source=source_key)
+    latest_data = _attach_video_playback_projection(latest_data, source=source_key)
     return {
         "success": True,
         "message": "预览视频链接已刷新，后台开始重新下载",
@@ -1271,6 +1457,7 @@ def _decorate_video_recommendation_item(
             annotated["display"] = dict(host_display_updates.get("display") or {})
         decorated = annotated
 
+    decorated = _attach_video_playback_projection(decorated, source="preview")
     return decorated
 
 

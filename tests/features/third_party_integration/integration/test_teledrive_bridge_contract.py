@@ -423,6 +423,7 @@ def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(third_par
     from application.video_app_service import VideoAppService
     import application.teledrive_app_service as teledrive_service_module
 
+    client = third_party_client["client"]
     video_id = "TD-VIDEO-folder-2"
     meta_dir = third_party_client["meta_dir"]
 
@@ -523,6 +524,26 @@ def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(third_par
     assert "teledrive" not in local_video.display
     assert local_video.display["teledrive_origin"]["episode_count"] == 1
     assert local_video.display["local_episodes"][0]["url"] == local_video.local_video_path
+
+    detail_response = client.get("/api/v1/video/detail", query_string={"video_id": video_id})
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.get_json()
+    assert detail_payload["code"] == 200
+    detail = detail_payload["data"] or {}
+    playback = detail.get("playback") or {}
+    primary = playback.get("primary") or {}
+    preview = playback.get("preview") or {}
+    assert primary.get("mode") == "local"
+    assert [item.get("name") for item in (primary.get("episodes") or [])] == ["01.mp4"]
+    assert preview.get("available") is False
+    assert preview.get("assets") == []
+
+    play_response = client.get(f"/api/v1/video/{video_id}/play-urls")
+    assert play_response.status_code == 200
+    play_payload = play_response.get_json()
+    assert play_payload["code"] == 200
+    stream_url = play_payload["data"]["sources"][0]["streams"][0]["url"]
+    assert stream_url.startswith(f"/api/v1/video/local-stream/{video_id}")
 
     resolved_video_path = service.resolve_local_video_file_path(video_id)
     assert resolved_video_path and os.path.exists(resolved_video_path)

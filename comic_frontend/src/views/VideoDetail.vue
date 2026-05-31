@@ -238,25 +238,6 @@
         </van-cell-group>
       </div>
 
-      <div v-if="isLocalVideo" class="preview-video-section">
-        <van-cell-group title="本地视频">
-          <div class="preview-video-player-container">
-            <video
-              v-if="hasLocalVideo"
-              controls
-              playsinline
-              preload="metadata"
-              :src="localVideoPlayerUrl"
-              @error="handleLocalVideoError"
-              class="preview-video-player"
-            ></video>
-            <div v-else class="preview-video-empty">
-              暂无可用本地视频文件
-            </div>
-          </div>
-        </van-cell-group>
-      </div>
-
       <div v-if="video" class="preview-video-section">
         <van-cell-group title="预览视频">
           <div class="preview-video-actions">
@@ -278,6 +259,18 @@
               @click="refreshPreviewVideo"
             >
               更新预览视频
+            </van-button>
+          </div>
+          <div v-if="previewAssetList.length > 1" class="preview-video-source-selector">
+            <van-button
+              v-for="asset in previewAssetList"
+              :key="asset.key"
+              size="small"
+              :type="activePreviewAssetKey === asset.key ? 'primary' : 'default'"
+              class="preview-video-source-button"
+              @click="selectPreviewAsset(asset.key)"
+            >
+              {{ asset.label }}
             </van-button>
           </div>
           <div class="preview-video-player-container">
@@ -515,6 +508,7 @@ import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import { resolveVideoPlaybackModel } from '@/utils/videoPlaybackModel'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -557,6 +551,7 @@ const currentSource = ref('')
 const currentStreams = ref([])
 const currentQuality = ref(0)
 const previewVideoPlayer = ref(null)
+const activePreviewAssetKey = ref('')
 const assetRefreshTimer = ref(null)
 const assetRefreshAttempts = ref(0)
 const refreshingPreviewVideo = ref(false)
@@ -643,35 +638,32 @@ const preferredThumbnailImages = computed(() => {
   }
   return merged
 })
-const previewVideoPlayerUrl = computed(() => {
-  const localPreview = String(video.value?.preview_video_local || '').trim()
-  const remotePreview = String(video.value?.preview_video || '').trim()
-  return resolvePreviewVideoUrl(localPreview || remotePreview)
+const playbackModel = computed(() => resolveVideoPlaybackModel(video.value))
+const primaryPlayback = computed(() => playbackModel.value.primary || {})
+const previewPlayback = computed(() => playbackModel.value.preview || {})
+const previewAssetList = computed(() => {
+  const assets = Array.isArray(previewPlayback.value.assets) ? previewPlayback.value.assets : []
+  return assets.filter((asset) => String(asset?.url || '').trim())
 })
-const localVideoPlayerUrl = computed(() => {
-  const localVideoPath = String(video.value?.local_video_path || '').trim()
-  return resolveLocalVideoUrl(localVideoPath)
+const activePreviewAsset = computed(() => {
+  const assets = previewAssetList.value
+  if (!assets.length) {
+    return null
+  }
+  return assets.find((asset) => asset.key === activePreviewAssetKey.value) || assets[0]
+})
+const previewVideoPlayerUrl = computed(() => {
+  return resolvePreviewVideoUrl(activePreviewAsset.value?.url || '')
 })
 const previewRefreshSource = computed(() => (video.value?.source === 'preview' ? 'preview' : 'local'))
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
-const hasLocalVideo = computed(() => Boolean(localVideoPlayerUrl.value))
 const detailEpisodeList = computed(() => {
-  const display = video.value?.display && typeof video.value.display === 'object' ? video.value.display : {}
-  const localEpisodes = Array.isArray(display.local_episodes) ? display.local_episodes : []
-  const teledriveEpisodes = display.teledrive && Array.isArray(display.teledrive.episodes)
-    ? display.teledrive.episodes
-    : []
-  const episodes = localEpisodes.length ? localEpisodes : teledriveEpisodes
+  const episodes = Array.isArray(primaryPlayback.value.episodes) ? primaryPlayback.value.episodes : []
   return episodes
     .map((episode, index) => {
       const fallbackIndex = index + 1
       const normalizedIndex = Number(episode?.index) || fallbackIndex
-      const name = String(
-        episode?.name ||
-        episode?.relative_path ||
-        episode?.title ||
-        `第 ${normalizedIndex} 集`
-      ).trim()
+      const name = String(episode?.name || `第 ${normalizedIndex} 集`).trim()
       return {
         index: normalizedIndex,
         name: name || `第 ${normalizedIndex} 集`
@@ -681,7 +673,7 @@ const detailEpisodeList = computed(() => {
 })
 const hasLocalPlayableSource = computed(() => {
   return Boolean(
-    hasLocalVideo.value ||
+    primaryPlayback.value.available ||
     detailEpisodeList.value.length > 0 ||
     String(video.value?.local_source_path || video.value?.storage_path || '').trim()
   )
@@ -759,6 +751,29 @@ function clearAssetRefreshTimer() {
   }
 }
 
+function syncPreviewAssetSelection(detail = video.value) {
+  const model = resolveVideoPlaybackModel(detail)
+  const assets = Array.isArray(model?.preview?.assets) ? model.preview.assets : []
+  if (!assets.length) {
+    activePreviewAssetKey.value = ''
+    return
+  }
+
+  if (assets.some((asset) => asset.key === activePreviewAssetKey.value)) {
+    return
+  }
+
+  activePreviewAssetKey.value = String(model?.preview?.default_asset_key || assets[0]?.key || '').trim()
+}
+
+function selectPreviewAsset(assetKey) {
+  const normalizedKey = String(assetKey || '').trim()
+  if (!normalizedKey || normalizedKey === activePreviewAssetKey.value) {
+    return
+  }
+  activePreviewAssetKey.value = normalizedKey
+}
+
 function isLocalPreviewAssetPath(path) {
   if (!path || typeof path !== 'string') {
     return false
@@ -805,6 +820,7 @@ function scheduleLocalAssetRefresh() {
       const detail = await videoStore.fetchDetailSnapshot(videoId.value)
       if (detail) {
         video.value = detail
+        syncPreviewAssetSelection(detail)
         if (detail?.score) {
           scoreValue.value = detail.score
         }
@@ -882,35 +898,6 @@ function resolvePreviewVideoUrl(rawUrl) {
   }
 
   return `/api/v1/video/proxy2?url=${encodeURIComponent(`https://${url}`)}`
-}
-
-function resolveLocalVideoUrl(rawUrl) {
-  if (!rawUrl || typeof rawUrl !== 'string') {
-    return ''
-  }
-
-  const url = rawUrl.trim()
-  if (!url) {
-    return ''
-  }
-
-  if (/^https?:\/\//i.test(url)) {
-    return url
-  }
-
-  if (url.startsWith('/')) {
-    return url
-  }
-
-  return ''
-}
-
-function handleLocalVideoError(event) {
-  const mediaErrorCode = event?.target?.error?.code
-  console.warn('本地视频加载失败', {
-    url: localVideoPlayerUrl.value,
-    mediaErrorCode
-  })
 }
 
 function handlePreviewVideoError(event) {
@@ -1007,6 +994,7 @@ async function refreshPreviewVideo() {
 
     video.value = response.data
     showMagnets.value = false
+    syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
       scoreValue.value = response.data.score
@@ -1046,6 +1034,7 @@ async function refreshLocalMetadata() {
     video.value = response.data
     selectedTagIds.value = [...(response.data?.tag_ids || [])]
     syncEditFormFromVideo(response.data)
+    syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     if (response.data?.score) {
       scoreValue.value = response.data.score
@@ -1089,6 +1078,7 @@ async function generateLocalThumbnails() {
     }
 
     video.value = response.data
+    syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     showMagnets.value = false
     showThumbnailPicker.value = true
@@ -1126,6 +1116,7 @@ async function saveThumbnailCoverSelection() {
     }
 
     video.value = response.data
+    syncPreviewAssetSelection(response.data)
     syncThumbnailSelectionState(response.data)
     showThumbnailPicker.value = false
     showSuccessToast(response?.msg || '封面已更新')
@@ -1178,6 +1169,7 @@ async function loadVideo() {
     }
     selectedTagIds.value = [...(data?.tag_ids || [])]
     syncEditFormFromVideo(data)
+    syncPreviewAssetSelection(data)
     syncThumbnailSelectionState(data)
     scheduleLocalAssetRefresh()
   } finally {
@@ -2169,6 +2161,17 @@ onUnmounted(() => {
   justify-content: flex-end;
 }
 
+.preview-video-source-selector {
+  padding: 12px 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-video-source-button {
+  min-width: 88px;
+}
+
 .preview-video-player {
   width: 100%;
   display: block;
@@ -2467,6 +2470,10 @@ onUnmounted(() => {
 
   .preview-video-actions {
     flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .preview-video-source-selector {
     justify-content: flex-start;
   }
 
