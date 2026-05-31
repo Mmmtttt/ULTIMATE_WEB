@@ -67,9 +67,11 @@ export const videoApi = {
 
   localImportFromPath(sourcePath, options = {}) {
     const importMode = String(options?.importMode || 'hardlink_move').trim().toLowerCase() || 'hardlink_move'
+    const groupingMode = String(options?.groupingMode || 'per_file').trim().toLowerCase() || 'per_file'
     return request.post('/v1/video/local-import/from-path', {
       source_path: sourcePath,
-      import_mode: importMode
+      import_mode: importMode,
+      grouping_mode: groupingMode
     }, {
       timeout: 0
     })

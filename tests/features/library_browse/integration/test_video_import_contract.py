@@ -166,6 +166,7 @@ def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(int
         json={
             "source_path": str(series_dir),
             "import_mode": "hardlink_move",
+            "grouping_mode": "leaf_dir",
         },
         timeout=10,
     )
@@ -175,6 +176,7 @@ def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(int
     assert import_payload["code"] == 200
     data = import_payload["data"] or {}
     assert data.get("imported_count") == 1
+    assert data.get("grouping_mode") == "leaf_dir"
     imported_ids = data.get("imported_ids") or []
     assert len(imported_ids) == 1
 
@@ -215,6 +217,193 @@ def test_video_local_import_groups_multiple_files_in_same_folder_as_episodes(int
         str(((item.get("streams") or [{}])[0].get("url") or "")).startswith(f"/api/v1/video/local-stream/{imported_ids[0]}")
         for item in sources
     )
+
+
+@pytest.mark.integration
+def test_video_local_import_defaults_to_per_file_for_same_folder_no_code_files(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 看护本地视频导入默认按“逐文件导入”，即使同目录下有多个未识别番号的视频，也不会自动合并成多集。
+    - 测试步骤:
+      1. 在同一目录创建两个无番号视频文件。
+      2. 调用本地视频路径导入接口，不显式传 grouping_mode。
+      3. 校验导入结果与本地详情。
+    - 预期结果:
+      1. 创建两个独立视频条目。
+      2. 每个条目的 total_units 都是 1。
+    """
+    base_url = integration_runtime["base_url"]
+
+    source_dir = tmp_path / "No Code Folder"
+    source_dir.mkdir()
+    (source_dir / "clip-one.mp4").write_bytes(b"clip-one")
+    (source_dir / "clip-two.mp4").write_bytes(b"clip-two")
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "hardlink_move",
+        },
+        timeout=10,
+    )
+
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    data = import_payload["data"] or {}
+    assert data.get("grouping_mode") == "per_file"
+    assert data.get("imported_count") == 2
+    imported_ids = data.get("imported_ids") or []
+    assert len(imported_ids) == 2
+
+    for imported_id in imported_ids:
+        detail_response = requests.get(
+            f"{base_url}/api/v1/video/detail",
+            params={"video_id": imported_id},
+            timeout=5,
+        )
+        assert detail_response.status_code == 200
+        detail_payload = detail_response.json()
+        assert detail_payload["code"] == 200
+        detail = detail_payload["data"] or {}
+        assert detail.get("total_units") == 1
+        episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+        assert len(episodes) == 1
+
+
+@pytest.mark.integration
+def test_video_local_import_defaults_to_per_file_but_merges_same_code_files_into_one_video(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 看护默认“逐文件导入”与“同番号自动并入”可以同时成立。
+    - 测试步骤:
+      1. 在同一目录创建两个同番号视频文件。
+      2. 调用本地视频路径导入接口，不显式传 grouping_mode。
+      3. 校验导入结果与本地详情。
+    - 预期结果:
+      1. 两个文件都会被成功处理。
+      2. imported_ids 只返回一个唯一视频 ID。
+      3. 最终该视频包含两个 local_episodes。
+    """
+    base_url = integration_runtime["base_url"]
+    code_suffix = f"{(uuid4().int % 9000) + 1000}"
+    recognized_code = f"UTV-{code_suffix}"
+
+    source_dir = tmp_path / "Same Code Folder"
+    source_dir.mkdir()
+    (source_dir / f"{recognized_code} cd1.mp4").write_bytes(b"cd-1")
+    (source_dir / f"{recognized_code.replace('-', '_').lower()} cd2.mkv").write_bytes(b"cd-2")
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "hardlink_move",
+        },
+        timeout=10,
+    )
+
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    data = import_payload["data"] or {}
+    assert data.get("grouping_mode") == "per_file"
+    assert data.get("imported_count") == 2
+    assert data.get("attached_source_count") == 1
+    imported_ids = data.get("imported_ids") or []
+    assert imported_ids
+    assert len(imported_ids) == 1
+
+    detail_response = requests.get(
+        f"{base_url}/api/v1/video/detail",
+        params={"video_id": imported_ids[0]},
+        timeout=5,
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["code"] == 200
+    detail = detail_payload["data"] or {}
+    episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    assert detail.get("code") == recognized_code
+    assert detail.get("total_units") == 2
+    assert [item.get("name") for item in episodes] == [
+        f"{recognized_code} cd1.mp4",
+        f"{recognized_code.replace('-', '_').lower()} cd2.mkv",
+    ]
+
+
+@pytest.mark.integration
+def test_video_local_import_softlink_repeat_import_is_idempotent_by_source_path(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 看护 softlink_ref 重复导入同一路径文件时按路径幂等，不会重复追加分集。
+    - 测试步骤:
+      1. 创建一个可识别番号的视频文件并执行 softlink_ref 导入。
+      2. 对同一目录重复执行一次导入。
+      3. 校验第二次导入被识别为重复分集。
+    - 预期结果:
+      1. 第一次导入成功创建视频。
+      2. 第二次 imported_count=0，duplicate_episode_count=1。
+      3. 视频详情仍然只有 1 集。
+    """
+    base_url = integration_runtime["base_url"]
+    code_suffix = f"{(uuid4().int % 9000) + 1000}"
+    recognized_code = f"UTI-{code_suffix}"
+
+    source_dir = tmp_path / "Idempotent Softlink"
+    source_dir.mkdir()
+    source_file = source_dir / f"{recognized_code} sample.mp4"
+    source_file.write_bytes(b"video")
+
+    first_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "softlink_ref",
+        },
+        timeout=10,
+    )
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+    assert first_payload["code"] == 200
+    first_data = first_payload["data"] or {}
+    created_id = (first_data.get("imported_ids") or [None])[0]
+    assert created_id
+
+    second_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "softlink_ref",
+        },
+        timeout=10,
+    )
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert second_payload["code"] == 200
+    second_data = second_payload["data"] or {}
+    assert second_data.get("imported_count") == 0
+    assert second_data.get("duplicate_episode_count") == 1
+    assert second_data.get("skipped_count") == 1
+    skipped_items = second_data.get("skipped_items") or []
+    assert skipped_items
+    assert skipped_items[0].get("reason") == "duplicate_episode_exists"
+    assert skipped_items[0].get("duplicate_id") == created_id
+
+    detail_response = requests.get(
+        f"{base_url}/api/v1/video/detail",
+        params={"video_id": created_id},
+        timeout=5,
+    )
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["code"] == 200
+    detail = detail_payload["data"] or {}
+    episodes = ((detail.get("display") or {}).get("local_episodes") or [])
+    assert detail.get("total_units") == 1
+    assert len(episodes) == 1
+    assert episodes[0].get("name") == f"{recognized_code} sample.mp4"
 
 
 @pytest.mark.integration

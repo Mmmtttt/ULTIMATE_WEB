@@ -654,10 +654,15 @@ def local_import_from_path():
         data = request.json or {}
         source_path = str(data.get('source_path') or '').strip()
         import_mode = str(data.get('import_mode') or '').strip()
+        grouping_mode = str(data.get('grouping_mode') or '').strip()
         if not source_path:
             return error_response(400, "missing parameter: source_path")
 
-        result = video_service.import_local_videos_from_path(source_path, import_mode=import_mode)
+        result = video_service.import_local_videos_from_path(
+            source_path,
+            import_mode=import_mode,
+            grouping_mode=grouping_mode,
+        )
         if result.success:
             return success_response(result.data, result.message)
         return error_response(400, result.message)

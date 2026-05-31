@@ -156,6 +156,8 @@ class VideoAppService(BaseContentAppService):
     LOCAL_VIDEO_FILENAME = "source"
     LOCAL_IMPORT_MODE_HARDLINK_MOVE = "hardlink_move"
     LOCAL_IMPORT_MODE_SOFTLINK_REF = "softlink_ref"
+    LOCAL_IMPORT_GROUPING_PER_FILE = "per_file"
+    LOCAL_IMPORT_GROUPING_LEAF_DIR = "leaf_dir"
     SOURCE_ORIGIN_LOCAL_IMPORT = "local_import"
     SOURCE_ORIGIN_MAGNET_DOWNLOAD = "magnet_download"
     LOCAL_THUMBNAIL_TARGET_COUNT = DEFAULT_LOCAL_VIDEO_THUMBNAIL_COUNT
@@ -169,6 +171,15 @@ class VideoAppService(BaseContentAppService):
     FC2_PATTERN = re.compile(
         r"(?i)(?:^|[^a-z0-9])(fc2)\s*[-_ ]?\s*(?:ppv\s*[-_ ]?)?([0-9]{4,8})(?:$|[^a-z0-9])"
     )
+    GENERIC_CODE_PREFIXES = {
+        "EPISODE",
+        "PART",
+        "CHAPTER",
+        "VOLUME",
+        "VOL",
+        "DISC",
+        "DISK",
+    }
     _asset_download_lock = threading.Lock()
     _asset_download_tasks = set()
     
@@ -1038,6 +1049,24 @@ class VideoAppService(BaseContentAppService):
             return cls.LOCAL_IMPORT_MODE_HARDLINK_MOVE
         return cls.LOCAL_IMPORT_MODE_HARDLINK_MOVE
 
+    @classmethod
+    def normalize_local_import_grouping_mode(cls, raw_mode: str) -> str:
+        mode = str(raw_mode or "").strip().lower()
+        if mode in {"leaf_dir", "leaf", "dir", "directory", "folder"}:
+            return cls.LOCAL_IMPORT_GROUPING_LEAF_DIR
+        return cls.LOCAL_IMPORT_GROUPING_PER_FILE
+
+    @staticmethod
+    def _normalize_local_path_key(path: str) -> str:
+        raw = str(path or "").strip()
+        if not raw:
+            return ""
+        try:
+            normalized = os.path.abspath(os.path.expandvars(os.path.expanduser(raw)))
+        except Exception:
+            normalized = raw
+        return os.path.normcase(normalized)
+
     @staticmethod
     def _build_local_stream_url(video_id: str) -> str:
         safe_id = str(video_id or "").strip()
@@ -1112,6 +1141,247 @@ class VideoAppService(BaseContentAppService):
                     pass
 
         return ""
+
+    def _get_local_episode_entries(self, video: Optional[Video]) -> List[Dict[str, Any]]:
+        if not isinstance(video, Video):
+            return []
+
+        display = getattr(video, "display", {}) if video else {}
+        existing = display.get("local_episodes") if isinstance(display, dict) else []
+        if isinstance(existing, list) and existing:
+            normalized_entries = []
+            for index, episode in enumerate(existing, start=1):
+                if not isinstance(episode, dict):
+                    continue
+                entry = dict(episode)
+                entry["index"] = index
+                entry["name"] = str(
+                    entry.get("name")
+                    or entry.get("relative_path")
+                    or entry.get("title")
+                    or f"第 {index} 集"
+                ).strip() or f"第 {index} 集"
+                normalized_entries.append(entry)
+            if normalized_entries:
+                return normalized_entries
+
+        return [
+            dict(item)
+            for item in (self._discover_local_video_episodes(video) or [])
+            if isinstance(item, dict)
+        ]
+
+    def _get_episode_entry_path(self, video: Optional[Video], episode: Dict[str, Any]) -> str:
+        if not isinstance(episode, dict):
+            return ""
+
+        source_path = str(episode.get("source_path") or "").strip()
+        if source_path:
+            expanded = os.path.abspath(os.path.expandvars(os.path.expanduser(source_path)))
+            if expanded:
+                return expanded
+
+        if isinstance(video, Video):
+            resolved = self._extract_local_episode_path(video, episode)
+            if resolved:
+                return resolved
+
+        media_path = self._media_url_to_abs_path(str(episode.get("url") or "").strip())
+        if media_path:
+            return media_path
+        return ""
+
+    def _collect_existing_local_episode_path_keys(self, video: Optional[Video]) -> set[str]:
+        if not isinstance(video, Video):
+            return set()
+
+        path_keys = set()
+        for episode in self._get_local_episode_entries(video):
+            normalized = self._normalize_local_path_key(self._get_episode_entry_path(video, episode))
+            if normalized:
+                path_keys.add(normalized)
+
+        local_source_path = self._normalize_local_path_key(getattr(video, "local_source_path", ""))
+        if local_source_path:
+            path_keys.add(local_source_path)
+        return path_keys
+
+    def _merge_local_episode_entries(
+        self,
+        existing_entries: List[Dict[str, Any]],
+        new_entries: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        merged_entries = []
+        for index, episode in enumerate([*(existing_entries or []), *(new_entries or [])], start=1):
+            if not isinstance(episode, dict):
+                continue
+            entry = dict(episode)
+            entry["index"] = index
+            entry["name"] = str(
+                entry.get("name")
+                or entry.get("relative_path")
+                or entry.get("title")
+                or f"第 {index} 集"
+            ).strip() or f"第 {index} 集"
+            merged_entries.append(entry)
+        return merged_entries
+
+    def _resolve_import_episode_storage(
+        self,
+        episode_entries: List[Dict[str, Any]],
+        *,
+        preferred_dir: str = "",
+    ) -> Dict[str, str]:
+        episode_paths = [
+            self._get_episode_entry_path(None, episode)
+            for episode in (episode_entries or [])
+            if isinstance(episode, dict)
+        ]
+        episode_paths = [path for path in episode_paths if path]
+        if not episode_paths:
+            return {
+                "local_video_path": "",
+                "local_source_path": "",
+                "local_source_filename": "",
+                "local_asset_dir_name": "",
+                "storage_path_relative": "",
+                "storage_path_kind": "source",
+            }
+
+        first_entry = episode_entries[0]
+        canonical_path = episode_paths[0]
+        storage_reference = canonical_path
+        storage_kind = "local_file" if normalize_data_relative_path(canonical_path) else "source"
+
+        normalized_preferred_dir = str(preferred_dir or "").strip()
+        if normalized_preferred_dir:
+            storage_reference = normalized_preferred_dir
+            storage_kind = "local_dir" if normalize_data_relative_path(normalized_preferred_dir) else "source"
+        else:
+            unique_dirs = {
+                os.path.dirname(path)
+                for path in episode_paths
+            }
+            if len(episode_paths) > 1 and len(unique_dirs) == 1:
+                only_dir = next(iter(unique_dirs))
+                storage_reference = only_dir
+                storage_kind = "local_dir" if normalize_data_relative_path(only_dir) else "source"
+
+        local_asset_dir_name = ""
+        asset_root = self._extract_local_asset_root(canonical_path)
+        if asset_root:
+            local_asset_dir_name = os.path.basename(asset_root)
+        else:
+            local_asset_dir_name = os.path.basename(os.path.dirname(canonical_path))
+
+        return {
+            "local_video_path": str(first_entry.get("url") or "").strip(),
+            "local_source_path": canonical_path,
+            "local_source_filename": os.path.basename(canonical_path),
+            "local_asset_dir_name": local_asset_dir_name,
+            "storage_path_relative": normalize_data_relative_path(storage_reference),
+            "storage_path_kind": storage_kind,
+        }
+
+    def _build_video_import_units(
+        self,
+        source_dir: str,
+        *,
+        grouping_mode: str,
+    ) -> Dict[str, Any]:
+        scanned_files = 0
+        scanned_video_files = 0
+        skipped_count = 0
+        skipped_items: List[Dict[str, str]] = []
+        units: List[Dict[str, Any]] = []
+
+        for root, _dirs, files in os.walk(source_dir):
+            root_abs = os.path.abspath(root)
+            sorted_files = sorted(files, key=self._natural_filename_key)
+            video_files: List[str] = []
+
+            for filename in sorted_files:
+                scanned_files += 1
+                abs_file_path = os.path.join(root_abs, filename)
+                if self._is_archive_file_path(filename):
+                    skipped_count += 1
+                    skipped_items.append({"file": abs_file_path, "reason": "archive_ignored"})
+                    continue
+                if not self._is_video_file_path(filename):
+                    continue
+                scanned_video_files += 1
+                video_files.append(filename)
+
+            if not video_files:
+                continue
+
+            if grouping_mode == self.LOCAL_IMPORT_GROUPING_LEAF_DIR:
+                recognized_buckets: Dict[str, Dict[str, Any]] = {}
+                unrecognized_files: List[str] = []
+                for filename in video_files:
+                    stem, _ext = os.path.splitext(filename)
+                    extracted_code = self.extract_code_from_filename(stem)
+                    if extracted_code:
+                        bucket_key = self._normalize_code_for_compare(extracted_code)
+                        bucket = recognized_buckets.setdefault(
+                            bucket_key,
+                            {"code_hint": extracted_code, "filenames": []},
+                        )
+                        bucket["filenames"].append(filename)
+                    else:
+                        unrecognized_files.append(filename)
+
+                if recognized_buckets:
+                    for bucket in recognized_buckets.values():
+                        grouped_filenames = sorted(bucket["filenames"], key=self._natural_filename_key)
+                        first_stem = os.path.splitext(grouped_filenames[0])[0].strip()
+                        units.append(
+                            {
+                                "root": root_abs,
+                                "filenames": grouped_filenames,
+                                "title_hint": first_stem or (bucket.get("code_hint") or "本地视频"),
+                                "code_hint": str(bucket.get("code_hint") or "").strip(),
+                            }
+                        )
+                    if unrecognized_files:
+                        units.append(
+                            {
+                                "root": root_abs,
+                                "filenames": sorted(unrecognized_files, key=self._natural_filename_key),
+                                "title_hint": os.path.basename(root_abs) or "本地视频合集",
+                                "code_hint": "",
+                            }
+                        )
+                    continue
+
+                units.append(
+                    {
+                        "root": root_abs,
+                        "filenames": video_files,
+                        "title_hint": os.path.basename(root_abs) or "本地视频合集",
+                        "code_hint": "",
+                    }
+                )
+                continue
+
+            for filename in video_files:
+                stem, _ext = os.path.splitext(filename)
+                units.append(
+                    {
+                        "root": root_abs,
+                        "filenames": [filename],
+                        "title_hint": stem.strip() or filename,
+                        "code_hint": self.extract_code_from_filename(stem),
+                    }
+                )
+
+        return {
+            "scanned_files": scanned_files,
+            "scanned_video_files": scanned_video_files,
+            "skipped_count": skipped_count,
+            "skipped_items": skipped_items,
+            "units": units,
+        }
 
     def _discover_local_video_episodes(self, video: Optional[Video]) -> List[Dict[str, Any]]:
         if not isinstance(video, Video):
@@ -1249,6 +1519,8 @@ class VideoAppService(BaseContentAppService):
         number = str(normal_match.group(2) or "").strip()
         if not prefix or not number:
             return ""
+        if prefix in cls.GENERIC_CODE_PREFIXES:
+            return ""
         return f"{prefix}-{number}"
 
     def _extract_or_generate_code(self, filename_without_ext: str) -> str:
@@ -1324,80 +1596,134 @@ class VideoAppService(BaseContentAppService):
         filenames: List[str],
         *,
         normalized_mode: str,
+        title_hint: str = "",
+        code_hint: str = "",
     ) -> Dict[str, Any]:
-        folder_name = os.path.basename(os.path.abspath(root)) or "本地视频合集"
-        code = self._extract_or_generate_code(folder_name)
-        duplicate_video = self._find_local_video_duplicate_entity("", code)
-        bind_existing_video = None
+        sorted_filenames = sorted(
+            [str(filename or "").strip() for filename in (filenames or []) if str(filename or "").strip()],
+            key=self._natural_filename_key,
+        )
+        if not sorted_filenames:
+            return {"status": "skipped", "reason": "empty_group", "duplicate_files": []}
 
-        if duplicate_video:
-            if self._is_local_video_id(duplicate_video.id) or self._has_video_source_file(duplicate_video):
-                return {
-                    "status": "skipped",
-                    "reason": "duplicate_code_source_exists",
-                    "duplicate_id": duplicate_video.id,
-                    "code": code,
-                }
-            bind_existing_video = duplicate_video
+        normalized_root = os.path.abspath(root)
+        fallback_title = title_hint or os.path.splitext(sorted_filenames[0])[0].strip() or os.path.basename(normalized_root) or "本地视频"
+        normalized_code_hint = self._normalize_code_for_storage(code_hint)
+        code = normalized_code_hint or self._extract_or_generate_code(fallback_title)
+        bind_existing_video = None
+        if not str(code or "").startswith(self.ABNORMAL_CODE_PREFIX):
+            bind_existing_video = self._find_local_video_duplicate_entity("", code)
 
         video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
-        sorted_filenames = sorted(filenames, key=self._natural_filename_key)
-        first_filename = sorted_filenames[0]
+        existing_entries = self._get_local_episode_entries(bind_existing_video)
+        existing_path_keys = self._collect_existing_local_episode_path_keys(bind_existing_video)
         moved_pairs: List[Tuple[str, str]] = []
+        duplicate_files: List[str] = []
         target_dir = ""
+        local_asset_dir_name = str(getattr(bind_existing_video, "local_asset_dir_name", "") or "").strip() if bind_existing_video else ""
+        local_source_filename = ""
+        new_entries: List[Dict[str, Any]] = []
 
         try:
             if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
+                preferred_dir_name = local_asset_dir_name
+                if bind_existing_video and not preferred_dir_name:
+                    existing_asset_dir = self._resolve_explicit_video_local_asset_dir(bind_existing_video)
+                    if existing_asset_dir:
+                        preferred_dir_name = os.path.basename(existing_asset_dir)
+
                 target_dir, first_target, local_asset_dir_name, local_source_filename = self._build_local_source_file_target(
                     video_id,
-                    first_filename,
-                    preferred_dir_name=str(getattr(bind_existing_video, "local_asset_dir_name", "") or "").strip() if bind_existing_video else "",
+                    sorted_filenames[0],
+                    preferred_dir_name=preferred_dir_name,
                 )
-                episodes: List[Dict[str, Any]] = []
-                for index, filename in enumerate(sorted_filenames, start=1):
-                    source_file = os.path.abspath(os.path.join(root, filename))
+            else:
+                local_source_filename = sorted_filenames[0]
+
+            for filename in sorted_filenames:
+                source_file = os.path.abspath(os.path.join(normalized_root, filename))
+                source_key = self._normalize_local_path_key(source_file)
+                if source_key and source_key in existing_path_keys:
+                    duplicate_files.append(source_file)
+                    continue
+
+                next_index = len(existing_entries) + len(new_entries) + 1
+                if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
                     target_name = (
                         os.path.basename(first_target)
-                        if index == 1
-                        else self._sanitize_local_fs_name(os.path.basename(filename), fallback=f"episode-{index:03d}.mp4")
+                        if not new_entries
+                        else self._sanitize_local_fs_name(os.path.basename(filename), fallback=f"episode-{next_index:03d}.mp4")
                     )
                     target_file = self._make_unique_file_path(os.path.join(target_dir, target_name))
                     shutil.move(source_file, target_file)
                     moved_pairs.append((source_file, target_file))
-                    episodes.append(self._build_local_episode_entry(
+                    episode_entry = self._build_local_episode_entry(
                         video_id,
                         target_file,
                         base_dir=target_dir,
-                        index=index,
-                        include_source_path=False,
-                    ))
-
-                first_episode = episodes[0]
-                local_video_path = first_episode["url"]
-                local_source_path = os.path.abspath(moved_pairs[0][1])
-                storage_path_relative = normalize_data_relative_path(target_dir)
-                storage_path_kind = "local_dir" if storage_path_relative else "source"
-            else:
-                local_asset_dir_name = str(getattr(bind_existing_video, "local_asset_dir_name", "") or "").strip() if bind_existing_video else ""
-                local_source_filename = first_filename
-                episodes = []
-                for index, filename in enumerate(sorted_filenames, start=1):
-                    source_file = os.path.abspath(os.path.join(root, filename))
-                    episodes.append(self._build_local_episode_entry(
+                        index=next_index,
+                        include_source_path=True,
+                    )
+                else:
+                    episode_entry = self._build_local_episode_entry(
                         video_id,
                         source_file,
-                        base_dir=root,
-                        index=index,
+                        base_dir=normalized_root,
+                        index=next_index,
                         include_source_path=True,
-                    ))
-                local_video_path = self._build_local_episode_stream_url(video_id, 1)
-                local_source_path = os.path.abspath(os.path.join(root, first_filename))
-                storage_path_relative = normalize_data_relative_path(root)
-                storage_path_kind = "local_dir" if storage_path_relative else "source"
+                    )
+
+                new_entries.append(episode_entry)
+                episode_key = self._normalize_local_path_key(self._get_episode_entry_path(None, episode_entry))
+                if episode_key:
+                    existing_path_keys.add(episode_key)
+
+            if not new_entries:
+                return {
+                    "status": "skipped",
+                    "reason": "duplicate_episode_exists",
+                    "duplicate_id": str(getattr(bind_existing_video, "id", "") or ""),
+                    "code": code,
+                    "duplicate_files": duplicate_files,
+                }
+
+            merged_entries = self._merge_local_episode_entries(existing_entries, new_entries)
+            storage_info = self._resolve_import_episode_storage(
+                merged_entries,
+                preferred_dir=target_dir if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE else "",
+            )
+
+            if bind_existing_video:
+                existing_video = self._video_repo.get_by_id(video_id) or bind_existing_video
+                existing_video.local_video_path = storage_info["local_video_path"]
+                existing_video.local_source_path = storage_info["local_source_path"]
+                existing_video.local_asset_dir_name = storage_info["local_asset_dir_name"] or local_asset_dir_name
+                existing_video.local_source_filename = storage_info["local_source_filename"] or local_source_filename
+                existing_video.source_origin = self.SOURCE_ORIGIN_LOCAL_IMPORT
+                existing_video.source_updated_time = get_current_time()
+                existing_video.storage_path_relative = storage_info["storage_path_relative"]
+                existing_video.storage_path_kind = storage_info["storage_path_kind"]
+                existing_video.total_units = len(merged_entries)
+                existing_video.current_unit = max(1, int(getattr(existing_video, "current_unit", 1) or 1))
+                display_payload = dict(getattr(existing_video, "display", {}) or {})
+                display_payload["local_episodes"] = merged_entries
+                existing_video.display = display_payload
+
+                if not self._video_repo.save(existing_video):
+                    raise RuntimeError("save appended local video episodes failed")
+
+                return {
+                    "status": "imported",
+                    "video_id": video_id,
+                    "attached": True,
+                    "code": code,
+                    "episode_count": len(new_entries),
+                    "duplicate_files": duplicate_files,
+                }
 
             payload = {
                 "id": video_id,
-                "title": folder_name,
+                "title": fallback_title,
                 "code": code,
                 "date": "",
                 "series": "",
@@ -1414,36 +1740,30 @@ class VideoAppService(BaseContentAppService):
                 "thumbnail_images_local": [],
                 "preview_video_local": "",
                 "cover_path_local": "",
-                "local_video_path": local_video_path,
-                "local_source_path": local_source_path,
-                "local_asset_dir_name": local_asset_dir_name,
-                "local_source_filename": local_source_filename,
+                "local_video_path": storage_info["local_video_path"],
+                "local_source_path": storage_info["local_source_path"],
+                "local_asset_dir_name": storage_info["local_asset_dir_name"] or local_asset_dir_name,
+                "local_source_filename": storage_info["local_source_filename"] or local_source_filename,
                 "source_origin": self.SOURCE_ORIGIN_LOCAL_IMPORT,
                 "source_updated_time": get_current_time(),
                 "local_metadata_enriched": False,
-                "storage_path_relative": storage_path_relative,
-                "storage_path_kind": storage_path_kind,
-                "total_units": len(episodes),
+                "storage_path_relative": storage_info["storage_path_relative"],
+                "storage_path_kind": storage_info["storage_path_kind"],
+                "total_units": len(merged_entries),
                 "current_unit": 1,
-                "display": {"local_episodes": episodes},
+                "display": {"local_episodes": merged_entries},
             }
-
-            if bind_existing_video:
-                existing_video = self._video_repo.get_by_id(video_id) or bind_existing_video
-                for key, value in payload.items():
-                    setattr(existing_video, key, value)
-                if not self._video_repo.save(existing_video):
-                    raise RuntimeError("save local multi-episode source on existing video failed")
-            else:
-                result = self.import_video(payload)
-                if not result.success:
-                    raise RuntimeError(result.message or "import_failed")
+            result = self.import_video(payload)
+            if not result.success:
+                raise RuntimeError(result.message or "import_failed")
 
             return {
                 "status": "imported",
                 "video_id": video_id,
-                "attached": bool(bind_existing_video),
-                "episode_count": len(episodes),
+                "attached": False,
+                "code": code,
+                "episode_count": len(new_entries),
+                "duplicate_files": duplicate_files,
             }
         except Exception:
             for source_file, target_file in reversed(moved_pairs):
@@ -1457,7 +1777,12 @@ class VideoAppService(BaseContentAppService):
                 shutil.rmtree(target_dir, ignore_errors=True)
             raise
 
-    def import_local_videos_from_path(self, source_path: str, import_mode: str = "") -> ServiceResult:
+    def import_local_videos_from_path(
+        self,
+        source_path: str,
+        import_mode: str = "",
+        grouping_mode: str = "",
+    ) -> ServiceResult:
         try:
             source_dir = os.path.abspath(os.path.expandvars(os.path.expanduser(str(source_path or "").strip())))
             if not source_dir:
@@ -1467,250 +1792,87 @@ class VideoAppService(BaseContentAppService):
             if not os.path.isdir(source_dir):
                 return ServiceResult.error("source_path must be a directory")
             normalized_mode = self.normalize_local_import_mode(import_mode)
+            normalized_grouping_mode = self.normalize_local_import_grouping_mode(grouping_mode)
 
-            scanned_files = 0
-            scanned_video_files = 0
+            import_plan = self._build_video_import_units(source_dir, grouping_mode=normalized_grouping_mode)
+            scanned_files = int(import_plan.get("scanned_files") or 0)
+            scanned_video_files = int(import_plan.get("scanned_video_files") or 0)
             imported_count = 0
             attached_source_count = 0
-            skipped_count = 0
+            appended_episode_count = 0
+            duplicate_episode_count = 0
+            skipped_count = int(import_plan.get("skipped_count") or 0)
             failed_count = 0
             imported_ids: List[str] = []
+            seen_imported_ids = set()
             skipped_items: List[Dict[str, str]] = []
+            skipped_items.extend(list(import_plan.get("skipped_items") or []))
             failed_items: List[Dict[str, str]] = []
-            grouped_dirs: Dict[str, List[str]] = {}
-
-            for root, _, files in os.walk(source_dir):
-                video_files = [
-                    filename
-                    for filename in files
-                    if self._is_video_file_path(filename)
-                ]
-                if len(video_files) >= 2:
-                    grouped_dirs[os.path.abspath(root)] = video_files
-
-            for root, _, files in os.walk(source_dir):
-                root_abs = os.path.abspath(root)
-                if root_abs in grouped_dirs:
-                    for filename in files:
-                        scanned_files += 1
-                        if self._is_archive_file_path(filename):
+            for unit in list(import_plan.get("units") or []):
+                unit_root = str(unit.get("root") or source_dir).strip() or source_dir
+                unit_filenames = list(unit.get("filenames") or [])
+                try:
+                    group_result = self._import_local_video_group(
+                        unit_root,
+                        unit_filenames,
+                        normalized_mode=normalized_mode,
+                        title_hint=str(unit.get("title_hint") or "").strip(),
+                        code_hint=str(unit.get("code_hint") or "").strip(),
+                    )
+                    if group_result.get("status") == "imported":
+                        imported_count += 1
+                        imported_video_id = str(group_result.get("video_id") or "").strip()
+                        if imported_video_id and imported_video_id not in seen_imported_ids:
+                            imported_ids.append(imported_video_id)
+                            seen_imported_ids.add(imported_video_id)
+                        if group_result.get("attached"):
+                            attached_source_count += 1
+                        appended_episode_count += int(group_result.get("episode_count") or 0)
+                        duplicate_files = list(group_result.get("duplicate_files") or [])
+                        duplicate_episode_count += len(duplicate_files)
+                        for duplicate_file in duplicate_files:
                             skipped_count += 1
-                            skipped_items.append({"file": os.path.join(root, filename), "reason": "archive_ignored"})
-                        elif self._is_video_file_path(filename):
-                            scanned_video_files += 1
+                            skipped_items.append(
+                                {
+                                    "file": str(duplicate_file or ""),
+                                    "reason": "duplicate_episode_exists",
+                                    "duplicate_id": str(group_result.get("video_id") or ""),
+                                    "code": str(group_result.get("code") or ""),
+                                }
+                            )
+                        continue
 
-                    try:
-                        group_result = self._import_local_video_group(
-                            root_abs,
-                            grouped_dirs[root_abs],
-                            normalized_mode=normalized_mode,
-                        )
-                        if group_result.get("status") == "imported":
-                            imported_count += 1
-                            if group_result.get("attached"):
-                                attached_source_count += 1
-                            imported_ids.append(str(group_result.get("video_id") or ""))
-                        else:
+                    duplicate_files = list(group_result.get("duplicate_files") or [])
+                    if duplicate_files:
+                        duplicate_episode_count += len(duplicate_files)
+                        for duplicate_file in duplicate_files:
                             skipped_count += 1
-                            skipped_items.append({
-                                "file": root_abs,
+                            skipped_items.append(
+                                {
+                                    "file": str(duplicate_file or ""),
+                                    "reason": str(group_result.get("reason") or "duplicate_episode_exists"),
+                                    "duplicate_id": str(group_result.get("duplicate_id") or ""),
+                                    "code": str(group_result.get("code") or ""),
+                                }
+                            )
+                    else:
+                        skipped_count += 1
+                        skipped_items.append(
+                            {
+                                "file": unit_root,
                                 "reason": str(group_result.get("reason") or "group_skipped"),
                                 "duplicate_id": str(group_result.get("duplicate_id") or ""),
                                 "code": str(group_result.get("code") or ""),
-                            })
-                    except Exception as item_error:
-                        failed_count += 1
-                        failed_items.append({"file": root_abs, "reason": str(item_error)})
-                    continue
-
-                for filename in files:
-                    scanned_files += 1
-                    abs_file_path = os.path.join(root, filename)
-
-                    if self._is_archive_file_path(filename):
-                        skipped_count += 1
-                        skipped_items.append({"file": abs_file_path, "reason": "archive_ignored"})
-                        continue
-                    if not self._is_video_file_path(filename):
-                        continue
-
-                    scanned_video_files += 1
-
-                    target_dir = ""
-                    target_file = ""
-                    source_restore_path = ""
-                    try:
-                        stem, ext = os.path.splitext(filename)
-                        normalized_ext = ext.lower() if ext else ".mp4"
-                        code = self._extract_or_generate_code(stem)
-                        duplicate_video = self._find_local_video_duplicate_entity("", code)
-                        bind_existing_video = None
-                        if duplicate_video:
-                            if self._is_local_video_id(duplicate_video.id):
-                                skipped_count += 1
-                                skipped_items.append(
-                                    {
-                                        "file": abs_file_path,
-                                        "reason": "duplicate_local_import",
-                                        "duplicate_id": duplicate_video.id,
-                                        "code": code,
-                                    }
-                                )
-                                continue
-
-                            if self._has_video_source_file(duplicate_video):
-                                skipped_count += 1
-                                skipped_items.append(
-                                    {
-                                        "file": abs_file_path,
-                                        "reason": "duplicate_code_source_exists",
-                                        "duplicate_id": duplicate_video.id,
-                                        "code": code,
-                                    }
-                                )
-                                continue
-
-                            bind_existing_video = duplicate_video
-
-                        video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
-                        if normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE:
-                            preferred_dir_name = ""
-                            if bind_existing_video:
-                                preferred_dir_name = str(
-                                    getattr(bind_existing_video, "local_asset_dir_name", "") or ""
-                                ).strip()
-                                if not preferred_dir_name:
-                                    existing_asset_dir = self._resolve_explicit_video_local_asset_dir(bind_existing_video)
-                                    if existing_asset_dir:
-                                        preferred_dir_name = os.path.basename(existing_asset_dir)
-
-                            target_dir, target_file, local_asset_dir_name, local_source_filename = (
-                                self._build_local_source_file_target(
-                                    video_id,
-                                    filename,
-                                    preferred_dir_name=preferred_dir_name,
-                                )
-                            )
-                            source_restore_path = abs_file_path
-                            shutil.move(abs_file_path, target_file)
-
-                            local_video_path = self._to_media_url(target_file)
-                            if not local_video_path:
-                                raise RuntimeError("failed to map local video path")
-                            local_source_path = os.path.abspath(target_file)
-                        else:
-                            local_video_path = self._build_local_stream_url(video_id)
-                            local_source_path = os.path.abspath(abs_file_path)
-                            local_asset_dir_name = str(
-                                getattr(bind_existing_video, "local_asset_dir_name", "") or ""
-                            ).strip() if bind_existing_video else ""
-                            local_source_filename = self._resolve_video_source_filename(
-                                bind_existing_video,
-                                default_extension=normalized_ext,
-                            ) if bind_existing_video else os.path.basename(abs_file_path)
-                            if not local_video_path:
-                                raise RuntimeError("failed to build local stream path")
-
-                        if bind_existing_video:
-                            existing_video = self._video_repo.get_by_id(video_id) or bind_existing_video
-                            existing_video.local_video_path = local_video_path
-                            existing_video.local_source_path = local_source_path
-                            existing_video.local_asset_dir_name = local_asset_dir_name
-                            existing_video.local_source_filename = local_source_filename
-                            existing_video.source_origin = self.SOURCE_ORIGIN_LOCAL_IMPORT
-                            existing_video.source_updated_time = get_current_time()
-                            existing_video.storage_path_relative = normalize_data_relative_path(local_source_path)
-                            existing_video.storage_path_kind = (
-                                "local_file"
-                                if existing_video.storage_path_relative
-                                else "source"
-                            )
-
-                            if not self._video_repo.save(existing_video):
-                                raise RuntimeError("save local source on existing video failed")
-
-                            imported_count += 1
-                            attached_source_count += 1
-                            imported_ids.append(video_id)
-                            continue
-
-                        payload = {
-                            "id": video_id,
-                            "title": stem.strip() or filename,
-                            "code": code,
-                            "date": "",
-                            "series": "",
-                            "creator": "",
-                            "actors": [],
-                            "desc": "",
-                            "score": None,
-                            "tag_ids": [],
-                            "list_ids": [],
-                            "magnets": [],
-                            "thumbnail_images": [],
-                            "preview_video": "",
-                            "cover_path": "",
-                            "thumbnail_images_local": [],
-                            "preview_video_local": "",
-                            "cover_path_local": "",
-                            "local_video_path": local_video_path,
-                            "local_source_path": local_source_path,
-                            "local_asset_dir_name": local_asset_dir_name,
-                            "local_source_filename": local_source_filename,
-                            "source_origin": self.SOURCE_ORIGIN_LOCAL_IMPORT,
-                            "source_updated_time": get_current_time(),
-                            "local_metadata_enriched": False,
-                            "storage_path_relative": normalize_data_relative_path(local_source_path),
-                            "storage_path_kind": (
-                                "local_file"
-                                if normalize_data_relative_path(local_source_path)
-                                else "source"
-                            ),
+                            }
+                        )
+                except Exception as item_error:
+                    failed_count += 1
+                    failed_items.append(
+                        {
+                            "file": unit_root,
+                            "reason": str(item_error),
                         }
-
-                        result = self.import_video(payload)
-                        if not result.success:
-                            failed_count += 1
-                            failed_items.append(
-                                {
-                                    "file": abs_file_path,
-                                    "reason": result.message or "import_failed",
-                                    "code": code,
-                                }
-                            )
-                            try:
-                                if (
-                                    normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE
-                                    and source_restore_path
-                                    and target_file
-                                    and os.path.exists(target_file)
-                                ):
-                                    os.makedirs(os.path.dirname(source_restore_path), exist_ok=True)
-                                    shutil.move(target_file, source_restore_path)
-                                if os.path.isdir(target_dir):
-                                    shutil.rmtree(target_dir, ignore_errors=True)
-                            except Exception:
-                                pass
-                            continue
-
-                        imported_count += 1
-                        imported_ids.append(video_id)
-                    except Exception as item_error:
-                        try:
-                            if (
-                                normalized_mode == self.LOCAL_IMPORT_MODE_HARDLINK_MOVE
-                                and source_restore_path
-                                and target_file
-                                and os.path.exists(target_file)
-                            ):
-                                os.makedirs(os.path.dirname(source_restore_path), exist_ok=True)
-                                shutil.move(target_file, source_restore_path)
-                            if target_dir and os.path.isdir(target_dir):
-                                shutil.rmtree(target_dir, ignore_errors=True)
-                        except Exception:
-                            pass
-                        failed_count += 1
-                        failed_items.append({"file": abs_file_path, "reason": str(item_error)})
+                    )
 
             if imported_ids:
                 recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
@@ -1720,19 +1882,24 @@ class VideoAppService(BaseContentAppService):
                     )
 
             mode_label = "软连接（保留源文件）" if normalized_mode == self.LOCAL_IMPORT_MODE_SOFTLINK_REF else "硬链接（移动源文件）"
+            grouping_label = "逐文件导入" if normalized_grouping_mode == self.LOCAL_IMPORT_GROUPING_PER_FILE else "叶子目录合并"
             summary = (
-                f"本地视频导入完成（{mode_label}）："
+                f"本地视频导入完成（{mode_label}，{grouping_label}）："
                 f"扫描 {scanned_video_files} 个视频，"
-                f"成功 {imported_count}（其中补齐source {attached_source_count}），跳过 {skipped_count}，失败 {failed_count}"
+                f"成功 {imported_count}，并入已有视频 {attached_source_count}，新增分集 {appended_episode_count}，"
+                f"重复跳过 {duplicate_episode_count}，总跳过 {skipped_count}，失败 {failed_count}"
             )
             return ServiceResult.ok(
                 {
                     "source_path": source_dir,
                     "import_mode": normalized_mode,
+                    "grouping_mode": normalized_grouping_mode,
                     "scanned_files": scanned_files,
                     "scanned_video_files": scanned_video_files,
                     "imported_count": imported_count,
                     "attached_source_count": attached_source_count,
+                    "appended_episode_count": appended_episode_count,
+                    "duplicate_episode_count": duplicate_episode_count,
                     "skipped_count": skipped_count,
                     "failed_count": failed_count,
                     "imported_ids": imported_ids,

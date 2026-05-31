@@ -10,7 +10,7 @@
       <h2>一步导入</h2>
       <p>
         仅支持输入服务端本机“文件夹路径”。系统会递归扫描常见视频文件并导入到本地库。
-        同一文件夹下的多个视频会作为同一作品的选集导入。
+        你可以决定按单个视频导入，还是按叶子目录合并为多集作品。
         你可以选择软连接（保留源文件）或硬链接（移动源文件），系统会自动忽略压缩包与非视频文件。
       </p>
       <div class="hero-steps">
@@ -48,7 +48,38 @@
       </div>
 
       <div class="picker-tip">
-        路径模式会递归扫描常见视频文件；同一文件夹内有多个视频时会合并为一个可选集播放的作品。
+        路径模式会递归扫描常见视频文件；默认每个视频独立导入，也可以切换成按叶子目录合并。
+      </div>
+
+      <div class="grouping-mode-switch">
+        <div class="section-title inline-title">
+          <h3>导入粒度</h3>
+          <span class="hint">默认逐文件导入</span>
+        </div>
+        <div class="grouping-mode-buttons">
+          <van-button
+            size="small"
+            :type="groupingMode === 'per_file' ? 'primary' : 'default'"
+            class="grouping-button"
+            @click="groupingMode = 'per_file'"
+          >
+            每个视频单独导入
+          </van-button>
+          <van-button
+            size="small"
+            :type="groupingMode === 'leaf_dir' ? 'primary' : 'default'"
+            class="grouping-button"
+            @click="groupingMode = 'leaf_dir'"
+          >
+            叶子目录合并为多集
+          </van-button>
+        </div>
+        <div class="switch-desc">
+          {{ groupingMode === 'per_file'
+            ? '逐文件导入：每个视频默认是一个独立条目；识别到相同番号时，会并入已有本地视频并作为新分集。'
+            : '叶子目录合并：同一叶子目录中的视频会优先按番号拆组，其余未识别番号的视频会合并为一个多集条目。'
+          }}
+        </div>
       </div>
 
       <div v-if="importMode === 'hardlink_move'" class="mode-tip danger-tip">
@@ -131,6 +162,7 @@ const sourcePath = ref('')
 const importing = ref(false)
 const result = ref(null)
 const importMode = ref('hardlink_move')
+const groupingMode = ref('per_file')
 
 const isSoftlinkMode = computed({
   get: () => importMode.value === 'softlink_ref',
@@ -178,7 +210,8 @@ async function runImport() {
 
   try {
     const response = await videoApi.localImportFromPath(path, {
-      importMode: importMode.value
+      importMode: importMode.value,
+      groupingMode: groupingMode.value
     })
     closeToast()
     if (response?.code !== 200) {
@@ -266,6 +299,28 @@ async function runImport() {
   border-radius: 12px;
   background: var(--surface-1);
   padding: 10px 12px;
+}
+
+.grouping-mode-switch {
+  margin: 10px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  padding: 10px 12px;
+}
+
+.inline-title {
+  margin-bottom: 8px;
+}
+
+.grouping-mode-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.grouping-button {
+  min-width: 156px;
 }
 
 .switch-main {

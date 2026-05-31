@@ -462,9 +462,10 @@ def test_video_local_import_softlink_mode_keeps_source_and_streams_from_local_so
 
 
 @pytest.mark.integration
-def test_video_local_import_duplicate_local_record_skips(integration_runtime):
+def test_video_local_import_duplicate_local_record_appends_episode(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
+    data_dir: Path = integration_runtime["data_dir"]
     meta_dir: Path = integration_runtime["meta_dir"]
     videos_path = meta_dir / "videos_database.json"
 
@@ -473,6 +474,9 @@ def test_video_local_import_duplicate_local_record_skips(integration_runtime):
     source_root.mkdir(parents=True, exist_ok=True)
     incoming_file = source_root / "ABP-123 sample.mp4"
     incoming_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    existing_source_abs = data_dir / "video" / "LOCAL" / "LOCALV_DUP_001" / "existing.mp4"
+    existing_source_abs.parent.mkdir(parents=True, exist_ok=True)
+    existing_source_abs.write_bytes(b"\x00\x00\x00\x18ftypmp42")
 
     try:
         save_json(
@@ -487,8 +491,8 @@ def test_video_local_import_duplicate_local_record_skips(integration_runtime):
                         "id": "LOCALV_DUP_001",
                         "code": "abp_123",
                         "title": "existing local",
-                        "local_video_path": "/api/v1/video/local-stream/LOCALV_DUP_001",
-                        "local_source_path": "",
+                        "local_video_path": "/media/video/LOCAL/LOCALV_DUP_001/existing.mp4",
+                        "local_source_path": str(existing_source_abs),
                         "is_deleted": False,
                     }
                 ],
@@ -504,13 +508,17 @@ def test_video_local_import_duplicate_local_record_skips(integration_runtime):
         payload = response.json()
         assert payload["code"] == 200
         data = payload["data"] or {}
-        assert data.get("imported_count") == 0
-        assert data.get("skipped_count") == 1
-        skipped_items = data.get("skipped_items") or []
-        assert skipped_items
-        assert skipped_items[0].get("reason") == "duplicate_local_import"
-        assert skipped_items[0].get("duplicate_id") == "LOCALV_DUP_001"
-        assert incoming_file.exists()
+        assert data.get("imported_count") == 1
+        assert data.get("attached_source_count") == 1
+        assert data.get("imported_ids") == ["LOCALV_DUP_001"]
+
+        refreshed = load_json(videos_path).get("videos") or []
+        record = find_by_id(refreshed, "LOCALV_DUP_001")
+        assert record is not None
+        assert record.get("total_units") == 2
+        episodes = ((record.get("display") or {}).get("local_episodes") or [])
+        assert [item.get("name") for item in episodes] == ["existing.mp4", "ABP-123 sample.mp4"]
+        assert not incoming_file.exists()
     finally:
         save_json(videos_path, original_videos)
 
@@ -575,6 +583,10 @@ def test_video_local_import_duplicate_non_local_without_source_attaches_source(i
         assert record.get("local_source_filename") == "abp 123 from_local.mp4"
         assert record.get("source_origin") == "local_import"
         assert str(record.get("source_updated_time") or "").strip()
+        assert record.get("total_units") == 1
+        episodes = ((record.get("display") or {}).get("local_episodes") or [])
+        assert len(episodes) == 1
+        assert episodes[0].get("name") == "abp 123 from_local.mp4"
 
         media_rel = str(record.get("local_video_path") or "")[len("/media/"):].replace("/", os.sep)
         assert (data_dir / media_rel).exists()
@@ -584,7 +596,7 @@ def test_video_local_import_duplicate_non_local_without_source_attaches_source(i
 
 
 @pytest.mark.integration
-def test_video_local_import_duplicate_non_local_with_source_skips(integration_runtime):
+def test_video_local_import_duplicate_non_local_with_source_appends_episode(integration_runtime):
     base_url = integration_runtime["base_url"]
     runtime_root: Path = integration_runtime["runtime_root"]
     data_dir: Path = integration_runtime["data_dir"]
@@ -633,12 +645,20 @@ def test_video_local_import_duplicate_non_local_with_source_skips(integration_ru
         payload = response.json()
         assert payload["code"] == 200
         data = payload["data"] or {}
-        assert data.get("imported_count") == 0
-        assert data.get("skipped_count") == 1
-        skipped_items = data.get("skipped_items") or []
-        assert skipped_items
-        assert skipped_items[0].get("reason") == "duplicate_code_source_exists"
-        assert skipped_items[0].get("duplicate_id") == "JAVDB900001"
-        assert incoming_file.exists()
+        assert data.get("imported_count") == 1
+        assert data.get("attached_source_count") == 1
+        assert data.get("imported_ids") == ["JAVDB900001"]
+
+        refreshed = load_json(videos_path).get("videos") or []
+        record = find_by_id(refreshed, "JAVDB900001")
+        assert record is not None
+        assert record.get("total_units") == 2
+        episodes = ((record.get("display") or {}).get("local_episodes") or [])
+        assert [item.get("name") for item in episodes] == ["source.mp4", "ABP123 another.mp4"]
+        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/JAVDB900001/source.")
+        assert str(record.get("local_source_path") or "").endswith(os.path.join("video", "JAVDB", "JAVDB900001", "source.mp4"))
+        appended_media_rel = "video/JAVDB/JAVDB900001/ABP123 another.mp4".replace("/", os.sep)
+        assert (data_dir / appended_media_rel).exists()
+        assert not incoming_file.exists()
     finally:
         save_json(videos_path, original_videos)
