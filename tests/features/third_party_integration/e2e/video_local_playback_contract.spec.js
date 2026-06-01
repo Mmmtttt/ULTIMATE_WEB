@@ -7,9 +7,9 @@ const VIDEO_ID = "JAVDB900001";
  * - 用例目的: 看护“本地视频详情页点击播放”端到端链路，确保用户点击后会请求后端播放源接口，并将第三方代理地址映射到播放器。
  * - 测试步骤:
  *   1. 进入 `/video/JAVDB900001`，等待详情页渲染。
- *   2. mock `/api/v1/video/JAVDB900001/play-urls` 返回包含 `proxy_url=/proxy2?...` 的播放源。
+ *   2. mock `/api/v1/video/JAVDB900001/play-urls` 返回当前协议层约定的 `provider_groups + sources` 播放数据。
  *   3. 用户点击封面播放区域 `.video-preview`。
- *   4. 断言播放器区域出现、播放源按钮渲染，并命中 `/api/v1/video/proxy2?...` 请求。
+ *   4. 断言播放器区域出现，并命中 `/api/v1/video/proxy2?...` 请求。
  * - 预期结果:
  *   1. 前端发起 `/api/v1/video/JAVDB900001/play-urls` 请求。
  *   2. 页面切换到播放器态（`.video-player-section` 可见）。
@@ -40,6 +40,33 @@ test("local video detail click-to-play triggers play-urls and proxy src mapping"
           video_id: VIDEO_ID,
           code: "TEST-900001",
           title: "Seed Video",
+          provider: "missav",
+          default_provider_key: "missav",
+          provider_groups: [
+            {
+              key: "missav",
+              label: "MissAV",
+              selection_mode: "streams",
+              available: true,
+              default_source_key: "missav",
+              sources: [
+                {
+                  key: "missav",
+                  source: "missav",
+                  name: "MissAV",
+                  available: true,
+                  currentResolution: "1080P",
+                  streams: [
+                    {
+                      resolution: "1080P",
+                      proxy_url: "/proxy2?url=https%3A%2F%2Fmedia.example%2Fseed-900001.m3u8",
+                      url: "https://media.example/seed-900001.m3u8",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
           sources: [
             {
               source: "missav",
@@ -75,8 +102,8 @@ test("local video detail click-to-play triggers play-urls and proxy src mapping"
   await page.locator(".video-preview").click();
 
   await expect(page.locator(".video-player-section")).toBeVisible();
-  await expect(page.locator(".source-selector .van-button")).toHaveCount(1);
-  await expect(page.locator(".source-selector .van-button").first()).toContainText("MissAV");
+  await expect(page.locator(".video-element")).toBeVisible();
+  await expect(page.locator(".source-selector .van-button")).toHaveCount(0);
 
   expect(playUrlHits).toHaveLength(1);
   expect(proxyHits.length).toBeGreaterThan(0);

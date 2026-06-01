@@ -791,19 +791,26 @@ function formatBytes(value) {
   margin-bottom: 12px;
 }
 
+.workflow-head > div,
+.panel-title > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .workflow-head h3,
 .panel-title h3 {
   font-size: 16px;
 }
 
-.help-wrap {
+:deep(.help-wrap) {
   position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  vertical-align: top;
 }
 
-.help-button {
+:deep(.help-button) {
   width: 22px;
   height: 22px;
   border: 1px solid rgba(148, 163, 184, 0.55);
@@ -821,15 +828,15 @@ function formatBytes(value) {
   transition: border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
-.help-wrap:hover .help-button,
-.help-wrap:focus-within .help-button {
+:deep(.help-wrap:hover .help-button),
+:deep(.help-wrap:focus-within .help-button) {
   border-color: rgba(37, 99, 235, 0.7);
   color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1), 0 2px 8px rgba(15, 23, 42, 0.1);
   transform: translateY(-1px);
 }
 
-.help-bubble {
+:deep(.help-bubble) {
   position: absolute;
   right: 0;
   top: 30px;
@@ -843,6 +850,8 @@ function formatBytes(value) {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
   line-height: 1.55;
   font-size: 13px;
+  text-align: left;
+  overflow-wrap: anywhere;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px);
@@ -850,7 +859,7 @@ function formatBytes(value) {
   transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
 }
 
-.help-bubble::before {
+:deep(.help-bubble::before) {
   content: '';
   position: absolute;
   right: 7px;
@@ -861,8 +870,8 @@ function formatBytes(value) {
   transform: rotate(45deg);
 }
 
-.help-wrap:hover .help-bubble,
-.help-wrap:focus-within .help-bubble {
+:deep(.help-wrap:hover .help-bubble),
+:deep(.help-wrap:focus-within .help-bubble) {
   opacity: 1;
   transform: translateY(0);
   visibility: visible;
@@ -1060,6 +1069,7 @@ function formatBytes(value) {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .console-frame-wrap {
@@ -1117,6 +1127,11 @@ function formatBytes(value) {
 
   .action-row {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-head,
+  .panel-title {
+    flex-wrap: wrap;
   }
 
   .console-frame-wrap {

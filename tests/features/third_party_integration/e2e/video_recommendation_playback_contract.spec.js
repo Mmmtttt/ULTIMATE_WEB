@@ -8,12 +8,12 @@ const RECOMMENDATION_ID = "JAVDBREC9001";
  * - 测试步骤:
  *   1. 进入 `/video-recommendation/JAVDBREC9001`。
  *   2. mock 推荐详情接口，返回含 code 的推荐视频数据。
- *   3. mock 推荐播放源接口，返回 `proxy_url=/proxy2?...`。
+ *   3. mock 推荐播放源接口，返回当前协议层约定的 `provider_groups + sources` 数据。
  *   4. 用户点击 `.video-preview` 触发播放。
  *   5. 断言请求链路、播放器渲染与 `/api/v1/video/proxy2` 命中。
  * - 预期结果:
  *   1. 前端发起 `/api/v1/video/recommendation/JAVDBREC9001/play-urls`。
- *   2. 页面展示播放器与播放源按钮。
+ *   2. 页面展示播放器。
  *   3. 播放链路实际命中 `/api/v1/video/proxy2?...` 代理地址。
  * - 历史变更:
  *   - 2026-03-24: 初始创建，覆盖推荐视频播放链路 E2E 第三方代理契约。
@@ -75,6 +75,33 @@ test("recommendation video detail click-to-play triggers recommendation play-url
           video_id: RECOMMENDATION_ID,
           code: "REC-9001",
           title: "Recommendation Seed Video",
+          provider: "missav",
+          default_provider_key: "missav",
+          provider_groups: [
+            {
+              key: "missav",
+              label: "MissAV",
+              selection_mode: "streams",
+              available: true,
+              default_source_key: "missav",
+              sources: [
+                {
+                  key: "missav",
+                  source: "missav",
+                  name: "MissAV",
+                  available: true,
+                  currentResolution: "720P",
+                  streams: [
+                    {
+                      resolution: "720P",
+                      proxy_url: "/proxy2?url=https%3A%2F%2Fmedia.example%2Frec-9001.m3u8",
+                      url: "https://media.example/rec-9001.m3u8",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
           sources: [
             {
               source: "missav",
@@ -110,8 +137,8 @@ test("recommendation video detail click-to-play triggers recommendation play-url
   await page.locator(".video-preview").click();
 
   await expect(page.locator(".video-player-section")).toBeVisible();
-  await expect(page.locator(".source-selector .van-button")).toHaveCount(1);
-  await expect(page.locator(".source-selector .van-button").first()).toContainText("MissAV");
+  await expect(page.locator(".video-element")).toBeVisible();
+  await expect(page.locator(".source-selector .van-button")).toHaveCount(0);
 
   expect(detailHits).toHaveLength(1);
   expect(playUrlHits).toHaveLength(1);
