@@ -17,6 +17,10 @@ import requests
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, unquote
 from PIL import Image
+from application.content_sorting import (
+    normalize_custom_order_records,
+    sort_content_items,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -419,6 +423,23 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"更新视频最近导入标签失败: {e}")
             return ServiceResult.error("更新最近导入标签失败")
+
+    @staticmethod
+    def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids: List[str] = None) -> bool:
+        changed = False
+        processed = False
+
+        def update_items(items: List[Dict[str, Any]]):
+            nonlocal changed, processed
+            normalized_items, did_change = normalize_custom_order_records(items, ordered_ids)
+            changed = did_change
+            processed = True
+            return normalized_items if did_change else None
+
+        updated = document_repo.update_items(update_items)
+        if updated:
+            return True
+        return processed and not changed
     
     def get_video_list(
         self,
@@ -440,17 +461,10 @@ class VideoAppService(BaseContentAppService):
                 videos = [v for v in videos if v.score is not None and v.score >= min_score]
             if max_score is not None:
                 videos = [v for v in videos if v.score is not None and v.score <= max_score]
-            
-            reverse = str(sort_order or "desc").strip().lower() != "asc"
-
-            if sort_type == "create_time":
-                videos = sorted(videos, key=lambda v: v.create_time or "", reverse=reverse)
-            elif sort_type == "score":
-                videos = sorted(videos, key=lambda v: v.score or 0, reverse=reverse)
-            elif sort_type == "access_time":
-                videos = sorted(videos, key=lambda v: v.last_access_time or "", reverse=reverse)
-            elif sort_type == "date":
-                videos = sorted(videos, key=lambda v: v.date or "", reverse=reverse)
+            if sort_type:
+                if str(sort_type or "").strip().lower() == "custom":
+                    self._commit_custom_order(self._video_document_repo)
+                videos = sort_content_items(videos, sort_type, sort_order)
             
             video_list = []
             for v in videos:
@@ -464,6 +478,29 @@ class VideoAppService(BaseContentAppService):
         except Exception as e:
             error_logger.error(f"获取视频列表失败: {e}")
             return ServiceResult.error("获取视频列表失败")
+
+    def update_custom_order(self, video_ids: List[str], source: str = "local") -> ServiceResult:
+        try:
+            normalized_ids = [
+                str(video_id or "").strip()
+                for video_id in (video_ids or [])
+                if str(video_id or "").strip()
+            ]
+            if not normalized_ids:
+                return ServiceResult.error("缺少参数: video_ids")
+
+            document_repo = (
+                self._video_recommendation_document_repo
+                if str(source or "").strip().lower() == "preview"
+                else self._video_document_repo
+            )
+            if not self._commit_custom_order(document_repo, normalized_ids):
+                return ServiceResult.error("保存自定义排序失败")
+
+            return ServiceResult.ok({"updated_count": len(normalized_ids)}, "自定义排序已保存")
+        except Exception as e:
+            error_logger.error(f"保存视频自定义排序失败: {e}")
+            return ServiceResult.error("保存自定义排序失败")
     
     def get_video_detail(self, video_id: str) -> ServiceResult:
         try:

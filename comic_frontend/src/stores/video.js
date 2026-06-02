@@ -360,6 +360,10 @@ export const useVideoStore = defineStore('video', () => {
     filteredVideos.value = []
   }
 
+  async function saveCustomOrder(videoIds = []) {
+    return videoApi.updateCustomOrder(videoIds)
+  }
+
   function setSortState(sortType = null, sortOrder = 'desc') {
     currentSort.value = sortType || null
     currentSortOrder.value = sortOrder || 'desc'
@@ -407,6 +411,7 @@ export const useVideoStore = defineStore('video', () => {
     filterByTags,
     filterMulti,
     sortVideos,
+    saveCustomOrder,
     setSortState,
     clearFilter,
     clearCurrentVideo

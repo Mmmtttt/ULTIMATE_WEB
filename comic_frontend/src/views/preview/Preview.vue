@@ -60,6 +60,13 @@
       <van-button size="mini" plain @click="clearAllFilters">清空</van-button>
     </div>
 
+    <div v-if="showCustomSortBanner" class="custom-sort-banner">
+      <div class="custom-sort-banner__copy">当前按自定义顺序显示</div>
+      <van-button size="small" plain type="primary" @click="openCustomOrderEditor">
+        调整顺序
+      </van-button>
+    </div>
+
     <!-- Content Area -->
     <div class="content-area">
       <van-loading v-if="isLoading" class="loading-center" />
@@ -212,6 +219,12 @@
         </div>
       </div>
     </van-popup>
+
+    <ContentOrderEditor
+      v-model:show="showCustomOrderEditor"
+      :items="orderEditorItems"
+      @save="saveCustomOrder"
+    />
   </div>
 </template>
 
@@ -224,9 +237,11 @@ import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
+import ContentOrderEditor from '@/components/common/ContentOrderEditor.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
 import { useClientPagination } from '@/composables/useClientPagination'
+import { toBackendUrl } from '@/utils/url'
 import {
   buildSortOptions,
   clearBrowseState,
@@ -259,6 +274,7 @@ const showSortPanel = ref(false)
 const showMenu = ref(false)
 const showViewModeSheet = ref(false)
 const showBatchListPopup = ref(false)
+const showCustomOrderEditor = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
 const batchSelectedListIds = ref([])
@@ -290,6 +306,9 @@ function getUiStateScope() {
 function isSortFieldSupported(sortField) {
   const normalized = String(sortField || '').trim()
   if (!normalized) {
+    return true
+  }
+  if (normalized === 'name' || normalized === 'random' || normalized === 'custom') {
     return true
   }
   if (normalized === 'date') {
@@ -406,8 +425,25 @@ const items = computed(() => {
   return isVideoMode.value ? videoRecStore.recommendationList : comicRecStore.recommendationList
 })
 
+const fullLibraryItems = computed(() => {
+  return isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
+})
+
 const displayItems = computed(() => {
   return filterMediaItemsByKeyword(items.value, searchKeyword.value)
+})
+
+const showCustomSortBanner = computed(() => {
+  return currentSortField.value === 'custom' && fullLibraryItems.value.length > 1
+})
+
+const orderEditorItems = computed(() => {
+  return fullLibraryItems.value.map((item) => ({
+    id: item.id,
+    title: item.title || item.name || item.id,
+    cover: resolveOrderCover(item),
+    platformLabel: item.plugin_name || item.platform || item.plugin_id || '',
+  }))
 })
 
 const paginationStorageKey = computed(() => `preview_${isVideoMode.value ? 'video' : 'comic'}`)
@@ -718,14 +754,59 @@ async function onSortConfirm({ selectedOptions }) {
   currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
   currentSortOrder.value = nextSort.sortOrder
   currentStore.value.setSortType(currentSortField.value || null, currentSortOrder.value)
-  if (hasActiveFilterState()) {
+  const customSortSelected = currentSortField.value === 'custom'
+  if (customSortSelected) {
+    await loadData(true)
+    if (hasActiveFilterState()) {
+      await applyCurrentFilters({ resetPage: true, closePanel: false, persist: false })
+    }
+  } else if (hasActiveFilterState()) {
     await applyCurrentFilters({ resetPage: true, persist: false })
   } else {
     await loadData(true)
   }
   await persistViewState()
   goFirst()
+  if (customSortSelected) {
+    showCustomOrderEditor.value = true
+  }
   showSortPanel.value = false
+}
+
+function resolveOrderCover(item) {
+  const candidate = String(item?.cover_path_local || item?.cover_path || '').trim()
+  return candidate ? toBackendUrl(candidate) : ''
+}
+
+function openCustomOrderEditor() {
+  if (!showCustomSortBanner.value) {
+    return
+  }
+  showCustomOrderEditor.value = true
+}
+
+async function saveCustomOrder(itemIds) {
+  try {
+    const response = await currentStore.value.saveCustomOrder?.(itemIds)
+    if (!response || response.code !== 200) {
+      showToast(response?.msg || response?.message || '保存自定义顺序失败')
+      return
+    }
+
+    showCustomOrderEditor.value = false
+    await loadData(true)
+    if (hasActiveFilterState()) {
+      await applyCurrentFilters({ resetPage: false, closePanel: false, persist: false })
+    } else if (typeof currentStore.value.clearFilter === 'function') {
+      currentStore.value.clearFilter()
+    }
+    goFirst()
+    await persistViewState()
+    showToast('自定义顺序已保存')
+  } catch (error) {
+    console.error('保存自定义顺序失败:', error)
+    showToast('保存自定义顺序失败')
+  }
 }
 
 async function applyFilterAndClose() {
@@ -884,6 +965,20 @@ onMounted(async () => {
   border: 1px solid rgba(47, 116, 255, 0.24);
   background: rgba(47, 116, 255, 0.08);
   color: var(--brand-700);
+}
+
+.custom-sort-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px 12px;
+}
+
+.custom-sort-banner__copy {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .toolbar {
@@ -1053,6 +1148,11 @@ onMounted(async () => {
 
   .toolbar-search :deep(.van-search__content) {
     height: 34px;
+  }
+
+  .custom-sort-banner {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .manage-bar {

@@ -3,6 +3,10 @@ import base64
 import json
 import os
 import re
+from application.content_sorting import (
+    normalize_custom_order_records,
+    sort_content_items,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -121,6 +125,23 @@ class ComicAppService:
             payload.pop("last_read_time", None)
             payload.pop("list_ids", None)
         return payload
+
+    @staticmethod
+    def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids: List[str] = None) -> bool:
+        changed = False
+        processed = False
+
+        def update_items(items: List[Dict[str, Any]]):
+            nonlocal changed, processed
+            normalized_items, did_change = normalize_custom_order_records(items, ordered_ids)
+            changed = did_change
+            processed = True
+            return normalized_items if did_change else None
+
+        updated = document_repo.update_items(update_items)
+        if updated:
+            return True
+        return processed and not changed
     
     def get_comic_list(
         self,
@@ -142,24 +163,13 @@ class ComicAppService:
                 comics = [c for c in comics if c.score is not None and c.score >= min_score]
             if max_score is not None:
                 comics = [c for c in comics if c.score is not None and c.score <= max_score]
-            
+
             app_logger.info(f"[get_comic_list] 排序前漫画数量: {len(comics)}")
             if sort_type:
                 app_logger.info(f"[get_comic_list] 执行排序: {sort_type}")
-
-            reverse = str(sort_order or "desc").strip().lower() != "asc"
-            
-            if sort_type == "create_time":
-                comics = sorted(comics, key=lambda c: c.create_time or "", reverse=reverse)
-            elif sort_type == "score":
-                comics = sorted(comics, key=lambda c: c.score or 0, reverse=reverse)
-            elif sort_type == "read_time":
-                comics = sorted(comics, key=lambda c: c.last_read_time or "", reverse=reverse)
-            elif sort_type == "read_status":
-                def read_status_sort_key(c):
-                    is_read = c.current_page >= c.total_page if c.total_page > 0 else False
-                    return (is_read, -(c.score or 0))
-                comics = sorted(comics, key=read_status_sort_key, reverse=reverse)
+                if str(sort_type or "").strip().lower() == "custom":
+                    self._commit_custom_order(self._comic_document_repo)
+                comics = sort_content_items(comics, sort_type, sort_order)
             
             app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
             
@@ -172,6 +182,24 @@ class ComicAppService:
         except Exception as e:
             error_logger.error(f"获取漫画列表失败: {e}")
             return ServiceResult.error("获取漫画列表失败")
+
+    def update_custom_order(self, comic_ids: List[str]) -> ServiceResult:
+        try:
+            normalized_ids = [
+                str(comic_id or "").strip()
+                for comic_id in (comic_ids or [])
+                if str(comic_id or "").strip()
+            ]
+            if not normalized_ids:
+                return ServiceResult.error("缺少参数: comic_ids")
+
+            if not self._commit_custom_order(self._comic_document_repo, normalized_ids):
+                return ServiceResult.error("保存自定义排序失败")
+
+            return ServiceResult.ok({"updated_count": len(normalized_ids)}, "自定义排序已保存")
+        except Exception as e:
+            error_logger.error(f"保存漫画自定义排序失败: {e}")
+            return ServiceResult.error("保存自定义排序失败")
     
     def get_comic_detail(self, comic_id: str) -> ServiceResult:
         try:

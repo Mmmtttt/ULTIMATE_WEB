@@ -209,6 +209,12 @@ export const comicApi = {
       params: { sort_type: sortType, sort_order: sortOrder }
     })
   },
+
+  updateCustomOrder: (comicIds = []) => {
+    return request.put('/v1/comic/custom-order', {
+      comic_ids: comicIds
+    })
+  },
   
   /**
    * 按评分范围筛选

@@ -12,6 +12,10 @@ export const videoApi = {
   getList(params = {}) {
     return request.get('/v1/video/list', { params })
   },
+
+  updateCustomOrder(videoIds = []) {
+    return request.put('/v1/video/custom-order', { video_ids: videoIds })
+  },
   
   getDetail(videoId) {
     return request.get('/v1/video/detail', { params: { video_id: videoId } })
@@ -210,6 +214,10 @@ export const videoApi = {
   
   getVideoRecommendationList(params = {}) {
     return request.get('/v1/video/recommendation/list', { params })
+  },
+
+  updateVideoRecommendationCustomOrder(videoIds = []) {
+    return request.put('/v1/video/recommendation/custom-order', { video_ids: videoIds })
   },
   
   getVideoRecommendationDetail(videoId) {

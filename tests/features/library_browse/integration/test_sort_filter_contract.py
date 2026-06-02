@@ -132,6 +132,58 @@ def test_comic_list_min_max_score_filters_match_seed_file(integration_runtime):
 
 
 @pytest.mark.integration
+def test_comic_list_sort_by_name_honors_natural_ascending_order(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 强看护漫画列表 `sort_type=name&sort_order=asc` 契约，确保名称排序支持自然顺序。
+    - 测试步骤:
+      1. 临时改写三个漫画标题为 `作品 2 / 作品 10 / 作品 1`。
+      2. 调用 `GET /api/v1/comic/list?sort_type=name&sort_order=asc`。
+      3. 对比接口返回顺序是否为 `作品 1 -> 作品 2 -> 作品 10`。
+    - 预期结果:
+      1. HTTP 状态码 200，业务 `code=200`。
+      2. 返回 ID 顺序严格匹配名称自然升序。
+    """
+    base_url = integration_runtime["base_url"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    comics_path = meta_dir / "comics_database.json"
+
+    original = load_json(comics_path)
+    mutated = load_json(comics_path)
+    comics = mutated.get("comics") or []
+    assert len(comics) >= 3
+
+    comics[0]["title"] = "排序样例 2"
+    comics[1]["title"] = "排序样例 10"
+    comics[2]["title"] = "排序样例 1"
+
+    try:
+        save_json(comics_path, mutated)
+
+        response = requests.get(
+            f"{base_url}/api/v1/comic/list",
+            params={"sort_type": "name", "sort_order": "asc"},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        actual_subset = [
+            item["id"]
+            for item in payload["data"]
+            if item["id"] in {comics[0]["id"], comics[1]["id"], comics[2]["id"]}
+        ]
+        assert actual_subset == [
+            comics[2]["id"],
+            comics[0]["id"],
+            comics[1]["id"],
+        ]
+    finally:
+        save_json(comics_path, original)
+
+
+@pytest.mark.integration
 def test_comic_filter_multi_include_exclude_author_list(integration_runtime):
     """
     用例描述:
@@ -379,6 +431,48 @@ def test_video_list_min_max_score_filters_match_seed_file(integration_runtime):
 
 
 @pytest.mark.integration
+def test_video_list_sort_by_random_returns_same_items_with_varying_orders(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 强看护视频列表 `sort_type=random` 契约，确保每次请求仍返回同一批内容，但顺序会变化。
+    - 测试步骤:
+      1. 读取 `videos_database.json` 并计算未删除视频 ID 集合。
+      2. 连续 4 次调用 `GET /api/v1/video/list?sort_type=random`。
+      3. 断言每次返回集合一致，且至少出现 2 种不同顺序。
+    - 预期结果:
+      1. 每次 HTTP 状态码均为 200，业务 `code=200`。
+      2. 每次返回 ID 集合与种子数据一致。
+      3. 至少有两次返回顺序不同。
+    """
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+
+    videos = load_json(meta_dir / "videos_database.json").get("videos", [])
+    expected_ids = {
+        item["id"]
+        for item in videos
+        if not item.get("is_deleted", False)
+    }
+
+    observed_orders = []
+    for _ in range(4):
+        response = requests.get(
+            f"{base_url}/api/v1/video/list",
+            params={"sort_type": "random"},
+            timeout=5,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+
+        order = tuple(item["id"] for item in payload["data"])
+        assert set(order) == expected_ids
+        observed_orders.append(order)
+
+    assert len(set(observed_orders)) >= 2
+
+
+@pytest.mark.integration
 def test_video_filter_multi_include_exclude_author_list(integration_runtime):
     """
     用例描述:
@@ -482,6 +576,68 @@ def test_recommendation_list_sort_by_score_honors_ascending_order(integration_ru
 
 
 @pytest.mark.integration
+def test_recommendation_custom_order_persists_after_update(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 强看护推荐漫画自定义排序契约，确保保存后的顺序能被列表读取并持久化。
+    - 测试步骤:
+      1. 构造 3 条推荐漫画记录。
+      2. 调用 `PUT /api/v1/recommendation/custom-order` 传入自定义顺序。
+      3. 调用 `GET /api/v1/recommendation/list?sort_type=custom`。
+      4. 读取 `recommendations_database.json` 校验 `custom_order` 已回写。
+    - 预期结果:
+      1. 更新接口与列表接口均返回 200。
+      2. 列表返回顺序与传入顺序一致。
+      3. 文件中的 `custom_order` 为连续编号。
+    """
+    base_url = integration_runtime["base_url"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    rec_path = meta_dir / "recommendations_database.json"
+
+    original = load_json(rec_path)
+    payload = {
+        "collection_name": "Test Comic Recommendations",
+        "user": "test-user",
+        "total_recommendations": 3,
+        "last_updated": "2026-06-03",
+        "recommendations": [
+            {"id": "JMREC101", "title": "推荐漫画 1", "score": 8.1, "create_time": "2026-05-01T10:00:00", "is_deleted": False},
+            {"id": "JMREC102", "title": "推荐漫画 2", "score": 8.2, "create_time": "2026-05-02T10:00:00", "is_deleted": False},
+            {"id": "JMREC103", "title": "推荐漫画 3", "score": 8.3, "create_time": "2026-05-03T10:00:00", "is_deleted": False},
+        ],
+    }
+    expected_order = ["JMREC103", "JMREC101", "JMREC102"]
+
+    try:
+        save_json(rec_path, payload)
+
+        update_response = requests.put(
+            f"{base_url}/api/v1/recommendation/custom-order",
+            json={"recommendation_ids": expected_order},
+            timeout=5,
+        )
+        assert update_response.status_code == 200
+        update_payload = update_response.json()
+        assert update_payload["code"] == 200
+
+        list_response = requests.get(
+            f"{base_url}/api/v1/recommendation/list",
+            params={"sort_type": "custom"},
+            timeout=5,
+        )
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+        assert list_payload["code"] == 200
+        assert [item["id"] for item in list_payload["data"]] == expected_order
+
+        persisted = load_json(rec_path).get("recommendations", [])
+        persisted_map = {item["id"]: item for item in persisted}
+        assert [persisted_map[item_id].get("custom_order") for item_id in expected_order] == [0, 1, 2]
+    finally:
+        save_json(rec_path, original)
+
+
+@pytest.mark.integration
 def test_video_recommendation_list_sort_by_publish_date_honors_ascending_order(integration_runtime):
     """
     用例描述:
@@ -526,5 +682,67 @@ def test_video_recommendation_list_sort_by_publish_date_honors_ascending_order(i
         body = response.json()
         assert body["code"] == 200
         assert [item["id"] for item in body["data"]] == ["JAVDBREC002", "JAVDBREC003", "JAVDBREC001"]
+    finally:
+        save_json(rec_path, original)
+
+
+@pytest.mark.integration
+def test_video_recommendation_custom_order_persists_after_update(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 强看护推荐视频自定义排序契约，覆盖 document-repo 路径下的顺序保存与读取。
+    - 测试步骤:
+      1. 构造 3 条推荐视频记录。
+      2. 调用 `PUT /api/v1/video/recommendation/custom-order` 保存顺序。
+      3. 调用 `GET /api/v1/video/recommendation/list?sort_type=custom` 校验返回顺序。
+      4. 读取 `video_recommendations_database.json` 校验 `custom_order` 已回写。
+    - 预期结果:
+      1. 更新接口与列表接口均返回 200。
+      2. 列表顺序与传入顺序一致。
+      3. 文件中的 `custom_order` 连续编号。
+    """
+    base_url = integration_runtime["base_url"]
+    meta_dir: Path = integration_runtime["meta_dir"]
+    rec_path = meta_dir / "video_recommendations_database.json"
+
+    original = load_json(rec_path)
+    payload = {
+        "collection_name": "Test Video Recommendations",
+        "user": "test-user",
+        "total_video_recommendations": 3,
+        "last_updated": "2026-06-03",
+        "video_recommendations": [
+            {"id": "JAVDBREC101", "title": "推荐视频 1", "code": "REC-101", "date": "2024-09-01", "create_time": "2026-05-01T10:00:00", "score": 7.2, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "JAVDBREC102", "title": "推荐视频 2", "code": "REC-102", "date": "2024-09-02", "create_time": "2026-05-02T10:00:00", "score": 7.3, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "JAVDBREC103", "title": "推荐视频 3", "code": "REC-103", "date": "2024-09-03", "create_time": "2026-05-03T10:00:00", "score": 7.4, "tag_ids": [], "list_ids": [], "is_deleted": False},
+        ],
+    }
+    expected_order = ["JAVDBREC102", "JAVDBREC103", "JAVDBREC101"]
+
+    try:
+        save_json(rec_path, payload)
+
+        update_response = requests.put(
+            f"{base_url}/api/v1/video/recommendation/custom-order",
+            json={"video_ids": expected_order},
+            timeout=5,
+        )
+        assert update_response.status_code == 200
+        update_payload = update_response.json()
+        assert update_payload["code"] == 200
+
+        list_response = requests.get(
+            f"{base_url}/api/v1/video/recommendation/list",
+            params={"sort_type": "custom"},
+            timeout=5,
+        )
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+        assert list_payload["code"] == 200
+        assert [item["id"] for item in list_payload["data"]] == expected_order
+
+        persisted = load_json(rec_path).get("video_recommendations", [])
+        persisted_map = {item["id"]: item for item in persisted}
+        assert [persisted_map[item_id].get("custom_order") for item_id in expected_order] == [0, 1, 2]
     finally:
         save_json(rec_path, original)

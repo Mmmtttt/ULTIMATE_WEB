@@ -117,8 +117,12 @@ export function buildSortOptions(isVideoMode = false) {
     { text: '默认顺序', value: encodeSortSelection('', DEFAULT_SORT_ORDER) },
     { text: '最近导入', value: encodeSortSelection('create_time', SORT_ORDER.DESC) },
     { text: '最早导入', value: encodeSortSelection('create_time', SORT_ORDER.ASC) },
+    { text: '名称 A-Z', value: encodeSortSelection('name', SORT_ORDER.ASC) },
+    { text: '名称 Z-A', value: encodeSortSelection('name', SORT_ORDER.DESC) },
     { text: '评分最高', value: encodeSortSelection('score', SORT_ORDER.DESC) },
     { text: '评分最低', value: encodeSortSelection('score', SORT_ORDER.ASC) },
+    { text: '随机排序', value: encodeSortSelection('random', DEFAULT_SORT_ORDER) },
+    { text: '自定义顺序', value: encodeSortSelection('custom', SORT_ORDER.ASC) },
   ]
   if (isVideoMode) {
     options.push(
@@ -148,6 +152,41 @@ function compareValues(left, right) {
   return 0
 }
 
+function compareText(left, right) {
+  return String(left || '').localeCompare(String(right || ''), 'zh-Hans-CN', {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
+function compareCustomOrder(left, right) {
+  const normalizeOrder = (value) => {
+    if (value === '' || value === null || value === undefined) {
+      return null
+    }
+    const numericValue = Number(value)
+    return Number.isInteger(numericValue) && numericValue >= 0 ? numericValue : null
+  }
+  const leftOrder = normalizeOrder(left?.custom_order)
+  const rightOrder = normalizeOrder(right?.custom_order)
+
+  if (leftOrder !== null && rightOrder !== null) {
+    return leftOrder - rightOrder
+  }
+  if (leftOrder !== null) {
+    return -1
+  }
+  if (rightOrder !== null) {
+    return 1
+  }
+
+  const createTimeCompare = compareText(String(right?.create_time || ''), String(left?.create_time || ''))
+  if (createTimeCompare !== 0) {
+    return createTimeCompare
+  }
+  return compareText(left?.title || left?.name || left?.id, right?.title || right?.name || right?.id)
+}
+
 export function sortContentItems(items = [], sortField = '', sortOrder = DEFAULT_SORT_ORDER) {
   const normalizedField = String(sortField || '').trim()
   if (!normalizedField) {
@@ -156,6 +195,14 @@ export function sortContentItems(items = [], sortField = '', sortOrder = DEFAULT
 
   const safeItems = Array.isArray(items) ? [...items] : []
   const factor = normalizeSortOrder(sortOrder) === SORT_ORDER.ASC ? 1 : -1
+
+  if (normalizedField === 'random') {
+    return [...safeItems].sort(() => Math.random() - 0.5)
+  }
+
+  if (normalizedField === 'custom') {
+    return [...safeItems].sort(compareCustomOrder)
+  }
 
   return safeItems.sort((left, right) => {
     if (normalizedField === 'score') {
@@ -171,8 +218,12 @@ export function sortContentItems(items = [], sortField = '', sortOrder = DEFAULT
       return compareValues(Number(left?.score || 0), Number(right?.score || 0)) * -1
     }
 
+    if (normalizedField === 'name') {
+      return compareText(left?.title || left?.name || left?.id, right?.title || right?.name || right?.id) * factor
+    }
+
     const leftValue = String(left?.[normalizedField] || '').trim()
     const rightValue = String(right?.[normalizedField] || '').trim()
-    return compareValues(leftValue, rightValue) * factor
+    return compareText(leftValue, rightValue) * factor
   })
 }

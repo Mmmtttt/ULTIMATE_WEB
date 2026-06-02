@@ -40,6 +40,7 @@ class BaseContent(BaseEntity):
     display: Dict[str, Any] = field(default_factory=dict)
     storage_path_relative: str = ""
     storage_path_kind: str = ""
+    custom_order: Optional[int] = None
     content_type: ContentType = ContentType.COMIC
 
     @staticmethod
@@ -53,6 +54,14 @@ class BaseContent(BaseEntity):
             seen.add(value)
             normalized.append(value)
         return normalized
+
+    @staticmethod
+    def _normalize_custom_order(value: Any) -> Optional[int]:
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return None
+        return normalized if normalized >= 0 else None
     
     def to_dict(self) -> dict:
         return {
@@ -76,6 +85,7 @@ class BaseContent(BaseEntity):
             "display": dict(self.display or {}),
             "storage_path_relative": self.storage_path_relative,
             "storage_path_kind": self.storage_path_kind,
+            "custom_order": self._normalize_custom_order(self.custom_order),
             "content_type": self.content_type.value
         }
     
@@ -105,6 +115,7 @@ class BaseContent(BaseEntity):
             display=dict(data.get("display") or {}),
             storage_path_relative=data.get("storage_path_relative", ""),
             storage_path_kind=data.get("storage_path_kind", ""),
+            custom_order=cls._normalize_custom_order(data.get("custom_order")),
             content_type=content_type
         )
     

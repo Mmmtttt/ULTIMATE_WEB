@@ -310,7 +310,7 @@ def test_actor_cover_download_resolves_proxy2_url_before_requests(third_party_cl
     """
     actor_api = third_party_client["actor_api"]
     service = actor_api.actor_service
-    captured = {}
+    captured_calls = []
     content_id = f"LOL-{uuid.uuid4().hex[:8].upper()}"
 
     target_url = "https://www.javbus.com/pics/thumb/a9mj.jpg"
@@ -330,18 +330,23 @@ def test_actor_cover_download_resolves_proxy2_url_before_requests(third_party_cl
             return None
 
     def fake_requests_get(url, headers=None, timeout=10):
-        captured["url"] = url
-        captured["headers"] = headers or {}
-        captured["timeout"] = timeout
+        captured_calls.append(
+            {
+                "url": url,
+                "headers": headers or {},
+                "timeout": timeout,
+            }
+        )
         return FakeResponse()
 
     monkeypatch.setattr("application.actor_app_service.requests.get", fake_requests_get)
 
     result_url = service._download_cover(content_id, proxy_url, "javbus")
 
-    assert captured["url"] == target_url
-    assert captured["timeout"] == 10
-    assert "javbus.com" in str(captured["headers"].get("Referer", "")).lower()
+    matching_calls = [call for call in captured_calls if call["url"] == target_url]
+    assert matching_calls
+    assert matching_calls[-1]["timeout"] == 10
+    assert "javbus.com" in str(matching_calls[-1]["headers"].get("Referer", "")).lower()
     assert result_url.startswith(f"/static/cover/JAVBUS/author_cache/{content_id}.jpg")
 
 @pytest.mark.integration

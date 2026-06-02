@@ -33,6 +33,12 @@ export const recommendationApi = {
     return request.get(`/v1/recommendation/list${queryString ? '?' + queryString : ''}`)
   },
 
+  updateCustomOrder: (recommendationIds = []) => {
+    return request.put('/v1/recommendation/custom-order', {
+      recommendation_ids: recommendationIds
+    })
+  },
+
   /**
    * 获取推荐漫画详情
    * @param {string} recommendationId - 推荐漫画ID

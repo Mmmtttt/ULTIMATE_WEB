@@ -311,6 +311,20 @@ def comic_list():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/custom-order', methods=['PUT'])
+def update_comic_custom_order():
+    try:
+        data = request.json or {}
+        comic_ids = data.get('comic_ids', [])
+        result = comic_service.update_custom_order(comic_ids)
+        if result.success:
+            return success_response(result.data, result.message or "自定义排序已保存")
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"保存漫画自定义排序失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/detail', methods=['GET'])
 def comic_detail():
     try:

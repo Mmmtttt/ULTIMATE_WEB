@@ -51,6 +51,7 @@ class VideoRecommendation(BaseContent):
             display=dict(data.get("display") or {}),
             storage_path_relative=data.get("storage_path_relative", ""),
             storage_path_kind=data.get("storage_path_kind", ""),
+            custom_order=BaseContent._normalize_custom_order(data.get("custom_order")),
             content_type=ContentType.VIDEO,
             code=data.get("code", ""),
             date=data.get("date", ""),

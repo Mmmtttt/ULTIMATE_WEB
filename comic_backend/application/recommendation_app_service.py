@@ -2,6 +2,10 @@ from typing import Any, Dict, List, Optional
 import os
 import re
 import shutil
+from application.content_sorting import (
+    normalize_custom_order_records,
+    sort_content_items,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -10,11 +14,12 @@ from domain.comic import Comic, ComicRepository
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import RecommendationJsonRepository, TagJsonRepository, ComicJsonRepository
+from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from core.utils import get_current_time, get_preview_pages, normalize_total_page
-from core.constants import COMIC_DIR, COMIC_RECOMMENDATION_CACHE_DIR
+from core.constants import COMIC_DIR, COMIC_RECOMMENDATION_CACHE_DIR, RECOMMENDATION_JSON_FILE
 from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from utils.file_parser import file_parser
 from core.enums import ContentType
@@ -42,6 +47,11 @@ class RecommendationAppService:
         self._tag_repo = tag_repo or TagJsonRepository()
         self._comic_repo = comic_repo or ComicJsonRepository()
         self._platform_service = None
+        self._recommendation_document_repo = JsonDocumentRepository(
+            RECOMMENDATION_JSON_FILE,
+            "recommendations",
+            "total_recommendations",
+        )
 
     @staticmethod
     def _recommendation_to_summary_dict(recommendation: Recommendation, tag_map: Dict[str, str]) -> Dict[str, Any]:
@@ -121,6 +131,23 @@ class RecommendationAppService:
                     recommendation[key] = value
                     changed = True
         return changed
+
+    @staticmethod
+    def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids: List[str] = None) -> bool:
+        changed = False
+        processed = False
+
+        def update_items(items: List[Dict[str, Any]]):
+            nonlocal changed, processed
+            normalized_items, did_change = normalize_custom_order_records(items, ordered_ids)
+            changed = did_change
+            processed = True
+            return normalized_items if did_change else None
+
+        updated = document_repo.update_items(update_items)
+        if updated:
+            return True
+        return processed and not changed
     
     def get_recommendation_list(
         self,
@@ -146,20 +173,10 @@ class RecommendationAppService:
                 recommendations = [r for r in recommendations if r.score is not None and r.score <= max_score]
             
             app_logger.info(f"[get_recommendation_list] 排序前数量: {len(recommendations)}")
-            reverse = str(sort_order or "desc").strip().lower() != "asc"
-            
-            # 排序
-            if sort_type == "create_time":
-                recommendations = sorted(recommendations, key=lambda r: r.create_time or "", reverse=reverse)
-            elif sort_type == "score":
-                recommendations = sorted(recommendations, key=lambda r: r.score or 0, reverse=reverse)
-            elif sort_type == "read_time":
-                recommendations = sorted(recommendations, key=lambda r: r.last_read_time or "", reverse=reverse)
-            elif sort_type == "read_status":
-                def read_status_sort_key(r):
-                    is_read = r.current_page >= r.total_page if r.total_page > 0 else False
-                    return (is_read, -(r.score or 0))
-                recommendations = sorted(recommendations, key=read_status_sort_key, reverse=reverse)
+            if sort_type:
+                if str(sort_type or "").strip().lower() == "custom":
+                    self._commit_custom_order(self._recommendation_document_repo)
+                recommendations = sort_content_items(recommendations, sort_type, sort_order)
             
             app_logger.info(f"[get_recommendation_list] 排序后数量: {len(recommendations)}")
             
@@ -175,6 +192,24 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"获取推荐列表失败: {e}")
             return ServiceResult.error("获取推荐列表失败")
+
+    def update_custom_order(self, recommendation_ids: List[str]) -> ServiceResult:
+        try:
+            normalized_ids = [
+                str(recommendation_id or "").strip()
+                for recommendation_id in (recommendation_ids or [])
+                if str(recommendation_id or "").strip()
+            ]
+            if not normalized_ids:
+                return ServiceResult.error("缺少参数: recommendation_ids")
+
+            if not self._commit_custom_order(self._recommendation_document_repo, normalized_ids):
+                return ServiceResult.error("保存自定义排序失败")
+
+            return ServiceResult.ok({"updated_count": len(normalized_ids)}, "自定义排序已保存")
+        except Exception as e:
+            error_logger.error(f"保存推荐漫画自定义排序失败: {e}")
+            return ServiceResult.error("保存自定义排序失败")
     
     def get_recommendation_detail(self, recommendation_id: str) -> ServiceResult:
         """获取推荐漫画详情"""

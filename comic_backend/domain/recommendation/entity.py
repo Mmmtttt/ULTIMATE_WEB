@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from core.enums import ContentType
 from core.utils import normalize_total_page
@@ -46,6 +46,7 @@ class Recommendation(BaseContent):
         display: Dict[str, Any] = None,
         storage_path_relative: str = "",
         storage_path_kind: str = "",
+        custom_order: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(
@@ -69,6 +70,7 @@ class Recommendation(BaseContent):
             display=dict(display or {}),
             storage_path_relative=storage_path_relative,
             storage_path_kind=storage_path_kind,
+            custom_order=BaseContent._normalize_custom_order(custom_order),
             content_type=ContentType.COMIC,
         )
         self.preview_image_urls = [str(item or "") for item in (preview_image_urls or [])]
@@ -146,6 +148,7 @@ class Recommendation(BaseContent):
             display=dict(data.get("display") or {}),
             storage_path_relative=data.get("storage_path_relative", ""),
             storage_path_kind=data.get("storage_path_kind", ""),
+            custom_order=BaseContent._normalize_custom_order(data.get("custom_order")),
             content_type=ContentType.COMIC,
         )
 
@@ -173,4 +176,5 @@ class Recommendation(BaseContent):
             "display": dict(self.display or {}),
             "storage_path_relative": self.storage_path_relative,
             "storage_path_kind": self.storage_path_kind,
+            "custom_order": BaseContent._normalize_custom_order(self.custom_order),
         }

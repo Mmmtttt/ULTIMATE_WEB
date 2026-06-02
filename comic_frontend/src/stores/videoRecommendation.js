@@ -375,6 +375,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     filters.value = {}
   }
 
+  async function saveCustomOrder(videoIds = []) {
+    return videoApi.updateVideoRecommendationCustomOrder(videoIds)
+  }
+
   function setSortType(type, order = 'desc') {
     currentSort.value = type || null
     currentSortOrder.value = order || 'desc'
@@ -423,6 +427,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     searchRecommendations,
     filterByTags,
     filterMulti,
+    saveCustomOrder,
     clearFilter,
     setSortType,
     setFilter,

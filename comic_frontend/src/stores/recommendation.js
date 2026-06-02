@@ -411,6 +411,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     isFiltering.value = false
   }
 
+  async function saveCustomOrder(recommendationIds = []) {
+    return recommendationApi.updateCustomOrder(recommendationIds)
+  }
+
   /**
    * 设置排序方式
    * @param {string} sortType - 排序类型
@@ -582,6 +586,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     searchRecommendations,
     filterByTags,
     filterMulti,
+    saveCustomOrder,
     clearFilter,
     setSortType,
     clearSort,

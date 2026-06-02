@@ -5,6 +5,10 @@
 from flask import Blueprint, request, jsonify, Response, make_response, send_file
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
+from application.content_sorting import (
+    normalize_custom_order_records,
+    sort_content_items,
+)
 from application.config_app_service import ConfigAppService
 from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
 from application.video_runtime_support import (
@@ -100,6 +104,23 @@ def _get_video_recommendation_document_repository() -> JsonDocumentRepository:
         "video_recommendations",
         "total_video_recommendations",
     )
+
+
+def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids=None) -> bool:
+    changed = False
+    processed = False
+
+    def update_items(items):
+        nonlocal changed, processed
+        normalized_items, did_change = normalize_custom_order_records(items, ordered_ids)
+        changed = did_change
+        processed = True
+        return normalized_items if did_change else None
+
+    updated = document_repo.update_items(update_items)
+    if updated:
+        return True
+    return processed and not changed
 
 
 def _build_teledrive_file_url(file_id: str, name: str) -> str:
@@ -464,6 +485,20 @@ def video_list():
             return error_response(500, result.message)
     except Exception as e:
         error_logger.error(f"获取视频列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/custom-order', methods=['PUT'])
+def update_video_custom_order():
+    try:
+        data = request.json or {}
+        video_ids = data.get('video_ids', [])
+        result = video_service.update_custom_order(video_ids, source="local")
+        if result.success:
+            return success_response(result.data, result.message or "自定义排序已保存")
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"保存视频自定义排序失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -2696,18 +2731,31 @@ def get_video_recommendation_list():
         if persisted_changed:
             document_repo.write_document(db_data)
 
-        reverse = str(sort_order or 'desc').strip().lower() != 'asc'
-
-        if sort_type == 'score':
-            filtered_videos.sort(key=lambda x: (x.get('score') or 0), reverse=reverse)
-        elif sort_type == 'date':
-            filtered_videos.sort(key=lambda x: (x.get('date') or ''), reverse=reverse)
-        else:
-            filtered_videos.sort(key=lambda x: (x.get('create_time') or ''), reverse=reverse)
+        if str(sort_type or '').strip().lower() == 'custom':
+            _commit_custom_order(document_repo)
+        filtered_videos = sort_content_items(
+            filtered_videos,
+            sort_type or 'create_time',
+            sort_order,
+        )
 
         return success_response(filtered_videos)
     except Exception as e:
         error_logger.error(f"获取推荐视频列表失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@video_bp.route('/recommendation/custom-order', methods=['PUT'])
+def update_video_recommendation_custom_order():
+    try:
+        data = request.json or {}
+        video_ids = data.get('video_ids', [])
+        result = video_service.update_custom_order(video_ids, source="preview")
+        if result.success:
+            return success_response(result.data, result.message or "自定义排序已保存")
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"保存推荐视频自定义排序失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

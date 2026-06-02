@@ -471,6 +471,14 @@ export const useComicStore = defineStore('comic', () => {
     filteredComics.value = []
   }
 
+  async function saveCustomOrder(comicIds = []) {
+    const response = await comicApi.updateCustomOrder(comicIds)
+    if (response.code === 200) {
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
   async function refreshLocalMetadata(id) {
     try {
       const response = await comicApi.refreshLocalMetadata(id)
@@ -650,6 +658,7 @@ export const useComicStore = defineStore('comic', () => {
     filterByTags,
     filterMulti,
     sortComics,
+    saveCustomOrder,
     setSortState,
     clearFilter,
     setCurrentComic,
