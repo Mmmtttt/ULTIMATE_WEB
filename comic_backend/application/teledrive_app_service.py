@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote, urlencode
 
 import requests
+from PIL import Image
 
-from core.constants import JSON_FILE, RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
+from application.persisted_content_metadata import normalize_data_relative_path
+from core.constants import COVER_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_CACHE_DIR
 from core.utils import get_current_time, get_preview_pages
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.repositories import JsonDocumentRepository
@@ -426,6 +429,7 @@ class TeleDriveAppService:
 
         apply_stats = self._apply_library_scan(scan)
         result["stats"].update(apply_stats)
+        result["stats"].update(self._cache_preview_covers(scan))
         return result
 
     @staticmethod
@@ -802,6 +806,188 @@ class TeleDriveAppService:
             "video_unchanged": video_stats["unchanged"],
             "video_missing_marked": video_stats["missing_marked"],
         }
+
+    @staticmethod
+    def _sanitize_cache_segment(value: str, fallback: str = "item") -> str:
+        normalized = re.sub(r'[^0-9A-Za-z._-]+', "_", str(value or "").strip()).strip("._")
+        return normalized or fallback
+
+    @staticmethod
+    def _to_media_url_from_abs_path(abs_path: str) -> str:
+        relative_path = normalize_data_relative_path(abs_path)
+        if not relative_path:
+            return ""
+        return f"/media/{str(relative_path).lstrip('/')}"
+
+    def _build_teledrive_recommendation_cover_paths(self, recommendation_id: str) -> Tuple[str, str]:
+        platform_dir = self._sanitize_cache_segment(TELEDRIVE_PLATFORM, fallback="TeleDrive")
+        filename = f"{self._sanitize_cache_segment(recommendation_id, fallback='recommendation')}.jpg"
+        cover_dir = os.path.join(COVER_DIR, platform_dir)
+        os.makedirs(cover_dir, exist_ok=True)
+        abs_path = os.path.join(cover_dir, filename)
+        return abs_path, f"/static/cover/{platform_dir}/{filename}"
+
+    def _build_teledrive_preview_video_cover_paths(self, video_id: str) -> Tuple[str, str]:
+        platform_dir = self._sanitize_cache_segment(TELEDRIVE_PLATFORM, fallback="TeleDrive")
+        item_dir = self._sanitize_cache_segment(video_id, fallback="video")
+        cover_dir = os.path.join(VIDEO_RECOMMENDATION_CACHE_DIR, platform_dir, item_dir)
+        os.makedirs(cover_dir, exist_ok=True)
+        abs_path = os.path.join(cover_dir, "cover.jpg")
+        return abs_path, self._to_media_url_from_abs_path(abs_path)
+
+    def _download_teledrive_image_as_jpeg(self, file_id: str, name: str, target_path: str) -> bool:
+        normalized_file_id = str(file_id or "").strip()
+        normalized_target = os.path.abspath(str(target_path or "").strip())
+        if not normalized_file_id or not normalized_target:
+            return False
+
+        temp_dir = tempfile.mkdtemp(prefix="teledrive-cover-", dir=os.path.dirname(normalized_target) or None)
+        source_path = os.path.join(temp_dir, self._sanitize_cache_segment(name or normalized_file_id, fallback="source"))
+        temp_output_path = f"{normalized_target}.tmp"
+        try:
+            self.download_file_to_path(normalized_file_id, source_path, name=str(name or "").strip())
+            with Image.open(source_path) as image:
+                os.makedirs(os.path.dirname(normalized_target) or ".", exist_ok=True)
+                image.convert("RGB").save(temp_output_path, "JPEG", quality=95)
+            os.replace(temp_output_path, normalized_target)
+            return True
+        except Exception as exc:
+            error_logger.error(
+                f"缓存 TeleDrive 封面失败: file_id={normalized_file_id}, target={normalized_target}, error={exc}"
+            )
+            return False
+        finally:
+            try:
+                if os.path.exists(temp_output_path):
+                    os.remove(temp_output_path)
+            except Exception:
+                pass
+            try:
+                if os.path.isdir(temp_dir):
+                    for root, _dirs, files in os.walk(temp_dir, topdown=False):
+                        for filename in files:
+                            try:
+                                os.remove(os.path.join(root, filename))
+                            except Exception:
+                                pass
+                    os.rmdir(temp_dir)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _select_teledrive_video_cover_file(item: Dict[str, Any]) -> Dict[str, Any]:
+        display = item.get("display") if isinstance(item.get("display"), dict) else {}
+        teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
+
+        cover = teledrive.get("cover") if isinstance(teledrive.get("cover"), dict) else {}
+        if str((cover or {}).get("file_id") or "").strip():
+            return dict(cover or {})
+
+        thumbnails = teledrive.get("thumbnails") if isinstance(teledrive.get("thumbnails"), list) else []
+        for thumbnail in thumbnails:
+            if not isinstance(thumbnail, dict):
+                continue
+            if str(thumbnail.get("file_id") or "").strip():
+                return dict(thumbnail)
+        return {}
+
+    def _cache_preview_covers(self, scan: Dict[str, Any]) -> Dict[str, int]:
+        comic_count = 0
+        video_count = 0
+        try:
+            comic_count = self._cache_preview_comic_covers(scan.get("comics", []))
+        except Exception as exc:
+            error_logger.error(f"缓存 TeleDrive 预览漫画封面失败: {exc}")
+        try:
+            video_count = self._cache_preview_video_covers(scan.get("videos", []))
+        except Exception as exc:
+            error_logger.error(f"缓存 TeleDrive 预览视频封面失败: {exc}")
+        return {
+            "comic_cover_cached": int(comic_count or 0),
+            "video_cover_cached": int(video_count or 0),
+        }
+
+    def _cache_preview_comic_covers(self, items: List[Dict[str, Any]]) -> int:
+        cover_updates: Dict[str, str] = {}
+        for item in items or []:
+            recommendation_id = str((item or {}).get("id") or "").strip()
+            if not recommendation_id:
+                continue
+
+            display = item.get("display") if isinstance(item.get("display"), dict) else {}
+            teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
+            pages = teledrive.get("pages") if isinstance(teledrive.get("pages"), list) else []
+            first_page = next(
+                (
+                    dict(page or {})
+                    for page in pages
+                    if isinstance(page, dict) and str(page.get("file_id") or "").strip()
+                ),
+                {},
+            )
+            file_id = str(first_page.get("file_id") or "").strip()
+            if not file_id:
+                continue
+
+            target_path, media_url = self._build_teledrive_recommendation_cover_paths(recommendation_id)
+            if not media_url:
+                continue
+
+            if self._download_teledrive_image_as_jpeg(file_id, str(first_page.get("name") or "cover.jpg"), target_path):
+                cover_updates[recommendation_id] = media_url
+
+        if not cover_updates:
+            return 0
+
+        repo = JsonDocumentRepository(RECOMMENDATION_JSON_FILE, "recommendations", "total_recommendations")
+
+        def update_items(existing_items: List[dict]) -> List[dict]:
+            for existing in existing_items:
+                recommendation_id = str(existing.get("id") or "").strip()
+                if recommendation_id in cover_updates:
+                    existing["cover_path"] = cover_updates[recommendation_id]
+            return existing_items
+
+        repo.update_items(update_items)
+        return len(cover_updates)
+
+    def _cache_preview_video_covers(self, items: List[Dict[str, Any]]) -> int:
+        cover_updates: Dict[str, str] = {}
+        for item in items or []:
+            video_id = str((item or {}).get("id") or "").strip()
+            if not video_id:
+                continue
+
+            cover_file = self._select_teledrive_video_cover_file(item)
+            file_id = str(cover_file.get("file_id") or "").strip()
+            if not file_id:
+                continue
+
+            target_path, media_url = self._build_teledrive_preview_video_cover_paths(video_id)
+            if not media_url:
+                continue
+
+            if self._download_teledrive_image_as_jpeg(file_id, str(cover_file.get("name") or "cover.jpg"), target_path):
+                cover_updates[video_id] = media_url
+
+        if not cover_updates:
+            return 0
+
+        repo = JsonDocumentRepository(
+            VIDEO_RECOMMENDATION_JSON_FILE,
+            "video_recommendations",
+            "total_video_recommendations",
+        )
+
+        def update_items(existing_items: List[dict]) -> List[dict]:
+            for existing in existing_items:
+                video_id = str(existing.get("id") or "").strip()
+                if video_id in cover_updates:
+                    existing["cover_path_local"] = cover_updates[video_id]
+            return existing_items
+
+        repo.update_items(update_items)
+        return len(cover_updates)
 
     def _merge_items_into_document(
         self,
