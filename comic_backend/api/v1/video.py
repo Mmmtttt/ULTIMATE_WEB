@@ -9,6 +9,14 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.list_query_support import (
+    build_paginated_payload,
+    extract_available_authors,
+    matches_keyword,
+    normalize_page,
+    normalize_page_size,
+    normalize_string_list,
+)
 from application.config_app_service import ConfigAppService
 from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
 from application.video_runtime_support import (
@@ -64,6 +72,13 @@ def error_response(code, msg):
         "msg": msg,
         "data": None
     })
+
+
+def _parse_bool_arg(name: str, default: bool = False) -> bool:
+    raw = str(request.args.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _build_local_video_detail_payload(video_id: str):
@@ -477,8 +492,33 @@ def video_list():
         sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
         max_score = request.args.get('max_score', type=float)
-        
-        result = video_service.get_video_list(sort_type, sort_order, min_score, max_score)
+        keyword = request.args.get('keyword', '')
+        include_tag_ids = request.args.getlist('include_tag_ids')
+        exclude_tag_ids = request.args.getlist('exclude_tag_ids')
+        authors = request.args.getlist('authors')
+        list_ids = request.args.getlist('list_ids')
+        paginate = _parse_bool_arg('paginate')
+        summary_only = _parse_bool_arg('summary')
+        include_available_authors = _parse_bool_arg('include_available_authors')
+        page = request.args.get('page', default=1, type=int)
+        page_size = request.args.get('page_size', default=24, type=int)
+
+        result = video_service.get_video_list(
+            sort_type,
+            sort_order,
+            min_score,
+            max_score,
+            keyword=keyword,
+            include_tags=include_tag_ids,
+            exclude_tags=exclude_tag_ids,
+            authors=authors,
+            list_ids=list_ids,
+            page=page,
+            page_size=page_size,
+            paginate=paginate,
+            summary_only=summary_only,
+            include_available_authors=include_available_authors,
+        )
         if result.success:
             return success_response(result.data)
         else:
@@ -1851,6 +1891,55 @@ def _decorate_video_recommendation_items(
     ]
 
 
+def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = None) -> dict:
+    if not isinstance(video_data, dict):
+        return {}
+
+    card = dict(video_data)
+    card["source"] = "preview"
+    _ensure_local_asset_fields(card)
+    card["tags"] = [
+        {"id": tid, "name": (tag_map or {}).get(tid, tid)}
+        for tid in (card.get("tag_ids") or [])
+    ]
+
+    host_display_updates = merge_host_video_display(card)
+    if host_display_updates:
+        card["display"] = dict(host_display_updates.get("display") or {})
+
+    platform_name = _resolve_protocol_video_platform_name(card)
+    if platform_name:
+        annotated = annotate_item(card, platform_name=platform_name, media_type="video")
+        if host_display_updates and not annotated.get("display"):
+            annotated["display"] = dict(host_display_updates.get("display") or {})
+        card = annotated
+
+    allowed_keys = {
+        "id",
+        "title",
+        "title_jp",
+        "creator",
+        "score",
+        "tag_ids",
+        "tags",
+        "list_ids",
+        "create_time",
+        "last_access_time",
+        "platform",
+        "plugin_id",
+        "plugin_name",
+        "display",
+        "custom_order",
+        "code",
+        "date",
+        "cover_path",
+        "cover_path_local",
+        "actors",
+        "source",
+    }
+    return {key: card.get(key) for key in allowed_keys}
+
+
 def _refresh_preview_video_persisted_fields(video_data: dict) -> bool:
     if not isinstance(video_data, dict):
         return False
@@ -2704,6 +2793,17 @@ def get_video_recommendation_list():
         sort_type = request.args.get('sort_type')
         sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
+        max_score = request.args.get('max_score', type=float)
+        keyword = request.args.get('keyword', '')
+        include_tag_ids = set(normalize_string_list(request.args.getlist('include_tag_ids')))
+        exclude_tag_ids = set(normalize_string_list(request.args.getlist('exclude_tag_ids')))
+        authors = set(normalize_string_list(request.args.getlist('authors')))
+        list_ids = set(normalize_string_list(request.args.getlist('list_ids')))
+        paginate = _parse_bool_arg('paginate')
+        summary_only = _parse_bool_arg('summary')
+        include_available_authors = _parse_bool_arg('include_available_authors')
+        page = request.args.get('page', default=1, type=int)
+        page_size = request.args.get('page_size', default=24, type=int)
 
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
@@ -2714,32 +2814,66 @@ def get_video_recommendation_list():
         tag_map = {t["id"]: t["name"] for t in tags}
 
         filtered_videos = []
-        persisted_changed = False
         for video in videos:
             if video.get('is_deleted'):
                 continue
             if min_score is not None and (video.get('score') or 0) < min_score:
                 continue
+            if max_score is not None and (video.get('score') or 0) > max_score:
+                continue
+            video_tag_ids = set(str(tag_id or "").strip() for tag_id in (video.get('tag_ids') or []) if str(tag_id or "").strip())
+            if include_tag_ids and not include_tag_ids.issubset(video_tag_ids):
+                continue
+            if exclude_tag_ids and exclude_tag_ids.intersection(video_tag_ids):
+                continue
+            if authors:
+                video_authors = set(
+                    str(actor or "").strip()
+                    for actor in (video.get('actors') or [])
+                    if str(actor or "").strip()
+                )
+                creator = str(video.get('creator') or '').strip()
+                if creator:
+                    video_authors.add(creator)
+                if not authors.intersection(video_authors):
+                    continue
+            if list_ids:
+                video_list_ids = set(str(list_id or "").strip() for list_id in (video.get('list_ids') or []) if str(list_id or "").strip())
+                if not list_ids.intersection(video_list_ids):
+                    continue
+            if keyword and not matches_keyword(video, keyword, tag_map=tag_map):
+                continue
 
-            if _refresh_preview_video_persisted_fields(video):
-                persisted_changed = True
+            filtered_videos.append(video)
 
-            filtered_videos.append(
-                _decorate_video_recommendation_item(video, tag_map=tag_map)
-            )
-
-        if persisted_changed:
-            document_repo.write_document(db_data)
-
-        if str(sort_type or '').strip().lower() == 'custom':
-            _commit_custom_order(document_repo)
         filtered_videos = sort_content_items(
             filtered_videos,
             sort_type or 'create_time',
             sort_order,
         )
 
-        return success_response(filtered_videos)
+        if paginate:
+            payload = build_paginated_payload(
+                filtered_videos,
+                page=normalize_page(page, 1),
+                page_size=normalize_page_size(page_size),
+                serializer=(
+                    (lambda item: _build_preview_video_card_dict(item, tag_map=tag_map))
+                    if summary_only
+                    else (lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map))
+                ),
+                extra={
+                    "available_authors": extract_available_authors(filtered_videos) if include_available_authors else [],
+                },
+            )
+            return success_response(payload)
+
+        serializer = (
+            (lambda item: _build_preview_video_card_dict(item, tag_map=tag_map))
+            if summary_only
+            else (lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map))
+        )
+        return success_response([serializer(item) for item in filtered_videos])
     except Exception as e:
         error_logger.error(f"获取推荐视频列表失败: {e}")
         return error_response(500, "服务器内部错误")

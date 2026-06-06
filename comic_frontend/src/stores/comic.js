@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { comicApi } from '@/api'
 import { useCacheStore } from './cache'
-import { filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
+import { extractAuthors, filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
 
 /**
  * 漫画管理 Store
@@ -16,6 +16,11 @@ export const useComicStore = defineStore('comic', () => {
   
   // 漫画列表
   const comics = ref([])
+  const totalCountState = ref(0)
+  const currentPageState = ref(1)
+  const pageSizeState = ref(0)
+  const totalPagesState = ref(1)
+  const availableAuthors = ref([])
   
   // 当前选中的漫画
   const currentComic = ref(null)
@@ -54,6 +59,10 @@ export const useComicStore = defineStore('comic', () => {
    * 漫画总数
    */
   const totalCount = computed(() => comics.value.length)
+  const queryTotalCount = computed(() => totalCountState.value || comics.value.length)
+  const queryCurrentPage = computed(() => currentPageState.value || 1)
+  const queryPageSize = computed(() => pageSizeState.value || comics.value.length || 0)
+  const queryTotalPages = computed(() => totalPagesState.value || 1)
   
   /**
    * 当前显示数量
@@ -120,7 +129,24 @@ export const useComicStore = defineStore('comic', () => {
       }
       const response = await comicApi.getList(params)
       console.log('[Comic] API响应:', response)
-      comics.value = response.data || []
+      const payload = response.data
+      if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+        comics.value = payload.items || []
+        totalCountState.value = Number(payload.total) || comics.value.length
+        currentPageState.value = Number(payload.page) || 1
+        pageSizeState.value = Number(payload.page_size) || comics.value.length || 0
+        totalPagesState.value = Number(payload.total_pages) || 1
+        availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(comics.value)
+      } else {
+        comics.value = Array.isArray(payload) ? payload : []
+        totalCountState.value = comics.value.length
+        currentPageState.value = 1
+        pageSizeState.value = comics.value.length
+        totalPagesState.value = 1
+        availableAuthors.value = extractAuthors(comics.value)
+      }
+      isFiltering.value = false
+      filteredComics.value = []
       
       if (Object.keys(options).length === 0) {
         cacheStore.setListCache(comics.value)
@@ -479,6 +505,14 @@ export const useComicStore = defineStore('comic', () => {
     return response
   }
 
+  async function fetchCustomOrderItems(options = {}) {
+    const response = await comicApi.getList({
+      ...options,
+      summary: 1
+    })
+    return Array.isArray(response.data) ? response.data : []
+  }
+
   async function refreshLocalMetadata(id) {
     try {
       const response = await comicApi.refreshLocalMetadata(id)
@@ -635,6 +669,11 @@ export const useComicStore = defineStore('comic', () => {
     comicList,
     currentComicInfo,
     totalCount,
+    queryTotalCount,
+    queryCurrentPage,
+    queryPageSize,
+    queryTotalPages,
+    availableAuthors,
     displayCount,
     getComicById,
     readCount,
@@ -659,6 +698,7 @@ export const useComicStore = defineStore('comic', () => {
     filterMulti,
     sortComics,
     saveCustomOrder,
+    fetchCustomOrderItems,
     setSortState,
     clearFilter,
     setCurrentComic,

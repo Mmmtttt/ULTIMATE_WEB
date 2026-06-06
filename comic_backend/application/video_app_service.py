@@ -21,6 +21,14 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.list_query_support import (
+    build_paginated_payload,
+    extract_available_authors,
+    matches_keyword,
+    normalize_page,
+    normalize_page_size,
+    normalize_string_list,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -371,6 +379,31 @@ class VideoAppService(BaseContentAppService):
             if isinstance(item, dict)
         ]
 
+    @classmethod
+    def _video_to_card_dict(cls, video: Video) -> Dict[str, Any]:
+        return cls._annotate_video_record({
+            "id": video.id,
+            "title": video.title,
+            "title_jp": video.title_jp,
+            "creator": video.creator,
+            "score": video.score,
+            "tag_ids": list(video.tag_ids or []),
+            "list_ids": list(video.list_ids or []),
+            "create_time": video.create_time,
+            "last_access_time": video.last_access_time,
+            "platform": video.platform,
+            "plugin_id": video.plugin_id,
+            "plugin_name": video.plugin_name,
+            "display": dict(video.display or {}),
+            "custom_order": video.custom_order,
+            "code": video.code,
+            "date": video.date,
+            "cover_path": video.cover_path,
+            "cover_path_local": video.cover_path_local,
+            "actors": list(video.actors or []),
+            "source": "local",
+        })
+
     def apply_recent_import_tags(
         self,
         video_ids: List[str],
@@ -447,32 +480,84 @@ class VideoAppService(BaseContentAppService):
         sort_order: str = "desc",
         min_score: float = None,
         max_score: float = None,
-        include_deleted: bool = False
+        include_deleted: bool = False,
+        keyword: str = "",
+        include_tags: List[str] = None,
+        exclude_tags: List[str] = None,
+        authors: List[str] = None,
+        list_ids: List[str] = None,
+        page: int = 1,
+        page_size: int = 24,
+        paginate: bool = False,
+        summary_only: bool = False,
+        include_available_authors: bool = False
     ) -> ServiceResult:
         try:
             videos = self._video_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
-            
+
+            include_tag_ids = set(normalize_string_list(include_tags))
+            exclude_tag_ids = set(normalize_string_list(exclude_tags))
+            author_set = set(normalize_string_list(authors))
+            list_id_set = set(normalize_string_list(list_ids))
+
             if not include_deleted:
                 videos = [v for v in videos if not v.is_deleted]
-            
+
             if min_score is not None:
                 videos = [v for v in videos if v.score is not None and v.score >= min_score]
             if max_score is not None:
                 videos = [v for v in videos if v.score is not None and v.score <= max_score]
+            if include_tag_ids:
+                videos = [v for v in videos if include_tag_ids.issubset(set(v.tag_ids or []))]
+            if exclude_tag_ids:
+                videos = [v for v in videos if not exclude_tag_ids.intersection(set(v.tag_ids or []))]
+            if author_set:
+                videos = [
+                    v for v in videos
+                    if author_set.intersection(
+                        set(str(actor or "").strip() for actor in (v.actors or []) if str(actor or "").strip())
+                    ) or str(v.creator or "").strip() in author_set
+                ]
+            if list_id_set:
+                videos = [v for v in videos if list_id_set.intersection(set(v.list_ids or []))]
+            if keyword:
+                videos = [v for v in videos if matches_keyword(v, keyword, tag_map=tag_map)]
             if sort_type:
-                if str(sort_type or "").strip().lower() == "custom":
-                    self._commit_custom_order(self._video_document_repo)
                 videos = sort_content_items(videos, sort_type, sort_order)
-            
+
+            if paginate:
+                payload = build_paginated_payload(
+                    videos,
+                    page=normalize_page(page, 1),
+                    page_size=normalize_page_size(page_size),
+                    serializer=self._video_to_card_dict if summary_only else (
+                        lambda video: self._annotate_video_record({
+                            **video.to_dict(),
+                            "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+                        })
+                    ),
+                    extra={
+                        "available_authors": extract_available_authors(videos) if include_available_authors else [],
+                    },
+                )
+                app_logger.info(
+                    f"获取视频分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个视频"
+                )
+                return ServiceResult.ok(payload)
+
             video_list = []
             for v in videos:
+                if summary_only:
+                    video_list.append(self._video_to_card_dict(v))
+                    continue
                 video_info = v.to_dict()
                 video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
                 video_list.append(video_info)
-            video_list = self._annotate_video_records(video_list)
-            
+            if not summary_only:
+                video_list = self._annotate_video_records(video_list)
+
             app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
             return ServiceResult.ok(video_list)
         except Exception as e:

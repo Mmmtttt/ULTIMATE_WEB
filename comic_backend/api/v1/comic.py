@@ -99,6 +99,13 @@ def error_response(code, msg):
     })
 
 
+def _parse_bool_arg(name: str, default: bool = False) -> bool:
+    raw = str(request.args.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_platform_manifest(platform_name: str, media_type: str = ""):
     gateway = get_protocol_gateway()
     normalized_name = str(platform_name or "").strip()
@@ -300,8 +307,35 @@ def comic_list():
         sort_order = request.args.get('sort_order', 'desc')
         min_score = request.args.get('min_score', type=float)
         max_score = request.args.get('max_score', type=float)
-        
-        result = comic_service.get_comic_list(sort_type, sort_order, min_score, max_score)
+        keyword = request.args.get('keyword', '')
+        include_tag_ids = request.args.getlist('include_tag_ids')
+        exclude_tag_ids = request.args.getlist('exclude_tag_ids')
+        authors = request.args.getlist('authors')
+        list_ids = request.args.getlist('list_ids')
+        unread_only = _parse_bool_arg('unread_only')
+        paginate = _parse_bool_arg('paginate')
+        summary_only = _parse_bool_arg('summary')
+        include_available_authors = _parse_bool_arg('include_available_authors')
+        page = request.args.get('page', default=1, type=int)
+        page_size = request.args.get('page_size', default=24, type=int)
+
+        result = comic_service.get_comic_list(
+            sort_type,
+            sort_order,
+            min_score,
+            max_score,
+            keyword=keyword,
+            include_tags=include_tag_ids,
+            exclude_tags=exclude_tag_ids,
+            authors=authors,
+            list_ids=list_ids,
+            unread_only=unread_only,
+            page=page,
+            page_size=page_size,
+            paginate=paginate,
+            summary_only=summary_only,
+            include_available_authors=include_available_authors,
+        )
         if result.success:
             return success_response(result.data)
         else:

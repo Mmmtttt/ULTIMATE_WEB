@@ -6,6 +6,14 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.list_query_support import (
+    build_paginated_payload,
+    extract_available_authors,
+    matches_keyword,
+    normalize_page,
+    normalize_page_size,
+    normalize_string_list,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -58,6 +66,28 @@ class RecommendationAppService:
         payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else {}
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
         return payload
+
+    @staticmethod
+    def _recommendation_to_card_dict(recommendation: Recommendation) -> Dict[str, Any]:
+        return {
+            "id": recommendation.id,
+            "title": recommendation.title,
+            "title_jp": recommendation.title_jp,
+            "author": recommendation.author,
+            "cover_path": recommendation.cover_path,
+            "total_page": normalize_total_page(recommendation.total_page),
+            "current_page": normalize_total_page(recommendation.current_page, default=1),
+            "score": recommendation.score,
+            "tag_ids": list(recommendation.tag_ids or []),
+            "list_ids": list(recommendation.list_ids or []),
+            "create_time": recommendation.create_time,
+            "last_read_time": recommendation.last_read_time,
+            "platform": recommendation.platform,
+            "plugin_id": recommendation.plugin_id,
+            "plugin_name": recommendation.plugin_name,
+            "display": dict(recommendation.display or {}),
+            "custom_order": recommendation.custom_order,
+        }
 
     def _build_recommendation_persisted_metadata(
         self,
@@ -154,7 +184,18 @@ class RecommendationAppService:
         sort_type: str = None,
         sort_order: str = "desc",
         min_score: float = None,
-        max_score: float = None
+        max_score: float = None,
+        keyword: str = "",
+        include_tags: List[str] = None,
+        exclude_tags: List[str] = None,
+        authors: List[str] = None,
+        list_ids: List[str] = None,
+        unread_only: bool = False,
+        page: int = 1,
+        page_size: int = 24,
+        paginate: bool = False,
+        summary_only: bool = False,
+        include_available_authors: bool = False,
     ) -> ServiceResult:
         """获取推荐漫画列表 - 支持排序和评分筛选"""
         try:
@@ -162,31 +203,55 @@ class RecommendationAppService:
             recommendations = self._recommendation_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
-            
-            # 过滤掉已删除的漫画
+
+            include_tag_ids = set(normalize_string_list(include_tags))
+            exclude_tag_ids = set(normalize_string_list(exclude_tags))
+            author_set = set(normalize_string_list(authors))
+            list_id_set = set(normalize_string_list(list_ids))
+
             recommendations = [r for r in recommendations if not r.is_deleted]
-            
-            # 评分筛选
+
             if min_score is not None:
                 recommendations = [r for r in recommendations if r.score is not None and r.score >= min_score]
             if max_score is not None:
                 recommendations = [r for r in recommendations if r.score is not None and r.score <= max_score]
-            
+            if include_tag_ids:
+                recommendations = [r for r in recommendations if include_tag_ids.issubset(set(r.tag_ids or []))]
+            if exclude_tag_ids:
+                recommendations = [r for r in recommendations if not exclude_tag_ids.intersection(set(r.tag_ids or []))]
+            if author_set:
+                recommendations = [r for r in recommendations if str(r.author or "").strip() in author_set]
+            if list_id_set:
+                recommendations = [r for r in recommendations if list_id_set.intersection(set(r.list_ids or []))]
+            if unread_only:
+                recommendations = [r for r in recommendations if normalize_total_page(r.current_page, default=1) == 1]
+            if keyword:
+                recommendations = [r for r in recommendations if matches_keyword(r, keyword, tag_map=tag_map)]
+
             app_logger.info(f"[get_recommendation_list] 排序前数量: {len(recommendations)}")
             if sort_type:
-                if str(sort_type or "").strip().lower() == "custom":
-                    self._commit_custom_order(self._recommendation_document_repo)
                 recommendations = sort_content_items(recommendations, sort_type, sort_order)
-            
+
             app_logger.info(f"[get_recommendation_list] 排序后数量: {len(recommendations)}")
-            
-            # 构建返回数据
-            recommendation_list = []
-            for r in recommendations:
-                rec_info = self._recommendation_to_summary_dict(r, tag_map)
-                rec_info["total_page"] = normalize_total_page(r.total_page)
-                recommendation_list.append(rec_info)
-            
+
+            serializer = self._recommendation_to_card_dict if summary_only else (lambda recommendation: self._recommendation_to_summary_dict(recommendation, tag_map))
+
+            if paginate:
+                payload = build_paginated_payload(
+                    recommendations,
+                    page=normalize_page(page, 1),
+                    page_size=normalize_page_size(page_size),
+                    serializer=serializer,
+                    extra={
+                        "available_authors": extract_available_authors(recommendations) if include_available_authors else [],
+                    },
+                )
+                app_logger.info(
+                    f"获取推荐分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个"
+                )
+                return ServiceResult.ok(payload)
+
+            recommendation_list = [serializer(r) for r in recommendations]
             app_logger.info(f"获取推荐列表成功，共 {len(recommendation_list)} 个")
             return ServiceResult.ok(recommendation_list)
         except Exception as e:

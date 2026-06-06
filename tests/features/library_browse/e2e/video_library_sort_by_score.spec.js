@@ -3,6 +3,7 @@ const {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 const VIDEO_TITLE = "Seed Video";
@@ -116,7 +117,7 @@ test("video library sort by score keeps UI order consistent with backend sorting
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data }),
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(data) }),
     });
   });
 

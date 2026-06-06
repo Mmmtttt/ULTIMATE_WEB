@@ -3,6 +3,7 @@ const {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 const COMIC_ID = "JM100001";
@@ -27,13 +28,89 @@ const COMIC_TITLE = "E2E Comic Alpha";
  */
 test("library browse opens comic detail with expected backend calls", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+  const comic = {
+    id: COMIC_ID,
+    title: COMIC_TITLE,
+    title_jp: "",
+    author: "Tester A",
+    desc: "Seeded comic for end-to-end validation.",
+    cover_path: "/static/mock/JM100001.jpg",
+    total_page: 3,
+    current_page: 1,
+    score: 8.5,
+    tag_ids: [],
+    tags: [],
+    list_ids: [],
+    source: "local",
+  };
 
-  await page.goto("/trash");
-  const trashItem = page.locator(".media-item", { hasText: COMIC_TITLE }).first();
-  if (await trashItem.isVisible()) {
-    await trashItem.getByRole("button", { name: "恢复" }).click();
-    await page.waitForTimeout(500);
-  }
+  await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tag_name: "0.0.0",
+        html_url: "https://github.com/Mmmtttt/ULTIMATE_WEB/releases",
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/ui-state**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 200, data: { state: null } }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: { ok: true } }),
+    });
+  });
+
+  await page.route("**/api/v1/list/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/author/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/tag/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/comic/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: buildPaginatedData([comic]) }),
+    });
+  });
+
+  await page.route("**/api/v1/comic/detail**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: comic }),
+    });
+  });
 
   await page.goto("/library");
 

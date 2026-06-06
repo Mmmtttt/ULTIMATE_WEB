@@ -3,6 +3,7 @@ const {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 const VIDEO_ID = "JAVDB900001";
@@ -106,7 +107,7 @@ test("library browse switches to video mode and opens video detail", async ({ pa
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: [video] }),
+      body: JSON.stringify({ code: 200, data: buildPaginatedData([video]) }),
     });
   });
 

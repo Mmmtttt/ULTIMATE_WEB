@@ -37,7 +37,20 @@ test("video detail page updates score via API", async ({ page }) => {
   await page.goto(`/video/${PRIMARY_VIDEO_ID}`);
   await expect(page.locator(".video-title, .detail-title").first()).toContainText(VIDEO_TITLE);
 
-  const rateComponent = page.getByRole("radio").nth(9);
+  const rateOptions = page.getByRole("radio");
+  const optionCount = await rateOptions.count();
+  let targetIndex = -1;
+  for (let index = 0; index < optionCount; index += 1) {
+    const checked = await rateOptions.nth(index).getAttribute("aria-checked");
+    if (checked !== "true") {
+      targetIndex = index;
+      break;
+    }
+  }
+  if (targetIndex < 0) {
+    targetIndex = 0;
+  }
+  const rateComponent = rateOptions.nth(targetIndex);
   await rateComponent.click();
 
   await expect

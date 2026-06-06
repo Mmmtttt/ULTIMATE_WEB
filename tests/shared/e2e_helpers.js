@@ -63,6 +63,23 @@ async function confirmDialog(page) {
   throw new Error("confirm dialog button not found");
 }
 
+function buildPaginatedData(items = [], options = {}) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+  const total = Number(options.total);
+  const page = Number(options.page);
+  const pageSize = Number(options.pageSize);
+  return {
+    items: normalizedItems,
+    total: Number.isFinite(total) ? total : normalizedItems.length,
+    page: Number.isFinite(page) && page > 0 ? page : 1,
+    page_size: Number.isFinite(pageSize) && pageSize > 0 ? pageSize : normalizedItems.length || 20,
+    total_pages: Number.isFinite(options.totalPages) && options.totalPages > 0
+      ? options.totalPages
+      : Math.max(1, Math.ceil((Number.isFinite(total) ? total : normalizedItems.length) / (Number.isFinite(pageSize) && pageSize > 0 ? pageSize : (normalizedItems.length || 20)))),
+    available_authors: Array.isArray(options.availableAuthors) ? options.availableAuthors : [],
+  };
+}
+
 module.exports = {
   test,
   expect,
@@ -70,4 +87,5 @@ module.exports = {
   hasApiCall,
   getMediaTitles,
   confirmDialog,
+  buildPaginatedData,
 };

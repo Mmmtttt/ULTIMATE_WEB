@@ -2,6 +2,7 @@ const {
   test,
   expect,
   confirmDialog,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 function ok(data, msg = "成功") {
@@ -29,16 +30,58 @@ test("library batch task uses all filtered results instead of only current page"
   }));
 
   const batchCalls = [];
+  let latestUiState = null;
+
+  await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tag_name: "0.0.0",
+        html_url: "https://github.com/Mmmtttt/ULTIMATE_WEB/releases",
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/ui-state**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill(ok({ state: latestUiState }));
+      return;
+    }
+    if (request.method() === "PUT") {
+      const body = JSON.parse(request.postData() || "{}");
+      latestUiState = body.state || null;
+      await route.fulfill(ok({ ok: true }));
+      return;
+    }
+    if (request.method() === "DELETE") {
+      latestUiState = null;
+      await route.fulfill(ok({ ok: true }));
+      return;
+    }
+    await route.fallback();
+  });
 
   await page.route("**/api/v1/list/list**", async (route) => {
     await route.fulfill(ok([]));
   });
 
-  await page.route("**/api/v1/comic/tags**", async (route) => {
+  await page.route("**/api/v1/author/list**", async (route) => {
+    await route.fulfill(ok([]));
+  });
+
+  await page.route("**/api/v1/tag/list**", async (route) => {
     await route.fulfill(ok([]));
   });
 
   await page.route("**/api/v1/comic/list**", async (route) => {
+    const url = new URL(route.request().url());
+    const shouldPaginate = url.searchParams.get("paginate") === "1";
+    if (shouldPaginate) {
+      await route.fulfill(ok(buildPaginatedData(items.slice(0, 20), { total: items.length, page: 1, pageSize: 20 })));
+      return;
+    }
     await route.fulfill(ok(items));
   });
 

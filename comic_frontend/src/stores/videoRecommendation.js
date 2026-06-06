@@ -2,11 +2,16 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '@/api/video'
 import { showSuccessToast, showFailToast } from 'vant'
-import { filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
+import { extractAuthors, filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
 
 export const useVideoRecommendationStore = defineStore('videoRecommendation', () => {
   // State
   const recommendations = ref([])
+  const totalCountState = ref(0)
+  const currentPageState = ref(1)
+  const pageSizeState = ref(0)
+  const totalPagesState = ref(1)
+  const availableAuthors = ref([])
   const currentRecommendation = ref(null)
   const loading = ref(false)
   const error = ref(null)
@@ -20,6 +25,10 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   // Getters
   const recommendationList = computed(() => isFiltering.value ? filteredRecommendations.value : recommendations.value)
   const totalCount = computed(() => recommendations.value.length)
+  const queryTotalCount = computed(() => totalCountState.value || recommendations.value.length)
+  const queryCurrentPage = computed(() => currentPageState.value || 1)
+  const queryPageSize = computed(() => pageSizeState.value || recommendations.value.length || 0)
+  const queryTotalPages = computed(() => totalPagesState.value || 1)
 
   // Actions
   async function fetchRecommendations(force = false, params = {}) {
@@ -46,7 +55,24 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       
       const res = await videoApi.getVideoRecommendationList(queryParams)
       if (res.code === 200) {
-        recommendations.value = res.data || []
+        const payload = res.data
+        if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+          recommendations.value = payload.items || []
+          totalCountState.value = Number(payload.total) || recommendations.value.length
+          currentPageState.value = Number(payload.page) || 1
+          pageSizeState.value = Number(payload.page_size) || recommendations.value.length || 0
+          totalPagesState.value = Number(payload.total_pages) || 1
+          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(recommendations.value)
+        } else {
+          recommendations.value = Array.isArray(payload) ? payload : []
+          totalCountState.value = recommendations.value.length
+          currentPageState.value = 1
+          pageSizeState.value = recommendations.value.length
+          totalPagesState.value = 1
+          availableAuthors.value = extractAuthors(recommendations.value)
+        }
+        isFiltering.value = false
+        filteredRecommendations.value = []
       }
     } catch (e) {
       error.value = e.message
@@ -379,6 +405,14 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     return videoApi.updateVideoRecommendationCustomOrder(videoIds)
   }
 
+  async function fetchCustomOrderItems(params = {}) {
+    const response = await videoApi.getVideoRecommendationList({
+      ...params,
+      summary: 1
+    })
+    return Array.isArray(response.data) ? response.data : []
+  }
+
   function setSortType(type, order = 'desc') {
     currentSort.value = type || null
     currentSortOrder.value = order || 'desc'
@@ -406,6 +440,11 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     trashList,
     recommendationList,
     totalCount,
+    queryTotalCount,
+    queryCurrentPage,
+    queryPageSize,
+    queryTotalPages,
+    availableAuthors,
     fetchRecommendations,
     fetchDetail,
     fetchRecommendationDetail,
@@ -428,6 +467,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
     filterByTags,
     filterMulti,
     saveCustomOrder,
+    fetchCustomOrderItems,
     clearFilter,
     setSortType,
     setFilter,

@@ -4,6 +4,7 @@ const {
   startApiRequestRecorder,
   hasApiCall,
   getMediaTitles,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 const EXPECTED_FILTERED_TITLES = ["E2E Comic Alpha", "E2E Comic Gamma"];
@@ -28,15 +29,120 @@ const EXPECTED_FILTERED_TITLES = ["E2E Comic Alpha", "E2E Comic Gamma"];
  */
 test("library filter include and exclude tags returns expected comics", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+  const allComics = [
+    {
+      id: "JM100001",
+      title: "E2E Comic Alpha",
+      author: "Tester A",
+      cover_path: "/static/mock/JM100001.jpg",
+      total_page: 3,
+      current_page: 1,
+      score: 8.5,
+      tag_ids: ["tag_action"],
+      tags: [{ id: "tag_action", name: "Action" }],
+      list_ids: [],
+    },
+    {
+      id: "JM100003",
+      title: "E2E Comic Gamma",
+      author: "Tester C",
+      cover_path: "/static/mock/JM100003.jpg",
+      total_page: 5,
+      current_page: 5,
+      score: 9.8,
+      tag_ids: ["tag_action", "tag_drama"],
+      tags: [{ id: "tag_action", name: "Action" }, { id: "tag_drama", name: "Drama" }],
+      list_ids: [],
+    },
+    {
+      id: "JM100005",
+      title: "E2E Comic Epsilon",
+      author: "Tester B",
+      cover_path: "/static/mock/JM100005.jpg",
+      total_page: 3,
+      current_page: 1,
+      score: 4.1,
+      tag_ids: ["tag_action", "tag_story"],
+      tags: [{ id: "tag_action", name: "Action" }, { id: "tag_story", name: "Story" }],
+      list_ids: [],
+    },
+  ];
 
-  await page.goto("/trash");
-  for (const title of EXPECTED_FILTERED_TITLES) {
-    const trashItem = page.locator(".media-item", { hasText: title }).first();
-    if (await trashItem.isVisible()) {
-      await trashItem.getByRole("button", { name: "恢复" }).click();
-      await page.waitForTimeout(300);
+  await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tag_name: "0.0.0",
+        html_url: "https://github.com/Mmmtttt/ULTIMATE_WEB/releases",
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/ui-state**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 200, data: { state: null } }),
+      });
+      return;
     }
-  }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: { ok: true } }),
+    });
+  });
+
+  await page.route("**/api/v1/list/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/author/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/tag/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 200,
+        data: [
+          { id: "tag_action", name: "Action", comic_count: 3 },
+          { id: "tag_story", name: "Story", comic_count: 1 },
+          { id: "tag_drama", name: "Drama", comic_count: 1 },
+        ],
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/comic/list**", async (route) => {
+    const url = new URL(route.request().url());
+    const includeTagIds = url.searchParams.getAll("include_tag_ids");
+    const excludeTagIds = url.searchParams.getAll("exclude_tag_ids");
+    const filtered = allComics.filter((item) => {
+      const tags = Array.isArray(item.tag_ids) ? item.tag_ids : [];
+      const includeOk = includeTagIds.length === 0 || includeTagIds.every((tagId) => tags.includes(tagId));
+      const excludeOk = excludeTagIds.every((tagId) => !tags.includes(tagId));
+      return includeOk && excludeOk;
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(filtered) }),
+    });
+  });
 
   await page.goto("/library");
   await expect(page.getByText("E2E Comic Alpha")).toBeVisible();
@@ -61,7 +167,7 @@ test("library filter include and exclude tags returns expected comics", async ({
         hasApiCall(
           apiRequests,
           (item) =>
-            item.url.includes("/api/v1/comic/filter") &&
+            item.url.includes("/api/v1/comic/list") &&
             item.url.includes("include_tag_ids=tag_action") &&
             item.url.includes("exclude_tag_ids=tag_story"),
         ),

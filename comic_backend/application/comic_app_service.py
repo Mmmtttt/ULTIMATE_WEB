@@ -7,6 +7,14 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.list_query_support import (
+    build_paginated_payload,
+    extract_available_authors,
+    matches_keyword,
+    normalize_page,
+    normalize_page_size,
+    normalize_string_list,
+)
 from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
@@ -127,6 +135,28 @@ class ComicAppService:
         return payload
 
     @staticmethod
+    def _comic_to_card_dict(comic: Comic) -> Dict[str, Any]:
+        return {
+            "id": comic.id,
+            "title": comic.title,
+            "title_jp": comic.title_jp,
+            "author": comic.author,
+            "cover_path": comic.cover_path,
+            "total_page": normalize_total_page(comic.total_page),
+            "current_page": normalize_total_page(comic.current_page, default=1),
+            "score": comic.score,
+            "tag_ids": list(comic.tag_ids or []),
+            "list_ids": list(comic.list_ids or []),
+            "create_time": comic.create_time,
+            "last_read_time": comic.last_read_time,
+            "platform": comic.platform,
+            "plugin_id": comic.plugin_id,
+            "plugin_name": comic.plugin_name,
+            "display": dict(comic.display or {}),
+            "custom_order": comic.custom_order,
+        }
+
+    @staticmethod
     def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids: List[str] = None) -> bool:
         changed = False
         processed = False
@@ -148,35 +178,77 @@ class ComicAppService:
         sort_type: str = None,
         sort_order: str = "desc",
         min_score: float = None,
-        max_score: float = None
+        max_score: float = None,
+        keyword: str = "",
+        include_tags: List[str] = None,
+        exclude_tags: List[str] = None,
+        authors: List[str] = None,
+        list_ids: List[str] = None,
+        unread_only: bool = False,
+        page: int = 1,
+        page_size: int = 24,
+        paginate: bool = False,
+        summary_only: bool = False,
+        include_available_authors: bool = False,
     ) -> ServiceResult:
         try:
-            app_logger.info(f"[get_comic_list] sort_type={sort_type}, sort_order={sort_order}, min_score={min_score}, max_score={max_score}")
+            app_logger.info(
+                f"[get_comic_list] sort_type={sort_type}, sort_order={sort_order}, "
+                f"min_score={min_score}, max_score={max_score}, paginate={paginate}"
+            )
             comics = self._comic_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
-            
-            # 过滤掉已删除的漫画
+
+            include_tag_ids = set(normalize_string_list(include_tags))
+            exclude_tag_ids = set(normalize_string_list(exclude_tags))
+            author_set = set(normalize_string_list(authors))
+            list_id_set = set(normalize_string_list(list_ids))
+
             comics = [c for c in comics if not c.is_deleted]
-            
+
             if min_score is not None:
                 comics = [c for c in comics if c.score is not None and c.score >= min_score]
             if max_score is not None:
                 comics = [c for c in comics if c.score is not None and c.score <= max_score]
+            if include_tag_ids:
+                comics = [c for c in comics if include_tag_ids.issubset(set(c.tag_ids or []))]
+            if exclude_tag_ids:
+                comics = [c for c in comics if not exclude_tag_ids.intersection(set(c.tag_ids or []))]
+            if author_set:
+                comics = [c for c in comics if str(c.author or "").strip() in author_set]
+            if list_id_set:
+                comics = [c for c in comics if list_id_set.intersection(set(c.list_ids or []))]
+            if unread_only:
+                comics = [c for c in comics if normalize_total_page(c.current_page, default=1) == 1]
+            if keyword:
+                comics = [c for c in comics if matches_keyword(c, keyword, tag_map=tag_map)]
 
             app_logger.info(f"[get_comic_list] 排序前漫画数量: {len(comics)}")
             if sort_type:
                 app_logger.info(f"[get_comic_list] 执行排序: {sort_type}")
-                if str(sort_type or "").strip().lower() == "custom":
-                    self._commit_custom_order(self._comic_document_repo)
                 comics = sort_content_items(comics, sort_type, sort_order)
-            
+
             app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
-            
-            comic_list = []
-            for c in comics:
-                comic_list.append(self._comic_to_summary_dict(c, tag_map))
-            
+
+            serializer = self._comic_to_card_dict if summary_only else (lambda comic: self._comic_to_summary_dict(comic, tag_map))
+
+            if paginate:
+                payload = build_paginated_payload(
+                    comics,
+                    page=normalize_page(page, 1),
+                    page_size=normalize_page_size(page_size),
+                    serializer=serializer,
+                    extra={
+                        "available_authors": extract_available_authors(comics) if include_available_authors else [],
+                    },
+                )
+                app_logger.info(
+                    f"获取漫画分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个漫画"
+                )
+                return ServiceResult.ok(payload)
+
+            comic_list = [serializer(c) for c in comics]
             app_logger.info(f"获取漫画列表成功，共 {len(comic_list)} 个漫画")
             return ServiceResult.ok(comic_list)
         except Exception as e:

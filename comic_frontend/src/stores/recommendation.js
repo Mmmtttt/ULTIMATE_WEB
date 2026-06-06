@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { recommendationApi } from '@/api'
 import { useCacheStore } from './cache'
-import { filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
+import { extractAuthors, filterItemsByMinScore, filterItemsByUnread, isReadByProgress, normalizeMinScore, sortContentItems } from '@/utils'
 
 /**
  * 推荐漫画管理 Store
@@ -17,6 +17,11 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
   // 推荐漫画列表
   const recommendations = ref([])
+  const totalCountState = ref(0)
+  const currentPageState = ref(1)
+  const pageSizeState = ref(0)
+  const totalPagesState = ref(1)
+  const availableAuthors = ref([])
 
   // 当前选中的推荐漫画
   const currentRecommendation = ref(null)
@@ -55,6 +60,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
    * 推荐漫画总数
    */
   const totalCount = computed(() => recommendations.value.length)
+  const queryTotalCount = computed(() => totalCountState.value || recommendations.value.length)
+  const queryCurrentPage = computed(() => currentPageState.value || 1)
+  const queryPageSize = computed(() => pageSizeState.value || recommendations.value.length || 0)
+  const queryTotalPages = computed(() => totalPagesState.value || 1)
 
   /**
    * 当前显示数量
@@ -109,7 +118,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     error.value = null
 
     try {
-      const params = {}
+      const params = { ...options }
       const sortTypeToUse = options.sortType || currentSort.value
       if (sortTypeToUse) {
         params.sort_type = sortTypeToUse
@@ -130,12 +139,29 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       console.log('[Recommendation] API 返回数据:', response)
 
       if (response.code === 200) {
-        recommendations.value = response.data || []
+        const payload = response.data
+        if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+          recommendations.value = payload.items || []
+          totalCountState.value = Number(payload.total) || recommendations.value.length
+          currentPageState.value = Number(payload.page) || 1
+          pageSizeState.value = Number(payload.page_size) || recommendations.value.length || 0
+          totalPagesState.value = Number(payload.total_pages) || 1
+          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(recommendations.value)
+        } else {
+          recommendations.value = Array.isArray(payload) ? payload : []
+          totalCountState.value = recommendations.value.length
+          currentPageState.value = 1
+          pageSizeState.value = recommendations.value.length
+          totalPagesState.value = 1
+          availableAuthors.value = extractAuthors(recommendations.value)
+        }
+        isFiltering.value = false
+        filteredRecommendations.value = []
         // 缓存列表数据
         if (Object.keys(options).length === 0) {
-          cacheStore.setRecommendationListCache(response.data)
+          cacheStore.setRecommendationListCache(recommendations.value)
         }
-        return response.data
+        return recommendations.value
       } else {
         error.value = response.msg || '获取推荐列表失败'
         return []
@@ -415,6 +441,14 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     return recommendationApi.updateCustomOrder(recommendationIds)
   }
 
+  async function fetchCustomOrderItems(options = {}) {
+    const response = await recommendationApi.getList({
+      ...options,
+      summary: 1
+    })
+    return Array.isArray(response.data) ? response.data : []
+  }
+
   /**
    * 设置排序方式
    * @param {string} sortType - 排序类型
@@ -568,6 +602,11 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     recommendationList,
     currentRecommendationInfo,
     totalCount,
+    queryTotalCount,
+    queryCurrentPage,
+    queryPageSize,
+    queryTotalPages,
+    availableAuthors,
     displayCount,
     getRecommendationById,
     readCount,
@@ -587,6 +626,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     filterByTags,
     filterMulti,
     saveCustomOrder,
+    fetchCustomOrderItems,
     clearFilter,
     setSortType,
     clearSort,

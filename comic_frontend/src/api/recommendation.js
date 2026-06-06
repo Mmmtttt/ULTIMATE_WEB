@@ -17,18 +17,20 @@ export const recommendationApi = {
    */
   getList: (params = {}) => {
     const queryParams = new URLSearchParams()
-    if (params.sort_type) {
-      queryParams.append('sort_type', params.sort_type)
-    }
-    if (params.sort_order) {
-      queryParams.append('sort_order', params.sort_order)
-    }
-    if (params.min_score !== undefined) {
-      queryParams.append('min_score', params.min_score)
-    }
-    if (params.max_score !== undefined) {
-      queryParams.append('max_score', params.max_score)
-    }
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item) => {
+          if (item !== undefined && item !== null && item !== '') {
+            queryParams.append(key, item)
+          }
+        })
+        return
+      }
+      queryParams.append(key, value)
+    })
     const queryString = queryParams.toString()
     return request.get(`/v1/recommendation/list${queryString ? '?' + queryString : ''}`)
   },

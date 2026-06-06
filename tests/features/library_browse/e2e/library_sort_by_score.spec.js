@@ -3,6 +3,7 @@ const {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 /**
@@ -24,6 +25,112 @@ const {
  */
 test("library sort by score keeps UI order consistent with backend sorting", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
+  const unsortedComics = [
+    {
+      id: "JM100001",
+      title: "E2E Comic Alpha",
+      author: "Tester A",
+      cover_path: "/static/mock/JM100001.jpg",
+      total_page: 3,
+      current_page: 1,
+      score: 8.5,
+      tag_ids: [],
+      tags: [],
+      list_ids: [],
+      source: "local",
+    },
+    {
+      id: "JM100003",
+      title: "E2E Comic Gamma",
+      author: "Tester C",
+      cover_path: "/static/mock/JM100003.jpg",
+      total_page: 5,
+      current_page: 5,
+      score: 9.8,
+      tag_ids: [],
+      tags: [],
+      list_ids: [],
+      source: "local",
+    },
+    {
+      id: "JM100002",
+      title: "E2E Comic Beta",
+      author: "Tester B",
+      cover_path: "/static/mock/JM100002.jpg",
+      total_page: 2,
+      current_page: 1,
+      score: 7.0,
+      tag_ids: [],
+      tags: [],
+      list_ids: [],
+      source: "local",
+    },
+  ];
+  const sortedComics = [...unsortedComics].sort((a, b) => b.score - a.score);
+
+  await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tag_name: "0.0.0",
+        html_url: "https://github.com/Mmmtttt/ULTIMATE_WEB/releases",
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/ui-state**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 200, data: { state: null } }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: { ok: true } }),
+    });
+  });
+
+  await page.route("**/api/v1/list/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/author/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/tag/list**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: [] }),
+    });
+  });
+
+  await page.route("**/api/v1/comic/list**", async (route) => {
+    const url = new URL(route.request().url());
+    const sortType = url.searchParams.get("sort_type");
+    const sortOrder = url.searchParams.get("sort_order");
+    const data = sortType === "score" && sortOrder === "desc" ? sortedComics : unsortedComics;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(data) }),
+    });
+  });
 
   await page.goto("/library");
   await expect(page.getByText("E2E Comic Alpha")).toBeVisible();

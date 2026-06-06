@@ -4,8 +4,8 @@ const repoRoot = path.resolve(__dirname, "..");
 const frontendRoot = path.join(repoRoot, "comic_frontend");
 const { defineConfig, devices } = require(path.join(frontendRoot, "node_modules", "@playwright/test"));
 
-const backendPort = 5010;
-const frontendPort = 4173;
+const backendPort = Number.parseInt(process.env.PW_BACKEND_PORT || "5010", 10);
+const frontendPort = Number.parseInt(process.env.PW_FRONTEND_PORT || "4173", 10);
 const isHeaded = process.env.PW_HEADED === "1";
 const defaultWorkers = 1;
 const workerCount = Number.parseInt(process.env.PW_WORKERS || String(defaultWorkers), 10);

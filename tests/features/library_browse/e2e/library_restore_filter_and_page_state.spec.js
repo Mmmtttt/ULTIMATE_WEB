@@ -1,4 +1,4 @@
-const { test, expect } = require("../../../shared/e2e_helpers");
+const { test, expect, buildPaginatedData } = require("../../../shared/e2e_helpers");
 
 function buildComic(index, tagIds) {
   const padded = String(index).padStart(2, "0");
@@ -98,18 +98,25 @@ test("library back restores filter and pagination state", async ({ page }) => {
   });
 
   await page.route("**/api/v1/comic/list**", async (route) => {
+    const url = new URL(route.request().url());
+    const includeTagIds = url.searchParams.getAll("include_tag_ids");
+    const pageParam = Number(url.searchParams.get("page") || "1");
+    const pageSize = Number(url.searchParams.get("page_size") || "20");
+    const sourceItems = includeTagIds.includes("tag_action") ? actionComics : allComics;
+    const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: allComics }),
-    });
-  });
-
-  await page.route("**/api/v1/comic/filter**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: actionComics }),
+      body: JSON.stringify({
+        code: 200,
+        data: buildPaginatedData(sourceItems.slice(start, end), {
+          total: sourceItems.length,
+          page,
+          pageSize,
+        }),
+      }),
     });
   });
 

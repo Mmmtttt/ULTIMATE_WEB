@@ -3,6 +3,7 @@ const {
   expect,
   startApiRequestRecorder,
   hasApiCall,
+  buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
 function buildComic(id, title, author) {
@@ -113,14 +114,22 @@ async function installSharedMocks(page) {
 
 async function assertRealtimeSearch(page, options) {
   const apiRequests = startApiRequestRecorder(page);
-  const { path, listPattern, items, expectedSearchApiPath, placeholder } = options;
+  const { path, listPattern, items, expectedListApiPath, placeholder } = options;
 
   await installSharedMocks(page);
   await page.route(listPattern, async (route) => {
+    const keyword = String(new URL(route.request().url()).searchParams.get("keyword") || "").trim().toLowerCase();
+    const filtered = keyword
+      ? items.filter((item) =>
+          [item.title, item.author, item.desc]
+            .filter(Boolean)
+            .some((field) => String(field).toLowerCase().includes(keyword)),
+        )
+      : items;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: items }),
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(filtered) }),
     });
   });
 
@@ -130,17 +139,52 @@ async function assertRealtimeSearch(page, options) {
   await expect(page.locator(".media-card")).toHaveCount(items.length);
 
   await searchInput.fill("Aurora");
+  await expect
+    .poll(
+      () =>
+        hasApiCall(
+          apiRequests,
+          (item) =>
+            item.url.includes(expectedListApiPath) &&
+            item.url.includes("keyword=Aurora"),
+        ),
+      { timeout: 5000 },
+    )
+    .toBeTruthy();
   await expect(page.locator(".media-card", { hasText: "Aurora" })).toHaveCount(1);
   await expect(page.locator(".media-card", { hasText: "Nebula" })).toHaveCount(0);
   await expect(page.locator(".media-card", { hasText: "Harbor" })).toHaveCount(0);
-  expect(hasApiCall(apiRequests, expectedSearchApiPath)).toBeFalsy();
 
   await searchInput.fill("Harbor");
+  await expect
+    .poll(
+      () =>
+        hasApiCall(
+          apiRequests,
+          (item) =>
+            item.url.includes(expectedListApiPath) &&
+            item.url.includes("keyword=Harbor"),
+        ),
+      { timeout: 5000 },
+    )
+    .toBeTruthy();
   await expect(page.locator(".media-card", { hasText: "Harbor" })).toHaveCount(1);
   await expect(page.locator(".media-card", { hasText: "Aurora" })).toHaveCount(0);
 
   await page.locator(".toolbar-search .toolbar-search-clear").click();
   await expect(searchInput).toHaveValue("");
+  await expect
+    .poll(
+      () =>
+        hasApiCall(
+          apiRequests,
+          (item) =>
+            item.url.includes(expectedListApiPath) &&
+            !item.url.includes("keyword="),
+        ),
+      { timeout: 5000 },
+    )
+    .toBeTruthy();
   await expect(page.locator(".media-card")).toHaveCount(items.length);
 }
 
@@ -148,7 +192,7 @@ test("library search filters local items immediately without manual submit", asy
   await assertRealtimeSearch(page, {
     path: "/library",
     listPattern: "**/api/v1/comic/list**",
-    expectedSearchApiPath: "/api/v1/comic/search",
+    expectedListApiPath: "/api/v1/comic/list",
     placeholder: "实时搜索漫画...",
     items: [
       buildComic("comic-a", "Aurora Comic", "Author Aurora"),
@@ -162,7 +206,7 @@ test("preview search filters preview items immediately without manual submit", a
   await assertRealtimeSearch(page, {
     path: "/preview",
     listPattern: "**/api/v1/recommendation/list**",
-    expectedSearchApiPath: "/api/v1/recommendation/search",
+    expectedListApiPath: "/api/v1/recommendation/list",
     placeholder: "实时搜索推荐漫画...",
     items: [
       buildRecommendation("rec-a", "Aurora Preview", "Preview Aurora"),

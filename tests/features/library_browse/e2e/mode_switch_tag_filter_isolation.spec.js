@@ -1,4 +1,4 @@
-const { test, expect } = require("../../../shared/e2e_helpers");
+const { test, expect, buildPaginatedData } = require("../../../shared/e2e_helpers");
 
 function buildComic(id, title, tagIds) {
   return {
@@ -140,9 +140,7 @@ async function assertModeSwitchClearsTagFilters(page, options) {
   const {
     path,
     comicListPattern,
-    comicFilterPattern,
     videoListPattern,
-    videoFilterPattern,
     comicSearchText,
     videoSearchText,
   } = options;
@@ -162,18 +160,15 @@ async function assertModeSwitchClearsTagFilters(page, options) {
   await installSharedMocks(page, stateByScope);
 
   await page.route(comicListPattern, async (route) => {
+    const url = new URL(route.request().url());
+    const includeTagIds = url.searchParams.getAll("include_tag_ids");
+    const filtered = includeTagIds.includes("tag_action")
+      ? filteredComicItems
+      : comicItems;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: comicItems }),
-    });
-  });
-
-  await page.route(comicFilterPattern, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: filteredComicItems }),
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(filtered) }),
     });
   });
 
@@ -181,15 +176,7 @@ async function assertModeSwitchClearsTagFilters(page, options) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: videoItems }),
-    });
-  });
-
-  await page.route(videoFilterPattern, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ code: 200, data: [] }),
+      body: JSON.stringify({ code: 200, data: buildPaginatedData(videoItems) }),
     });
   });
 
@@ -219,9 +206,7 @@ test("library mode switch does not leak comic tag filters into video mode", asyn
   await assertModeSwitchClearsTagFilters(page, {
     path: "/library",
     comicListPattern: "**/api/v1/comic/list**",
-    comicFilterPattern: "**/api/v1/comic/filter**",
     videoListPattern: "**/api/v1/video/list**",
-    videoFilterPattern: "**/api/v1/video/filter**",
     comicSearchText: "实时搜索漫画...",
     videoSearchText: "实时搜索视频...",
   });
@@ -231,9 +216,7 @@ test("preview mode switch does not leak comic tag filters into video mode", asyn
   await assertModeSwitchClearsTagFilters(page, {
     path: "/preview",
     comicListPattern: "**/api/v1/recommendation/list**",
-    comicFilterPattern: "**/api/v1/recommendation/filter**",
     videoListPattern: "**/api/v1/video/recommendation/list**",
-    videoFilterPattern: "**/api/v1/video/recommendation/filter**",
     comicSearchText: "实时搜索推荐漫画...",
     videoSearchText: "实时搜索推荐视频...",
   });

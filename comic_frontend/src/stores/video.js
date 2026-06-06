@@ -1,10 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { videoApi } from '../api/video'
-import { filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
+import { extractAuthors, filterItemsByMinScore, normalizeMinScore, sortContentItems } from '@/utils'
 
 export const useVideoStore = defineStore('video', () => {
   const videos = ref([])
+  const totalCountState = ref(0)
+  const currentPageState = ref(1)
+  const pageSizeState = ref(0)
+  const totalPagesState = ref(1)
+  const availableAuthors = ref([])
   const currentVideo = ref(null)
   const trashList = ref([])
   const loading = ref(false)
@@ -15,6 +20,10 @@ export const useVideoStore = defineStore('video', () => {
   const currentSortOrder = ref('desc')
   
   const videoCount = computed(() => videos.value.length)
+  const queryTotalCount = computed(() => totalCountState.value || videos.value.length)
+  const queryCurrentPage = computed(() => currentPageState.value || 1)
+  const queryPageSize = computed(() => pageSizeState.value || videos.value.length || 0)
+  const queryTotalPages = computed(() => totalPagesState.value || 1)
   const trashCount = computed(() => trashList.value.length)
   const videoList = computed(() => isFiltering.value ? filteredVideos.value : videos.value)
   
@@ -33,7 +42,24 @@ export const useVideoStore = defineStore('video', () => {
       }
       const res = await videoApi.getList(queryParams)
       if (res.code === 200) {
-        videos.value = res.data || []
+        const payload = res.data
+        if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
+          videos.value = payload.items || []
+          totalCountState.value = Number(payload.total) || videos.value.length
+          currentPageState.value = Number(payload.page) || 1
+          pageSizeState.value = Number(payload.page_size) || videos.value.length || 0
+          totalPagesState.value = Number(payload.total_pages) || 1
+          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(videos.value)
+        } else {
+          videos.value = Array.isArray(payload) ? payload : []
+          totalCountState.value = videos.value.length
+          currentPageState.value = 1
+          pageSizeState.value = videos.value.length
+          totalPagesState.value = 1
+          availableAuthors.value = extractAuthors(videos.value)
+        }
+        isFiltering.value = false
+        filteredVideos.value = []
       }
     } catch (e) {
       error.value = e.message
@@ -364,6 +390,14 @@ export const useVideoStore = defineStore('video', () => {
     return videoApi.updateCustomOrder(videoIds)
   }
 
+  async function fetchCustomOrderItems(params = {}) {
+    const response = await videoApi.getList({
+      ...params,
+      summary: 1
+    })
+    return Array.isArray(response.data) ? response.data : []
+  }
+
   function setSortState(sortType = null, sortOrder = 'desc') {
     currentSort.value = sortType || null
     currentSortOrder.value = sortOrder || 'desc'
@@ -384,6 +418,11 @@ export const useVideoStore = defineStore('video', () => {
     filteredVideos,
     isFiltering,
     videoCount,
+    queryTotalCount,
+    queryCurrentPage,
+    queryPageSize,
+    queryTotalPages,
+    availableAuthors,
     trashCount,
     videoList,
     fetchList,
@@ -412,6 +451,7 @@ export const useVideoStore = defineStore('video', () => {
     filterMulti,
     sortVideos,
     saveCustomOrder,
+    fetchCustomOrderItems,
     setSortState,
     clearFilter,
     clearCurrentVideo

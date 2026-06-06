@@ -231,7 +231,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore } from '@/stores'
+import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore, useConfigStore } from '@/stores'
 import { uiStateApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -240,16 +240,15 @@ import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import ContentOrderEditor from '@/components/common/ContentOrderEditor.vue'
 import { showToast } from 'vant'
 import { useDevice } from '@/composables/useDevice'
-import { useClientPagination } from '@/composables/useClientPagination'
+import { usePersistentPage } from '@/composables/useClientPagination'
 import { toBackendUrl } from '@/utils/url'
 import {
   buildSortOptions,
   clearBrowseState,
   buildUiStateScope,
+  DEFAULT_CONFIG,
   debounce,
   decodeSortSelection,
-  extractAuthors,
-  filterMediaItemsByKeyword,
   getOrCreateUiStateClientId,
   isAllSelected,
   isDefaultSortState,
@@ -267,6 +266,7 @@ const videoRecStore = useVideoRecommendationStore()
 const listStore = useListStore()
 const tagStore = useTagStore()
 const importTaskStore = useImportTaskStore()
+const configStore = useConfigStore()
 const { isDesktop } = useDevice()
 
 // State
@@ -289,6 +289,10 @@ const tempUnreadOnly = ref(false)
 const currentSortField = ref('')
 const currentSortOrder = ref('desc')
 const suppressSearchStateWatch = ref(false)
+const customOrderItems = ref([])
+const pageWatchReady = ref(false)
+const skipNextPageFetch = ref(false)
+const selectionScopeItems = ref([])
 const mediaViewMode = computed(() => modeStore.mediaViewMode)
 const initVersion = ref(0)
 const uiStateClientId = getOrCreateUiStateClientId()
@@ -417,6 +421,59 @@ function sanitizeFilterStateForCurrentMode() {
   tempExcludeTags.value = tempExcludeTags.value.filter((tagId) => availableTagIds.has(tagId))
 }
 
+function buildListQueryParams() {
+  const params = {
+    paginate: 1,
+    summary: 1,
+    include_available_authors: 1,
+    page: currentPage.value,
+    page_size: pageSize.value,
+  }
+
+  if (currentSortField.value) {
+    params.sort_type = currentSortField.value
+    params.sort_order = currentSortOrder.value
+  }
+  if (String(searchKeyword.value || '').trim()) {
+    params.keyword = String(searchKeyword.value || '').trim()
+  }
+  if (tempIncludeTags.value.length > 0) {
+    params.include_tag_ids = [...tempIncludeTags.value]
+  }
+  if (tempExcludeTags.value.length > 0) {
+    params.exclude_tag_ids = [...tempExcludeTags.value]
+  }
+  if (tempSelectedAuthors.value.length > 0) {
+    params.authors = [...tempSelectedAuthors.value]
+  }
+  if (tempSelectedListIds.value.length > 0) {
+    params.list_ids = [...tempSelectedListIds.value]
+  }
+  if (Number(tempMinScore.value) > 0) {
+    params.min_score = Number(tempMinScore.value)
+  }
+  if (tempUnreadOnly.value && !isVideoMode.value) {
+    params.unread_only = 1
+  }
+  return params
+}
+
+function buildCustomOrderQueryParams() {
+  return {
+    sort_type: 'custom',
+    sort_order: currentSortOrder.value,
+  }
+}
+
+function buildSelectionScopeQueryParams() {
+  const params = buildListQueryParams()
+  delete params.paginate
+  delete params.page
+  delete params.page_size
+  delete params.include_available_authors
+  return params
+}
+
 // Computed
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const currentStore = computed(() => isVideoMode.value ? videoRecStore : comicRecStore)
@@ -425,20 +482,16 @@ const items = computed(() => {
   return isVideoMode.value ? videoRecStore.recommendationList : comicRecStore.recommendationList
 })
 
-const fullLibraryItems = computed(() => {
-  return isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
-})
-
 const displayItems = computed(() => {
-  return filterMediaItemsByKeyword(items.value, searchKeyword.value)
+  return items.value
 })
 
 const showCustomSortBanner = computed(() => {
-  return currentSortField.value === 'custom' && fullLibraryItems.value.length > 1
+  return currentSortField.value === 'custom' && totalItems.value > 1
 })
 
 const orderEditorItems = computed(() => {
-  return fullLibraryItems.value.map((item) => ({
+  return customOrderItems.value.map((item) => ({
     id: item.id,
     title: item.title || item.name || item.id,
     cover: resolveOrderCover(item),
@@ -447,13 +500,23 @@ const orderEditorItems = computed(() => {
 })
 
 const paginationStorageKey = computed(() => `preview_${isVideoMode.value ? 'video' : 'comic'}`)
+const pageSize = computed(() => {
+  const size = Number(configStore.listPageSize)
+  if (Number.isFinite(size) && size > 0) {
+    return size
+  }
+  return DEFAULT_CONFIG.LIST_PAGE_SIZE
+})
 const {
-  pageSize,
   currentPage,
-  totalItems,
-  pagedItems,
-  goFirst
-} = useClientPagination(displayItems, paginationStorageKey)
+  goFirst,
+  ensureWithinRange
+} = usePersistentPage(paginationStorageKey)
+const totalItems = computed(() => {
+  const total = isVideoMode.value ? videoRecStore.queryTotalCount : comicRecStore.queryTotalCount
+  return Number(total) || 0
+})
+const pagedItems = computed(() => items.value)
 
 const isLoading = computed(() => currentStore.value.loading)
 
@@ -474,8 +537,7 @@ const emptyDescription = computed(() => {
 const availableTags = computed(() => isVideoMode.value ? tagStore.videoTags : tagStore.tags)
 
 const availableAuthors = computed(() => {
-  const items = isVideoMode.value ? videoRecStore.recommendations : comicRecStore.recommendations
-  return extractAuthors(items)
+  return isVideoMode.value ? videoRecStore.availableAuthors : comicRecStore.availableAuthors
 })
 
 const availableLists = computed(() => {
@@ -557,7 +619,8 @@ const menuActions = [
 const sortOptions = computed(() => buildSortOptions(isVideoMode.value))
 
 const isAllItemsSelected = computed(() => {
-  return isAllSelected(selectedIds.value, displayItems.value, (item) => item.id)
+  const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
+  return isAllSelected(selectedIds.value, scopeItems, (item) => item.id)
 })
 
 // Methods
@@ -594,8 +657,18 @@ function toggleSelection(item) {
   }
 }
 
-function toggleSelectAllItems() {
-  toggleSelectAll(selectedIds, displayItems.value, (item) => item.id)
+async function toggleSelectAllItems() {
+  try {
+    if (!isAllItemsSelected.value) {
+      const scopeItems = await currentStore.value.fetchCustomOrderItems?.(buildSelectionScopeQueryParams())
+      selectionScopeItems.value = Array.isArray(scopeItems) ? scopeItems : []
+    }
+    const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
+    toggleSelectAll(selectedIds, scopeItems, (item) => item.id)
+  } catch (error) {
+    console.error('加载全选范围失败:', error)
+    showToast('加载列表失败，请稍后重试')
+  }
 }
 
 function setViewMode(mode) {
@@ -705,6 +778,7 @@ async function batchAddToLists() {
     showBatchListPopup.value = false
     batchSelectedListIds.value = []
     selectedIds.value = []
+    selectionScopeItems.value = []
     isManageMode.value = false
     const contentType = isVideoMode.value ? 'video' : 'comic'
     await listStore.fetchLists(contentType)
@@ -715,16 +789,18 @@ async function batchAddToLists() {
   }
 }
 
-function clearAllFilters() {
+async function clearAllFilters() {
   tempIncludeTags.value = []
   tempExcludeTags.value = []
   tempSelectedAuthors.value = []
   tempSelectedListIds.value = []
   tempMinScore.value = 0
   tempUnreadOnly.value = false
-  currentStore.value.clearFilter()
+  skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
-  persistViewState()
+  await loadData()
+  selectionScopeItems.value = []
+  await persistViewState()
 }
 
 function clearSearchKeyword() {
@@ -754,21 +830,17 @@ async function onSortConfirm({ selectedOptions }) {
   currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
   currentSortOrder.value = nextSort.sortOrder
   currentStore.value.setSortType(currentSortField.value || null, currentSortOrder.value)
+  skipNextPageFetch.value = currentPage.value !== 1
+  goFirst()
   const customSortSelected = currentSortField.value === 'custom'
   if (customSortSelected) {
     await loadData(true)
-    if (hasActiveFilterState()) {
-      await applyCurrentFilters({ resetPage: true, closePanel: false, persist: false })
-    }
-  } else if (hasActiveFilterState()) {
-    await applyCurrentFilters({ resetPage: true, persist: false })
   } else {
     await loadData(true)
   }
   await persistViewState()
-  goFirst()
   if (customSortSelected) {
-    showCustomOrderEditor.value = true
+    await openCustomOrderEditor()
   }
   showSortPanel.value = false
 }
@@ -778,11 +850,18 @@ function resolveOrderCover(item) {
   return candidate ? toBackendUrl(candidate) : ''
 }
 
-function openCustomOrderEditor() {
+async function openCustomOrderEditor() {
   if (!showCustomSortBanner.value) {
     return
   }
-  showCustomOrderEditor.value = true
+  try {
+    const result = await currentStore.value.fetchCustomOrderItems?.(buildCustomOrderQueryParams())
+    customOrderItems.value = Array.isArray(result) ? result : []
+    showCustomOrderEditor.value = true
+  } catch (error) {
+    console.error('加载自定义顺序失败:', error)
+    showToast('加载自定义顺序失败')
+  }
 }
 
 async function saveCustomOrder(itemIds) {
@@ -794,12 +873,8 @@ async function saveCustomOrder(itemIds) {
     }
 
     showCustomOrderEditor.value = false
+    customOrderItems.value = []
     await loadData(true)
-    if (hasActiveFilterState()) {
-      await applyCurrentFilters({ resetPage: false, closePanel: false, persist: false })
-    } else if (typeof currentStore.value.clearFilter === 'function') {
-      currentStore.value.clearFilter()
-    }
     goFirst()
     await persistViewState()
     showToast('自定义顺序已保存')
@@ -811,11 +886,10 @@ async function saveCustomOrder(itemIds) {
 
 async function applyFilterAndClose() {
   await applyCurrentFilters({ resetPage: true })
-  await persistViewState()
   showFilterPanel.value = false
 }
 
-async function loadData(force = false) {
+async function loadSupportData(force = false) {
   if (force || listStore.lists.length === 0) {
     await listStore.fetchLists()
   }
@@ -826,49 +900,22 @@ async function loadData(force = false) {
   } else if (force || tagStore.tags.length === 0) {
     await tagStore.fetchTags('comic', force)
   }
-  await currentStore.value.fetchRecommendations(force, {
-    sortType: currentSortField.value || undefined,
-    sortOrder: currentSortField.value ? currentSortOrder.value : undefined,
-  })
 }
 
-function hasActiveFilterState() {
-  return tempIncludeTags.value.length > 0 ||
-    tempExcludeTags.value.length > 0 ||
-    tempSelectedAuthors.value.length > 0 ||
-    tempSelectedListIds.value.length > 0 ||
-    tempMinScore.value > 0 ||
-    tempUnreadOnly.value
+async function loadData(force = false) {
+  await loadSupportData(force)
+  await currentStore.value.fetchRecommendations(force, buildListQueryParams())
+  ensureWithinRange(isVideoMode.value ? videoRecStore.queryTotalPages : comicRecStore.queryTotalPages)
 }
 
 async function applyCurrentFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
   const shouldPersistState = options.persist !== false
-  if (isVideoMode.value) {
-    await currentStore.value.filterMulti(
-      tempIncludeTags.value,
-      tempExcludeTags.value,
-      tempSelectedAuthors.value,
-      tempSelectedListIds.value,
-      tempMinScore.value,
-      currentSortField.value || null,
-      currentSortOrder.value
-    )
-  } else {
-    await currentStore.value.filterMulti(
-      tempIncludeTags.value,
-      tempExcludeTags.value,
-      tempSelectedAuthors.value,
-      tempSelectedListIds.value,
-      tempMinScore.value,
-      tempUnreadOnly.value,
-      currentSortField.value || null,
-      currentSortOrder.value
-    )
-  }
   if (shouldResetPage) {
+    skipNextPageFetch.value = currentPage.value !== 1
     goFirst()
   }
+  await loadData()
   if (shouldPersistState) {
     await persistViewState()
   }
@@ -876,6 +923,7 @@ async function applyCurrentFilters(options = {}) {
 
 async function initializePage(force = false) {
   const currentVersion = ++initVersion.value
+  pageWatchReady.value = false
   await restoreViewState()
   if (route.query.author) {
     tempSelectedAuthors.value = [route.query.author]
@@ -889,12 +937,7 @@ async function initializePage(force = false) {
   if (currentVersion !== initVersion.value) {
     return
   }
-
-  if (hasActiveFilterState()) {
-    await applyCurrentFilters({ resetPage: false, persist: false })
-  } else if (typeof currentStore.value.clearFilter === 'function') {
-    currentStore.value.clearFilter()
-  }
+  pageWatchReady.value = true
 }
 
 // Lifecycle
@@ -919,27 +962,38 @@ watch(() => route.query.tagId, async (newTagId) => {
 })
 
 watch(
-  () => displayItems.value.map((item) => item.id),
+  () => pagedItems.value.map((item) => item.id),
   () => {
     selectedIds.value = []
+    selectionScopeItems.value = []
   }
 )
 
-watch(currentPage, () => {
+watch(currentPage, async (page, previousPage) => {
   persistLocalBrowseState()
+  if (skipNextPageFetch.value) {
+    skipNextPageFetch.value = false
+    return
+  }
+  if (!pageWatchReady.value || page === previousPage) {
+    return
+  }
+  await loadData()
 })
 
-const debouncedPersistSearchState = debounce(() => {
-  persistViewState().catch(() => {})
+const debouncedSearchRefresh = debounce(() => {
+  loadData()
+    .then(() => persistViewState())
+    .catch(() => {})
 }, 260)
 
 watch(searchKeyword, () => {
   if (suppressSearchStateWatch.value) {
     return
   }
+  skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
-  persistLocalBrowseState()
-  debouncedPersistSearchState()
+  debouncedSearchRefresh()
 })
 
 onMounted(async () => {
