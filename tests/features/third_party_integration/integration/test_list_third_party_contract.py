@@ -206,13 +206,14 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
     用例描述:
     - 用例目的: 看护 JAVDB 清单同步去重逻辑，确保仅把“远程新增 code”传给通用视频导入器，防止重复导入。
     - 测试步骤:
-      1. 在隔离库中创建一个远程跟踪清单，并让本地已存在视频绑定该清单。
+      1. 在隔离库中创建一个旧版 local 远程跟踪清单，并让预览库已存在视频绑定该清单。
       2. mock get_list_detail 返回“一个已存在 code + 一个新 code”。
       3. mock _import_platform_videos 记录收到的 works。
       4. 调用 POST /api/v1/list/sync。
     - 预期结果:
-      1. 通用视频导入器仅收到新增 code 对应的 works。
-      2. 接口返回业务成功并回传 list_id。
+      1. 同步时自动把远程跟踪清单修正为预览库。
+      2. 通用视频导入器仅收到新增 code 对应的 works。
+      3. 接口返回业务成功并回传 list_id。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖同步去重核心契约。
     """
@@ -239,11 +240,23 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
     )
     save_json(meta_dir / "lists_database.json", lists_payload)
 
-    videos_payload = load_json(meta_dir / "videos_database.json")
-    for item in videos_payload.get("videos", []):
-        if item.get("id") == "JAVDB900001":
-            item["list_ids"] = sorted(set((item.get("list_ids") or []) + [list_id]))
-    save_json(meta_dir / "videos_database.json", videos_payload)
+    preview_videos_payload = load_json(meta_dir / "video_recommendations_database.json")
+    preview_videos = preview_videos_payload.setdefault("video_recommendations", [])
+    preview_videos.append(
+        {
+            "id": "JAVDB900001",
+            "title": "Existing",
+            "code": "TEST-900001",
+            "list_ids": [list_id],
+            "tag_ids": [],
+            "cover_path": "",
+            "create_time": "2026-03-23T10:00:00",
+            "last_access_time": "2026-03-23T10:00:00",
+            "is_deleted": False,
+        }
+    )
+    preview_videos_payload["total_video_recommendations"] = len(preview_videos)
+    save_json(meta_dir / "video_recommendations_database.json", preview_videos_payload)
 
     def fake_load(manifest, remote_list_id):
         captured["plugin_id"] = manifest.plugin_id
@@ -273,11 +286,116 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
     assert captured["plugin_id"] == "video.javdb"
     assert captured["remote_list_id"] == "remote-sync-88"
     assert captured["target_list_id"] == list_id
-    assert captured["source"] == "local"
+    assert captured["source"] == "preview"
     assert captured["platform_str"] == "JAVDB"
     assert len(captured["works"]) == 1
     assert captured["works"][0]["code"] == "TEST-900099"
     assert payload["data"]["list_id"] == list_id
+    synced_list = next(
+        item for item in load_json(meta_dir / "lists_database.json").get("lists", [])
+        if item.get("id") == list_id
+    )
+    assert synced_list["import_source"] == "preview"
+
+
+@pytest.mark.integration
+def test_list_sync_platform_list_comic_legacy_local_source_is_forced_to_preview(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard remote comic list sync against legacy tracking lists saved with import_source=local.
+    - Steps:
+      1. Create a JM remote tracking list whose persisted import_source is local.
+      2. Bind one existing comic in recommendations_database.json to that list.
+      3. Mock the remote list payload with one existing and one new album.
+      4. Call POST /api/v1/list/sync.
+    - Expected:
+      1. Sync imports through the preview path even though the old metadata says local.
+      2. Only the new preview-library comic is sent to the importer.
+      3. The tracking list metadata is repaired to import_source=preview.
+    """
+    client = third_party_client["client"]
+    list_api = third_party_client["list_api"]
+    meta_dir = third_party_client["meta_dir"]
+    list_id = "list_remote_jm_sync_legacy_local"
+    captured = {}
+
+    lists_payload = load_json(meta_dir / "lists_database.json")
+    lists_payload.setdefault("lists", []).append(
+        {
+            "id": list_id,
+            "name": "Remote JM Sync List",
+            "desc": "remote sync",
+            "content_type": "comic",
+            "is_default": False,
+            "create_time": "2026-03-23T10:00:00",
+            "platform": "JM",
+            "platform_list_id": "favorites",
+            "import_source": "local",
+            "last_sync_time": "",
+        }
+    )
+    save_json(meta_dir / "lists_database.json", lists_payload)
+
+    rec_payload = load_json(meta_dir / "recommendations_database.json")
+    recommendations = rec_payload.setdefault("recommendations", [])
+    recommendations.append(
+        {
+            "id": "JM100001",
+            "title": "Existing",
+            "author": "A",
+            "cover_path": "",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 8.0,
+            "tag_ids": [],
+            "list_ids": [list_id],
+            "create_time": "2026-03-23T10:00:00",
+            "last_read_time": "2026-03-23T10:00:00",
+            "is_deleted": False,
+        }
+    )
+    rec_payload["total_recommendations"] = len(recommendations)
+    save_json(meta_dir / "recommendations_database.json", rec_payload)
+
+    def fake_load(manifest, remote_list_id):
+        captured["plugin_id"] = manifest.plugin_id
+        captured["remote_list_id"] = remote_list_id
+        return {
+            "works": [
+                {"album_id": "100001", "comic_id": "100001", "title": "Existing"},
+                {"album_id": "100099", "comic_id": "100099", "title": "New Album"},
+            ]
+        }
+
+    def fake_import(works, target_list_id, source, platform, platform_str=""):
+        captured["works"] = works
+        captured["target_list_id"] = target_list_id
+        captured["source"] = source
+        captured["platform"] = platform
+        captured["platform_str"] = platform_str
+        return _ok_result({"imported_count": len(works), "skipped_count": 0, "total_count": len(works)})
+
+    monkeypatch.setattr(list_api.list_service, "_load_platform_list_payload", fake_load)
+    monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import)
+
+    response = client.post("/api/v1/list/sync", json={"list_id": list_id})
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert captured["plugin_id"] == "comic.jmcomic"
+    assert captured["remote_list_id"] == "favorites"
+    assert captured["target_list_id"] == list_id
+    assert captured["source"] == "preview"
+    assert captured["platform"] == "JM"
+    assert captured["platform_str"] == "JM"
+    assert len(captured["works"]) == 1
+    assert captured["works"][0]["album_id"] == "100099"
+    synced_list = next(
+        item for item in load_json(meta_dir / "lists_database.json").get("lists", [])
+        if item.get("id") == list_id
+    )
+    assert synced_list["import_source"] == "preview"
 
 
 @pytest.mark.integration
@@ -403,7 +521,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     - Purpose: Guard JM favorites sync de-dup logic so only newly discovered comics are passed to importer.
     - Steps:
       1. Create JM favorites tracking list via real import chain (mock importer only).
-      2. Bind existing comic to that list in isolated metadata.
+      2. Bind existing preview-library comic to that list in isolated metadata.
       3. Mock favorites source to return one existing + one new album.
       4. Call `POST /api/v1/list/sync/favorites` and verify importer input.
     - Expected:
@@ -441,11 +559,26 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     assert create_payload["code"] == 200
     favorites_list_id = import_captured["target_list_id"]
 
-    comics_payload = load_json(meta_dir / "comics_database.json")
-    for item in comics_payload.get("comics", []):
-        if item.get("id") == "JM100001":
-            item["list_ids"] = sorted(set((item.get("list_ids") or []) + [favorites_list_id]))
-    save_json(meta_dir / "comics_database.json", comics_payload)
+    rec_payload = load_json(meta_dir / "recommendations_database.json")
+    recommendations = rec_payload.setdefault("recommendations", [])
+    recommendations.append(
+        {
+            "id": "JM100001",
+            "title": "Existing",
+            "author": "A",
+            "cover_path": "",
+            "total_page": 1,
+            "current_page": 1,
+            "score": 8.0,
+            "tag_ids": [],
+            "list_ids": [favorites_list_id],
+            "create_time": "2026-03-23T10:00:00",
+            "last_read_time": "2026-03-23T10:00:00",
+            "is_deleted": False,
+        }
+    )
+    rec_payload["total_recommendations"] = len(recommendations)
+    save_json(meta_dir / "recommendations_database.json", rec_payload)
 
     def fake_execute_sync(manifest, capability, params=None):
         assert manifest.plugin_id == "comic.jmcomic"
@@ -478,7 +611,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     assert sync_captured["platform"] == "JM"
     assert sync_captured["platform_is_string"] is True
     assert sync_captured["platform_str"] == "JM"
-    assert sync_captured["source"] == "local"
+    assert sync_captured["source"] == "preview"
     assert len(sync_captured["works"]) == 1
     assert sync_captured["works"][0]["album_id"] == "100889"
 

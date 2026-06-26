@@ -452,7 +452,7 @@ async function syncList(list) {
   try {
     await showConfirmDialog({
       title: '同步清单',
-      message: `确定要同步清单"${list.name}"吗？\n\n将从网络侧获取最新内容，新增的内容将被导入到本地。`
+      message: `确定要同步清单"${list.name}"吗？\n\n将从网络侧获取最新内容，新增的内容将被导入到预览库。`
     })
   } catch {
     return

@@ -25,6 +25,7 @@ class ListAppService:
     DEFAULT_VIDEO_LIST_ID = "list_favorites_video"
     DEFAULT_IMPORT_MAX_WORKERS = 10
     THIRD_PARTY_DISABLED_MESSAGE = "third-party integration is disabled in current runtime profile"
+    REMOTE_TRACKING_IMPORT_SOURCE = "preview"
     COMIC_RECENT_IMPORT_TAG_ID = "tag_recent_import"
     COMIC_RECENT_IMPORT_TAG_NAME = "最近导入"
     
@@ -369,6 +370,14 @@ class ListAppService:
             return ""
         return self._canonicalize_platform_name("", manifests[0])
 
+    def _ensure_remote_tracking_source(self, lst: List) -> bool:
+        if not lst or not getattr(lst, "platform", "") or not getattr(lst, "platform_list_id", ""):
+            return False
+        if lst.import_source == self.REMOTE_TRACKING_IMPORT_SOURCE:
+            return False
+        lst.import_source = self.REMOTE_TRACKING_IMPORT_SOURCE
+        return True
+
     def _get_positive_int_config(self, env_name: str, default_value: int) -> int:
         value = os.getenv(env_name)
         if not value:
@@ -524,9 +533,10 @@ class ListAppService:
                             continue
                         lst.platform = fallback_platform
                         lst.platform_list_id = match.group(1)
-                        lst.import_source = "local"
-                        self._list_repo.save(lst)
                         app_logger.info(f"自动修复旧清单数据: {lst.id}, {lst.platform}, {lst.platform_list_id}")
+                if self._ensure_remote_tracking_source(lst):
+                    self._list_repo.save(lst)
+                    app_logger.info(f"已修正远程跟踪清单导入目标为预览库: {lst.id}")
                 
                 comic_count = self._list_repo.get_comic_count(lst.id)
                 video_count = self._list_repo.get_video_count(lst.id)
@@ -1111,7 +1121,6 @@ class ListAppService:
                         return ServiceResult.error("该清单缺少平台信息，且无法根据协议自动识别平台")
                     lst.platform = inferred_platform
                     lst.platform_list_id = match.group(1)
-                    lst.import_source = "local"
                     self._list_repo.save(lst)
                     app_logger.info(f"从描述中解析出清单信息: {lst.platform}, {lst.platform_list_id}")
                 else:
@@ -1124,7 +1133,16 @@ class ListAppService:
             platform_key = self._canonicalize_platform_name(lst.platform, manifest)
             content_type = self._resolve_platform_content_type(platform_key, manifest)
             runtime_platform = self._resolve_runtime_platform_name(platform_key, manifest)
-            source = lst.import_source or "local"
+            source = self.REMOTE_TRACKING_IMPORT_SOURCE
+            changed = False
+            if lst.platform != platform_key:
+                lst.platform = platform_key
+                changed = True
+            if lst.import_source != source:
+                lst.import_source = source
+                changed = True
+            if changed:
+                self._list_repo.save(lst)
             
             app_logger.info(f"从平台 {lst.platform} 同步清单 {lst.platform_list_id}")
 
