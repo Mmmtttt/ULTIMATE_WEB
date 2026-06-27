@@ -188,14 +188,15 @@ test("comic detail page starts reading and navigates to reader", async ({ page }
  * - 用例目的: 强看护漫画详情页章节跳转链路，确保章节入口只在详情页体现且能跳到正确全局页码。
  * - 测试步骤:
  *   1. 打开 `/comic/JM100001` 详情页。
- *   2. 校验章节区与章节卡片已渲染。
- *   3. 点击第二个章节卡片。
+ *   2. 校验章节区默认折叠，章节卡片已渲染但不可见。
+ *   3. 展开章节列表并点击第二个章节卡片。
  *   4. 校验路由跳转到 `/reader/JM100001?page=3`。
  * - 预期结果:
- *   1. 章节区显示两张章节卡片。
+ *   1. 章节区默认折叠，点击“展开章节”后显示两张章节卡片。
  *   2. 点击章节后直接跳到对应起始页。
  * - 历史变更:
  *   - 2026-05-14: 初始创建，覆盖漫画分章节详情跳转主链路。
+ *   - 2026-06-28: 适配章节列表默认折叠交互。
  */
 test("comic detail page jumps to chapter start page from chapter cards", async ({ page }) => {
   await page.goto(`/comic/${CHAPTER_COMIC_ID}`);
@@ -203,6 +204,12 @@ test("comic detail page jumps to chapter start page from chapter cards", async (
 
   const chapterCards = page.locator(".chapter-card");
   await expect(chapterCards).toHaveCount(2);
+  await expect(chapterCards.first()).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /展开章节/ })).toBeVisible();
+
+  await page.getByRole("button", { name: /展开章节/ }).click();
+  await expect(page.getByRole("button", { name: /收起章节/ })).toBeVisible();
+  await expect(chapterCards.first()).toBeVisible();
   await expect(chapterCards.first()).toContainText("第1章");
   await expect(chapterCards.nth(1)).toContainText("第2章");
 
