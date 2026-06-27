@@ -273,7 +273,7 @@ class ComicAppService:
             error_logger.error(f"保存漫画自定义排序失败: {e}")
             return ServiceResult.error("保存自定义排序失败")
     
-    def get_comic_detail(self, comic_id: str) -> ServiceResult:
+    def get_comic_detail(self, comic_id: str, include_chapters: bool = True) -> ServiceResult:
         try:
             comic = self._comic_repo.get_by_id(comic_id)
             if not comic:
@@ -308,7 +308,8 @@ class ComicAppService:
             detail["source"] = "local"
             detail["storage_path"] = storage_path
             detail["storage_path_kind"] = storage_path_kind or str(detail.get("storage_path_kind", "")).strip()
-            detail["chapters"] = self._resolve_comic_chapters(comic)
+            if include_chapters:
+                detail["chapters"] = self._resolve_comic_chapters(comic)
             
             app_logger.info(f"获取漫画详情成功: {comic_id}")
             return ServiceResult.ok(detail)

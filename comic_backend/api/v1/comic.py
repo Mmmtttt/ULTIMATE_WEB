@@ -365,8 +365,13 @@ def comic_detail():
         comic_id = request.args.get('comic_id')
         if not comic_id:
             return error_response(400, "缺少参数")
-        
-        result = comic_service.get_comic_detail(comic_id)
+
+        include_chapters = str(request.args.get('include_chapters', 'true')).strip().lower() not in {
+            '0',
+            'false',
+            'no',
+        }
+        result = comic_service.get_comic_detail(comic_id, include_chapters=include_chapters)
         if result.success:
             return success_response(result.data)
         else:
@@ -451,21 +456,27 @@ def comic_image():
             response.headers['Cache-Control'] = f'public, max-age={CACHE_MAX_AGE}'
             return response
         
-        stream = image_handler.get_image_stream(comic_id, page_num)
-        if not stream:
-            return error_response(404, "图片不存在")
-        
         image_paths = file_parser.parse_comic_images(comic_id)
-        if page_num <= len(image_paths):
-            ext = image_paths[page_num - 1].split('.')[-1].lower()
-            mimetype = f"image/{ext}"
-            if ext == 'jpg':
-                mimetype = 'image/jpeg'
-        else:
+        if page_num < 1 or page_num > len(image_paths):
+            return error_response(404, "图片不存在")
+
+        image_path = image_paths[page_num - 1]
+        if not os.path.isfile(image_path):
+            file_parser.clear_image_cache(comic_id)
+            image_paths = file_parser.parse_comic_images(comic_id)
+            if page_num < 1 or page_num > len(image_paths):
+                return error_response(404, "图片不存在")
+            image_path = image_paths[page_num - 1]
+            if not os.path.isfile(image_path):
+                return error_response(404, "图片不存在")
+
+        ext = os.path.splitext(image_path)[1].lstrip('.').lower()
+        mimetype = f"image/{ext}" if ext else 'image/jpeg'
+        if ext == 'jpg':
             mimetype = 'image/jpeg'
         
         app_logger.info(f"获取图片成功: {comic_id}, 第 {page_num} 页")
-        response = send_file(stream, mimetype=mimetype)
+        response = send_file(image_path, mimetype=mimetype)
         response.headers['Cache-Control'] = f'public, max-age={CACHE_MAX_AGE}'
         return response
     except Exception as e:

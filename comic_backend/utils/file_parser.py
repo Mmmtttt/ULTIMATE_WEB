@@ -1,5 +1,7 @@
 import os
 import re
+import threading
+import time
 from typing import Any, Dict, List, Optional
 from application.persisted_content_metadata import resolve_data_relative_path
 from core.host_platform_fallback import infer_existing_host_comic_dir
@@ -15,8 +17,12 @@ from infrastructure.persistence.repositories import JsonDocumentRepository
 
 
 class FileParser:
+    IMAGE_CACHE_TTL_SECONDS = 60
+
     def __init__(self):
         self.supported_formats = SUPPORTED_FORMATS
+        self._image_cache = {}
+        self._image_cache_lock = threading.Lock()
 
     _chapter_numeric_pattern = re.compile(
         r"^(?:第)?(?:\d{1,4}|[a-z]{1,2}|[ivxlcdm]{1,6}|[一二三四五六七八九十百千零〇两]{1,6})(?:话|章|回|节|卷|集|部)?$",
@@ -129,12 +135,65 @@ class FileParser:
         
         return None
     
+    def clear_image_cache(self, comic_id: str = ""):
+        normalized_id = str(comic_id or "").strip()
+        with self._image_cache_lock:
+            if normalized_id:
+                self._image_cache.pop(normalized_id, None)
+            else:
+                self._image_cache.clear()
+
+    @staticmethod
+    def _safe_dir_mtime(path: str) -> float:
+        try:
+            return os.path.getmtime(path)
+        except Exception:
+            return 0.0
+
+    def _get_cached_image_paths(self, comic_id: str, comic_dir: str) -> Optional[List[str]]:
+        normalized_id = str(comic_id or "").strip()
+        if not normalized_id or not comic_dir:
+            return None
+
+        dir_mtime = self._safe_dir_mtime(comic_dir)
+        now = time.monotonic()
+        with self._image_cache_lock:
+            entry = self._image_cache.get(normalized_id)
+            if not entry:
+                return None
+            if entry.get("comic_dir") != comic_dir:
+                return None
+            if float(entry.get("expires_at", 0) or 0) < now:
+                self._image_cache.pop(normalized_id, None)
+                return None
+            if float(entry.get("dir_mtime", 0) or 0) != dir_mtime:
+                self._image_cache.pop(normalized_id, None)
+                return None
+            return list(entry.get("paths") or [])
+
+    def _set_cached_image_paths(self, comic_id: str, comic_dir: str, image_paths: List[str]):
+        normalized_id = str(comic_id or "").strip()
+        if not normalized_id or not comic_dir:
+            return
+
+        with self._image_cache_lock:
+            self._image_cache[normalized_id] = {
+                "comic_dir": comic_dir,
+                "dir_mtime": self._safe_dir_mtime(comic_dir),
+                "paths": list(image_paths or []),
+                "expires_at": time.monotonic() + self.IMAGE_CACHE_TTL_SECONDS,
+            }
+
     def parse_comic_images(self, comic_id):
         try:
             comic_dir = self._get_comic_dir(comic_id)
             if not os.path.exists(comic_dir):
                 app_logger.warning(f"漫画目录不存在: {comic_dir}")
                 return []
+
+            cached_paths = self._get_cached_image_paths(comic_id, comic_dir)
+            if cached_paths is not None:
+                return cached_paths
             
             image_paths = []
             
@@ -146,9 +205,11 @@ class FileParser:
             
             if not image_paths:
                 app_logger.warning(f"漫画目录下未找到图片文件: {comic_dir}")
+                self._set_cached_image_paths(comic_id, comic_dir, [])
                 return []
             
             image_paths = self.natural_sort_paths(image_paths, comic_dir)
+            self._set_cached_image_paths(comic_id, comic_dir, image_paths)
             app_logger.info(f"解析漫画图片成功: {comic_id}, 共 {len(image_paths)} 张图片")
             return image_paths
         except Exception as e:

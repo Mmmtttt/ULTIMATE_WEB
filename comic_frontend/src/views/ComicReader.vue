@@ -45,10 +45,12 @@
             v-for="(pageNum, index) in displayedPageNumbers" 
             :key="`lr-${pageNum}-${index}`"
             class="page"
+            :class="{ 'page--pending': !isPageReadyForDisplay(pageNum) }"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :class="{ 'comic-image--pending': !isPageReadyForDisplay(pageNum) }"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -79,10 +81,12 @@
             v-for="(pageNum, index) in displayedPageNumbers" 
             :key="`ud-${pageNum}-${index}`" 
             class="up-down-page"
+            :class="{ 'up-down-page--pending': !isPageReadyForDisplay(pageNum) }"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :class="{ 'comic-image--pending': !isPageReadyForDisplay(pageNum) }"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -300,6 +304,9 @@ let restoreBootstrapTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
 let mobileSingleTapTimer = null
+let imageLoadSessionToken = 0
+let readerDisposed = false
+const activeImagePreloads = new Map()
 const SINGLE_PAGE_SWITCH_THRESHOLD = 0.38
 const SINGLE_PAGE_ANIMATION_DURATION_MS = 120
 const SINGLE_PAGE_SETTLE_DELAY_MS = 100
@@ -309,6 +316,10 @@ const DOUBLE_TAP_MAX_DISTANCE_PX = 36
 const TAP_MAX_DURATION_MS = 260
 const TAP_MAX_MOVE_PX = 18
 const MOBILE_DOUBLE_TAP_ZOOM_LEVEL = 2.2
+const NORMAL_PRELOAD_BEFORE = 20
+const NORMAL_PRELOAD_AFTER = 60
+const RESTORE_PRELOAD_BEFORE = 1
+const RESTORE_PRELOAD_AFTER = 24
 let lastObservedScrollPosition = 0
 let lastSinglePageDirection = 0
 
@@ -596,6 +607,11 @@ const invalidateScrollObservation = () => {
 const nextRestoreSessionToken = () => {
   restoreSessionToken += 1
   return restoreSessionToken
+}
+
+const nextImageLoadSessionToken = () => {
+  imageLoadSessionToken += 1
+  return imageLoadSessionToken
 }
 
 const getPageElements = (container) => {
@@ -910,24 +926,89 @@ const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
   }, settleDelay)
 }
 
-const rebuildLoadQueue = (centerPage) => {
-  if (totalPage.value <= 0) {
-    loadQueue.value = []
-    return
-  }
-
+const getImageLoadWindow = (centerPage = getLoadFocusPage()) => {
+  if (totalPage.value <= 0) return { minPage: 1, maxPage: 0, focusPage: 1 }
   const focusPage =
     pendingRestorePage.value != null
       ? clampPage(pendingRestorePage.value, totalPage.value)
       : clampPage(centerPage, totalPage.value)
-  const baseSequence = calculateLoadSequence(focusPage, totalPage.value)
-  const sequence = isRestoreBootstrap.value
-    ? baseSequence.filter((pageNum) => {
-        const minPage = Math.max(1, focusPage - 1)
-        const maxPage = Math.min(totalPage.value, focusPage + 24)
-        return pageNum >= minPage && pageNum <= maxPage
-      })
-    : baseSequence
+  const preloadBefore = isRestoreBootstrap.value ? RESTORE_PRELOAD_BEFORE : NORMAL_PRELOAD_BEFORE
+  const preloadAfter = isRestoreBootstrap.value ? RESTORE_PRELOAD_AFTER : NORMAL_PRELOAD_AFTER
+  const minPage = Math.max(1, focusPage - preloadBefore)
+  const maxPage = Math.min(totalPage.value, focusPage + preloadAfter)
+
+  return { minPage, maxPage, focusPage }
+}
+
+const activeImageWindow = computed(() => getImageLoadWindow())
+
+const isPageInImageWindow = (pageNum, windowRange = activeImageWindow.value) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  return safePage >= windowRange.minPage && safePage <= windowRange.maxPage
+}
+
+const markPageLoaded = (pageNum) => {
+  const nextLoaded = new Set(loadedPages.value)
+  nextLoaded.add(pageNum)
+  loadedPages.value = nextLoaded
+}
+
+const markPageLoading = (pageNum) => {
+  const nextLoading = new Set(loadingPages.value)
+  nextLoading.add(pageNum)
+  loadingPages.value = nextLoading
+}
+
+const markPageNotLoading = (pageNum) => {
+  const nextLoading = new Set(loadingPages.value)
+  nextLoading.delete(pageNum)
+  loadingPages.value = nextLoading
+}
+
+const abortImagePreload = (pageNum, img = activeImagePreloads.get(pageNum)) => {
+  if (!img) return
+  img.onload = null
+  img.onerror = null
+  try {
+    img.src = ''
+  } catch (err) {
+    // 某些 WebView 可能不允许在释放阶段改 src，忽略即可。
+  }
+  activeImagePreloads.delete(pageNum)
+  markPageNotLoading(pageNum)
+}
+
+const abortPreloadsOutsideWindow = (windowRange) => {
+  for (const [pageNum, img] of activeImagePreloads.entries()) {
+    if (!isPageInImageWindow(pageNum, windowRange)) {
+      abortImagePreload(pageNum, img)
+    }
+  }
+}
+
+const cancelImageLoading = ({ clearLoaded = false } = {}) => {
+  nextImageLoadSessionToken()
+  loadQueue.value = []
+  for (const [pageNum, img] of activeImagePreloads.entries()) {
+    abortImagePreload(pageNum, img)
+  }
+  activeImagePreloads.clear()
+  loadingPages.value = new Set()
+  if (clearLoaded) {
+    loadedPages.value = new Set()
+  }
+}
+
+const rebuildLoadQueue = (centerPage) => {
+  if (totalPage.value <= 0) {
+    loadQueue.value = []
+    return { minPage: 1, maxPage: 0, focusPage: 1 }
+  }
+
+  const { minPage, maxPage, focusPage } = getImageLoadWindow(centerPage)
+  const windowTotal = maxPage - minPage + 1
+  const sequence = calculateLoadSequence(focusPage - minPage + 1, windowTotal)
+    .map((pageNum) => pageNum + minPage - 1)
 
   const nextQueue = []
   for (const pageNum of sequence) {
@@ -937,17 +1018,20 @@ const rebuildLoadQueue = (centerPage) => {
     nextQueue.push(pageNum)
   }
   loadQueue.value = nextQueue
+  return { minPage, maxPage }
 }
 
-const queueProcessNextTick = () => {
+const queueProcessNextTick = (sessionToken = imageLoadSessionToken) => {
   if (typeof queueMicrotask === 'function') {
-    queueMicrotask(() => processLoadQueue())
+    queueMicrotask(() => processLoadQueue(sessionToken))
   } else {
-    setTimeout(() => processLoadQueue(), 0)
+    setTimeout(() => processLoadQueue(sessionToken), 0)
   }
 }
 
-const processLoadQueue = () => {
+const processLoadQueue = (sessionToken = imageLoadSessionToken) => {
+  if (readerDisposed || sessionToken !== imageLoadSessionToken) return
+
   const adaptiveMaxConcurrent = getAdaptiveMaxConcurrent({
     isMobileViewport: isMobile.value,
     lanHost: isLikelyLanHost()
@@ -960,24 +1044,37 @@ const processLoadQueue = () => {
 
   while (loadQueue.value.length > 0 && loadingPages.value.size < maxConcurrent) {
     const pageNum = loadQueue.value.shift()
-    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
+    if (
+      loadedPages.value.has(pageNum) ||
+      loadingPages.value.has(pageNum) ||
+      !isPageInImageWindow(pageNum)
+    ) {
       continue
     }
 
-    loadingPages.value.add(pageNum)
+    markPageLoading(pageNum)
 
     const img = new Image()
     const imageUrl = buildImageUrl(comicId.value, pageNum)
+    activeImagePreloads.set(pageNum, img)
 
     img.onload = () => {
-      loadedPages.value.add(pageNum)
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
+      if (activeImagePreloads.get(pageNum) === img) {
+        activeImagePreloads.delete(pageNum)
+      }
+      if (readerDisposed || sessionToken !== imageLoadSessionToken) return
+      markPageLoaded(pageNum)
+      markPageNotLoading(pageNum)
+      queueProcessNextTick(sessionToken)
     }
 
     img.onerror = () => {
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
+      if (activeImagePreloads.get(pageNum) === img) {
+        activeImagePreloads.delete(pageNum)
+      }
+      if (readerDisposed || sessionToken !== imageLoadSessionToken) return
+      markPageNotLoading(pageNum)
+      queueProcessNextTick(sessionToken)
     }
 
     img.src = imageUrl
@@ -985,17 +1082,21 @@ const processLoadQueue = () => {
 }
 
 const preloadImages = (startPage) => {
-  rebuildLoadQueue(startPage)
-  processLoadQueue()
+  if (readerDisposed) return
+  const windowRange = rebuildLoadQueue(startPage)
+  abortPreloadsOutsideWindow(windowRange)
+  processLoadQueue(imageLoadSessionToken)
 }
 
 const getImageSrc = (pageNum) => {
   const safePage = clampPage(pageNum, totalPage.value)
-  if (!loadedPages.value.has(safePage)) {
+  if (!loadedPages.value.has(safePage) || !isPageInImageWindow(safePage)) {
     return ''
   }
   return images.value[safePage - 1] || ''
 }
+
+const isPageReadyForDisplay = (pageNum) => Boolean(getImageSrc(pageNum))
 
 const getLoadFocusPage = () => {
   if (totalPage.value <= 0) return 1
@@ -1009,6 +1110,22 @@ const getImageLoading = (pageNum) => {
   const eagerStart = Math.max(1, focusPage - 1)
   const eagerEnd = Math.min(totalPage.value, focusPage + 4)
   return safePage >= eagerStart && safePage <= eagerEnd ? 'eager' : 'lazy'
+}
+
+const buildDeclaredImageList = (pageCount) => {
+  const safeTotal = Math.max(0, Math.floor(Number(pageCount) || 0))
+  return Array.from({ length: safeTotal }, (_, index) => buildImageUrl(comicId.value, index + 1))
+}
+
+const needsImageListProbe = (comic) => {
+  const storageMode = String(comic?.storage_mode || '').trim().toLowerCase()
+  const storagePath = String(comic?.storage_path_relative || '').trim().toLowerCase()
+  const teledrive = comic?.display?.teledrive
+  return (
+    storageMode === 'soft_ref' ||
+    storagePath.startsWith('teledrive://') ||
+    (teledrive && String(teledrive.type || '').trim().toLowerCase() === 'comic')
+  )
 }
 
 const clearRestoreRetry = () => {
@@ -1143,6 +1260,11 @@ const fetchImagesWithSoftRefPasswordFallback = async () => {
 }
 
 const loadImages = async () => {
+  readerDisposed = false
+  cancelImageLoading({ clearLoaded: true })
+  const imageSession = imageLoadSessionToken
+  const isCurrentImageSession = () => !readerDisposed && imageSession === imageLoadSessionToken
+
   loading.value = true
   error.value = false
   clearMobileSingleTapTimer()
@@ -1161,19 +1283,26 @@ const loadImages = async () => {
   clearRestoreRetry()
   clearRestoreBootstrap()
   const restoreSession = nextRestoreSessionToken()
-  loadedPages.value = new Set()
-  loadingPages.value = new Set()
-  loadQueue.value = []
 
   try {
-    const comic = await comicStore.fetchComicDetail(comicId.value)
-    const imageData = await fetchImagesWithSoftRefPasswordFallback()
+    const comic = await comicStore.fetchComicDetail(
+      comicId.value,
+      true,
+      { includeChapters: false }
+    )
+    if (!isCurrentImageSession()) return
+
+    const declaredTotalPage = Number(comic?.total_page || 0)
+    const imageData = !needsImageListProbe(comic) && declaredTotalPage > 0
+      ? buildDeclaredImageList(declaredTotalPage)
+      : await fetchImagesWithSoftRefPasswordFallback()
+    if (!isCurrentImageSession()) return
 
     if (!imageData || imageData.length === 0) {
       throw new Error('empty images')
     }
 
-    images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
+    images.value = imageData.map((src, index) => src || buildImageUrl(comicId.value, index + 1))
     totalPage.value = images.value.length
 
     const routePage = Number(route.query.page)
@@ -1195,12 +1324,18 @@ const loadImages = async () => {
 
     await nextTick()
     await nextAnimationFrame()
-    void tryRestorePendingPage(restoreSession)
+    if (isCurrentImageSession()) {
+      void tryRestorePendingPage(restoreSession)
+    }
   } catch (err) {
-    error.value = true
+    if (isCurrentImageSession()) {
+      error.value = true
+    }
     console.error('加载图片失败:', err)
   } finally {
-    loading.value = false
+    if (isCurrentImageSession()) {
+      loading.value = false
+    }
   }
 }
 
@@ -2001,6 +2136,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 })
 
 onMounted(() => {
+  readerDisposed = false
   updateDeviceState()
   updateReaderViewport()
   void loadImages()
@@ -2021,6 +2157,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  readerDisposed = true
+  cancelImageLoading({ clearLoaded: true })
   removeDocumentListener('mousemove', handleZoomDrag)
   removeDocumentListener('mouseup', endZoomDrag)
   removeDocumentListener('fullscreenchange', handleFullscreenChange)
@@ -2177,6 +2315,16 @@ onUnmounted(() => {
   margin-left: -1px;
 }
 
+.left-right-mode .page--pending {
+  width: min(86vw, calc(var(--reader-vh, 100vh) * 0.72));
+  min-width: min(86vw, calc(var(--reader-vh, 100vh) * 0.72));
+}
+
+.left-right-mode.single-page-mode .page--pending {
+  width: 100%;
+  min-width: 100%;
+}
+
 .comic-image {
   max-width: 100%;
   max-height: none;
@@ -2189,6 +2337,15 @@ onUnmounted(() => {
   cursor: grab;
   image-rendering: -webkit-optimize-quality;
   image-rendering: high-quality;
+}
+
+.comic-image--pending {
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 1px;
+  min-height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .left-right-mode .comic-image {
@@ -2257,6 +2414,10 @@ onUnmounted(() => {
 
 .up-down-page + .up-down-page {
   margin-top: -1px;
+}
+
+.up-down-page--pending {
+  min-height: var(--reader-vh, 100dvh);
 }
 
 .left-right-mode.single-page-mode .page + .page,

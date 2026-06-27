@@ -315,6 +315,39 @@ def test_comic_detail_returns_full_info(integration_runtime):
 
 
 @pytest.mark.integration
+def test_comic_detail_can_skip_chapter_outline_for_reader_boot(integration_runtime):
+    """
+    用例描述:
+    - 用例目的: 看护阅读页轻量详情契约，避免进入阅读页时为大体量漫画重复解析章节。
+    - 测试步骤:
+      1. 调用 GET /api/v1/comic/detail?comic_id=JM100001&include_chapters=false。
+      2. 检查基础详情仍返回，但不包含 chapters 字段。
+    - 预期结果:
+      1. HTTP 200，业务 code=200。
+      2. 返回 id/total_page 等阅读所需字段，不返回章节列表。
+    - 历史变更:
+      - 2026-06-28: 新增阅读页轻量详情契约，降低大章节漫画启动成本。
+    """
+    base_url = integration_runtime["base_url"]
+
+    from tests.shared.test_constants import PRIMARY_COMIC_ID
+
+    response = requests.get(
+        f"{base_url}/api/v1/comic/detail",
+        params={"comic_id": PRIMARY_COMIC_ID, "include_chapters": "false"},
+        timeout=5,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    data = payload["data"]
+    assert data["id"] == PRIMARY_COMIC_ID
+    assert "total_page" in data
+    assert "chapters" not in data
+
+
+@pytest.mark.integration
 def test_comic_detail_rejects_nonexistent_comic(integration_runtime):
     """
     用例描述:

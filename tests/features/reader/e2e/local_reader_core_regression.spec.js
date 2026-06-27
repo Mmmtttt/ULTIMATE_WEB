@@ -61,11 +61,11 @@ async function waitPageIndicator(page, expectedText) {
  *   1. 直接进入 /reader/JM100001?page=2。
  *   2. 等待阅读页加载并展开底部控制条。
  *   3. 校验页码恢复为第 2 页、图片地址指向后端图片接口。
- *   4. 校验已发出 detail/images 关键请求。
+ *   4. 校验已发出轻量 detail 请求，且普通本地漫画不再请求全量 images 列表。
  * - 预期结果:
  *   1. 页面可正常渲染且页码为 2/3。
  *   2. 读图 URL 命中 /api/v1/comic/image。
- *   3. 请求链路包含 /comic/detail 与 /comic/images。
+ *   3. 请求链路包含 /comic/detail?include_chapters=false，且不包含 /comic/images。
  * - 历史变更:
  *   - 2026-03-24: 初始创建，建立本地阅读核心看护门禁。
  */
@@ -90,7 +90,8 @@ test("local reader restores route page and loads backend images", async ({ page 
       (item) =>
         item.method === "GET" &&
         item.url.includes("/api/v1/comic/detail") &&
-        item.url.includes(`comic_id=${COMIC_ID}`),
+        item.url.includes(`comic_id=${COMIC_ID}`) &&
+        item.url.includes("include_chapters=false"),
     ),
   ).toBeTruthy();
   expect(
@@ -101,7 +102,7 @@ test("local reader restores route page and loads backend images", async ({ page 
         item.url.includes("/api/v1/comic/images") &&
         item.url.includes(`comic_id=${COMIC_ID}`),
     ),
-  ).toBeTruthy();
+  ).toBeFalsy();
 });
 
 /**
