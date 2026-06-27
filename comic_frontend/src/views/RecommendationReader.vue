@@ -51,10 +51,12 @@
             v-for="(pageNum, index) in displayedPageNumbers" 
             :key="`lr-${pageNum}-${index}`"
             class="page"
+            :class="{ 'page--pending': useCachedWindowLoading && !isPageReadyForDisplay(pageNum) }"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :class="{ 'comic-image--pending': useCachedWindowLoading && !isPageReadyForDisplay(pageNum) }"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -85,10 +87,12 @@
             v-for="(pageNum, index) in displayedPageNumbers" 
             :key="`ud-${pageNum}-${index}`" 
             class="up-down-page"
+            :class="{ 'up-down-page--pending': useCachedWindowLoading && !isPageReadyForDisplay(pageNum) }"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :class="{ 'comic-image--pending': useCachedWindowLoading && !isPageReadyForDisplay(pageNum) }"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -224,6 +228,7 @@ const declaredTotalPage = ref(0)
 const cachedPageSet = ref(new Set())
 const activeDownloadInProgress = ref(false)
 const deferredRestorePage = ref(null)
+const useCachedWindowLoading = ref(false)
 
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
@@ -313,6 +318,9 @@ let cacheStatusPollTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
 let mobileSingleTapTimer = null
+let imageLoadSessionToken = 0
+let readerDisposed = false
+const activeImagePreloads = new Map()
 const SINGLE_PAGE_SWITCH_THRESHOLD = 0.38
 const SINGLE_PAGE_ANIMATION_DURATION_MS = 120
 const SINGLE_PAGE_SETTLE_DELAY_MS = 100
@@ -322,6 +330,10 @@ const DOUBLE_TAP_MAX_DISTANCE_PX = 36
 const TAP_MAX_DURATION_MS = 260
 const TAP_MAX_MOVE_PX = 18
 const MOBILE_DOUBLE_TAP_ZOOM_LEVEL = 2.2
+const NORMAL_PRELOAD_BEFORE = 20
+const NORMAL_PRELOAD_AFTER = 60
+const RESTORE_PRELOAD_BEFORE = 1
+const RESTORE_PRELOAD_AFTER = 24
 let lastObservedScrollPosition = 0
 let lastSinglePageDirection = 0
 
@@ -551,13 +563,13 @@ const tryApplyDeferredRestorePage = async () => {
 
 const refreshCacheStatus = async () => {
   if (!recommendationId.value) {
-    return { isCached: false, cachedPages: [] }
+    return { isCached: false, cachedPages: [], cacheInfo: null }
   }
 
   try {
     const cacheStatus = await recommendationApi.getCacheStatus(recommendationId.value)
     if (cacheStatus.code !== 200) {
-      return { isCached: false, cachedPages: [] }
+      return { isCached: false, cachedPages: [], cacheInfo: null }
     }
 
     const rawPages = cacheStatus.data?.cached_pages || []
@@ -566,10 +578,11 @@ const refreshCacheStatus = async () => {
 
     return {
       isCached: Boolean(cacheStatus.data?.is_cached) || cachedPages.length > 0,
-      cachedPages
+      cachedPages,
+      cacheInfo: cacheStatus.data?.cache_info || null
     }
   } catch (error) {
-    return { isCached: false, cachedPages: [] }
+    return { isCached: false, cachedPages: [], cacheInfo: null }
   }
 }
 
@@ -588,6 +601,15 @@ const waitForFirstCachedPage = async (timeoutMs = 30000) => {
   }
 
   return []
+}
+
+const isLocalPreviewCacheStatus = (status) => {
+  if (!status || !Array.isArray(status.cachedPages) || status.cachedPages.length === 0) {
+    return false
+  }
+  const cacheInfo = status.cacheInfo || {}
+  const source = String(cacheInfo.source || '').trim().toLowerCase()
+  return cacheInfo.remote !== true && source !== 'teledrive'
 }
 
 const resetZoomState = () => {
@@ -726,6 +748,11 @@ const invalidateScrollObservation = () => {
 const nextRestoreSessionToken = () => {
   restoreSessionToken += 1
   return restoreSessionToken
+}
+
+const nextImageLoadSessionToken = () => {
+  imageLoadSessionToken += 1
+  return imageLoadSessionToken
 }
 
 const getPageElements = (container) => {
@@ -1040,24 +1067,104 @@ const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
   }, settleDelay)
 }
 
+const getImageLoadWindow = (centerPage = getLoadFocusPage()) => {
+  if (totalPage.value <= 0) return { minPage: 1, maxPage: 0, focusPage: 1 }
+  const focusPage =
+    pendingRestorePage.value != null
+      ? clampPage(pendingRestorePage.value, totalPage.value)
+      : clampPage(centerPage, totalPage.value)
+  const preloadBefore = isRestoreBootstrap.value ? RESTORE_PRELOAD_BEFORE : NORMAL_PRELOAD_BEFORE
+  const preloadAfter = isRestoreBootstrap.value ? RESTORE_PRELOAD_AFTER : NORMAL_PRELOAD_AFTER
+  const minPage = Math.max(1, focusPage - preloadBefore)
+  const maxPage = Math.min(totalPage.value, focusPage + preloadAfter)
+
+  return { minPage, maxPage, focusPage }
+}
+
+const activeImageWindow = computed(() => getImageLoadWindow())
+
+const isPageInImageWindow = (pageNum, windowRange = activeImageWindow.value) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  return safePage >= windowRange.minPage && safePage <= windowRange.maxPage
+}
+
+const markPageLoaded = (pageNum) => {
+  const nextLoaded = new Set(loadedPages.value)
+  nextLoaded.add(pageNum)
+  loadedPages.value = nextLoaded
+}
+
+const markPageLoading = (pageNum) => {
+  const nextLoading = new Set(loadingPages.value)
+  nextLoading.add(pageNum)
+  loadingPages.value = nextLoading
+}
+
+const markPageNotLoading = (pageNum) => {
+  const nextLoading = new Set(loadingPages.value)
+  nextLoading.delete(pageNum)
+  loadingPages.value = nextLoading
+}
+
+const abortImagePreload = (pageNum, img = activeImagePreloads.get(pageNum)) => {
+  if (!img) return
+  img.onload = null
+  img.onerror = null
+  try {
+    img.src = ''
+  } catch (err) {
+    // 释放阶段不需要因为个别 WebView 的 src 写入失败而中断清理。
+  }
+  activeImagePreloads.delete(pageNum)
+  markPageNotLoading(pageNum)
+}
+
+const abortPreloadsOutsideWindow = (windowRange) => {
+  for (const [pageNum, img] of activeImagePreloads.entries()) {
+    if (!isPageInImageWindow(pageNum, windowRange)) {
+      abortImagePreload(pageNum, img)
+    }
+  }
+}
+
+const cancelWindowedImageLoading = ({ clearLoaded = false } = {}) => {
+  nextImageLoadSessionToken()
+  loadQueue.value = []
+  for (const [pageNum, img] of activeImagePreloads.entries()) {
+    abortImagePreload(pageNum, img)
+  }
+  activeImagePreloads.clear()
+  loadingPages.value = new Set()
+  if (clearLoaded) {
+    loadedPages.value = new Set()
+  }
+}
+
 const rebuildLoadQueue = (centerPage) => {
   if (totalPage.value <= 0) {
     loadQueue.value = []
-    return
+    return { minPage: 1, maxPage: 0, focusPage: 1 }
   }
 
   const focusPage =
     pendingRestorePage.value != null
       ? clampPage(pendingRestorePage.value, totalPage.value)
       : clampPage(centerPage, totalPage.value)
-  const baseSequence = calculateLoadSequence(focusPage, totalPage.value)
-  const sequence = isRestoreBootstrap.value
-    ? baseSequence.filter((pageNum) => {
+  const windowRange = useCachedWindowLoading.value
+    ? getImageLoadWindow(focusPage)
+    : { minPage: 1, maxPage: totalPage.value, focusPage }
+  const windowTotal = windowRange.maxPage - windowRange.minPage + 1
+  const baseSequence = useCachedWindowLoading.value
+    ? calculateLoadSequence(windowRange.focusPage - windowRange.minPage + 1, windowTotal)
+      .map((pageNum) => pageNum + windowRange.minPage - 1)
+    : calculateLoadSequence(focusPage, totalPage.value)
+  const sequence = useCachedWindowLoading.value || !isRestoreBootstrap.value
+    ? baseSequence
+    : baseSequence.filter((pageNum) => {
         const minPage = Math.max(1, focusPage - 1)
         const maxPage = Math.min(totalPage.value, focusPage + 24)
         return pageNum >= minPage && pageNum <= maxPage
       })
-    : baseSequence
 
   const nextQueue = []
   for (const pageNum of sequence) {
@@ -1070,17 +1177,25 @@ const rebuildLoadQueue = (centerPage) => {
     nextQueue.push(pageNum)
   }
   loadQueue.value = nextQueue
+  return windowRange
 }
 
-const queueProcessNextTick = () => {
+const queueProcessNextTick = (sessionToken = imageLoadSessionToken) => {
   if (typeof queueMicrotask === 'function') {
-    queueMicrotask(() => processLoadQueue())
+    queueMicrotask(() => processLoadQueue(sessionToken))
   } else {
-    setTimeout(() => processLoadQueue(), 0)
+    setTimeout(() => processLoadQueue(sessionToken), 0)
   }
 }
 
-const processLoadQueue = () => {
+const processLoadQueue = (sessionToken = imageLoadSessionToken) => {
+  if (
+    useCachedWindowLoading.value &&
+    (readerDisposed || sessionToken !== imageLoadSessionToken)
+  ) {
+    return
+  }
+
   const adaptiveMaxConcurrent = getAdaptiveMaxConcurrent({
     isMobileViewport: isMobile.value,
     lanHost: isLikelyLanHost()
@@ -1093,24 +1208,49 @@ const processLoadQueue = () => {
 
   while (loadQueue.value.length > 0 && loadingPages.value.size < maxConcurrent) {
     const pageNum = loadQueue.value.shift()
-    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
+    if (
+      loadedPages.value.has(pageNum) ||
+      loadingPages.value.has(pageNum) ||
+      (useCachedWindowLoading.value && !isPageInImageWindow(pageNum))
+    ) {
       continue
     }
 
-    loadingPages.value.add(pageNum)
+    markPageLoading(pageNum)
 
     const img = new Image()
     const imageUrl = images.value[pageNum - 1] || ''
+    if (useCachedWindowLoading.value) {
+      activeImagePreloads.set(pageNum, img)
+    }
 
     img.onload = () => {
-      loadedPages.value.add(pageNum)
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
+      if (useCachedWindowLoading.value && activeImagePreloads.get(pageNum) === img) {
+        activeImagePreloads.delete(pageNum)
+      }
+      if (
+        useCachedWindowLoading.value &&
+        (readerDisposed || sessionToken !== imageLoadSessionToken)
+      ) {
+        return
+      }
+      markPageLoaded(pageNum)
+      markPageNotLoading(pageNum)
+      queueProcessNextTick(sessionToken)
     }
 
     img.onerror = () => {
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
+      if (useCachedWindowLoading.value && activeImagePreloads.get(pageNum) === img) {
+        activeImagePreloads.delete(pageNum)
+      }
+      if (
+        useCachedWindowLoading.value &&
+        (readerDisposed || sessionToken !== imageLoadSessionToken)
+      ) {
+        return
+      }
+      markPageNotLoading(pageNum)
+      queueProcessNextTick(sessionToken)
     }
 
     img.src = imageUrl
@@ -1118,17 +1258,26 @@ const processLoadQueue = () => {
 }
 
 const preloadImages = (startPage) => {
-  rebuildLoadQueue(startPage)
-  processLoadQueue()
+  if (useCachedWindowLoading.value && readerDisposed) return
+  const windowRange = rebuildLoadQueue(startPage)
+  if (useCachedWindowLoading.value) {
+    abortPreloadsOutsideWindow(windowRange)
+  }
+  processLoadQueue(imageLoadSessionToken)
 }
 
 const getImageSrc = (pageNum) => {
   const safePage = clampPage(pageNum, totalPage.value)
-  if (!loadedPages.value.has(safePage)) {
+  if (
+    !loadedPages.value.has(safePage) ||
+    (useCachedWindowLoading.value && !isPageInImageWindow(safePage))
+  ) {
     return ''
   }
   return images.value[safePage - 1] || ''
 }
+
+const isPageReadyForDisplay = (pageNum) => Boolean(getImageSrc(pageNum))
 
 const getLoadFocusPage = () => {
   if (totalPage.value <= 0) return 1
@@ -1258,6 +1407,11 @@ const bootstrapReaderAtPage = async (initialPage, restoreSession = restoreSessio
 }
 
 const loadImages = async () => {
+  readerDisposed = false
+  cancelWindowedImageLoading({ clearLoaded: true })
+  const imageSession = imageLoadSessionToken
+  const isCurrentWindowSession = () => !readerDisposed && imageSession === imageLoadSessionToken
+
   loading.value = true
   error.value = false
   clearMobileSingleTapTimer()
@@ -1281,6 +1435,7 @@ const loadImages = async () => {
   clearCacheStatusPolling()
   activeDownloadInProgress.value = false
   isCached.value = false
+  useCachedWindowLoading.value = false
   declaredTotalPage.value = 0
   cachedPageSet.value = new Set()
   images.value = []
@@ -1300,8 +1455,10 @@ const loadImages = async () => {
 
     const initialStatus = await refreshCacheStatus()
     isCached.value = initialStatus.isCached
+    useCachedWindowLoading.value = isLocalPreviewCacheStatus(initialStatus)
 
     if (initialStatus.cachedPages.length > 0) {
+      if (!isCurrentWindowSession()) return
       let initialPage = clampPage(desiredPage, totalPage.value)
       if (desiredPage > totalPage.value) {
         deferredRestorePage.value = desiredPage
@@ -2197,6 +2354,7 @@ watch(() => route.params.id, async (newId, oldId) => {
 })
 
 onMounted(() => {
+  readerDisposed = false
   updateDeviceState()
   updateReaderViewport()
   void loadImages()
@@ -2217,6 +2375,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  readerDisposed = true
+  if (useCachedWindowLoading.value) {
+    cancelWindowedImageLoading({ clearLoaded: true })
+  }
   removeDocumentListener('mousemove', handleZoomDrag)
   removeDocumentListener('mouseup', endZoomDrag)
   removeDocumentListener('fullscreenchange', handleFullscreenChange)
@@ -2394,6 +2556,16 @@ onUnmounted(() => {
   margin-left: -1px;
 }
 
+.left-right-mode .page--pending {
+  width: min(86vw, calc(var(--reader-vh, 100vh) * 0.72));
+  min-width: min(86vw, calc(var(--reader-vh, 100vh) * 0.72));
+}
+
+.left-right-mode.single-page-mode .page--pending {
+  width: 100%;
+  min-width: 100%;
+}
+
 .comic-image {
   max-width: 100%;
   max-height: none;
@@ -2406,6 +2578,15 @@ onUnmounted(() => {
   cursor: grab;
   image-rendering: -webkit-optimize-quality;
   image-rendering: high-quality;
+}
+
+.comic-image--pending {
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 1px;
+  min-height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .left-right-mode .comic-image {
@@ -2474,6 +2655,10 @@ onUnmounted(() => {
 
 .up-down-page + .up-down-page {
   margin-top: -1px;
+}
+
+.up-down-page--pending {
+  min-height: var(--reader-vh, 100dvh);
 }
 
 .left-right-mode.single-page-mode .page + .page,

@@ -129,10 +129,28 @@
 
       <div v-if="hasChapters" class="chapter-section">
         <div class="section-heading">
-          <h2 class="section-title">章节</h2>
-          <span class="section-hint">共 {{ chapterCards.length }} 个章节</span>
+          <div class="section-heading-main">
+            <h2 class="section-title">章节</h2>
+            <span class="section-hint">共 {{ chapterCards.length }} 个章节</span>
+          </div>
+          <button
+            type="button"
+            class="chapter-toggle"
+            :aria-expanded="String(!chapterCollapsed)"
+            aria-controls="chapter-list"
+            @click="chapterCollapsed = !chapterCollapsed"
+          >
+            <span>{{ chapterCollapsed ? '展开章节' : '收起章节' }}</span>
+            <van-icon :name="chapterCollapsed ? 'arrow-down' : 'arrow-up'" />
+          </button>
         </div>
-        <div class="chapter-list">
+        <div v-if="chapterCollapsed && currentChapterCard" class="chapter-summary">
+          <span class="chapter-summary-label">当前</span>
+          <span class="chapter-summary-title">{{ currentChapterCard.title }}</span>
+          <span class="chapter-summary-meta">{{ currentChapterCard.pageRangeLabel }}</span>
+        </div>
+        <Transition name="chapter-collapse">
+          <div v-show="!chapterCollapsed" id="chapter-list" class="chapter-list">
           <button
             v-for="chapter in chapterCards"
             :key="chapter.key"
@@ -162,7 +180,8 @@
               <van-icon name="arrow" class="chapter-arrow" />
             </span>
           </button>
-        </div>
+          </div>
+        </Transition>
       </div>
       
       <div class="preview-section" v-if="comic.preview_pages && comic.preview_pages.length > 0">
@@ -363,6 +382,7 @@ const showTagPopup = ref(false)
 const showListPopup = ref(false)
 const showPreview = ref(false)
 const previewIndex = ref(0)
+const chapterCollapsed = ref(true)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedListIds = ref([])
@@ -449,6 +469,10 @@ const chapterCards = computed(() => {
   })
 })
 
+const currentChapterCard = computed(() => {
+  return chapterCards.value.find(chapter => chapter.isCurrent) || chapterCards.value[0] || null
+})
+
 // 方法
 function getImageUrl(comicId, pageNum) {
   return buildImageUrl(comicId, pageNum)
@@ -457,6 +481,7 @@ function getImageUrl(comicId, pageNum) {
 async function fetchComicDetail() {
   const comicId = route.params.id
   isLoading.value = true
+  chapterCollapsed.value = true
   
   try {
     const detail = await comicStore.fetchComicDetail(comicId)
@@ -1067,10 +1092,17 @@ watch(showListPopup, async (val) => {
 
 .section-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.section-heading-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .section-title {
@@ -1089,6 +1121,7 @@ watch(showListPopup, async (val) => {
 .section-hint {
   font-size: 12px;
   color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .tags-container {
@@ -1107,6 +1140,89 @@ watch(showListPopup, async (val) => {
   color: var(--text-secondary);
   margin: 0;
   white-space: pre-wrap;
+}
+
+.chapter-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(47, 116, 255, 0.16);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(47, 116, 255, 0.08), rgba(47, 116, 255, 0.03));
+  color: #2f74ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.chapter-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 116, 255, 0.28);
+  box-shadow: 0 10px 20px rgba(47, 116, 255, 0.1);
+}
+
+.chapter-summary {
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  box-shadow: 0 10px 22px rgba(17, 27, 45, 0.05);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 12px 14px;
+}
+
+.chapter-summary-label {
+  border-radius: 999px;
+  background: rgba(47, 116, 255, 0.09);
+  color: #2f74ff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.chapter-summary-title {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-summary-meta {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.chapter-collapse-enter-active,
+.chapter-collapse-leave-active {
+  transition:
+    opacity var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
+}
+
+.chapter-collapse-enter-from,
+.chapter-collapse-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 .chapter-list {
@@ -1379,6 +1495,25 @@ watch(showListPopup, async (val) => {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
+  }
+
+  .section-heading-main {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .chapter-toggle {
+    width: 100%;
+  }
+
+  .chapter-summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .chapter-summary-meta {
+    width: 100%;
+    margin-left: 0;
   }
 
   .chapter-list {
