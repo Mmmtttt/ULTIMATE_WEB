@@ -9,6 +9,11 @@ import time
 from flask import Blueprint, jsonify, request, send_from_directory
 
 from application.config_app_service import ConfigAppService
+from application.storage_usage_service import (
+    build_storage_ranking,
+    build_storage_overview,
+    invalidate_storage_usage_cache,
+)
 from core.constants import (
     CACHE_ROOT_DIR,
     COMIC_RECOMMENDATION_CACHE_DIR,
@@ -115,13 +120,20 @@ def _get_directory_file_count_and_size(root_dir):
 
     file_count = 0
     total_size = 0
-    for dirpath, _, filenames in os.walk(root_dir):
-        file_count += len(filenames)
+    for dirpath, dirnames, filenames in os.walk(root_dir, followlinks=False):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if not os.path.islink(os.path.join(dirpath, dirname))
+        ]
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
+            if os.path.islink(filepath):
+                continue
             if os.path.isfile(filepath):
                 try:
                     total_size += os.path.getsize(filepath)
+                    file_count += 1
                 except OSError:
                     continue
     return file_count, total_size
@@ -755,6 +767,7 @@ def clear_specific_cache():
             clear_directory(_VIDEO_PREVIEW_CACHE_DIR)
             local_field_reset = _clear_preview_video_local_fields()
 
+        invalidate_storage_usage_cache()
         freed_mb = freed_size_bytes / (1024 * 1024)
         app_logger.info(
             "清除特定缓存完成: "
@@ -807,5 +820,25 @@ def get_cache_info():
         })
     except Exception as e:
         error_logger.error(f"获取缓存信息失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/storage/overview', methods=['GET'])
+def get_storage_overview():
+    try:
+        return success_response(build_storage_overview())
+    except Exception as e:
+        error_logger.error(f"获取存储概览失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/storage/ranking', methods=['GET'])
+def get_storage_ranking():
+    try:
+        category = request.args.get('category', default='local_comics')
+        limit = request.args.get('limit', default=12, type=int)
+        return success_response(build_storage_ranking(category=category, limit=limit))
+    except Exception as e:
+        error_logger.error(f"获取存储排行失败: {e}")
         return error_response(500, "服务器内部错误")
 

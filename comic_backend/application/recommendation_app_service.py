@@ -18,6 +18,7 @@ from application.persisted_content_metadata import (
     build_persisted_annotation,
     normalize_data_relative_path,
 )
+from application.storage_usage_service import annotate_comic_storage_usage
 from domain.comic import Comic, ComicRepository
 from domain.recommendation import Recommendation, RecommendationRepository
 from domain.tag import TagRepository
@@ -64,12 +65,29 @@ class RecommendationAppService:
     @staticmethod
     def _recommendation_to_summary_dict(recommendation: Recommendation, tag_map: Dict[str, str]) -> Dict[str, Any]:
         payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else {}
+        payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
         return payload
 
     @staticmethod
+    def _storage_fields_from_item(item: Any) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        for key in (
+            "storage_size_bytes",
+            "storage_size_label",
+            "storage_file_count",
+            "storage_size_scope",
+            "storage_is_soft_ref",
+            "storage_excluded_reason",
+        ):
+            value = getattr(item, key, None)
+            if value is not None:
+                fields[key] = value
+        return fields
+
+    @staticmethod
     def _recommendation_to_card_dict(recommendation: Recommendation) -> Dict[str, Any]:
-        return {
+        payload = {
             "id": recommendation.id,
             "title": recommendation.title,
             "title_jp": recommendation.title_jp,
@@ -88,6 +106,8 @@ class RecommendationAppService:
             "display": dict(recommendation.display or {}),
             "custom_order": recommendation.custom_order,
         }
+        payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
+        return payload
 
     def _build_recommendation_persisted_metadata(
         self,
@@ -196,6 +216,7 @@ class RecommendationAppService:
         paginate: bool = False,
         summary_only: bool = False,
         include_available_authors: bool = False,
+        include_storage_usage: bool = False,
     ) -> ServiceResult:
         """获取推荐漫画列表 - 支持排序和评分筛选"""
         try:
@@ -234,7 +255,12 @@ class RecommendationAppService:
 
             app_logger.info(f"[get_recommendation_list] 排序后数量: {len(recommendations)}")
 
-            serializer = self._recommendation_to_card_dict if summary_only else (lambda recommendation: self._recommendation_to_summary_dict(recommendation, tag_map))
+            base_serializer = self._recommendation_to_card_dict if summary_only else (lambda recommendation: self._recommendation_to_summary_dict(recommendation, tag_map))
+
+            def serializer(recommendation):
+                if include_storage_usage:
+                    annotate_comic_storage_usage([recommendation], source="preview")
+                return base_serializer(recommendation)
 
             if paginate:
                 payload = build_paginated_payload(
@@ -332,7 +358,9 @@ class RecommendationAppService:
                     except Exception as e:
                         error_logger.warning(f"获取协议预览图片失败: {recommendation_id}, {e}")
 
+            annotate_comic_storage_usage([recommendation], source="preview")
             detail = recommendation.to_dict()
+            detail.update(self._storage_fields_from_item(recommendation))
             detail["total_page"] = normalized_total_page
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
             detail["preview_pages"] = preview_pages

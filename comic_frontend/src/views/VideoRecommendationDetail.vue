@@ -158,6 +158,16 @@
           <span class="label">系列:</span>
           <span class="value">{{ recommendation.series }}</span>
         </div>
+
+        <div v-if="recommendationStorageUsageText" class="info-row">
+          <span class="label">本地文件:</span>
+          <span class="value storage-usage-value">
+            <span class="storage-size-chip">{{ recommendationStorageUsageText }}</span>
+            <span v-if="recommendationStorageFileCountText" class="storage-count-chip">
+              {{ recommendationStorageFileCountText }}
+            </span>
+          </span>
+        </div>
         
         <div class="info-row score-row">
           <span class="label">评分:</span>
@@ -432,7 +442,13 @@ import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stor
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import {
+  applyListMembershipChanges,
+  buildListChangeMessage,
+  formatStorageFileCountText,
+  formatStorageUsageText,
+  getCoverUrl
+} from '@/utils'
 import { toBackendUrl } from '@/utils/url'
 import {
   buildEpisodeListFromPlayableSources,
@@ -581,6 +597,8 @@ const previewVideoPlayerUrl = computed(() => {
   return resolvePreviewVideoUrl(activePreviewAsset.value?.url || '')
 })
 const hasPreviewVideo = computed(() => Boolean(previewVideoPlayerUrl.value))
+const recommendationStorageUsageText = computed(() => formatStorageUsageText(recommendation.value))
+const recommendationStorageFileCountText = computed(() => formatStorageFileCountText(recommendation.value))
 const detailEpisodeList = computed(() => {
   if (showPlayer.value && loadedPlaybackSourceKey.value === activePrimarySourceKey.value) {
     const providerGroup = activeProviderGroup.value
@@ -1819,6 +1837,34 @@ onUnmounted(() => {
 .info-row .value {
   font-size: 14px;
   color: var(--text-strong);
+}
+
+.storage-usage-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.storage-size-chip,
+.storage-count-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.storage-size-chip {
+  padding: 0 10px;
+  background: rgba(89, 160, 255, 0.14);
+  border: 1px solid rgba(89, 160, 255, 0.26);
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
+.storage-count-chip {
+  color: var(--text-tertiary);
 }
 
 .actor-tags {

@@ -68,6 +68,13 @@ def _score_key(item: Any) -> float:
         return 0.0
 
 
+def _numeric_key(item: Any, *field_names: str) -> int:
+    try:
+        return int(_read_value(item, *field_names) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _read_status_key(item: Any) -> Tuple[int, float]:
     try:
         current_unit = int(_read_value(item, "current_page", "current_unit") or 0)
@@ -151,6 +158,20 @@ def sort_content_items(
         return sorted(
             safe_items,
             key=lambda item: (_score_key(item), _title_key(item), _id_key(item)),
+            reverse=reverse,
+        )
+
+    if normalized_sort_type in {"storage_size", "file_size", "size"}:
+        return sorted(
+            safe_items,
+            key=lambda item: (_numeric_key(item, "storage_size_bytes", "file_size_bytes"), _title_key(item), _id_key(item)),
+            reverse=reverse,
+        )
+
+    if normalized_sort_type in {"page_count", "total_page", "pages"}:
+        return sorted(
+            safe_items,
+            key=lambda item: (_numeric_key(item, "total_page", "total_units"), _title_key(item), _id_key(item)),
             reverse=reverse,
         )
 

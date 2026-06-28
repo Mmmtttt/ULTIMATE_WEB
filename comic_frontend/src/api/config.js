@@ -33,6 +33,14 @@ export const configApi = {
     return request.get('/v1/config/cache/info')
   },
 
+  getStorageOverview(params = {}) {
+    return request.get('/v1/config/storage/overview', { params })
+  },
+
+  getStorageRanking(params = {}) {
+    return request.get('/v1/config/storage/ranking', { params })
+  },
+
   clearSpecificCache(cacheType) {
     return request.delete('/v1/config/cache/clear-specific', { data: { cache_type: cacheType } })
   }

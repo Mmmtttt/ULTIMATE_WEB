@@ -46,9 +46,8 @@
           <div v-if="displaySubtitle(item)" class="media-subtitle">
             {{ displaySubtitle(item) }}
           </div>
-          <div class="media-meta">
-            <span v-if="item.date">{{ item.date }}</span>
-            <span v-else-if="item.total_page">{{ item.total_page }}P</span>
+          <div v-if="primaryMetaText(item)" class="media-meta">
+            <span>{{ primaryMetaText(item) }}</span>
           </div>
         </div>
       </template>
@@ -61,12 +60,7 @@
               {{ displaySubtitle(item) }}
             </div>
             <div class="media-meta">
-              <span v-if="showProgress && item.current_page && item.current_page > 0">
-                {{ item.current_page }}{{ item.total_page ? `/${item.total_page}` : '' }}
-              </span>
-              <span v-else-if="item.date">{{ item.date }}</span>
-              <span v-else-if="item.total_page">{{ item.total_page }}P</span>
-              <span v-else>-</span>
+              <span>{{ primaryMetaText(item, true) || '-' }}</span>
             </div>
           </div>
 
@@ -205,6 +199,20 @@ function displaySubtitle(item) {
   }
   return item.author || item.creator || item.actor || ''
 }
+
+function primaryMetaText(item, includeProgress = false) {
+  if (includeProgress && props.showProgress && item.current_page && item.current_page > 0) {
+    return `${item.current_page}${item.total_page ? `/${item.total_page}` : ''}`
+  }
+  if (item.date) {
+    return item.date
+  }
+  if (item.total_page) {
+    return `${item.total_page}P`
+  }
+  return ''
+}
+
 </script>
 
 <style scoped>
@@ -444,6 +452,10 @@ function displaySubtitle(item) {
 }
 
 .media-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   font-size: 11px;
   color: var(--text-tertiary);
   font-weight: 500;

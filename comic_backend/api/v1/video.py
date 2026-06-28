@@ -19,6 +19,7 @@ from application.list_query_support import (
 )
 from application.config_app_service import ConfigAppService
 from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
+from application.storage_usage_service import annotate_video_storage_usage
 from application.video_runtime_support import (
     build_video_host_id as runtime_build_video_host_id,
     execute_video_plugin_capability as runtime_execute_video_plugin_capability,
@@ -500,6 +501,7 @@ def video_list():
         paginate = _parse_bool_arg('paginate')
         summary_only = _parse_bool_arg('summary')
         include_available_authors = _parse_bool_arg('include_available_authors')
+        include_storage_usage = _parse_bool_arg('include_storage_usage')
         page = request.args.get('page', default=1, type=int)
         page_size = request.args.get('page_size', default=24, type=int)
 
@@ -518,6 +520,7 @@ def video_list():
             paginate=paginate,
             summary_only=summary_only,
             include_available_authors=include_available_authors,
+            include_storage_usage=include_storage_usage,
         )
         if result.success:
             return success_response(result.data)
@@ -1936,6 +1939,12 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "cover_path_local",
         "actors",
         "source",
+        "storage_size_bytes",
+        "storage_size_label",
+        "storage_file_count",
+        "storage_size_scope",
+        "storage_is_soft_ref",
+        "storage_excluded_reason",
     }
     return {key: card.get(key) for key in allowed_keys}
 
@@ -2802,6 +2811,7 @@ def get_video_recommendation_list():
         paginate = _parse_bool_arg('paginate')
         summary_only = _parse_bool_arg('summary')
         include_available_authors = _parse_bool_arg('include_available_authors')
+        include_storage_usage = _parse_bool_arg('include_storage_usage')
         page = request.args.get('page', default=1, type=int)
         page_size = request.args.get('page_size', default=24, type=int)
 
@@ -2852,27 +2862,29 @@ def get_video_recommendation_list():
             sort_order,
         )
 
+        def serialize_card(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _build_preview_video_card_dict(item, tag_map=tag_map)
+
+        def serialize_detail(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _decorate_video_recommendation_item(item, tag_map=tag_map)
+
         if paginate:
             payload = build_paginated_payload(
                 filtered_videos,
                 page=normalize_page(page, 1),
                 page_size=normalize_page_size(page_size),
-                serializer=(
-                    (lambda item: _build_preview_video_card_dict(item, tag_map=tag_map))
-                    if summary_only
-                    else (lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map))
-                ),
+                serializer=serialize_card if summary_only else serialize_detail,
                 extra={
                     "available_authors": extract_available_authors(filtered_videos) if include_available_authors else [],
                 },
             )
             return success_response(payload)
 
-        serializer = (
-            (lambda item: _build_preview_video_card_dict(item, tag_map=tag_map))
-            if summary_only
-            else (lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map))
-        )
+        serializer = serialize_card if summary_only else serialize_detail
         return success_response([serializer(item) for item in filtered_videos])
     except Exception as e:
         error_logger.error(f"获取推荐视频列表失败: {e}")
@@ -2916,6 +2928,7 @@ def get_video_recommendation_detail():
             if video.get('id') == video_id:
                 if _refresh_preview_video_persisted_fields(video):
                     document_repo.write_document(db_data)
+                annotate_video_storage_usage([video], source="preview")
                 detail = _decorate_video_recommendation_item(
                     video,
                     tag_map=tag_map,

@@ -170,6 +170,14 @@
           <span class="label">Path:</span>
           <span class="value path-value" :title="videoStoragePath">{{ videoStoragePath }}</span>
         </div>
+
+        <div v-if="videoStorageUsageText" class="info-row">
+          <span class="label">本地文件:</span>
+          <span class="value storage-usage-value">
+            <span class="storage-size-chip">{{ videoStorageUsageText }}</span>
+            <span v-if="videoStorageFileCountText" class="storage-count-chip">{{ videoStorageFileCountText }}</span>
+          </span>
+        </div>
         
         <div class="info-row score-row">
           <span class="label">评分:</span>
@@ -521,7 +529,13 @@ import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/store
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
+import {
+  applyListMembershipChanges,
+  buildListChangeMessage,
+  formatStorageFileCountText,
+  formatStorageUsageText,
+  getCoverUrl
+} from '@/utils'
 import { toBackendUrl } from '@/utils/url'
 import {
   buildEpisodeListFromPlayableSources,
@@ -737,6 +751,8 @@ const videoStoragePath = computed(() => {
   const path = String(video.value?.storage_path || video.value?.local_source_path || '').trim()
   return path
 })
+const videoStorageUsageText = computed(() => formatStorageUsageText(video.value))
+const videoStorageFileCountText = computed(() => formatStorageFileCountText(video.value))
 const localThumbnailCapability = computed(() => {
   const capability = video.value?.local_thumbnail_capability
   if (!capability || typeof capability !== 'object') {
@@ -2241,6 +2257,34 @@ onUnmounted(() => {
   min-width: 0;
   word-break: break-all;
   line-height: 1.4;
+}
+
+.storage-usage-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.storage-size-chip,
+.storage-count-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.storage-size-chip {
+  padding: 0 10px;
+  background: rgba(89, 160, 255, 0.14);
+  border: 1px solid rgba(89, 160, 255, 0.26);
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
+.storage-count-chip {
+  color: var(--text-tertiary);
 }
 
 .actor-tags {

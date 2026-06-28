@@ -74,6 +74,27 @@ export function formatFileSize(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${units[i]}`
 }
 
+export function formatStorageUsageText(item) {
+  if (!item || item.storage_size_bytes === undefined) {
+    return ''
+  }
+  if (item.storage_is_soft_ref || item.storage_excluded_reason === 'symlink') {
+    return '软连接/外部文件不计入'
+  }
+  if (item.storage_size_scope === 'external') {
+    return '外部文件不计入'
+  }
+  if (item.storage_size_scope === 'missing') {
+    return '未缓存'
+  }
+  return item.storage_size_label || formatFileSize(Number(item.storage_size_bytes || 0))
+}
+
+export function formatStorageFileCountText(item) {
+  const count = Number(item?.storage_file_count || 0)
+  return count > 0 ? `${count} 个文件` : ''
+}
+
 export function formatPageMode(mode) {
   const modeMap = {
     [PAGE_MODE.LEFT_RIGHT]: '左右翻页',

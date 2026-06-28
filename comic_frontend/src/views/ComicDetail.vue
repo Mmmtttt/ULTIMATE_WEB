@@ -69,6 +69,12 @@
               <span class="stat-item">{{ progressPercent }}%</span>
             </div>
 
+            <div v-if="comicStorageUsageText" class="storage-size-row">
+              <span class="storage-size-label">本地文件</span>
+              <span class="storage-size-value">{{ comicStorageUsageText }}</span>
+              <span v-if="comicStorageFileCountText" class="storage-size-count">{{ comicStorageFileCountText }}</span>
+            </div>
+
             <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
               <span class="storage-path-label">Path:</span>
               <span class="storage-path-value">{{ comicStoragePath }}</span>
@@ -366,7 +372,7 @@ import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { authorApi } from '@/api'
 import { showSuccessToast, showFailToast } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, formatStorageFileCountText, formatStorageUsageText, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -441,6 +447,9 @@ const comicStoragePath = computed(() => {
   const path = String(comic.value?.storage_path || comic.value?.import_source || '').trim()
   return path
 })
+
+const comicStorageUsageText = computed(() => formatStorageUsageText(comic.value))
+const comicStorageFileCountText = computed(() => formatStorageFileCountText(comic.value))
 
 const hasChapters = computed(() => {
   return Array.isArray(comic.value?.chapters) && comic.value.chapters.length > 1
@@ -994,6 +1003,44 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+.storage-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.storage-size-label,
+.storage-size-value,
+.storage-size-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.storage-size-label {
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+
+.storage-size-value {
+  padding: 0 10px;
+  background: rgba(89, 160, 255, 0.18);
+  border: 1px solid rgba(180, 209, 255, 0.34);
+  color: #fff;
+  font-weight: 700;
+}
+
+.storage-size-count {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .storage-path-row {

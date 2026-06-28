@@ -57,6 +57,14 @@
             <span class="stat-item">{{ progressPercent }}%</span>
           </div>
 
+          <div v-if="recommendationStorageUsageText" class="storage-size-row">
+            <span class="storage-size-label">本地文件</span>
+            <span class="storage-size-value">{{ recommendationStorageUsageText }}</span>
+            <span v-if="recommendationStorageFileCountText" class="storage-size-count">
+              {{ recommendationStorageFileCountText }}
+            </span>
+          </div>
+
           <div class="score-section">
             <div class="score-display">
               <span class="score-label">评分:</span>
@@ -286,7 +294,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { authorApi } from '@/api'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
+import {
+  applyListMembershipChanges,
+  buildListChangeMessage,
+  formatStorageFileCountText,
+  formatStorageUsageText,
+  getCoverUrl,
+  isReadByProgress
+} from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -352,6 +367,9 @@ const isRead = computed(() => {
   if (!recommendation.value) return false
   return isReadByProgress(recommendation.value.current_page)
 })
+
+const recommendationStorageUsageText = computed(() => formatStorageUsageText(recommendation.value))
+const recommendationStorageFileCountText = computed(() => formatStorageFileCountText(recommendation.value))
 
 // ============ Methods ============
 
@@ -791,6 +809,44 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+.storage-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.storage-size-label,
+.storage-size-value,
+.storage-size-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.storage-size-label {
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+
+.storage-size-value {
+  padding: 0 10px;
+  background: rgba(89, 160, 255, 0.18);
+  border: 1px solid rgba(180, 209, 255, 0.34);
+  color: #fff;
+  font-weight: 700;
+}
+
+.storage-size-count {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .score-section {

@@ -34,6 +34,7 @@ from application.persisted_content_metadata import (
     normalize_data_relative_path,
     resolve_data_relative_path,
 )
+from application.storage_usage_service import annotate_video_storage_usage
 
 from domain.video import Video, VideoRepository
 from domain.video_recommendation import VideoRecommendationRepository, VideoRecommendation
@@ -381,7 +382,7 @@ class VideoAppService(BaseContentAppService):
 
     @classmethod
     def _video_to_card_dict(cls, video: Video) -> Dict[str, Any]:
-        return cls._annotate_video_record({
+        payload = {
             "id": video.id,
             "title": video.title,
             "title_jp": video.title_jp,
@@ -402,7 +403,25 @@ class VideoAppService(BaseContentAppService):
             "cover_path_local": video.cover_path_local,
             "actors": list(video.actors or []),
             "source": "local",
-        })
+        }
+        payload.update(cls._storage_fields_from_item(video))
+        return cls._annotate_video_record(payload)
+
+    @staticmethod
+    def _storage_fields_from_item(item: Any) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        for key in (
+            "storage_size_bytes",
+            "storage_size_label",
+            "storage_file_count",
+            "storage_size_scope",
+            "storage_is_soft_ref",
+            "storage_excluded_reason",
+        ):
+            value = getattr(item, key, None)
+            if value is not None:
+                fields[key] = value
+        return fields
 
     def apply_recent_import_tags(
         self,
@@ -490,7 +509,8 @@ class VideoAppService(BaseContentAppService):
         page_size: int = 24,
         paginate: bool = False,
         summary_only: bool = False,
-        include_available_authors: bool = False
+        include_available_authors: bool = False,
+        include_storage_usage: bool = False
     ) -> ServiceResult:
         try:
             videos = self._video_repo.get_all()
@@ -527,17 +547,26 @@ class VideoAppService(BaseContentAppService):
             if sort_type:
                 videos = sort_content_items(videos, sort_type, sort_order)
 
+            def serialize_video_card(video):
+                if include_storage_usage:
+                    annotate_video_storage_usage([video], source="local")
+                return self._video_to_card_dict(video)
+
+            def serialize_video_summary(video):
+                if include_storage_usage:
+                    annotate_video_storage_usage([video], source="local")
+                return {
+                    **video.to_dict(),
+                    **self._storage_fields_from_item(video),
+                    "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+                }
+
             if paginate:
                 payload = build_paginated_payload(
                     videos,
                     page=normalize_page(page, 1),
                     page_size=normalize_page_size(page_size),
-                    serializer=self._video_to_card_dict if summary_only else (
-                        lambda video: self._annotate_video_record({
-                            **video.to_dict(),
-                            "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
-                        })
-                    ),
+                    serializer=serialize_video_card if summary_only else serialize_video_summary,
                     extra={
                         "available_authors": extract_available_authors(videos) if include_available_authors else [],
                     },
@@ -550,11 +579,9 @@ class VideoAppService(BaseContentAppService):
             video_list = []
             for v in videos:
                 if summary_only:
-                    video_list.append(self._video_to_card_dict(v))
+                    video_list.append(serialize_video_card(v))
                     continue
-                video_info = v.to_dict()
-                video_info["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in v.tag_ids]
-                video_list.append(video_info)
+                video_list.append(serialize_video_summary(v))
             if not summary_only:
                 video_list = self._annotate_video_records(video_list)
 
@@ -603,7 +630,9 @@ class VideoAppService(BaseContentAppService):
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
             
+            annotate_video_storage_usage([video], source="local")
             detail = video.to_dict()
+            detail.update(self._storage_fields_from_item(video))
             local_episodes = self._discover_local_video_episodes(video)
             if local_episodes:
                 display = dict(detail.get("display") or {})

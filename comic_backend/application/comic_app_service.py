@@ -20,6 +20,7 @@ from application.persisted_content_metadata import (
     normalize_data_relative_path,
     resolve_data_relative_path,
 )
+from application.storage_usage_service import annotate_comic_storage_usage
 from domain.comic import Comic, ComicRepository
 from domain.recommendation import Recommendation
 from domain.tag import TagRepository
@@ -127,6 +128,7 @@ class ComicAppService:
     @staticmethod
     def _comic_to_summary_dict(comic: Comic, tag_map: Dict[str, str], *, include_progress: bool = True) -> Dict[str, Any]:
         payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
+        payload.update(ComicAppService._storage_fields_from_item(comic))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
         if not include_progress:
             payload.pop("current_page", None)
@@ -135,8 +137,24 @@ class ComicAppService:
         return payload
 
     @staticmethod
+    def _storage_fields_from_item(item: Any) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+        for key in (
+            "storage_size_bytes",
+            "storage_size_label",
+            "storage_file_count",
+            "storage_size_scope",
+            "storage_is_soft_ref",
+            "storage_excluded_reason",
+        ):
+            value = getattr(item, key, None)
+            if value is not None:
+                fields[key] = value
+        return fields
+
+    @staticmethod
     def _comic_to_card_dict(comic: Comic) -> Dict[str, Any]:
-        return {
+        payload = {
             "id": comic.id,
             "title": comic.title,
             "title_jp": comic.title_jp,
@@ -155,6 +173,8 @@ class ComicAppService:
             "display": dict(comic.display or {}),
             "custom_order": comic.custom_order,
         }
+        payload.update(ComicAppService._storage_fields_from_item(comic))
+        return payload
 
     @staticmethod
     def _commit_custom_order(document_repo: JsonDocumentRepository, ordered_ids: List[str] = None) -> bool:
@@ -190,6 +210,7 @@ class ComicAppService:
         paginate: bool = False,
         summary_only: bool = False,
         include_available_authors: bool = False,
+        include_storage_usage: bool = False,
     ) -> ServiceResult:
         try:
             app_logger.info(
@@ -231,7 +252,12 @@ class ComicAppService:
 
             app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
 
-            serializer = self._comic_to_card_dict if summary_only else (lambda comic: self._comic_to_summary_dict(comic, tag_map))
+            base_serializer = self._comic_to_card_dict if summary_only else (lambda comic: self._comic_to_summary_dict(comic, tag_map))
+
+            def serializer(comic):
+                if include_storage_usage:
+                    annotate_comic_storage_usage([comic], source="local")
+                return base_serializer(comic)
 
             if paginate:
                 payload = build_paginated_payload(
@@ -299,8 +325,10 @@ class ComicAppService:
             
             is_favorited = FAVORITES_LIST_ID in comic.list_ids
             storage_path, storage_path_kind = self._resolve_comic_storage_path(comic)
+            annotate_comic_storage_usage([comic], source="local")
             
             detail = comic.to_dict()
+            detail.update(self._storage_fields_from_item(comic))
             detail["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
             detail["preview_images"] = [f"/api/v1/comic/image?comic_id={comic_id}&page_num={p}" for p in preview_pages]
             detail["preview_pages"] = preview_pages

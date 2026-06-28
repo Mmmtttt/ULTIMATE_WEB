@@ -316,6 +316,7 @@ def comic_list():
         paginate = _parse_bool_arg('paginate')
         summary_only = _parse_bool_arg('summary')
         include_available_authors = _parse_bool_arg('include_available_authors')
+        include_storage_usage = _parse_bool_arg('include_storage_usage')
         page = request.args.get('page', default=1, type=int)
         page_size = request.args.get('page_size', default=24, type=int)
 
@@ -335,6 +336,7 @@ def comic_list():
             paginate=paginate,
             summary_only=summary_only,
             include_available_authors=include_available_authors,
+            include_storage_usage=include_storage_usage,
         )
         if result.success:
             return success_response(result.data)

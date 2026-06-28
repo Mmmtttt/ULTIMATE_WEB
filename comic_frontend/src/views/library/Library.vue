@@ -326,6 +326,9 @@ function isSortFieldSupported(sortField) {
   if (normalized === 'name' || normalized === 'random' || normalized === 'custom') {
     return true
   }
+  if (normalized === 'page_count') {
+    return !isVideoMode.value
+  }
   if (normalized === 'date') {
     return isVideoMode.value
   }

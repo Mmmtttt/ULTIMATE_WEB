@@ -139,6 +139,12 @@ const routes = [
     meta: { title: '数据同步' }
   },
   {
+    path: '/storage',
+    name: 'StorageManage',
+    component: () => import('@/views/StorageManage.vue'),
+    meta: { title: '存储管理' }
+  },
+  {
     path: '/trash',
     name: 'Trash',
     component: () => import('@/views/Trash.vue')
