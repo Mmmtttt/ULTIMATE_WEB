@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="comic-local-import-page desktop-page-shell">
     <van-nav-bar
       title="本地漫画导入"
@@ -993,9 +993,9 @@ watch(
 
 <style scoped>
 .comic-local-import-page {
-  min-height: 100vh;
-  padding: 0 12px 80px;
-  background: var(--surface-0);
+  min-height: 95vh;
+  background: transparent;
+  padding-bottom: 80px;
 }
 
 .card-surface {

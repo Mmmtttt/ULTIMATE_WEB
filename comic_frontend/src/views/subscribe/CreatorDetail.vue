@@ -415,7 +415,6 @@ onMounted(async () => {
 <style scoped>
 .creator-detail-page {
   background: transparent;
-  min-height: 100vh;
 }
 
 .creator-header {

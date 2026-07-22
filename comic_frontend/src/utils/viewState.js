@@ -129,11 +129,6 @@ export function buildSortOptions(isVideoMode = false) {
       { text: '最新发布', value: encodeSortSelection('date', SORT_ORDER.DESC) },
       { text: '最早发布', value: encodeSortSelection('date', SORT_ORDER.ASC) },
     )
-  } else {
-    options.push(
-      { text: '页数最多', value: encodeSortSelection('page_count', SORT_ORDER.DESC) },
-      { text: '页数最少', value: encodeSortSelection('page_count', SORT_ORDER.ASC) },
-    )
   }
   return options
 }
@@ -212,9 +207,6 @@ export function sortContentItems(items = [], sortField = '', sortOrder = DEFAULT
   return safeItems.sort((left, right) => {
     if (normalizedField === 'score') {
       return compareValues(Number(left?.score || 0), Number(right?.score || 0)) * factor
-    }
-    if (normalizedField === 'page_count') {
-      return compareValues(Number(left?.total_page || left?.total_units || 0), Number(right?.total_page || right?.total_units || 0)) * factor
     }
     if (normalizedField === 'read_status') {
       const leftRead = Number(left?.current_page || 0) >= Number(left?.total_page || 0) ? 1 : 0

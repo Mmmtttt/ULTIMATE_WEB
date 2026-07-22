@@ -16,13 +16,13 @@ function loadServerConfig() {
       console.warn('Failed to load server_config.json, using defaults')
     }
   }
-  return { backend: { host: '0.0.0.0', port: 5000 }, frontend: { host: '0.0.0.0', port: 5173 } }
+  return { backend: { host: '0.0.0.0', port: 5050 }, frontend: { host: '0.0.0.0', port: 5173 } }
 }
 
 const serverConfig = loadServerConfig()
 const frontendConfig = serverConfig.frontend || {}
 const backendConfig = serverConfig.backend || {}
-const backendPort = backendConfig.port || 5000
+const backendPort = backendConfig.port || 5050
 
 export default defineConfig({
   plugins: [vue()],

@@ -88,6 +88,7 @@
         :selected-ids="selectedIds"
         :show-progress="!isVideoMode"
         @click="onItemClick"
+        @play="onItemPlay"
         @toggle-favorite="toggleFavorite"
         @select="toggleSelection"
         :class="{ 'video-mode': isVideoMode }"
@@ -325,9 +326,6 @@ function isSortFieldSupported(sortField) {
   }
   if (normalized === 'name' || normalized === 'random' || normalized === 'custom') {
     return true
-  }
-  if (normalized === 'page_count') {
-    return !isVideoMode.value
   }
   if (normalized === 'date') {
     return isVideoMode.value
@@ -765,6 +763,11 @@ function onItemClick(item) {
   }
 }
 
+function onItemPlay(item) {
+  if (isManageMode.value) return
+  router.push({ name: 'VideoDetail', params: { id: item.id }, query: { ...route.query, autoplay: '1' } })
+}
+
 function toggleSelection(item) {
   const id = item.id
   if (selectedIds.value.includes(id)) {
@@ -1073,7 +1076,8 @@ onMounted(async () => {
 
 <style scoped>
 .library-page {
-  padding-bottom: 96px;
+  display: flex;
+  flex-direction: column;
 }
 
 .toolbar {
@@ -1180,11 +1184,16 @@ onMounted(async () => {
 }
 
 .content-area {
+  flex: 1;
   min-height: 200px;
 }
 
 .content-pagination {
-  padding: 0 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding: 8px 8px 12px;
+  background: var(--surface-1);
 }
 
 .loading-center {
@@ -1260,10 +1269,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 767px) {
-  .library-page {
-    padding-bottom: 110px;
-  }
-
   .toolbar {
     top: calc(var(--mobile-header-offset, 0px) + 8px);
     padding: 8px;

@@ -183,26 +183,23 @@ export const useTagStore = defineStore('tag', () => {
       return { success: false, message: validation.message }
     }
     
-    // 检查是否已存在
-    const exists = tags.value.some(tag => tag.name === newName.trim() && tag.id !== tagId)
-    if (exists) {
-      return { success: false, message: '标签名称已存在' }
-    }
-    
     loading.value = true
     
     try {
       console.log('[Tag] 编辑标签:', tagId, newName)
-      await tagApi.edit(tagId, newName.trim())
+      const response = await tagApi.edit(tagId, newName.trim())
       
       // 刷新标签列表
       await fetchTags('comic', true)
+      await fetchTags('video', true)
       
       // 清除相关缓存
       cacheStore.clearCache('tags')
+      cacheStore.clearCache('video-tags')
       cacheStore.clearCache('detail')
+      cacheStore.clearCache('video-detail')
       
-      return { success: true }
+      return { success: true, message: response.msg || '修改成功' }
     } catch (err) {
       console.error('[Tag] 编辑标签失败:', err)
       return { success: false, message: err.message }
@@ -224,26 +221,23 @@ export const useTagStore = defineStore('tag', () => {
       return { success: false, message: validation.message }
     }
     
-    // 检查是否已存在
-    const exists = videoTags.value.some(tag => tag.name === newName.trim() && tag.id !== tagId)
-    if (exists) {
-      return { success: false, message: '标签名称已存在' }
-    }
-    
     loading.value = true
     
     try {
       console.log('[Tag] 编辑视频标签:', tagId, newName)
-      await tagApi.edit(tagId, newName.trim())
+      const response = await tagApi.edit(tagId, newName.trim())
       
       // 刷新标签列表
+      await fetchTags('comic', true)
       await fetchTags('video', true)
       
       // 清除相关缓存
+      cacheStore.clearCache('tags')
       cacheStore.clearCache('video-tags')
+      cacheStore.clearCache('detail')
       cacheStore.clearCache('video-detail')
       
-      return { success: true }
+      return { success: true, message: response.msg || '修改成功' }
     } catch (err) {
       console.error('[Tag] 编辑视频标签失败:', err)
       return { success: false, message: err.message }
@@ -264,12 +258,15 @@ export const useTagStore = defineStore('tag', () => {
       console.log('[Tag] 删除标签:', tagId)
       await tagApi.delete(tagId)
       
-      // 刷新标签列表
-      await fetchTags(true)
+      // 刷新标签列表（强制刷新，避免缓存干扰）
+      await fetchTags('comic', true)
+      await fetchTags('video', true)
       
       // 清除相关缓存
       cacheStore.clearCache('tags')
+      cacheStore.clearCache('video-tags')
       cacheStore.clearCache('detail')
+      cacheStore.clearCache('video-detail')
       
       // 从选中列表中移除
       selectedTags.value = selectedTags.value.filter(id => id !== tagId)

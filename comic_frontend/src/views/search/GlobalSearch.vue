@@ -412,7 +412,6 @@ onMounted(() => {
 
 <style scoped>
 .search-page {
-  min-height: 100vh;
   background: transparent;
   display: flex;
   flex-direction: column;

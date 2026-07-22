@@ -31,7 +31,7 @@
 
     <van-cell-group class="mine-menu" inset>
       <van-cell title="数据同步" icon="share-o" to="/sync" is-link />
-      <van-cell title="数据库整理" icon="brush-o" @click="openOrganizePanel" is-link />
+      <van-cell title="数据库整理" icon="brush-o" to="/organize" is-link />
       <van-cell title="存储管理" icon="tosend" to="/storage" is-link />
     </van-cell-group>
 
@@ -176,14 +176,6 @@
         </div>
       </div>
     </van-popup>
-
-    <van-action-sheet
-      v-model:show="showOrganizeSheet"
-      :actions="organizeActions"
-      cancel-text="取消"
-      close-on-click-action
-      @select="handleOrganizeActionSelect"
-    />
     
   </div>
 </template>
@@ -192,8 +184,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore, useAppUpdateStore } from '@/stores'
-import { organizeApi } from '@/api'
-import { closeToast, showFailToast, showConfirmDialog, showLoadingToast, showSuccessToast } from 'vant'
+import { showFailToast, showConfirmDialog, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
 import { fetchProtocolPlatformOptions } from '@/utils'
 
@@ -218,10 +209,6 @@ const importId = ref('')
 const importFile = ref(null)
 const importing = ref(false)
 const importFileInput = ref(null)
-const showOrganizeSheet = ref(false)
-const organizeActions = ref([])
-const runningOrganizeAction = ref(false)
-const loadingOrganizeOptions = ref(false)
 const importPlatformOptions = ref([])
 
 // Stats
@@ -244,8 +231,7 @@ const stats = computed(() => {
 })
 
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
-const tagManagePath = computed(() => isVideoMode.value ? '/video-tags' : '/tags')
-const organizeModeKey = computed(() => (isVideoMode.value ? 'video' : 'comic'))
+const tagManagePath = '/tags'
 const appVersionLabel = computed(() => String(import.meta.env.VITE_APP_VERSION || '0.0.0').trim() || '0.0.0')
 const updateChecking = computed(() => appUpdateStore.checking)
 const hasNewVersion = computed(() => appUpdateStore.hasUpdate)
@@ -278,77 +264,6 @@ function goToFavorites() {
   router.push(`/list/${favoritesListId}`)
 }
 
-function mapOrganizeActions(rawOptions) {
-  if (!Array.isArray(rawOptions)) {
-    return []
-  }
-  return rawOptions.map((item) => ({
-    ...item,
-    name: item?.name || item?.action || '未知功能',
-    subname: item?.description || '',
-    disabled: item?.implemented === false,
-  }))
-}
-
-function buildOrganizeResultMessage(action, payload) {
-  if (payload?.summary) {
-    return payload.summary
-  }
-  if (action === 'repair_cover') {
-    const rewritten = Number(payload?.home?.rewritten_total_pages || 0)
-    const repaired = Number(payload?.home?.updated_cover_paths || 0) + Number(payload?.recommendation?.updated_cover_paths || 0)
-    return `修复封面完成：修复封面 ${repaired}，回写页数 ${rewritten}`
-  }
-  if (action === 'deduplicate_by_title' || action === 'deduplicate_by_code') {
-    const home = Number(payload?.home?.moved_to_trash || 0)
-    const recommendation = Number(payload?.recommendation?.moved_to_trash || 0)
-    return `查重完成：本地库 ${home} 条，预览库 ${recommendation} 条`
-  }
-  if (action === 'enrich_local_metadata') {
-    const updated = Number(payload?.updated_records || 0)
-    const noMatch = Number(payload?.skipped_no_match || 0)
-    return `LOCAL 补全完成：成功 ${updated}，无匹配 ${noMatch}`
-  }
-  return '数据库整理已完成'
-}
-
-function buildOrganizeResultDetail(action, payload) {
-  const summary = buildOrganizeResultMessage(action, payload)
-  if (action === 'enrich_local_metadata') {
-    const lines = [
-      summary,
-      `处理候选: ${Number(payload?.processed_candidates || 0)}`,
-      `无匹配: ${Number(payload?.skipped_no_match || 0)}`,
-      `已补全跳过: ${Number(payload?.skipped_already_enriched || 0)}`
-    ]
-    const matchedByPlatform = payload?.matched_by_platform
-    const entries = matchedByPlatform && typeof matchedByPlatform === 'object'
-      ? Object.entries(matchedByPlatform)
-      : []
-    if (entries.length > 0) {
-      entries.forEach(([platform, count]) => {
-        lines.push(`${String(platform || '').toUpperCase()}命中: ${Number(count || 0)}`)
-      })
-    } else {
-      const platformOrder = Array.isArray(payload?.search_platform_order)
-        ? payload.search_platform_order
-        : []
-      platformOrder.forEach((platform) => {
-        lines.push(`${String(platform || '').toUpperCase()}命中: 0`)
-      })
-    }
-    return lines.join('\n')
-  }
-  if (action === 'deduplicate_by_title' || action === 'deduplicate_by_code') {
-    return [
-      summary,
-      `本地库移入回收站: ${Number(payload?.home?.moved_to_trash || 0)}`,
-      `预览库移入回收站: ${Number(payload?.recommendation?.moved_to_trash || 0)}`
-    ].join('\n')
-  }
-  return summary
-}
-
 async function loadImportPlatformOptions() {
   try {
     const options = await fetchProtocolPlatformOptions({
@@ -366,68 +281,6 @@ async function loadImportPlatformOptions() {
 
   if (!importPlatformOptions.value.some(item => item.value === importPlatform.value)) {
     importPlatform.value = importPlatformOptions.value[0]?.value || ''
-  }
-}
-
-async function openOrganizePanel() {
-  if (runningOrganizeAction.value || loadingOrganizeOptions.value) {
-    return
-  }
-  loadingOrganizeOptions.value = true
-  try {
-    const response = await organizeApi.getOptions(organizeModeKey.value)
-    organizeActions.value = mapOrganizeActions(response?.data?.options)
-    if (!organizeActions.value.length) {
-      showFailToast('当前模式暂无可用整理功能')
-      return
-    }
-    showOrganizeSheet.value = true
-  } catch (error) {
-    showFailToast(error?.message || '加载数据库整理功能失败')
-  } finally {
-    loadingOrganizeOptions.value = false
-  }
-}
-
-async function handleOrganizeActionSelect(selectedAction) {
-  if (!selectedAction?.action) {
-    return
-  }
-  if (selectedAction?.implemented === false) {
-    showFailToast(selectedAction?.confirm_message || '该功能尚未实现')
-    return
-  }
-
-  try {
-    await showConfirmDialog({
-      title: '数据库整理',
-      message: selectedAction?.confirm_message || `确定执行「${selectedAction?.name || selectedAction?.action}」吗？`
-    })
-  } catch {
-    return
-  }
-
-  runningOrganizeAction.value = true
-  showLoadingToast({
-    message: `正在执行「${selectedAction?.name || '数据库整理'}」...`,
-    forbidClick: true,
-    duration: 0
-  })
-  try {
-    const response = await organizeApi.run(organizeModeKey.value, selectedAction.action)
-    closeToast()
-    const resultText = buildOrganizeResultDetail(selectedAction.action, response?.data || {})
-    await showConfirmDialog({
-      title: '执行完成',
-      message: resultText,
-      confirmButtonText: '知道了',
-      showCancelButton: false
-    })
-  } catch (error) {
-    closeToast()
-    showFailToast(error?.message || '数据库整理失败')
-  } finally {
-    runningOrganizeAction.value = false
   }
 }
 
@@ -609,20 +462,19 @@ onMounted(async () => {
 })
 
 watch(() => modeStore.currentMode, async () => {
-  organizeActions.value = []
   await loadImportPlatformOptions()
 })
 </script>
 
 <style scoped>
 .mine-page {
-  padding-bottom: 80px;
+  padding-bottom: 20px;
 }
 
 .stats-overview {
   background: var(--surface-2);
   padding: 20px 0;
-  margin-bottom: 12px;
+  margin: 0 16px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 14px;
 }
@@ -630,18 +482,23 @@ watch(() => modeStore.currentMode, async () => {
 .stats-overview :deep(.van-grid-item__content) {
   background: transparent;
   color: var(--text-primary);
+  padding: clamp(4px, 1vw, 10px) clamp(2px, 0.5vw, 4px);
 }
 
 .stats-overview :deep(.van-grid-item__text) {
   color: var(--text-secondary);
+  font-size: clamp(11px, 1.2vw, 14px);
+  margin-top: clamp(4px, 0.6vw, 8px);
 }
 
 .stats-overview :deep(.van-icon) {
   color: var(--brand-600);
+  font-size: clamp(18px, 2.4vw, 28px);
 }
 
 .stats-overview :deep(.van-grid-item__icon) {
   color: var(--brand-600);
+  font-size: clamp(18px, 2.4vw, 28px);
 }
 
 .mine-menu {
@@ -653,13 +510,12 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 .about {
-  padding: 28px 0 16px;
+  padding: 28px 16px 16px;
   color: var(--text-tertiary);
 }
 
 .about-card {
-  max-width: 420px;
-  margin: 0 auto;
+  width: 100%;
   padding: 14px;
   border: 1px solid var(--border-soft);
   border-radius: 14px;
@@ -720,6 +576,27 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 /* Panels & Dialogs */
+.cache-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.cache-content {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.cache-info-group, .clear-options-group {
+  margin-bottom: 16px;
+}
+
+.cache-desc {
+  font-size: 12px;
+  color: #999;
+}
+
 .import-dialog {
   width: min(92vw, 420px);
   padding: 20px;

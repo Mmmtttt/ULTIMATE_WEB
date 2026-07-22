@@ -752,7 +752,7 @@ onUnmounted(() => {
 
 <style scoped>
 .sync-center-page {
-  min-height: 100vh;
+  min-height: 95vh;
   background: transparent;
   padding-bottom: 24px;
 }

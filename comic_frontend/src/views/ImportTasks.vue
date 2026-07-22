@@ -1,5 +1,5 @@
 <template>
-  <div class="import-tasks-page">
+  <div class="import-tasks-page desktop-page-shell">
     <van-nav-bar
       title="任务中心"
       left-arrow
@@ -292,10 +292,8 @@ onUnmounted(() => {
 
 <style scoped>
 .import-tasks-page {
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at top, rgba(47, 116, 255, 0.16), transparent 36%),
-    var(--surface-0);
+  min-height: 95vh;
+  background: transparent;
   padding-bottom: 64px;
 }
 

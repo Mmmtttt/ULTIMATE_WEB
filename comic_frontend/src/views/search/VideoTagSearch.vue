@@ -690,7 +690,6 @@ onMounted(async () => {
 
 <style scoped>
 .tag-search-page {
-  min-height: 100vh;
   padding: 12px 10px 90px;
   color: var(--text-primary);
 }
