@@ -452,7 +452,7 @@ async function syncList(list) {
   try {
     await showConfirmDialog({
       title: '同步清单',
-      message: `确定要同步清单"${list.name}"吗？\n\n将从网络侧获取最新内容，新增的内容将被导入到预览库。`
+      message: `确定要同步清单"${list.name}"吗？\n\n将从网络侧获取最新内容，新增的内容将被导入到本地。`
     })
   } catch {
     return
@@ -493,8 +493,8 @@ watch(currentContentType, () => {
 
 <style scoped>
 .list-manage {
-  min-height: 100vh;
-  background: var(--surface-0);
+  min-height: 95vh;
+  background: transparent;
 }
 
 .loading-center {

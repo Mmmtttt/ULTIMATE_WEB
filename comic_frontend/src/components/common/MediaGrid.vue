@@ -32,7 +32,7 @@
             />
           </div>
 
-          <div v-if="isVideoItem(item)" class="play-btn">
+          <div v-if="isVideoItem(item)" class="play-btn" @click.stop="$emit('play', item)">
             <van-icon name="play-circle-o" size="48" />
           </div>
 
@@ -46,8 +46,9 @@
           <div v-if="displaySubtitle(item)" class="media-subtitle">
             {{ displaySubtitle(item) }}
           </div>
-          <div v-if="primaryMetaText(item)" class="media-meta">
-            <span>{{ primaryMetaText(item) }}</span>
+          <div class="media-meta">
+            <span v-if="item.date">{{ item.date }}</span>
+            <span v-else-if="item.total_page">{{ item.total_page }}P</span>
           </div>
         </div>
       </template>
@@ -60,7 +61,12 @@
               {{ displaySubtitle(item) }}
             </div>
             <div class="media-meta">
-              <span>{{ primaryMetaText(item, true) || '-' }}</span>
+              <span v-if="showProgress && item.current_page && item.current_page > 0">
+                {{ item.current_page }}{{ item.total_page ? `/${item.total_page}` : '' }}
+              </span>
+              <span v-else-if="item.date">{{ item.date }}</span>
+              <span v-else-if="item.total_page">{{ item.total_page }}P</span>
+              <span v-else>-</span>
             </div>
           </div>
 
@@ -134,7 +140,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['click', 'toggle-favorite', 'select'])
+const emit = defineEmits(['click', 'toggle-favorite', 'select', 'play'])
 const { isMobile, isDesktop } = useDevice()
 const modeStore = useModeStore()
 
@@ -199,20 +205,6 @@ function displaySubtitle(item) {
   }
   return item.author || item.creator || item.actor || ''
 }
-
-function primaryMetaText(item, includeProgress = false) {
-  if (includeProgress && props.showProgress && item.current_page && item.current_page > 0) {
-    return `${item.current_page}${item.total_page ? `/${item.total_page}` : ''}`
-  }
-  if (item.date) {
-    return item.date
-  }
-  if (item.total_page) {
-    return `${item.total_page}P`
-  }
-  return ''
-}
-
 </script>
 
 <style scoped>
@@ -385,22 +377,33 @@ function primaryMetaText(item, includeProgress = false) {
 
 .play-btn {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  transform: none;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   color: #fff;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
-  z-index: 2;
-  pointer-events: none;
-  opacity: 0.92;
-  background: rgba(20, 31, 49, 0.28);
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  width: 26px;
-  height: 26px;
+  z-index: 3;
+  opacity: 0.88;
+  background: rgba(20, 31, 49, 0.40);
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-radius: 50%;
+  width: 52px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+  cursor: pointer;
+}
+
+.play-btn:hover {
+  opacity: 1;
+  background: rgba(20, 31, 49, 0.58);
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.play-btn:active {
+  transform: translate(-50%, -50%) scale(0.95);
 }
 
 @keyframes playPulse {
@@ -452,10 +455,6 @@ function primaryMetaText(item, includeProgress = false) {
 }
 
 .media-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   font-size: 11px;
   color: var(--text-tertiary);
   font-weight: 500;
@@ -578,10 +577,6 @@ function primaryMetaText(item, includeProgress = false) {
 
   .media-cover {
     aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
-  }
-
-  .media-card.video-item .play-btn {
-    display: none;
   }
 }
 

@@ -1,8 +1,20 @@
 <template>
-  <div class="comic-detail">
+  <div class="comic-detail desktop-page-shell">
     <van-nav-bar title="漫画详情" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
-        <van-icon name="ellipsis" @click="showActionSheet = true" />
+        <van-icon
+          :name="isFavorited ? 'star' : 'star-o'"
+          class="nav-icon"
+          :class="{ active: isFavorited }"
+          @click="handleToggleFavorite"
+          :title="isFavorited ? '取消收藏' : '收藏'"
+        />
+        <van-icon
+          name="delete-o"
+          class="nav-icon"
+          @click="handleMoveToTrash"
+          title="移入回收站"
+        />
       </template>
     </van-nav-bar>
     
@@ -41,6 +53,7 @@
             >本地库</van-tag>
           </div>
           <div class="info">
+            <van-icon name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
             <h1 class="title">{{ comic.title }}</h1>
             <div class="author-row">
               <p class="author" v-if="comic.author">
@@ -69,12 +82,6 @@
               <span class="stat-item">{{ progressPercent }}%</span>
             </div>
 
-            <div v-if="comicStorageUsageText" class="storage-size-row">
-              <span class="storage-size-label">本地文件</span>
-              <span class="storage-size-value">{{ comicStorageUsageText }}</span>
-              <span v-if="comicStorageFileCountText" class="storage-size-count">{{ comicStorageFileCountText }}</span>
-            </div>
-
             <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
               <span class="storage-path-label">Path:</span>
               <span class="storage-path-value">{{ comicStoragePath }}</span>
@@ -88,9 +95,6 @@
               <span class="score-label">评分</span>
               <van-icon name="star" class="score-star" />
             </div>
-            <span class="score-chip" :class="{ 'is-empty': !comic.score }">
-              {{ comic.score || '未评分' }}
-            </span>
           </div>
           <div class="score-rate-wrap">
             <van-rate
@@ -114,9 +118,29 @@
             type="primary" 
             plain 
             class="tag"
+            :closeable="showTagRemove"
             @click="filterByTag(tag.id)"
+            @close="handleRemoveTag(tag)"
           >
             {{ tag.name }}
+          </van-tag>
+          <van-tag 
+            size="medium" 
+            type="primary"
+            class="tag tag-add"
+            @click="showAddTag = true"
+          >
+            <van-icon name="plus" size="12" />
+          </van-tag>
+          <van-tag
+            v-if="comic.tags && comic.tags.length > 0"
+            size="medium"
+            type="danger"
+            :plain="!showTagRemove"
+            class="tag tag-remove"
+            @click="showTagRemove = !showTagRemove"
+          >
+            <van-icon name="minus" size="12" />
           </van-tag>
           <van-tag 
             v-if="!comic.tags || comic.tags.length === 0" 
@@ -135,28 +159,10 @@
 
       <div v-if="hasChapters" class="chapter-section">
         <div class="section-heading">
-          <div class="section-heading-main">
-            <h2 class="section-title">章节</h2>
-            <span class="section-hint">共 {{ chapterCards.length }} 个章节</span>
-          </div>
-          <button
-            type="button"
-            class="chapter-toggle"
-            :aria-expanded="String(!chapterCollapsed)"
-            aria-controls="chapter-list"
-            @click="chapterCollapsed = !chapterCollapsed"
-          >
-            <span>{{ chapterCollapsed ? '展开章节' : '收起章节' }}</span>
-            <van-icon :name="chapterCollapsed ? 'arrow-down' : 'arrow-up'" />
-          </button>
+          <h2 class="section-title">章节</h2>
+          <span class="section-hint">共 {{ chapterCards.length }} 个章节</span>
         </div>
-        <div v-if="chapterCollapsed && currentChapterCard" class="chapter-summary">
-          <span class="chapter-summary-label">当前</span>
-          <span class="chapter-summary-title">{{ currentChapterCard.title }}</span>
-          <span class="chapter-summary-meta">{{ currentChapterCard.pageRangeLabel }}</span>
-        </div>
-        <Transition name="chapter-collapse">
-          <div v-show="!chapterCollapsed" id="chapter-list" class="chapter-list">
+        <div class="chapter-list">
           <button
             v-for="chapter in chapterCards"
             :key="chapter.key"
@@ -186,8 +192,7 @@
               <van-icon name="arrow" class="chapter-arrow" />
             </span>
           </button>
-          </div>
-        </Transition>
+        </div>
       </div>
       
       <div class="preview-section" v-if="comic.preview_pages && comic.preview_pages.length > 0">
@@ -219,41 +224,6 @@
       />
       
       <div class="action-section">
-        <div class="action-buttons">
-          <van-button 
-            :type="isFavorited ? 'warning' : 'default'" 
-            size="small"
-            @click="handleToggleFavorite"
-            :loading="favoriteLoading"
-          >
-            <van-icon :name="isFavorited ? 'star' : 'star-o'" />
-            {{ isFavorited ? '已收藏' : '收藏' }}
-          </van-button>
-          <van-button 
-            type="default" 
-            size="small"
-            @click="showListPopup = true"
-          >
-            <van-icon name="add-o" />
-            加入清单
-          </van-button>
-          <van-button 
-            :type="isRead ? 'success' : 'default'" 
-            size="small"
-            @click="markAsRead"
-          >
-            <van-icon :name="isRead ? 'passed' : 'circle'" />
-            {{ isRead ? '已读' : '标记已读' }}
-          </van-button>
-          <van-button 
-            type="danger" 
-            size="small"
-            @click="handleMoveToTrash"
-          >
-            <van-icon name="delete-o" />
-            移入回收站
-          </van-button>
-        </div>
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ comic.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
@@ -265,7 +235,6 @@
       :actions="actions" 
       @select="onActionSelect"
     />
-    
     <van-popup 
       v-model:show="showEditPopup" 
       position="bottom" 
@@ -290,6 +259,17 @@
             placeholder="请输入简介" 
           />
         </van-cell-group>
+        <div v-if="comic.source !== 'preview'" style="padding: 0 16px 16px;">
+          <van-button
+            type="primary"
+            plain
+            block
+            :loading="refreshingLocalMetadata"
+            @click="refreshLocalMetadata"
+          >
+            更新详情信息
+          </van-button>
+        </div>
       </div>
     </van-popup>
     
@@ -362,6 +342,19 @@
         </div>
       </div>
     </van-popup>
+
+    <!-- 添加标签弹窗 -->
+    <van-popup v-model:show="showAddTag" round position="bottom" :style="{ height: '50%' }">
+      <div class="edit-popup">
+        <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
+        <div class="tag-add-content">
+          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
+            添加
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -371,8 +364,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
 import { authorApi } from '@/api'
-import { showSuccessToast, showFailToast } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, formatStorageFileCountText, formatStorageUsageText, isReadByProgress } from '@/utils'
+import { tagApi } from '@/api/tag'
+import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
+import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -386,9 +380,11 @@ const showActionSheet = ref(false)
 const showEditPopup = ref(false)
 const showTagPopup = ref(false)
 const showListPopup = ref(false)
+const showAddTag = ref(false)
+const newTagName = ref('')
+const tagAdding = ref(false)
 const showPreview = ref(false)
 const previewIndex = ref(0)
-const chapterCollapsed = ref(true)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedListIds = ref([])
@@ -409,12 +405,8 @@ const actions = computed(() => {
   const menuActions = [
     { name: '下载漫画', value: 'download' },
     { name: '检查更新并下载', value: 'check_update' },
-    { name: '编辑信息', value: 'edit' },
     { name: '绑定标签', value: 'tags' }
   ]
-  if (comic.value?.source !== 'preview') {
-    menuActions.push({ name: '更新详情信息', value: 'refresh_local_metadata' })
-  }
   menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
   return menuActions
 })
@@ -448,9 +440,6 @@ const comicStoragePath = computed(() => {
   return path
 })
 
-const comicStorageUsageText = computed(() => formatStorageUsageText(comic.value))
-const comicStorageFileCountText = computed(() => formatStorageFileCountText(comic.value))
-
 const hasChapters = computed(() => {
   return Array.isArray(comic.value?.chapters) && comic.value.chapters.length > 1
 })
@@ -478,10 +467,6 @@ const chapterCards = computed(() => {
   })
 })
 
-const currentChapterCard = computed(() => {
-  return chapterCards.value.find(chapter => chapter.isCurrent) || chapterCards.value[0] || null
-})
-
 // 方法
 function getImageUrl(comicId, pageNum) {
   return buildImageUrl(comicId, pageNum)
@@ -490,7 +475,6 @@ function getImageUrl(comicId, pageNum) {
 async function fetchComicDetail() {
   const comicId = route.params.id
   isLoading.value = true
-  chapterCollapsed.value = true
   
   try {
     const detail = await comicStore.fetchComicDetail(comicId)
@@ -608,18 +592,23 @@ async function handleScoreChange(value) {
   }
 }
 
+function openEdit() {
+  editForm.value = {
+    title: comic.value.title || '',
+    author: comic.value.author || '',
+    desc: comic.value.desc || ''
+  }
+  showEditPopup.value = true
+}
+
 function onActionSelect(action) {
   showActionSheet.value = false
   if (action.value === 'download') {
     handleDownload()
   } else if (action.value === 'check_update') {
     handleCheckAndDownloadUpdate()
-  } else if (action.value === 'edit') {
-    showEditPopup.value = true
   } else if (action.value === 'tags') {
     showTagPopup.value = true
-  } else if (action.value === 'refresh_local_metadata') {
-    refreshLocalMetadata()
   } else if (action.value === 'trash') {
     handleMoveToTrash()
   }
@@ -870,6 +859,42 @@ async function markAsRead() {
   }
 }
 
+async function handleAddTag() {
+  const name = newTagName.value.trim()
+  if (!name) { showFailToast('请输入标签名称'); return }
+  tagAdding.value = true
+  try {
+    const res = await tagApi.add(name, 'comic')
+    if (res.code === 200 && res.data?.tag_id) {
+      await tagApi.batchAddTags([{ id: comic.value.id, source: comic.value.source || 'local' }], [res.data.tag_id])
+      await fetchComicDetail()
+      newTagName.value = ''
+      showAddTag.value = false
+      showSuccessToast('标签已添加')
+    } else {
+      showFailToast('添加失败')
+    }
+  } catch (e) {
+    showFailToast('添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function handleRemoveTag(tag) {
+  try {
+    await showConfirmDialog({ title: '移除标签', message: `确定移除「${tag.name}」吗？` })
+  } catch { return }
+  try {
+    const comicData = [{ id: comic.value.id, source: comic.value.source || 'local' }]
+    await tagApi.batchRemoveTags(comicData, [tag.id])
+    await fetchComicDetail()
+    showSuccessToast('标签已移除')
+  } catch (e) {
+    showFailToast('移除失败')
+  }
+}
+
 onMounted(async () => {
   console.log('[Detail] onMounted, id:', route.params.id)
   await fetchComicDetail()
@@ -899,8 +924,31 @@ watch(showListPopup, async (val) => {
 <style scoped>
 .comic-detail {
   padding-bottom: 20px;
-  min-height: 100vh;
   background: transparent;
+}
+
+.nav-icon {
+  font-size: 20px;
+  margin-left: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.nav-icon.active {
+  color: #f5a21e;
+}
+
+.tag-add {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tag-add:hover {
+  opacity: 1;
+}
+
+.tag-add-content {
+  padding: 16px;
 }
 
 .detail-content {
@@ -954,6 +1002,23 @@ watch(showListPopup, async (val) => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
+}
+
+.info-edit-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  padding: 4px;
+  z-index: 1;
+  transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.info-edit-btn:hover {
+  color: #fff;
 }
 
 .title {
@@ -1003,44 +1068,6 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
-}
-
-.storage-size-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.storage-size-label,
-.storage-size-value,
-.storage-size-count {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.storage-size-label {
-  padding: 0 8px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.88);
-  font-weight: 600;
-}
-
-.storage-size-value {
-  padding: 0 10px;
-  background: rgba(89, 160, 255, 0.18);
-  border: 1px solid rgba(180, 209, 255, 0.34);
-  color: #fff;
-  font-weight: 700;
-}
-
-.storage-size-count {
-  color: rgba(255, 255, 255, 0.78);
 }
 
 .storage-path-row {
@@ -1139,17 +1166,10 @@ watch(showListPopup, async (val) => {
 
 .section-heading {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
-}
-
-.section-heading-main {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
 }
 
 .section-title {
@@ -1168,7 +1188,6 @@ watch(showListPopup, async (val) => {
 .section-hint {
   font-size: 12px;
   color: var(--text-tertiary);
-  white-space: nowrap;
 }
 
 .tags-container {
@@ -1187,89 +1206,6 @@ watch(showListPopup, async (val) => {
   color: var(--text-secondary);
   margin: 0;
   white-space: pre-wrap;
-}
-
-.chapter-toggle {
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid rgba(47, 116, 255, 0.16);
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(47, 116, 255, 0.08), rgba(47, 116, 255, 0.03));
-  color: #2f74ff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    transform var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    background-color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard);
-}
-
-.chapter-toggle:hover {
-  transform: translateY(-1px);
-  border-color: rgba(47, 116, 255, 0.28);
-  box-shadow: 0 10px 20px rgba(47, 116, 255, 0.1);
-}
-
-.chapter-summary {
-  border: 1px solid var(--border-soft);
-  border-radius: 16px;
-  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
-  box-shadow: 0 10px 22px rgba(17, 27, 45, 0.05);
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 54px;
-  padding: 12px 14px;
-}
-
-.chapter-summary-label {
-  border-radius: 999px;
-  background: rgba(47, 116, 255, 0.09);
-  color: #2f74ff;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 4px 8px;
-  flex-shrink: 0;
-}
-
-.chapter-summary-title {
-  color: var(--text-strong);
-  font-size: 14px;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chapter-summary-meta {
-  color: var(--text-tertiary);
-  font-size: 12px;
-  margin-left: auto;
-  white-space: nowrap;
-}
-
-.chapter-collapse-enter-active,
-.chapter-collapse-leave-active {
-  transition:
-    opacity var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
-}
-
-.chapter-collapse-enter-from,
-.chapter-collapse-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
 }
 
 .chapter-list {
@@ -1542,25 +1478,6 @@ watch(showListPopup, async (val) => {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
-  }
-
-  .section-heading-main {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .chapter-toggle {
-    width: 100%;
-  }
-
-  .chapter-summary {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .chapter-summary-meta {
-    width: 100%;
-    margin-left: 0;
   }
 
   .chapter-list {

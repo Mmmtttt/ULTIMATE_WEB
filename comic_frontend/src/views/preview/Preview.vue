@@ -315,9 +315,6 @@ function isSortFieldSupported(sortField) {
   if (normalized === 'name' || normalized === 'random' || normalized === 'custom') {
     return true
   }
-  if (normalized === 'page_count') {
-    return !isVideoMode.value
-  }
   if (normalized === 'date') {
     return isVideoMode.value
   }
@@ -1006,7 +1003,8 @@ onMounted(async () => {
 
 <style scoped>
 .preview-page {
-  padding-bottom: 96px;
+  display: flex;
+  flex-direction: column;
 }
 
 .active-filters {
@@ -1113,11 +1111,16 @@ onMounted(async () => {
 }
 
 .content-area {
+  flex: 1;
   min-height: 200px;
 }
 
 .content-pagination {
-  padding: 0 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding: 8px 8px 12px;
+  background: var(--surface-1);
 }
 
 .loading-center {
@@ -1193,10 +1196,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 767px) {
-  .preview-page {
-    padding-bottom: 110px;
-  }
-
   .toolbar {
     top: calc(var(--mobile-header-offset, 0px) + 8px);
     padding: 8px;

@@ -103,22 +103,89 @@ class TagAppService:
             if not tag:
                 return ServiceResult.error("标签不存在")
             
-            existing_tag = self._tag_repo.get_by_id(tag_id)
-            if existing_tag and existing_tag.name == name:
-                pass
-            elif self._tag_repo.exists_by_name(name, tag.content_type):
-                return ServiceResult.error("标签名称已存在")
+            # 同名不修改
+            if tag.name == name:
+                return ServiceResult.ok({"id": tag.id, "name": tag.name, "merged": False}, "更新成功")
+
+            # 检查是否有同名标签，有则合并
+            all_tags = self._tag_repo.get_all()
+            target_tag = None
+            for t in all_tags:
+                if t.id != tag_id and t.name == name and t.content_type == tag.content_type:
+                    target_tag = t
+                    break
+
+            if target_tag:
+                # 合并：将旧标签的所有内容迁移到目标标签
+                merged_count = self._merge_tags(tag, target_tag)
+                app_logger.info(
+                    f"标签合并: 将 {tag_id}({tag.name}) 合并到 {target_tag.id}({target_tag.name}), "
+                    f"迁移内容 {merged_count} 项"
+                )
+                return ServiceResult.ok(
+                    {"id": target_tag.id, "name": target_tag.name, "merged": True, "merged_count": merged_count},
+                    f"已合并到已有标签「{target_tag.name}」"
+                )
             
             tag.update_name(name)
             
             if not self._tag_repo.save(tag):
                 return ServiceResult.error("更新标签失败")
             
-            app_logger.info(f"更新标签成功: {tag_id}")
-            return ServiceResult.ok({"id": tag.id, "name": tag.name}, "更新成功")
+            app_logger.info(f"更新标签成功: {tag_id} -> {name}")
+            return ServiceResult.ok({"id": tag.id, "name": tag.name, "merged": False}, "更新成功")
         except Exception as e:
             error_logger.error(f"更新标签失败: {e}")
             return ServiceResult.error("更新标签失败")
+
+    def _merge_tags(self, source_tag: Tag, target_tag: Tag) -> int:
+        """将 source_tag 的所有内容迁移到 target_tag，然后删除 source_tag。
+        Returns: 迁移的内容数量"""
+        count = 0
+
+        # 漫画
+        for comic in self._comic_repo.get_all():
+            if source_tag.id in comic.tag_ids:
+                ids = [t for t in comic.tag_ids if t != source_tag.id]
+                if target_tag.id not in ids:
+                    ids.append(target_tag.id)
+                comic.tag_ids = ids
+                self._comic_repo.save(comic)
+                count += 1
+
+        # 推荐漫画
+        for rec in self._recommendation_repo.get_all():
+            if source_tag.id in rec.tag_ids:
+                ids = [t for t in rec.tag_ids if t != source_tag.id]
+                if target_tag.id not in ids:
+                    ids.append(target_tag.id)
+                rec.tag_ids = ids
+                self._recommendation_repo.save(rec)
+                count += 1
+
+        # 视频
+        for video in self._video_repo.get_all():
+            if source_tag.id in video.tag_ids:
+                ids = [t for t in video.tag_ids if t != source_tag.id]
+                if target_tag.id not in ids:
+                    ids.append(target_tag.id)
+                video.tag_ids = ids
+                self._video_repo.save(video)
+                count += 1
+
+        # 推荐视频
+        for vrec in self._video_recommendation_repo.get_all():
+            if source_tag.id in vrec.tag_ids:
+                ids = [t for t in vrec.tag_ids if t != source_tag.id]
+                if target_tag.id not in ids:
+                    ids.append(target_tag.id)
+                vrec.tag_ids = ids
+                self._video_recommendation_repo.save(vrec)
+                count += 1
+
+        # 删除旧标签
+        self._tag_repo.delete(source_tag.id)
+        return count
     
     def delete_tag(self, tag_id: str) -> ServiceResult:
         try:

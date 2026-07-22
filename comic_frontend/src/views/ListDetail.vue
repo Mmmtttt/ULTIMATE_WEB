@@ -1183,7 +1183,6 @@ onMounted(async () => {
 
 <style scoped>
 .list-detail {
-  min-height: 100vh;
   background: var(--surface-0);
   padding-bottom: 20px;
 }

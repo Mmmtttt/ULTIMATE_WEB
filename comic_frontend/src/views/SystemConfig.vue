@@ -1,23 +1,12 @@
-﻿<template>
+<template>
   <div class="system-config desktop-page-shell">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
     <van-cell-group inset class="config-group">
-      <van-cell title="默认翻页模式" />
-      <van-radio-group v-model="pageModeValue" @change="updatePageMode">
-        <van-cell-group inset>
-          <van-cell title="左右翻页" clickable @click="selectPageMode('left_right')">
-            <template #right-icon>
-              <van-radio name="left_right" />
-            </template>
-          </van-cell>
-          <van-cell title="上下翻页" clickable @click="selectPageMode('up_down')">
-            <template #right-icon>
-              <van-radio name="up_down" />
-            </template>
-          </van-cell>
-        </van-cell-group>
-      </van-radio-group>
+      <div class="select-row" @click.stop="toggleDropdown('pageMode', $event)">
+        <span class="select-label">默认翻页模式</span>
+        <span class="select-value">{{ pageModeLabel }} <van-icon name="arrow-down" size="12" /></span>
+      </div>
       <van-cell
         title="左右翻页方向（漫画阅读）"
         :label="pageModeValue === 'left_right' ? '开启后按右→左方向翻页（更接近日漫阅读习惯）' : '仅在左右翻页模式下生效'"
@@ -47,45 +36,17 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="列表分页数量" :label="`当前每页 ${pageSizeValue} 条，用于本地库、预览库、清单和回收站等页面`" />
-      <van-radio-group v-model="pageSizeValue" @change="updatePageSize">
-        <van-cell-group inset>
-          <van-cell
-            v-for="size in pageSizeOptions"
-            :key="size"
-            :title="`每页 ${size} 条`"
-            clickable
-            @click="selectPageSize(size)"
-          >
-            <template #right-icon>
-              <van-radio :name="size" />
-            </template>
-          </van-cell>
-        </van-cell-group>
-      </van-radio-group>
+      <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
+        <span class="select-label">列表分页数量</span>
+        <span class="select-value">{{ pageSizeLabel }} <van-icon name="arrow-down" size="12" /></span>
+      </div>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="默认背景色" />
-      <van-radio-group v-model="backgroundValue" @change="updateBackground">
-        <van-cell-group inset>
-          <van-cell title="白色背景" clickable @click="selectBackground('white')">
-            <template #right-icon>
-              <van-radio name="white" />
-            </template>
-          </van-cell>
-          <van-cell title="深色背景" clickable @click="selectBackground('dark')">
-            <template #right-icon>
-              <van-radio name="dark" />
-            </template>
-          </van-cell>
-          <van-cell title="护眼色背景" clickable @click="selectBackground('sepia')">
-            <template #right-icon>
-              <van-radio name="sepia" />
-            </template>
-          </van-cell>
-        </van-cell-group>
-      </van-radio-group>
+      <div class="select-row" @click.stop="toggleDropdown('background', $event)">
+        <span class="select-label">默认背景色</span>
+        <span class="select-value">{{ backgroundLabel }} <van-icon name="arrow-down" size="12" /></span>
+      </div>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -100,7 +61,7 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <van-cell title="第三方平台配置" is-link @click="showThirdPartyConfig = true" />
+      <van-cell title="第三方平台配置" is-link to="/config/third-party" />
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -185,84 +146,6 @@
       </div>
     </van-cell-group>
 
-    <van-popup
-      v-model:show="showThirdPartyConfig"
-      class="third-party-popup"
-      position="bottom"
-      round
-      teleport="body"
-      :style="thirdPartyPopupStyle"
-    >
-      <div class="third-party-config">
-        <van-nav-bar title="第三方平台配置" left-text="关闭" @click-left="showThirdPartyConfig = false" />
-
-        <div class="popup-content">
-          <van-tabs v-model:active="activeAdapter" animated>
-            <van-tab
-              v-for="adapterName in displayAdapters"
-              :key="adapterName"
-              :name="adapterName"
-              :title="adapterLabel(adapterName)"
-            >
-              <div class="adapter-panel">
-                <van-cell-group inset>
-                  <template v-for="field in adapterFields(adapterName)" :key="`${adapterName}-${field.key}`">
-                    <van-cell v-if="field.type === 'boolean'" :title="field.label">
-                      <template #right-icon>
-                        <van-switch v-model="adapterForms[adapterName][field.key]" />
-                      </template>
-                    </van-cell>
-
-                    <van-field
-                      v-else-if="field.type === 'textarea'"
-                      v-model="adapterForms[adapterName][field.key]"
-                      type="textarea"
-                      autosize
-                      :label="field.label"
-                      :placeholder="field.placeholder || ''"
-                    />
-
-                    <van-field
-                      v-else
-                      v-model="adapterForms[adapterName][field.key]"
-                      :type="field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                      :label="field.label"
-                      :placeholder="field.placeholder || ''"
-                    />
-                  </template>
-                </van-cell-group>
-
-                <div v-if="adapterActions(adapterName).length > 0" class="adapter-actions">
-                  <div
-                    v-for="action in adapterActions(adapterName)"
-                    :key="`${adapterName}-${action.key || action.label}`"
-                    class="adapter-action-card"
-                  >
-                    <div v-if="action.description" class="adapter-action-text">{{ action.description }}</div>
-                    <van-button plain type="primary" block @click="runAdapterAction(action)">
-                      {{ action.label || action.key || '执行动作' }}
-                    </van-button>
-                  </div>
-                </div>
-
-                <div class="popup-actions">
-                  <van-button
-                    type="primary"
-                    block
-                    round
-                    :loading="Boolean(savingAdapterMap[adapterName])"
-                    @click="saveAdapterConfig(adapterName)"
-                  >
-                    保存 {{ adapterLabel(adapterName) }} 配置
-                  </van-button>
-                </div>
-              </div>
-            </van-tab>
-          </van-tabs>
-        </div>
-      </div>
-    </van-popup>
-
     <div class="action-area">
       <van-button type="danger" block round @click="confirmReset">
         重置为默认设置
@@ -270,24 +153,38 @@
     </div>
 
     <div class="mmmtttt-config">github@Mmmtttt</div>
+
+    <Teleport to="body">
+      <div
+        v-if="activeDropdown"
+        class="select-dropdown-overlay"
+        :style="dropdownStyle"
+        @click.stop
+      >
+        <div
+          v-for="opt in activeDropdownColumns"
+          :key="opt.value"
+          class="select-option"
+          :class="{ active: activeDropdownValue === opt.value }"
+          @click="onDropdownSelect(opt.value)"
+        >{{ opt.text }}</div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
-import { useDevice } from '@/composables/useDevice'
-import { openExternalUrl, reloadPage } from '@/runtime/browser'
-import { resolveBackendApiUrl } from '@/runtime/endpoint'
+import { reloadPage } from '@/runtime/browser'
 import { useConfigStore, useModeStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const configStore = useConfigStore()
 const modeStore = useModeStore()
-const { isDesktop } = useDevice()
 
 const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
@@ -297,14 +194,49 @@ const pageSizeValue = ref(20)
 const leftRightReadingReversedValue = ref(false)
 const pageSizeOptions = [20, 40, 60]
 
-const showThirdPartyConfig = ref(false)
-const savingAdapterMap = ref({})
-const activeAdapter = ref('')
+const activeDropdown = ref('')
+const dropdownPos = ref({ top: 0, left: 0, width: 0 })
 
-const thirdPartySchema = ref({})
-const thirdPartyAdapters = ref({})
-const thirdPartyAdapterOrder = ref([])
-const adapterForms = ref({})
+const dropdownStyle = computed(() => ({
+  top: `${dropdownPos.value.top}px`,
+  left: `${dropdownPos.value.left}px`,
+  minWidth: `${dropdownPos.value.width}px`,
+}))
+
+const pageModeColumns = [
+  { text: '左右翻页', value: 'left_right' },
+  { text: '上下翻页', value: 'up_down' },
+]
+
+const pageSizeColumns = pageSizeOptions.map(s => ({ text: `每页 ${s} 条`, value: s }))
+
+const backgroundColumns = [
+  { text: '白色背景', value: 'white' },
+  { text: '深色背景', value: 'dark' },
+  { text: '护眼色背景', value: 'sepia' },
+]
+
+const dropdownColumnMap = {
+  pageMode: pageModeColumns,
+  pageSize: pageSizeColumns,
+  background: backgroundColumns,
+}
+
+const dropdownValueMap = computed(() => ({
+  pageMode: pageModeValue.value,
+  pageSize: pageSizeValue.value,
+  background: backgroundValue.value,
+}))
+
+const activeDropdownColumns = computed(() => dropdownColumnMap[activeDropdown.value] || [])
+const activeDropdownValue = computed(() => dropdownValueMap.value[activeDropdown.value])
+
+const pageModeMap = { left_right: '左右翻页', up_down: '上下翻页' }
+const backgroundMap = { white: '白色背景', dark: '深色背景', sepia: '护眼色背景' }
+
+const pageModeLabel = computed(() => pageModeMap[pageModeValue.value] || pageModeValue.value)
+const pageSizeLabel = computed(() => `每页 ${pageSizeValue.value} 条`)
+const backgroundLabel = computed(() => backgroundMap[backgroundValue.value] || backgroundValue.value)
 
 const systemDataDir = ref('')
 const runtimeDataDir = ref('')
@@ -318,19 +250,6 @@ const configDirSource = ref('')
 const savingConfigDir = ref(false)
 const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
 
-const displayAdapters = computed(() => {
-  if (Array.isArray(thirdPartyAdapterOrder.value) && thirdPartyAdapterOrder.value.length > 0) {
-    return thirdPartyAdapterOrder.value
-  }
-
-  const schemaKeys = Object.keys(thirdPartySchema.value || {})
-  if (schemaKeys.length > 0) {
-    return schemaKeys
-  }
-
-  return Object.keys(thirdPartyAdapters.value || {})
-})
-
 const configDirSourceLabel = computed(() => {
   const source = String(configDirSource.value || '').toLowerCase()
   if (source === 'env') return '环境变量'
@@ -338,10 +257,6 @@ const configDirSourceLabel = computed(() => {
   if (source === 'default') return '系统默认'
   return source || '-'
 })
-
-const thirdPartyPopupStyle = computed(() => ({
-  height: isDesktop.value ? '90vh' : '82%'
-}))
 
 function initValues() {
   pageModeValue.value = configStore.defaultPageMode
@@ -352,64 +267,44 @@ function initValues() {
   leftRightReadingReversedValue.value = configStore.leftRightReadingReversed
 }
 
-function adapterLabel(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.label || adapterName
+function closeAllDropdowns() {
+  activeDropdown.value = ''
 }
 
-function adapterFields(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.fields || []
+function toggleDropdown(name, event) {
+  if (activeDropdown.value === name) {
+    activeDropdown.value = ''
+    return
+  }
+  const rect = event.currentTarget.getBoundingClientRect()
+  dropdownPos.value = {
+    top: rect.bottom + 4,
+    left: rect.right - 140,
+    width: rect.width,
+  }
+  activeDropdown.value = name
 }
 
-function adapterActions(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.actions || []
-}
-
-function ensureAdapterFormShape() {
-  const forms = {}
-  const adapters = thirdPartyAdapters.value || {}
-
-  displayAdapters.value.forEach((adapterName) => {
-    const source = adapters[adapterName] || {}
-    forms[adapterName] = {
-      ...source,
-    }
-
-    adapterFields(adapterName).forEach((field) => {
-      if (forms[adapterName][field.key] === undefined || forms[adapterName][field.key] === null) {
-        if (field.type === 'boolean') {
-          forms[adapterName][field.key] = false
-        } else {
-          forms[adapterName][field.key] = ''
-        }
-      }
-    })
-  })
-
-  adapterForms.value = forms
-
-  if (!activeAdapter.value && displayAdapters.value.length > 0) {
-    activeAdapter.value = displayAdapters.value[0]
+function onDropdownSelect(value) {
+  const name = activeDropdown.value
+  activeDropdown.value = ''
+  if (name === 'pageMode') {
+    if (pageModeValue.value === value) return
+    pageModeValue.value = value
+    updatePageMode()
+  } else if (name === 'pageSize') {
+    if (pageSizeValue.value === value) return
+    pageSizeValue.value = value
+    configStore.setListPageSize(pageSizeValue.value)
+  } else if (name === 'background') {
+    if (backgroundValue.value === value) return
+    backgroundValue.value = value
+    updateBackground()
   }
 }
 
-async function loadThirdPartyConfig() {
-  try {
-    const response = await comicApi.getThirdPartyConfig()
-    if (response.code !== 200) {
-      return
-    }
-
-    const data = response.data || {}
-    thirdPartySchema.value = data.schema || {}
-    thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
-
-    const adapters = data.adapters || {}
-
-    thirdPartyAdapters.value = adapters
-    ensureAdapterFormShape()
-  } catch (error) {
-    showFailToast(error?.message || '加载第三方配置失败')
-  }
+function onDocumentClick() {
+  activeDropdown.value = ''
 }
 
 async function loadSystemConfig() {
@@ -452,26 +347,6 @@ async function updatePageMode() {
   }
 }
 
-async function selectPageMode(mode) {
-  if (pageModeValue.value === mode) {
-    return
-  }
-  pageModeValue.value = mode
-  await updatePageMode()
-}
-
-function updatePageSize() {
-  configStore.setListPageSize(pageSizeValue.value)
-}
-
-function selectPageSize(size) {
-  if (pageSizeValue.value === size) {
-    return
-  }
-  pageSizeValue.value = size
-  updatePageSize()
-}
-
 function updateLeftRightReadingReversed(value) {
   leftRightReadingReversedValue.value = Boolean(value)
   configStore.setLeftRightReadingReversed(leftRightReadingReversedValue.value)
@@ -493,14 +368,6 @@ async function updateSinglePageBrowsing() {
   }
 }
 
-async function selectBackground(background) {
-  if (backgroundValue.value === background) {
-    return
-  }
-  backgroundValue.value = background
-  await updateBackground()
-}
-
 async function updatePreviewImportAssetDownload() {
   configStore.setAutoDownloadPreviewImportAssets(autoDownloadPreviewImportAssets.value)
   const ok = await configStore.saveConfigToServer()
@@ -509,52 +376,6 @@ async function updatePreviewImportAssetDownload() {
     return
   }
   showSuccessToast('设置已保存')
-}
-
-async function saveAdapterConfig(adapterName) {
-  const form = adapterForms.value?.[adapterName]
-  if (!form) {
-    showFailToast('配置数据为空')
-    return
-  }
-
-  savingAdapterMap.value = {
-    ...savingAdapterMap.value,
-    [adapterName]: true,
-  }
-
-  try {
-    const payload = { ...form }
-
-    adapterFields(adapterName).forEach((field) => {
-      if (field.type === 'number') {
-        const value = payload[field.key]
-        if (value !== '' && value !== null && value !== undefined) {
-          const num = Number(value)
-          payload[field.key] = Number.isFinite(num) ? num : value
-        }
-      }
-    })
-
-    const response = await comicApi.saveThirdPartyConfig({
-      adapter: adapterName,
-      config: payload,
-    })
-
-    if (response.code === 200) {
-      showSuccessToast(`${adapterLabel(adapterName)} 配置已保存`)
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '保存失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '保存失败')
-  } finally {
-    savingAdapterMap.value = {
-      ...savingAdapterMap.value,
-      [adapterName]: false,
-    }
-  }
 }
 
 async function saveSystemDataDir({ migrateData }) {
@@ -667,21 +488,6 @@ async function saveConfigDir() {
   }
 }
 
-function runAdapterAction(action) {
-  const kind = String(action?.kind || '').trim().toLowerCase()
-  const rawUrl = String(action?.url || '').trim()
-  if (kind !== 'open_url' || !rawUrl) {
-    showFailToast('当前动作暂不支持')
-    return
-  }
-
-  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : resolveBackendApiUrl(rawUrl)
-  const win = openExternalUrl(url, '_blank')
-  if (!win) {
-    showFailToast('浏览器拦截了弹窗，请允许后重试')
-  }
-}
-
 async function confirmReset() {
   try {
     await showConfirmDialog({
@@ -720,21 +526,20 @@ async function organizeDatabase() {
 onMounted(async () => {
   await configStore.loadConfigFromServer()
   initValues()
-  await Promise.all([loadSystemConfig(), loadThirdPartyConfig(), loadConfigDirInfo()])
+  await Promise.all([loadSystemConfig(), loadConfigDirInfo()])
+  document.addEventListener('click', onDocumentClick)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
 })
 </script>
 
 <style scoped>
 .system-config {
-  min-height: 100vh;
+  min-height: 95vh;
   background: transparent;
-  padding: 0 12px 20px;
-}
-
-@media (min-width: 1024px) {
-  .system-config.desktop-page-shell {
-    overflow: visible;
-  }
+  padding-bottom: 20px;
 }
 
 .config-group {
@@ -813,49 +618,6 @@ onMounted(async () => {
   padding: 16px;
 }
 
-.third-party-config {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.popup-content {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 8px 20px;
-}
-
-.adapter-panel {
-  padding-top: 10px;
-}
-
-.adapter-actions {
-  margin: 12px 16px 0;
-  display: grid;
-  gap: 10px;
-}
-
-.adapter-action-card {
-  padding: 14px;
-  border-radius: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-xs);
-}
-
-.adapter-action-text {
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-  margin-bottom: 10px;
-}
-
-.popup-actions {
-  padding: 16px;
-}
-
 .action-area {
   padding: 20px 16px;
 }
@@ -865,10 +627,66 @@ onMounted(async () => {
   transform-origin: right center;
 }
 
+/* 内联下拉框 */
+.select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  min-height: 48px;
+  cursor: pointer;
+  position: relative;
+}
+
+.select-label {
+  font-size: 14px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.select-value {
+  font-size: 14px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 @media (min-width: 1024px) {
   .path-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+</style>
+
+<style>
+.select-dropdown-overlay {
+  position: fixed;
+  z-index: 3000;
+  background: var(--surface-2, #fff);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.select-dropdown-overlay .select-option {
+  padding: 10px 16px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.select-dropdown-overlay .select-option:hover {
+  background: rgba(47, 116, 255, 0.08);
+}
+
+.select-dropdown-overlay .select-option.active {
+  color: #1989fa;
+  font-weight: 600;
+  background: rgba(25, 137, 250, 0.06);
 }
 </style>
 

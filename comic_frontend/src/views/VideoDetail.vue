@@ -1,12 +1,24 @@
-﻿<template>
-  <div class="video-detail" :class="{ 'video-detail-desktop': isDesktop, 'video-detail-mobile': isMobile }">
+<template>
+  <div class="video-detail desktop-page-shell" :class="{ 'video-detail-desktop': isDesktop, 'video-detail-mobile': isMobile }">
     <van-nav-bar
       :title="video?.title || '视频详情'"
       left-arrow
       @click-left="goBack"
     >
       <template #right>
-        <van-icon name="ellipsis" @click="showActions = true" />
+        <van-icon
+          :name="isFavoritedVideo ? 'star' : 'star-o'"
+          class="nav-icon"
+          :class="{ active: isFavoritedVideo }"
+          @click="toggleFavorite"
+          :title="isFavoritedVideo ? '取消收藏' : '收藏'"
+        />
+        <van-icon
+          name="delete-o"
+          class="nav-icon"
+          @click="handleMoveToTrash"
+          title="移入回收站"
+        />
       </template>
     </van-nav-bar>
     
@@ -55,13 +67,9 @@
           </div>
           <div class="quality-selector" v-if="currentStreams.length > 1">
             <span class="quality-label">画质:</span>
-            <van-dropdown-menu>
-              <van-dropdown-item 
-                v-model="currentQuality" 
-                :options="qualityOptions"
-                @change="changeQuality"
-              />
-            </van-dropdown-menu>
+            <van-button size="small" plain @click="showQualityPicker = true">
+              {{ qualityOptions[currentQuality]?.name || '选择画质' }}
+            </van-button>
           </div>
         </div>
       </div>
@@ -119,6 +127,7 @@
       </div>
       
       <div class="video-info">
+        <van-icon name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
         <div class="video-title">{{ video.title }}</div>
         
         <div class="info-row">
@@ -170,14 +179,6 @@
           <span class="label">Path:</span>
           <span class="value path-value" :title="videoStoragePath">{{ videoStoragePath }}</span>
         </div>
-
-        <div v-if="videoStorageUsageText" class="info-row">
-          <span class="label">本地文件:</span>
-          <span class="value storage-usage-value">
-            <span class="storage-size-chip">{{ videoStorageUsageText }}</span>
-            <span v-if="videoStorageFileCountText" class="storage-count-chip">{{ videoStorageFileCountText }}</span>
-          </span>
-        </div>
         
         <div class="info-row score-row">
           <span class="label">评分:</span>
@@ -188,11 +189,10 @@
               allow-half 
               @change="updateScore"
             />
-            <span class="score-chip" :class="{ 'is-empty': !video.score }">{{ video.score || '未评分' }}</span>
           </div>
         </div>
         
-        <div v-if="video.tags && video.tags.length > 0" class="info-row">
+        <div class="info-row">
           <span class="label">标签:</span>
           <div class="tag-list">
             <van-tag 
@@ -200,41 +200,43 @@
               :key="tag.id" 
               plain 
               class="tag-item"
+              :closeable="showTagRemove"
               @click="filterByTag(tag.id)"
+              @close="handleRemoveTag(tag)"
             >
               {{ tag.name }}
             </van-tag>
+            <van-tag 
+              class="tag-item tag-add"
+              @click="showAddTag = true"
+            >
+              <van-icon name="plus" size="12" />
+            </van-tag>
+            <van-tag
+              class="tag-item tag-remove"
+              type="danger"
+              :plain="!showTagRemove"
+              @click="showTagRemove = !showTagRemove"
+            >
+              <van-icon name="minus" size="12" />
+            </van-tag>
           </div>
-        </div>
       </div>
-      
-      <!-- 操作按钮区 -->
-      <div class="action-buttons">
-        <van-button 
-          :type="isFavoritedVideo ? 'warning' : 'default'"
+      <div v-if="isLocalVideo && localThumbnailCapability.show_generate_action" style="margin-top: 12px;">
+        <van-button
+          type="primary"
+          plain
+          block
           size="small"
-          @click="toggleFavorite"
+          :loading="generatingLocalThumbnails"
+          :disabled="!localThumbnailCapability.can_generate"
+          :title="!localThumbnailCapability.can_generate ? localThumbnailCapability.reason : ''"
+          @click="generateLocalThumbnails"
         >
-          <van-icon :name="isFavoritedVideo ? 'star' : 'star-o'" />
-          {{ isFavoritedVideo ? '已收藏' : '收藏' }}
-        </van-button>
-        <van-button 
-          type="default"
-          size="small"
-          @click="showListPopup = true"
-        >
-          <van-icon name="add-o" />
-          加入清单
-        </van-button>
-        <van-button 
-          type="danger"
-          size="small"
-          @click="handleMoveToTrash"
-        >
-          <van-icon name="delete-o" />
-          移入回收站
+          {{ localThumbnailImages.length > 0 ? '重新生成缩略图' : '生成缩略图' }}
         </van-button>
       </div>
+    </div>
       
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
         <van-cell
@@ -260,7 +262,7 @@
         </van-cell-group>
       </div>
 
-      <div v-if="video" class="preview-video-section">
+      <div v-if="video && !isLocalVideo" class="preview-video-section">
         <van-cell-group title="预览视频">
           <div class="preview-video-actions">
             <van-button
@@ -349,6 +351,12 @@
       v-model:show="showActions" 
       :actions="actions" 
       @select="handleAction"
+    />
+
+    <van-action-sheet
+      v-model:show="showQualityPicker"
+      :actions="qualityOptions"
+      @select="onQualitySelect"
     />
 
     <van-popup
@@ -440,11 +448,22 @@
             placeholder="请输入简介"
           />
         </van-cell-group>
+        <div v-if="isLocalVideo" style="padding: 0 16px 16px;">
+          <van-button
+            type="primary"
+            plain
+            block
+            :loading="refreshingLocalMetadata"
+            @click="refreshLocalMetadata"
+          >
+            更新详情信息
+          </van-button>
+        </div>
       </div>
     </van-popup>
 
     <van-popup 
-      v-model:show="showTagPopup" 
+      v-model:show="showTagPopup"
       position="bottom" 
       round 
       :style="{ height: '60%' }"
@@ -517,6 +536,19 @@
         </div>
       </div>
     </van-popup>
+
+    <!-- 添加标签弹窗 -->
+    <van-popup v-model:show="showAddTag" round position="bottom" :style="{ height: '50%' }">
+      <div class="edit-popup">
+        <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
+        <div class="tag-add-content">
+          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
+            添加
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -526,16 +558,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { nextTick } from 'vue'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
+import { tagApi } from '@/api/tag'
+import { videoApi } from '@/api/video'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
-import {
-  applyListMembershipChanges,
-  buildListChangeMessage,
-  formatStorageFileCountText,
-  formatStorageUsageText,
-  getCoverUrl
-} from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
 import { toBackendUrl } from '@/utils/url'
 import {
   buildEpisodeListFromPlayableSources,
@@ -555,10 +583,11 @@ const { isDesktop, isMobile } = useDevice()
 const video = ref(null)
 const loading = ref(true)
 const showActions = ref(false)
+const showQualityPicker = ref(false)
+const showThumbnailPicker = ref(false)
 const showEditPopup = ref(false)
 const showTagPopup = ref(false)
 const showListPopup = ref(false)
-const showThumbnailPicker = ref(false)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedListIds = ref([])
@@ -566,6 +595,10 @@ const selectedThumbnailCoverIndex = ref(-1)
 const scoreValue = ref(0)
 const subscribingActors = ref([])
 const showMagnets = ref(false)
+const showAddTag = ref(false)
+const showTagRemove = ref(false)
+const newTagName = ref('')
+const tagAdding = ref(false)
 
 const editForm = ref({
   title: '',
@@ -613,24 +646,10 @@ const actions = computed(() => {
 
   const menuActions = []
   if (isLocalVideo.value) {
-    if (localThumbnailCapability.value.show_generate_action) {
-      const generateAction = {
-        name: localThumbnailImages.value.length > 0 ? '重新生成缩略图' : '生成缩略图',
-        value: 'generate_local_thumbnails',
-        disabled: !localThumbnailCapability.value.can_generate
-      }
-      const capabilityReason = String(localThumbnailCapability.value.reason || '').trim()
-      if (!localThumbnailCapability.value.can_generate && capabilityReason) {
-        generateAction.subname = capabilityReason
-      }
-      menuActions.push(generateAction)
-    }
     if (localThumbnailCapability.value.can_select_cover) {
       menuActions.push({ name: '选择封面', value: 'select_local_thumbnail_cover' })
     }
     menuActions.push(
-      { name: '更新详情信息', value: 'refresh_local_metadata' },
-      { name: '编辑信息', value: 'edit' },
       { name: '绑定标签', value: 'tags' }
     )
   }
@@ -751,8 +770,6 @@ const videoStoragePath = computed(() => {
   const path = String(video.value?.storage_path || video.value?.local_source_path || '').trim()
   return path
 })
-const videoStorageUsageText = computed(() => formatStorageUsageText(video.value))
-const videoStorageFileCountText = computed(() => formatStorageFileCountText(video.value))
 const localThumbnailCapability = computed(() => {
   const capability = video.value?.local_thumbnail_capability
   if (!capability || typeof capability !== 'object') {
@@ -1288,6 +1305,10 @@ async function loadVideo() {
   ]).catch((error) => {
     console.warn('加载附加数据失败:', error)
   })
+
+  if (route.query.autoplay === '1') {
+    loadPlayUrls()
+  }
 }
 
 function isActorSubscribed(actorName) {
@@ -1551,22 +1572,20 @@ async function handleMoveToTrash() {
   }
 }
 
+async function openEdit() {
+  syncEditFormFromVideo(video.value)
+  showEditPopup.value = true
+}
+
 async function handleAction(action) {
   showActions.value = false
   
-  if (action.value === 'edit') {
-    syncEditFormFromVideo(video.value)
-    showEditPopup.value = true
-  } else if (action.value === 'generate_local_thumbnails') {
-    await generateLocalThumbnails()
-  } else if (action.value === 'select_local_thumbnail_cover') {
+  if (action.value === 'select_local_thumbnail_cover') {
     openThumbnailPicker()
   } else if (action.value === 'tags') {
     selectedTagIds.value = [...(video.value?.tag_ids || [])]
     await fetchAllTags()
     showTagPopup.value = true
-  } else if (action.value === 'refresh_local_metadata') {
-    await refreshLocalMetadata()
   } else if (action.value === 'trash') {
     await handleMoveToTrash()
   } else if (action.value === 'delete') {
@@ -1593,6 +1612,71 @@ function goBack() {
   router.back()
 }
 
+async function handleAddTag() {
+  const name = newTagName.value.trim()
+  if (!name) { showFailToast('请输入标签名称'); return }
+  tagAdding.value = true
+  try {
+    let tagId = null
+
+    // 尝试创建新标签
+    try {
+      const res = await tagApi.add(name, 'video')
+      if (res.code === 200 && res.data?.id) {
+        tagId = res.data.id
+      }
+    } catch (_) {
+      // 创建失败（如已存在），从列表中按名称查找
+    }
+
+    if (!tagId) {
+      const listRes = await tagApi.list('video')
+      if (listRes.code === 200) {
+        const existing = (listRes.data || []).find(t => t.name === name)
+        if (existing) tagId = existing.id
+      }
+    }
+
+    if (!tagId) {
+      showFailToast('标签不存在或创建失败')
+      return
+    }
+
+    const currentTagIds = (video.value?.tag_ids || []).map(t => typeof t === 'object' ? t.id : t)
+    const bindRes = await videoApi.bindTags(videoId.value, [...currentTagIds, tagId])
+    if (bindRes.code === 200) {
+      await loadVideo()
+      newTagName.value = ''
+      showAddTag.value = false
+      showSuccessToast('标签已添加')
+    } else {
+      showFailToast(bindRes.msg || '绑定标签失败')
+    }
+  } catch (e) {
+    showFailToast(e?.message || '添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function handleRemoveTag(tag) {
+  try {
+    await showConfirmDialog({ title: '移除标签', message: `确定移除「${tag.name}」吗？` })
+  } catch { return }
+  try {
+    const currentTagIds = (video.value?.tag_ids || []).map(t => typeof t === 'object' ? t.id : t)
+    const response = await videoApi.bindTags(videoId.value, currentTagIds.filter(id => id !== tag.id))
+    if (response.code === 200) {
+      await loadVideo()
+      showSuccessToast('标签已移除')
+    } else {
+      showFailToast(response.msg || '移除失败')
+    }
+  } catch (e) {
+    showFailToast('移除失败')
+  }
+}
+
 // 播放器相关函数
 const availableSources = computed(() => {
   return playSources.value.filter(s => s.available)
@@ -1600,7 +1684,7 @@ const availableSources = computed(() => {
 
 const qualityOptions = computed(() => {
   return currentStreams.value.map((stream, index) => ({
-    text: stream.resolution || '未知画质',
+    name: stream.resolution || '未知画质',
     value: index
   }))
 })
@@ -1845,6 +1929,11 @@ async function changeQuality(index) {
   }
 }
 
+function onQualitySelect(action) {
+  showQualityPicker.value = false
+  changeQuality(action.value)
+}
+
 async function playStream(stream) {
   if (!videoPlayer.value) {
     console.error('视频元素未找到')
@@ -1963,9 +2052,32 @@ onUnmounted(() => {
 
 <style scoped>
 .video-detail {
-  min-height: 100vh;
   background: transparent;
   color: var(--text-primary);
+}
+
+.nav-icon {
+  font-size: 20px;
+  margin-left: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.nav-icon.active {
+  color: #f5a21e;
+}
+
+.tag-add {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tag-add:hover {
+  opacity: 1;
+}
+
+.tag-add-content {
+  padding: 16px;
 }
 
 .loading-center {
@@ -2077,16 +2189,13 @@ onUnmounted(() => {
 
 .video-wrapper {
   position: relative;
-  padding-bottom: 56.25%;
-  height: 0;
-  overflow: hidden;
+  aspect-ratio: 16 / 9;
 }
 
 .video-element {
-  position: absolute;
-  inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
 }
 
 .player-controls {
@@ -2224,6 +2333,23 @@ onUnmounted(() => {
   padding: 16px;
   margin-top: 12px;
   margin-bottom: 12px;
+  position: relative;
+}
+
+.info-edit-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 18px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  z-index: 1;
+  transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.info-edit-btn:hover {
+  color: var(--text-strong);
 }
 
 .video-title {
@@ -2257,34 +2383,6 @@ onUnmounted(() => {
   min-width: 0;
   word-break: break-all;
   line-height: 1.4;
-}
-
-.storage-usage-value {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.storage-size-chip,
-.storage-count-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.storage-size-chip {
-  padding: 0 10px;
-  background: rgba(89, 160, 255, 0.14);
-  border: 1px solid rgba(89, 160, 255, 0.26);
-  color: var(--brand-700);
-  font-weight: 700;
-}
-
-.storage-count-chip {
-  color: var(--text-tertiary);
 }
 
 .actor-tags {
@@ -2497,7 +2595,6 @@ onUnmounted(() => {
 .video-detail-desktop .video-wrapper {
   max-width: 1000px;
   margin: 0 auto;
-  padding-bottom: 56.25%;
 }
 
 .video-detail-desktop .player-controls {

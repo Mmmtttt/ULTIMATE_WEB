@@ -235,11 +235,6 @@
       </div>
     </van-popup>
     
-    <van-tabbar v-model="active" route>
-      <van-tabbar-item icon="home-o" :to="homePath">首页</van-tabbar-item>
-      <van-tabbar-item icon="user-o" to="/mine">我的</van-tabbar-item>
-    </van-tabbar>
-
     <van-action-sheet
       v-model:show="showBatchTaskSheet"
       title="批量处理"
@@ -296,7 +291,6 @@ const importTaskStore = useImportTaskStore()
 const runtimeStore = useRuntimeStore()
 const { isDesktop } = useDevice()
 
-const active = ref(1)
 const activeTab = ref(0)
 const loading = ref(true)
 const contentList = ref([])
@@ -536,7 +530,7 @@ async function editTag() {
     const response = await props.tagStore.editTag(editingTag.value.id, editTagName.value.trim())
     if (response.success) {
       showEditPopup.value = false
-      showSuccessToast('修改成功')
+      showSuccessToast(response.message || '修改成功')
       await fetchTagList()
     } else {
       showFailToast(response.message || '修改失败')
@@ -716,8 +710,7 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 
 <style scoped>
 .base-tag-manage {
-  padding-bottom: 50px;
-  min-height: 100vh;
+  min-height: 95vh;
   background: var(--surface-0);
 }
 

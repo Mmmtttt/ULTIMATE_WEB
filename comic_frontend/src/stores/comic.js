@@ -168,11 +168,9 @@ export const useComicStore = defineStore('comic', () => {
    * @param {boolean} forceRefresh - 是否强制刷新
    * @returns {Object} 漫画详情
    */
-  async function fetchComicDetail(id, forceRefresh = false, options = {}) {
-    const shouldIncludeChapters = options.includeChapters !== false
-
+  async function fetchComicDetail(id, forceRefresh = false) {
     // 检查缓存
-    if (shouldIncludeChapters && !forceRefresh) {
+    if (!forceRefresh) {
       const cached = cacheStore.getDetailCache(id)
       if (cached) {
         currentComic.value = cached
@@ -185,13 +183,11 @@ export const useComicStore = defineStore('comic', () => {
     
     try {
       console.log('[Comic] 获取漫画详情:', id)
-      const response = await comicApi.getDetail(id, { includeChapters: shouldIncludeChapters })
+      const response = await comicApi.getDetail(id)
       currentComic.value = response.data
       
       // 更新缓存
-      if (shouldIncludeChapters) {
-        cacheStore.setDetailCache(id, response.data)
-      }
+      cacheStore.setDetailCache(id, response.data)
       
       return response.data
     } catch (err) {

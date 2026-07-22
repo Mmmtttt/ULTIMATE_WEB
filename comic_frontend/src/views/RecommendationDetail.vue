@@ -1,8 +1,20 @@
 <template>
-  <div class="recommendation-detail">
+  <div class="recommendation-detail desktop-page-shell">
     <van-nav-bar title="推荐漫画详情" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
-        <van-icon name="ellipsis" @click="showActionSheet = true" />
+        <van-icon
+          :name="isFavorited ? 'star' : 'star-o'"
+          class="nav-icon"
+          :class="{ active: isFavorited }"
+          @click="handleToggleFavorite"
+          :title="isFavorited ? '取消收藏' : '收藏'"
+        />
+        <van-icon
+          name="delete-o"
+          class="nav-icon"
+          @click="handleMoveToTrash"
+          title="移入回收站"
+        />
       </template>
     </van-nav-bar>
 
@@ -29,6 +41,7 @@
           >预览库</van-tag>
         </div>
         <div class="info">
+          <van-icon name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
           <h1 class="title">{{ recommendation.title }}</h1>
           <div class="author-row">
             <p class="author" v-if="recommendation.author">
@@ -57,29 +70,22 @@
             <span class="stat-item">{{ progressPercent }}%</span>
           </div>
 
-          <div v-if="recommendationStorageUsageText" class="storage-size-row">
-            <span class="storage-size-label">本地文件</span>
-            <span class="storage-size-value">{{ recommendationStorageUsageText }}</span>
-            <span v-if="recommendationStorageFileCountText" class="storage-size-count">
-              {{ recommendationStorageFileCountText }}
-            </span>
-          </div>
-
           <div class="score-section">
             <div class="score-display">
-              <span class="score-label">评分:</span>
-              <van-icon name="star" class="score-star" />
-              <span class="score-chip" :class="{ 'is-empty': !recommendation.score }">
-                {{ recommendation.score || '未评分' }}
-              </span>
+              <div class="score-summary">
+                <span class="score-label">评分</span>
+                <van-icon name="star" class="score-star" />
+              </div>
             </div>
-            <van-rate
-              v-model="scoreValue"
-              :count="12"
-              allow-half
-              @change="handleScoreChange"
-              class="score-rate"
-            />
+            <div class="score-rate-wrap">
+              <van-rate
+                v-model="scoreValue"
+                :count="12"
+                allow-half
+                @change="handleScoreChange"
+                class="score-rate"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -94,9 +100,29 @@
             type="primary"
             plain
             class="tag"
+            :closeable="showTagRemove"
             @click="filterByTag(tag.id)"
+            @close="handleRemoveTag(tag)"
           >
             {{ tag.name }}
+          </van-tag>
+          <van-tag
+            size="medium"
+            type="primary"
+            class="tag tag-add"
+            @click="showAddTag = true"
+          >
+            <van-icon name="plus" size="12" />
+          </van-tag>
+          <van-tag
+            v-if="recommendation.tags && recommendation.tags.length > 0"
+            size="medium"
+            type="danger"
+            :plain="!showTagRemove"
+            class="tag tag-remove"
+            @click="showTagRemove = !showTagRemove"
+          >
+            <van-icon name="minus" size="12" />
           </van-tag>
           <van-tag
             v-if="!recommendation.tags || recommendation.tags.length === 0"
@@ -142,41 +168,6 @@
       />
 
       <div class="action-section">
-        <div class="action-buttons">
-          <van-button
-            :type="isFavorited ? 'warning' : 'default'"
-            size="small"
-            @click="handleToggleFavorite"
-            :loading="favoriteLoading"
-          >
-            <van-icon :name="isFavorited ? 'star' : 'star-o'" />
-            {{ isFavorited ? '已收藏' : '收藏' }}
-          </van-button>
-          <van-button
-            type="default"
-            size="small"
-            @click="showListPopup = true"
-          >
-            <van-icon name="add-o" />
-            加入清单
-          </van-button>
-          <van-button
-            :type="isRead ? 'success' : 'default'"
-            size="small"
-            @click="markAsRead"
-          >
-            <van-icon :name="isRead ? 'passed' : 'circle'" />
-            {{ isRead ? '已读' : '标记已读' }}
-          </van-button>
-          <van-button
-            type="danger"
-            size="small"
-            @click="handleMoveToTrash"
-          >
-            <van-icon name="delete-o" />
-            移入回收站
-          </van-button>
-        </div>
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ recommendation.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
@@ -285,6 +276,19 @@
         </div>
       </div>
     </van-popup>
+
+    <!-- 添加标签弹窗 -->
+    <van-popup v-model:show="showAddTag" round position="bottom" :style="{ height: '50%' }">
+      <div class="edit-popup">
+        <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
+        <div class="tag-add-content">
+          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
+            添加
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -293,15 +297,9 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { authorApi } from '@/api'
+import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import {
-  applyListMembershipChanges,
-  buildListChangeMessage,
-  formatStorageFileCountText,
-  formatStorageUsageText,
-  getCoverUrl,
-  isReadByProgress
-} from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -324,6 +322,10 @@ const scoreValue = ref(6)
 const favoriteLoading = ref(false)
 const isSubscribed = ref(false)
 const subscribing = ref(false)
+const showAddTag = ref(false)
+const showTagRemove = ref(false)
+const newTagName = ref('')
+const tagAdding = ref(false)
 
 const showEditPopup = ref(false)
 
@@ -334,7 +336,6 @@ const editForm = ref({
 })
 
 const actions = [
-  { name: '编辑信息', value: 'edit' },
   { name: '绑定标签', value: 'tags' },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ]
@@ -367,9 +368,6 @@ const isRead = computed(() => {
   if (!recommendation.value) return false
   return isReadByProgress(recommendation.value.current_page)
 })
-
-const recommendationStorageUsageText = computed(() => formatStorageUsageText(recommendation.value))
-const recommendationStorageFileCountText = computed(() => formatStorageFileCountText(recommendation.value))
 
 // ============ Methods ============
 
@@ -502,16 +500,18 @@ async function handleScoreChange(value) {
 /**
  * 操作菜单选择
  */
+function openEdit() {
+  editForm.value = {
+    title: recommendation.value.title || '',
+    author: recommendation.value.author || '',
+    desc: recommendation.value.desc || ''
+  }
+  showEditPopup.value = true
+}
+
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'edit') {
-    editForm.value = {
-      title: recommendation.value.title || '',
-      author: recommendation.value.author || '',
-      desc: recommendation.value.desc || ''
-    }
-    showEditPopup.value = true
-  } else if (action.value === 'tags') {
+  if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {
     handleMoveToTrash()
@@ -687,6 +687,42 @@ async function markAsRead() {
   }
 }
 
+async function handleAddTag() {
+  const name = newTagName.value.trim()
+  if (!name) { showFailToast('请输入标签名称'); return }
+  tagAdding.value = true
+  try {
+    const res = await tagApi.add(name, 'comic')
+    if (res.code === 200 && res.data?.tag_id) {
+      await tagApi.batchAddTags([{ id: recommendation.value.id, source: 'preview' }], [res.data.tag_id])
+      await fetchDetail()
+      newTagName.value = ''
+      showAddTag.value = false
+      showSuccessToast('标签已添加')
+    } else {
+      showFailToast('添加失败')
+    }
+  } catch (e) {
+    showFailToast('添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function handleRemoveTag(tag) {
+  try {
+    await showConfirmDialog({ title: '移除标签', message: `确定移除「${tag.name}」吗？` })
+  } catch { return }
+  try {
+    const comicData = [{ id: recommendation.value.id, source: 'preview' }]
+    await tagApi.batchRemoveTags(comicData, [tag.id])
+    await fetchDetail()
+    showSuccessToast('标签已移除')
+  } catch (e) {
+    showFailToast('移除失败')
+  }
+}
+
 // ============ Lifecycle ============
 onMounted(async () => {
   await fetchDetail()
@@ -711,8 +747,31 @@ watch(showListPopup, async (val) => {
 <style scoped>
 .recommendation-detail {
   padding-bottom: 20px;
-  min-height: 100vh;
   background: transparent;
+}
+
+.nav-icon {
+  font-size: 20px;
+  margin-left: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.nav-icon.active {
+  color: #f5a21e;
+}
+
+.tag-add {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tag-add:hover {
+  opacity: 1;
+}
+
+.tag-add-content {
+  padding: 16px;
 }
 
 .empty {
@@ -763,6 +822,23 @@ watch(showListPopup, async (val) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.info-edit-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  padding: 4px;
+  z-index: 1;
+  transition: color var(--motion-fast) var(--ease-standard);
+}
+
+.info-edit-btn:hover {
+  color: #fff;
 }
 
 .title {
@@ -809,44 +885,6 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
-}
-
-.storage-size-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.storage-size-label,
-.storage-size-value,
-.storage-size-count {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.storage-size-label {
-  padding: 0 8px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.88);
-  font-weight: 600;
-}
-
-.storage-size-value {
-  padding: 0 10px;
-  background: rgba(89, 160, 255, 0.18);
-  border: 1px solid rgba(180, 209, 255, 0.34);
-  color: #fff;
-  font-weight: 700;
-}
-
-.storage-size-count {
-  color: rgba(255, 255, 255, 0.78);
 }
 
 .score-section {

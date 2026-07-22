@@ -233,9 +233,9 @@ async function runImport() {
 
 <style scoped>
 .video-local-import-page {
-  min-height: 100vh;
-  padding: 0 12px 80px;
-  background: var(--surface-0);
+  min-height: 95vh;
+  background: transparent;
+  padding-bottom: 80px;
 }
 
 .card-surface {

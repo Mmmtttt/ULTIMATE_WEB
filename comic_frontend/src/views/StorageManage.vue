@@ -1,12 +1,9 @@
 <template>
-  <div class="storage-page">
+  <div class="storage-page desktop-page-shell">
     <van-nav-bar
       title="存储管理"
       left-arrow
-      fixed
-      placeholder
-      safe-area-inset-top
-      @click-left="goBack"
+      @click-left="$router.back()"
     >
       <template #right>
         <van-button size="small" plain class="refresh-btn" :loading="loading" @click="loadOverview">
@@ -303,14 +300,6 @@ function goRankingItem(item) {
   router.push({ name: source === 'preview' ? 'RecommendationDetail' : 'ComicDetail', params: { id } })
 }
 
-function goBack() {
-  if (window.history.length > 1) {
-    router.back()
-    return
-  }
-  router.push({ name: 'Mine' })
-}
-
 async function loadOverview() {
   loading.value = true
   try {
@@ -401,9 +390,10 @@ onMounted(loadOverview)
 
 <style scoped>
 .storage-page {
-  min-height: 100vh;
+  min-height: 95vh;
+  background: transparent;
   color: var(--text-primary);
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: 24px;
 }
 
 .storage-page :deep(.van-nav-bar) {
@@ -417,8 +407,7 @@ onMounted(loadOverview)
 }
 
 .storage-shell {
-  width: min(var(--desktop-page-fluid), 1180px);
-  margin: 0 auto;
+  width: 100%;
   padding: clamp(14px, 2vw, 28px);
 }
 
