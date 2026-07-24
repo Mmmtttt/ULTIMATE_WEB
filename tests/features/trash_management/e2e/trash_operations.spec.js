@@ -9,6 +9,40 @@ const {
 const TRASH_COMIC_TITLE = "E2E Comic Epsilon";
 
 /**
+ * 打开漫画详情页：点击卡片并等待详情页加载完成，"移入回收站"按钮可见。
+ */
+async function openComicDetail(page, title) {
+  await page.goto("/library");
+  await page.waitForLoadState("networkidle");
+  const card = page.locator(".media-card", { hasText: title }).first();
+  await expect(card).toBeVisible({ timeout: 10000 });
+
+  await card.click();
+  // SPA 内导航，等待路由切到 /comic/:id
+  await page.waitForURL(/\/comic\//);
+  await page.waitForLoadState("networkidle");
+
+  const moveToTrashBtn = page.getByRole("button", { name: "移入回收站" });
+  await expect(moveToTrashBtn).toBeVisible({ timeout: 10000 });
+  return moveToTrashBtn;
+}
+
+/**
+ * 等待移入回收站的 API 调用完成。
+ */
+async function waitForMoveToTrashApi(apiRequests) {
+  await expect
+    .poll(
+      () =>
+        hasApiCall(apiRequests, (item) =>
+          item.url.includes("/api/v1/comic/trash/move") && item.method === "PUT"
+        ),
+      { timeout: 5000 }
+    )
+    .toBeTruthy();
+}
+
+/**
  * 用例描述:
  * - 用例目的: 强看护回收站完整生命周期（移入->列表->恢复）。
  * - 测试步骤:
@@ -35,26 +69,22 @@ test("trash page complete lifecycle: move to trash, list, and restore", async ({
   const trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   if (await trashItem.isVisible()) {
     await trashItem.getByRole("button", { name: "恢复" }).click();
-    await page.waitForTimeout(500);
+    await expect
+      .poll(
+        () =>
+          hasApiCall(apiRequests, (item) =>
+            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
+          ),
+        { timeout: 5000 }
+      )
+      .toBeTruthy();
   }
 
-  await page.goto("/library");
-  await page.waitForLoadState("networkidle");
-  const card = page.locator(".media-card", { hasText: TRASH_COMIC_TITLE }).first();
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await card.click();
-
-  await page.getByRole("button", { name: "移入回收站" }).click();
+  const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
+  await moveToTrashBtn.click();
   await confirmDialog(page);
   await expect(page).toHaveURL(/\/library/);
-
-  expect(
-    hasApiCall(apiRequests, (item) =>
-      item.url.includes("/api/v1/comic/trash/move") && item.method === "PUT"
-    )
-  ).toBeTruthy();
-
-  await page.waitForTimeout(500);
+  await waitForMoveToTrashApi(apiRequests);
 
   await page.goto("/trash");
   await page.waitForLoadState("networkidle");
@@ -112,18 +142,21 @@ test("trash page shows delete button for trashed item", async ({ page }) => {
   let trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   if (await trashItem.isVisible()) {
     await trashItem.getByRole("button", { name: "恢复" }).click();
-    await page.waitForTimeout(500);
+    await expect
+      .poll(
+        () =>
+          hasApiCall(apiRequests, (item) =>
+            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
+          ),
+        { timeout: 5000 }
+      )
+      .toBeTruthy();
   }
 
-  await page.goto("/library");
-  await page.waitForLoadState("networkidle");
-  const card = page.locator(".media-card", { hasText: TRASH_COMIC_TITLE }).first();
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await card.click();
-  await page.getByRole("button", { name: "移入回收站" }).click();
+  const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
+  await moveToTrashBtn.click();
   await confirmDialog(page);
-
-  await page.waitForTimeout(500);
+  await waitForMoveToTrashApi(apiRequests);
 
   await page.goto("/trash");
   await page.waitForLoadState("networkidle");
@@ -171,18 +204,21 @@ test("trash page shows restore button when items exist", async ({ page }) => {
   let trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   if (await trashItem.isVisible()) {
     await trashItem.getByRole("button", { name: "恢复" }).click();
-    await page.waitForTimeout(500);
+    await expect
+      .poll(
+        () =>
+          hasApiCall(apiRequests, (item) =>
+            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
+          ),
+        { timeout: 5000 }
+      )
+      .toBeTruthy();
   }
 
-  await page.goto("/library");
-  await page.waitForLoadState("networkidle");
-  const card = page.locator(".media-card", { hasText: TRASH_COMIC_TITLE }).first();
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await card.click();
-  await page.getByRole("button", { name: "移入回收站" }).click();
+  const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
+  await moveToTrashBtn.click();
   await confirmDialog(page);
-
-  await page.waitForTimeout(500);
+  await waitForMoveToTrashApi(apiRequests);
 
   await page.goto("/trash");
   await page.waitForLoadState("networkidle");
