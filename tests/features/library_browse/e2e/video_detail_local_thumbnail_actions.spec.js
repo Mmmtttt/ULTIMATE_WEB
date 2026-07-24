@@ -126,7 +126,8 @@ test("local video detail supports generating thumbnails and selecting cover from
   await page.goto(`/video/${VIDEO_ID}`);
   await expect(page.locator(".video-title").first()).toContainText(VIDEO_TITLE);
 
-  await page.locator(".van-nav-bar__right .van-icon").click();
+  // 使用更精确的选择器，避免匹配到收藏和删除两个 van-icon
+  await page.locator(".van-nav-bar__right .van-icon").first().click();
   await expect(page.getByText("生成缩略图")).toBeVisible();
   await page.getByText("生成缩略图").click();
 
@@ -148,6 +149,7 @@ test("local video detail supports generating thumbnails and selecting cover from
 
   await expect(page.getByText("选择视频封面")).toBeHidden();
 
-  await page.locator(".van-nav-bar__right .van-icon").click();
+  // 使用更精确的选择器，避免匹配到收藏和删除两个 van-icon
+  await page.locator(".van-nav-bar__right .van-icon").first().click();
   await expect(page.getByText("选择封面")).toBeVisible();
 });

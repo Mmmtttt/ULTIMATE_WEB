@@ -1,4 +1,4 @@
-﻿const {
+const {
   test,
   expect,
   startApiRequestRecorder,
@@ -12,6 +12,8 @@ test("system config updates reader preferences including single-page mode", asyn
   await expect(page).toHaveURL(/\/config$/);
 
   await page.getByText("上下翻页").click();
+  // 背景色改为下拉选择器，需要先点击打开
+  await page.locator(".select-row", { hasText: "默认背景色" }).click();
   await page.getByText("深色背景").click();
 
   const singlePageSwitch = page
