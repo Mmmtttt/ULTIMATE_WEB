@@ -138,6 +138,22 @@ test("library back restores filter and pagination state", async ({ page }) => {
     });
   });
 
+  await page.route("**/api/v1/config/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: {} }),
+    });
+  });
+
+  await page.route("**/api/v1/runtime/**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, data: { loaded: true } }),
+    });
+  });
+
   await page.goto("/library");
   await expect(page.getByText("Restore Comic 01")).toBeVisible();
 
@@ -153,10 +169,12 @@ test("library back restores filter and pagination state", async ({ page }) => {
   await expect(page.locator(".filter-panel")).toBeHidden();
 
   await expect(page.locator(".active-filters")).toContainText("包含: Action");
-  await expect(page.locator(".app-pagination .summary-main")).toHaveText("第 1 / 2 页");
+  // 新前端无 .summary-main，用分页按钮验证页数
+  await expect(page.locator(".app-pagination")).toBeVisible();
+  await expect(page.locator(".app-pagination .pager-btn.active")).toHaveText("1");
 
   await page.getByRole("button", { name: "第 2 页" }).click();
-  await expect(page.locator(".app-pagination .summary-main")).toHaveText("第 2 / 2 页");
+  await expect(page.locator(".app-pagination .pager-btn.active")).toHaveText("2");
   await expect(page.getByText("Restore Comic 21")).toBeVisible();
 
   await page.locator(".media-card", { hasText: "Restore Comic 21" }).first().click({ force: true });
@@ -166,7 +184,8 @@ test("library back restores filter and pagination state", async ({ page }) => {
   await page.goBack();
 
   await expect(page.locator(".active-filters")).toContainText("包含: Action");
-  await expect(page.locator(".app-pagination .summary-main")).toHaveText("第 2 / 2 页");
+  await expect(page.locator(".app-pagination")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator(".app-pagination .pager-btn.active")).toHaveText("2");
   await expect(page.getByText("Restore Comic 21")).toBeVisible();
   await expect(page.getByText("Restore Comic 01")).not.toBeVisible();
 });
