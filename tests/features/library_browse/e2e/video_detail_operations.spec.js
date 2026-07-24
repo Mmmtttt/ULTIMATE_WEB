@@ -1,4 +1,4 @@
-﻿const {
+const {
   test,
   expect,
   startApiRequestRecorder,
@@ -95,7 +95,7 @@ test("video detail page moves to trash via API", async ({ page }) => {
     await page.goto(`/video/${PRIMARY_VIDEO_ID}`);
     await expect(page.locator(".video-title, .detail-title").first()).toContainText(VIDEO_TITLE);
 
-    const trashButton = page.getByRole("button", { name: /移入回收站|删除/ });
+    const trashButton = page.locator('[title="移入回收站"]');
     await trashButton.click();
 
     await page.waitForTimeout(300);
