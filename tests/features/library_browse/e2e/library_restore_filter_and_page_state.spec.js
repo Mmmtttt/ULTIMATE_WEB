@@ -160,7 +160,8 @@ test("library back restores filter and pagination state", async ({ page }) => {
   await expect(page.getByText("Restore Comic 21")).toBeVisible();
 
   await page.locator(".media-card", { hasText: "Restore Comic 21" }).first().click({ force: true });
-  await expect(page.getByText("漫画详情")).toBeVisible();
+  await page.waitForURL(/\/comic\//);
+  await expect(page.locator(".van-nav-bar__title").getByText("漫画详情")).toBeVisible();
 
   await page.goBack();
 

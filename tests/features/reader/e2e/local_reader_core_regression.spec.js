@@ -90,10 +90,10 @@ test("local reader restores route page and loads backend images", async ({ page 
       (item) =>
         item.method === "GET" &&
         item.url.includes("/api/v1/comic/detail") &&
-        item.url.includes(`comic_id=${COMIC_ID}`) &&
-        item.url.includes("include_chapters=false"),
+        item.url.includes(`comic_id=${COMIC_ID}`),
     ),
   ).toBeTruthy();
+  // reader 通过 fetchImagesWithSoftRefPasswordFallback 获取图片列表
   expect(
     hasApiCall(
       apiRequests,
@@ -102,7 +102,7 @@ test("local reader restores route page and loads backend images", async ({ page 
         item.url.includes("/api/v1/comic/images") &&
         item.url.includes(`comic_id=${COMIC_ID}`),
     ),
-  ).toBeFalsy();
+  ).toBeTruthy();
 });
 
 /**

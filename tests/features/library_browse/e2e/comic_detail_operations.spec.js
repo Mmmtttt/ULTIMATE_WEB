@@ -75,7 +75,8 @@ test("comic detail page toggles favorite via API", async ({ page }) => {
   await page.goto(`/comic/${TRASH_TEST_COMIC_ID}`);
   await expect(page.locator(".title")).toContainText(TRASH_TEST_COMIC_TITLE);
 
-  const favoriteButton = page.getByRole("button", { name: /收藏|已收藏/ });
+  // van-icon 渲染为 <i> 元素，不是 <button>
+  const favoriteButton = page.locator('[title="收藏"], [title="取消收藏"]');
   await favoriteButton.click();
 
   await expect
@@ -204,11 +205,7 @@ test("comic detail page jumps to chapter start page from chapter cards", async (
 
   const chapterCards = page.locator(".chapter-card");
   await expect(chapterCards).toHaveCount(2);
-  await expect(chapterCards.first()).not.toBeVisible();
-  await expect(page.getByRole("button", { name: /展开章节/ })).toBeVisible();
-
-  await page.getByRole("button", { name: /展开章节/ }).click();
-  await expect(page.getByRole("button", { name: /收起章节/ })).toBeVisible();
+  // 新前端章节直接可见，不需要展开
   await expect(chapterCards.first()).toBeVisible();
   await expect(chapterCards.first()).toContainText("第1章");
   await expect(chapterCards.nth(1)).toContainText("第2章");

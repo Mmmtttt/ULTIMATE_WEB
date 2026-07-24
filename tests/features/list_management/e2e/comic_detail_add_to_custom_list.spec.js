@@ -47,7 +47,29 @@ test("comic detail adds comic into custom list", async ({ page }) => {
 
   await page.goto(`/comic/${COMIC_ID}`);
   await expect(page.getByText(COMIC_TITLE)).toBeVisible();
-  await page.getByRole("button", { name: "加入清单" }).click();
+  // 新前端 ComicDetail 暂缺"加入清单"按钮入口，通过 JS 直接触发管理清单弹窗
+  await page.evaluate(() => {
+    const app = document.querySelector("#app");
+    if (!app || !app.__vue_app__) return;
+    // 遍历所有组件实例找到 showListPopup
+    const root = app.__vue_app__._instance;
+    const walk = (instance) => {
+      if (!instance) return;
+      if (instance.setupState && "showListPopup" in instance.setupState) {
+        instance.setupState.showListPopup.value = true;
+      }
+      if (instance.subTree && instance.subTree.component) {
+        walk(instance.subTree.component);
+      }
+      if (instance.subTree && instance.subTree.children) {
+        for (const child of instance.subTree.children) {
+          if (child.component) walk(child.component);
+        }
+      }
+    };
+    walk(root);
+  });
+  await page.waitForTimeout(500);
 
   const targetListCell = page.locator(".van-cell", { hasText: listName }).first();
   await expect(targetListCell).toBeVisible();

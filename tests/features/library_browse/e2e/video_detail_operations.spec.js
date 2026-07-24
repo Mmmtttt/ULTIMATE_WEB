@@ -71,7 +71,8 @@ test("video detail page toggles favorite via API", async ({ page }) => {
   await page.goto(`/video/${PRIMARY_VIDEO_ID}`);
   await expect(page.locator(".video-title, .detail-title").first()).toContainText(VIDEO_TITLE);
 
-  const favoriteButton = page.getByRole("button", { name: /收藏|已收藏/ });
+  // van-icon 渲染为 <i> 元素，不是 <button>
+  const favoriteButton = page.locator('[title="收藏"], [title="取消收藏"]');
   await favoriteButton.click();
 
   await expect
