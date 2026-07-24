@@ -91,6 +91,7 @@
         @play="onItemPlay"
         @toggle-favorite="toggleFavorite"
         @select="toggleSelection"
+        @direct-read="onDirectRead"
         :class="{ 'video-mode': isVideoMode }"
       />
     </div>
@@ -766,6 +767,11 @@ function onItemClick(item) {
 function onItemPlay(item) {
   if (isManageMode.value) return
   router.push({ name: 'VideoDetail', params: { id: item.id }, query: { ...route.query, autoplay: '1' } })
+}
+
+function onDirectRead(item) {
+  if (isManageMode.value) return
+  router.push({ name: 'ComicDetail', params: { id: item.id }, query: { autoread: '1' } })
 }
 
 function toggleSelection(item) {

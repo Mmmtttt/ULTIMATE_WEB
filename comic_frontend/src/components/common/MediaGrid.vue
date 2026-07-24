@@ -9,9 +9,20 @@
         'video-item': isVideoItem(item)
       }"
       @click="$emit('click', item)"
+      @mouseenter="onCardEnter(item)"
+      @mouseleave="onCardLeave(item)"
     >
       <template v-if="!isListMode">
         <div class="media-cover" :style="getCoverStyle(item)">
+          <div
+            v-if="!isVideoItem(item)"
+            class="read-now-btn"
+            :class="{ visible: showReadButtonIds.has(String(item.id)) }"
+            @click.stop="$emit('direct-read', item)"
+          >
+            <van-icon name="play-circle-o" size="16" />
+            <span>直接阅读</span>
+          </div>
           <van-image 
             :src="getCoverUrl(item)" 
             :fit="resolveCoverFit(item)"
@@ -93,7 +104,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import { useDevice } from '@/composables/useDevice'
 import { useModeStore } from '@/stores'
 import {
@@ -140,8 +151,29 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['click', 'toggle-favorite', 'select', 'play'])
+const emit = defineEmits(['click', 'toggle-favorite', 'select', 'play', 'direct-read'])
 const { isMobile, isDesktop } = useDevice()
+
+const HOVER_DELAY = 600
+const hoverTimers = reactive({})
+const showReadButtonIds = reactive(new Set())
+
+function onCardEnter(item) {
+  if (isVideoItem(item)) return
+  const id = String(item.id)
+  clearTimeout(hoverTimers[id])
+  hoverTimers[id] = setTimeout(() => {
+    showReadButtonIds.add(id)
+  }, HOVER_DELAY)
+}
+
+function onCardLeave(item) {
+  const id = String(item.id)
+  clearTimeout(hoverTimers[id])
+  delete hoverTimers[id]
+  showReadButtonIds.delete(id)
+}
+
 const modeStore = useModeStore()
 
 const resolvedViewMode = computed(() => {
@@ -406,6 +438,58 @@ function displaySubtitle(item) {
   transform: translate(-50%, -50%) scale(0.95);
 }
 
+.read-now-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(16, 27, 48, 0.78);
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  color: #fff;
+  padding: 7px 16px 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 5;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+}
+
+.read-now-btn.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.read-now-btn:hover {
+  background: rgba(47, 116, 255, 0.88);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.read-now-btn:active {
+  transform: translate(-50%, -50%) scale(0.95);
+}
+
+@media (hover: none) {
+  .read-now-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 @keyframes playPulse {
   0%,
   100% {
@@ -590,7 +674,8 @@ function displaySubtitle(item) {
   .media-card,
   .media-card::before,
   .select-overlay,
-  .play-btn {
+  .play-btn,
+  .read-now-btn {
     transition: none;
     animation: none;
   }

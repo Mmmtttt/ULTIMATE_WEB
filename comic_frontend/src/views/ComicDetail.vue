@@ -898,6 +898,12 @@ async function handleRemoveTag(tag) {
 onMounted(async () => {
   console.log('[Detail] onMounted, id:', route.params.id)
   await fetchComicDetail()
+  if (route.query.autoread === '1' && comic.value) {
+    // 先 await 清除 autoread 参数（此时没有其他导航竞争），再跳转阅读器
+    await router.replace({ query: { ...route.query, autoread: undefined } })
+    startReading()
+    return
+  }
   await fetchAllTags()
   await listStore.fetchLists('comic')
 })
