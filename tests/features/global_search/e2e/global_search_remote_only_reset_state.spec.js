@@ -64,9 +64,11 @@ test("global search resets previous keyword and stays remote-only", async ({ pag
 
   await page.goto("/search");
 
-  await expect(page.getByText("仅搜索全网内容，输入关键词后点击搜索或按回车触发。")).toBeVisible();
-  await expect(page.getByText("本地库")).toHaveCount(0);
-  await expect(page.getByText("预览库")).toHaveCount(0);
+  const searchPage = page.locator(".search-page");
+  await expect(searchPage.getByText("仅搜索全网内容，输入关键词后点击搜索或按回车触发。")).toBeVisible();
+  // 断言搜索页面内部不出现本地库/预览库的 scope 切换，而非匹配布局导航中的同名文字
+  await expect(searchPage.getByText("本地库")).toHaveCount(0);
+  await expect(searchPage.getByText("预览库")).toHaveCount(0);
 
   const searchInput = page.locator("input[type='search']").first();
   await expect(searchInput).toBeVisible();

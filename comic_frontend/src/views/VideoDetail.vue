@@ -222,11 +222,10 @@
             </van-tag>
           </div>
       </div>
-      <div v-if="isLocalVideo && localThumbnailCapability.show_generate_action" style="margin-top: 12px;">
+      <div v-if="isLocalVideo && localThumbnailCapability.show_generate_action" class="thumbnail-actions" style="margin-top: 12px;">
         <van-button
           type="primary"
           plain
-          block
           size="small"
           :loading="generatingLocalThumbnails"
           :disabled="!localThumbnailCapability.can_generate"
@@ -234,6 +233,15 @@
           @click="generateLocalThumbnails"
         >
           {{ localThumbnailImages.length > 0 ? '重新生成缩略图' : '生成缩略图' }}
+        </van-button>
+        <van-button
+          v-if="preferredThumbnailImages.length > 0"
+          type="default"
+          plain
+          size="small"
+          @click="showPreviewImages = !showPreviewImages"
+        >
+          {{ showPreviewImages ? '隐藏预览图' : '显示预览图' }}
         </van-button>
       </div>
     </div>
@@ -314,7 +322,7 @@
         </van-cell-group>
       </div>
       
-      <div v-if="preferredThumbnailImages.length > 0" class="thumbnails-section">
+      <div v-if="preferredThumbnailImages.length > 0" v-show="showPreviewImages" class="thumbnails-section">
         <van-cell-group title="预览图">
           <div class="thumbnail-grid">
             <div
@@ -628,6 +636,7 @@ const refreshingPreviewVideo = ref(false)
 const refreshingLocalMetadata = ref(false)
 const generatingLocalThumbnails = ref(false)
 const savingThumbnailCover = ref(false)
+const showPreviewImages = ref(false)
 
 const hls = ref(null)
 const previewHls = ref(null)
@@ -2494,6 +2503,17 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.thumbnail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.thumbnail-actions .van-button {
+  flex: 1;
+  min-width: 0;
 }
 
 .preview-video-source-selector {
