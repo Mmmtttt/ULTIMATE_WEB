@@ -79,7 +79,9 @@
     >
       <router-view v-slot="{ Component }">
         <transition name="slide-left" mode="out-in">
-          <component :is="Component" />
+          <keep-alive :include="cachedViewNames">
+            <component :is="Component" />
+          </keep-alive>
         </transition>
       </router-view>
     </main>
@@ -107,6 +109,10 @@ import { useRuntimeStore } from '@/stores'
 const { isDesktop, isMobile } = useDevice()
 const route = useRoute()
 const runtimeStore = useRuntimeStore()
+
+// keep-alive 缓存的视图：从详情页返回时不重新请求数据
+const cachedViewNames = ['Library', 'Preview', 'RandomFeed', 'Subscribe', 'Mine']
+
 const showTeleDriveNav = ref(false)
 const sidebarState = ref(0) // 0=展开, 1=仅图标, 2=隐藏
 const SIDEBAR_WIDTHS = [248, 64, 0] // 对应三个状态的宽度
