@@ -2865,7 +2865,7 @@ class DirectionalSyncService:
         headers: Optional[Dict[str, str]],
         body: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        logger.info(
+        app_logger.info(
             f"[sync] outgoing request: {method} {url} "
             f"(timeout={self.HTTP_TIMEOUT_SECONDS}s, verify=False)"
         )
@@ -2879,21 +2879,21 @@ class DirectionalSyncService:
                 verify=False,
             )
         except requests.exceptions.SSLError as exc:
-            logger.error(f"[sync] SSL error connecting to {url}: {exc!r}")
+            app_logger.error(f"[sync] SSL error connecting to {url}: {exc!r}")
             raise RuntimeError(f"SSL certificate error connecting to {url}: {exc}") from exc
         except requests.exceptions.ConnectionError as exc:
-            logger.error(f"[sync] connection error connecting to {url}: {exc!r}")
+            app_logger.error(f"[sync] connection error connecting to {url}: {exc!r}")
             raise RuntimeError(f"Connection refused/unreachable at {url}: {exc}") from exc
         except requests.exceptions.Timeout as exc:
-            logger.error(f"[sync] timeout connecting to {url}: {exc!r}")
+            app_logger.error(f"[sync] timeout connecting to {url}: {exc!r}")
             raise RuntimeError(f"Request timeout after {self.HTTP_TIMEOUT_SECONDS}s at {url}") from exc
         except Exception as exc:
-            logger.error(f"[sync] request failed to {url}: {exc!r}")
+            app_logger.error(f"[sync] request failed to {url}: {exc!r}")
             raise
 
         status = int(response.status_code)
         content_type = str(response.headers.get("Content-Type", "")).lower()
-        logger.info(f"[sync] response received: HTTP {status} from {url}")
+        app_logger.info(f"[sync] response received: HTTP {status} from {url}")
 
         payload: Any = None
         if "application/json" in content_type:

@@ -132,8 +132,8 @@ sleep 8
 
 echo ""
 echo "=== Services Started ==="
-echo "Backend: http://127.0.0.1:${BACKEND_PORT}"
-echo "Frontend: http://127.0.0.1:${FRONTEND_PORT}/"
+echo "Backend: https://127.0.0.1:${BACKEND_PORT}"
+echo "Frontend: https://127.0.0.1:${FRONTEND_PORT}/"
 echo ""
 echo "To stop services, run: ./scripts/stop_services.sh"
 echo "To view status, run: ./scripts/view_status.sh"
