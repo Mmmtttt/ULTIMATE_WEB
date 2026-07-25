@@ -106,7 +106,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showFailToast } from 'vant'
 import { imageApi } from '@/api'
@@ -712,6 +712,15 @@ onUnmounted(() => {
   removeWindowListener('resize', handleResize)
   removeDocumentListener('mousemove', onMouseMove)
   removeDocumentListener('mouseup', stopMouseDrag)
+})
+
+onActivated(async () => {
+  await nextTick()
+  updateScrollerHeight()
+  if (hasStoredViewStateForMode(modeKey.value)) {
+    await applyStoredViewState()
+  }
+  restoringViewState.value = false
 })
 
 watch(

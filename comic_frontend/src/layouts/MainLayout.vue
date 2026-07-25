@@ -78,7 +78,7 @@
       :style="isDesktop ? { marginLeft: sidebarWidthPx, width: 'calc(100% - ' + sidebarWidthPx + ')' } : {}"
     >
       <router-view v-slot="{ Component }">
-        <transition name="slide-left">
+        <transition name="slide-left" mode="out-in">
           <keep-alive :include="cachedViewNames">
             <component :is="Component" />
           </keep-alive>
@@ -549,14 +549,14 @@ async function loadTeleDriveNavState() {
 }
 
 .with-header {
-  padding-top: var(--mobile-header-offset);
-}
+    padding-top: var(--mobile-header-offset);
+  }
 
-.with-tabbar {
-  padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
-}
+  .with-tabbar {
+    padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
+  }
 
-.slide-left-enter-active,
+  .slide-left-enter-active,
 .slide-left-leave-active {
   transition:
     opacity var(--motion-base) var(--ease-standard),
@@ -595,6 +595,10 @@ async function loadTeleDriveNavState() {
     margin-left: 0;
     width: 100%;
     padding: 0;
+  }
+
+  .with-header.with-tabbar {
+    min-height: calc(100vh - var(--mobile-header-offset) - 54px);
   }
 }
 
