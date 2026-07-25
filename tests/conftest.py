@@ -46,6 +46,7 @@ def integration_runtime() -> dict:
             "BACKEND_PORT": str(INTEGRATION_BACKEND_PORT),
             "BACKEND_DEBUG": "0",
             "BACKEND_ENABLE_THIRD_PARTY": "0",
+            "BACKEND_SSL_ENABLED": "0",
             "PYTHONUNBUFFERED": "1",
         }
     )

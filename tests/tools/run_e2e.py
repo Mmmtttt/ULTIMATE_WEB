@@ -207,6 +207,7 @@ def main() -> int:
             "BACKEND_PORT": str(E2E_BACKEND_PORT),
             "BACKEND_DEBUG": "0",
             "BACKEND_ENABLE_THIRD_PARTY": "0",
+            "BACKEND_SSL_ENABLED": "0",
             "PYTHONUNBUFFERED": "1",
         }
     )

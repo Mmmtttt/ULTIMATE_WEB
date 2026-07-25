@@ -42,6 +42,7 @@ def main() -> int:
             "BACKEND_PORT": str(args.port),
             "BACKEND_DEBUG": "0",
             "BACKEND_ENABLE_THIRD_PARTY": "1" if args.enable_third_party else "0",
+            "BACKEND_SSL_ENABLED": "0",
             "PYTHONUNBUFFERED": "1",
         }
     )

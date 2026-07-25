@@ -58,6 +58,7 @@ def _start_backend(prepared: dict, port: int, log_name: str) -> dict:
             "BACKEND_PORT": str(port),
             "BACKEND_DEBUG": "0",
             "BACKEND_ENABLE_THIRD_PARTY": "0",
+            "BACKEND_SSL_ENABLED": "0",
             "PYTHONUNBUFFERED": "1",
         }
     )
