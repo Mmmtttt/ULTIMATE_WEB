@@ -8,59 +8,79 @@ import time
 import uuid
 from typing import Callable, Dict, Optional
 
-from core.constants import (
-    AUTHOR_JSON_FILE,
-    ACTOR_JSON_FILE,
-    BACKUP_SUFFIX,
-    IMPORT_TASKS_JSON_FILE,
-    JSON_FILE,
-    LISTS_JSON_FILE,
-    META_DIR,
-    RECOMMENDATION_JSON_FILE,
-    TAGS_JSON_FILE,
-    UI_STATE_JSON_FILE,
-    USER_CONFIG_JSON_FILE,
-    VIDEO_JSON_FILE,
-    VIDEO_RECOMMENDATION_JSON_FILE,
-)
+from core.constants import BACKUP_SUFFIX
+from core.storage_layout import get_meta_dir, get_current_space_mode
 from infrastructure.logger import app_logger, error_logger
+
+
+def _get_file_name_from_path(path: str) -> str:
+    """从路径中提取文件名（用于标识同一份逻辑数据在不同空间的对应文件）"""
+    return os.path.basename(path)
 
 
 class JsonStorage:
     _instances: Dict[str, "JsonStorage"] = {}
     _locks: Dict[str, threading.RLock] = {}
 
-    def __new__(cls, json_file: str = None):
-        normalized_path = os.path.abspath(json_file or JSON_FILE)
-        instance = cls._instances.get(normalized_path)
+    def __new__(cls, json_file: str = None, space_mode: str = None):
+        if json_file is None:
+            file_name = "comics_database.json"
+        else:
+            file_name = _get_file_name_from_path(json_file)
+
+        instance = cls._instances.get(file_name)
         if instance is None:
             instance = super().__new__(cls)
             instance._initialized = False
-            cls._instances[normalized_path] = instance
+            cls._instances[file_name] = instance
         return instance
 
-    def __init__(self, json_file: str = None):
+    def __init__(self, json_file: str = None, space_mode: str = None):
         if self._initialized:
             return
 
-        self.json_file = os.path.abspath(json_file or JSON_FILE)
+        if json_file is None:
+            file_name = "comics_database.json"
+        else:
+            file_name = _get_file_name_from_path(json_file)
+
+        self._file_name = file_name
         self._tmp_prefix = "comic_db_"
         self._tmp_suffix = ".tmp"
         self._tmp_cleanup_max_age_seconds = 600
-        self._last_tmp_cleanup_ts = 0.0
+        self._last_tmp_cleanup_ts_per_space: Dict[str, float] = {}
         self._tmp_cleanup_cooldown_seconds = 60
-        self._lock = self._locks.setdefault(self.json_file, threading.RLock())
-        self._cleanup_stale_temp_files(force=True)
         self._initialized = True
+
+    def _get_json_file(self) -> str:
+        """获取当前空间模式下的实际 JSON 文件路径"""
+        return os.path.join(get_meta_dir(), self._file_name)
+
+    def _get_lock(self) -> threading.RLock:
+        """获取当前空间对应文件的锁"""
+        actual_path = self._get_json_file()
+        lock = self._locks.get(actual_path)
+        if lock is None:
+            lock = threading.RLock()
+            self._locks[actual_path] = lock
+        return lock
+
+    @property
+    def json_file(self) -> str:
+        return self._get_json_file()
 
     def _cleanup_stale_temp_files(self, force: bool = False) -> int:
         try:
             now = time.time()
-            if not force and (now - self._last_tmp_cleanup_ts) < self._tmp_cleanup_cooldown_seconds:
-                return 0
-            self._last_tmp_cleanup_ts = now
+            json_file = self._get_json_file()
+            space_key = get_current_space_mode()
 
-            dir_path = os.path.dirname(self.json_file) or "."
+            last_ts = self._last_tmp_cleanup_ts_per_space.get(space_key, 0.0)
+            if not force and (now - last_ts) < self._tmp_cleanup_cooldown_seconds:
+                return 0
+            self._last_tmp_cleanup_ts_per_space[space_key] = now
+
+            dir_path = os.path.dirname(json_file) or "."
             if not os.path.isdir(dir_path):
                 return 0
 
@@ -83,24 +103,26 @@ class JsonStorage:
                 app_logger.info(f"已清理残留临时文件: {cleaned} 个, 目录: {dir_path}")
             return cleaned
         except Exception as e:
-            error_logger.warning(f"扫描残留临时文件失败: {self.json_file}, {e}")
+            error_logger.warning(f"扫描残留临时文件失败: {self._file_name}, {e}")
             return 0
 
     def _read_unlocked(self) -> dict:
-        if not os.path.exists(self.json_file):
+        json_file = self._get_json_file()
+        if not os.path.exists(json_file):
             return self._create_empty_data()
-        with open(self.json_file, "r", encoding="utf-8") as f:
+        with open(json_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _write_unlocked(self, data: dict) -> bool:
         self._cleanup_stale_temp_files()
-        dir_path = os.path.dirname(self.json_file) or "."
+        json_file = self._get_json_file()
+        dir_path = os.path.dirname(json_file) or "."
         os.makedirs(dir_path, exist_ok=True)
 
-        backup_file = self.json_file + BACKUP_SUFFIX
-        if os.path.exists(self.json_file):
+        backup_file = json_file + BACKUP_SUFFIX
+        if os.path.exists(json_file):
             try:
-                shutil.copy2(self.json_file, backup_file)
+                shutil.copy2(json_file, backup_file)
             except Exception as e:
                 error_logger.warning(f"创建备份失败: {e}")
 
@@ -111,7 +133,7 @@ class JsonStorage:
             last_error = None
             for attempt in range(3):
                 try:
-                    os.replace(temp_path, self.json_file)
+                    os.replace(temp_path, json_file)
                     last_error = None
                     break
                 except PermissionError as e:
@@ -119,7 +141,7 @@ class JsonStorage:
                     time.sleep(0.05 * (attempt + 1))
             if last_error is not None:
                 raise last_error
-            app_logger.info(f"JSON 文件写入成功: {self.json_file}")
+            app_logger.info(f"JSON 文件写入成功: {json_file}")
             return True
         except Exception:
             if os.path.exists(temp_path):
@@ -132,13 +154,14 @@ class JsonStorage:
             self._cleanup_stale_temp_files()
 
     def read(self) -> dict:
-        with self._lock:
+        lock = self._get_lock()
+        with lock:
             try:
                 data = self._read_unlocked()
-                app_logger.info(f"JSON 文件读取成功: {self.json_file}")
+                app_logger.info(f"JSON 文件读取成功: {self._get_json_file()}")
                 return data
             except json.JSONDecodeError as e:
-                error_logger.error(f"JSON 文件损坏: path={self.json_file}, error={e}")
+                error_logger.error(f"JSON 文件损坏: path={self._get_json_file()}, error={e}")
                 return self.restore_backup()
             except Exception as e:
                 error_logger.error(f"读取 JSON 文件失败: {e}")
@@ -146,7 +169,8 @@ class JsonStorage:
 
     def write(self, data: dict, max_retries: int = 3) -> bool:
         del max_retries
-        with self._lock:
+        lock = self._get_lock()
+        with lock:
             try:
                 return self._write_unlocked(dict(data or {}))
             except Exception as e:
@@ -155,7 +179,7 @@ class JsonStorage:
 
     def cleanup_stale_meta_temp_files(self, max_age_seconds: int = 600) -> int:
         try:
-            meta_dir_abs = os.path.abspath(META_DIR)
+            meta_dir_abs = os.path.abspath(get_meta_dir())
             if not os.path.isdir(meta_dir_abs):
                 return 0
 
@@ -183,10 +207,10 @@ class JsonStorage:
             return 0
 
     def _create_empty_data(self) -> dict:
-        file_name = os.path.basename(self.json_file).lower()
+        file_name = self._file_name.lower()
         now = time.strftime("%Y-%m-%d")
 
-        if self.json_file == os.path.abspath(USER_CONFIG_JSON_FILE) or file_name == "user_config.json":
+        if file_name == "user_config.json":
             return {
                 "user_config": {
                     "default_page_mode": "up_down",
@@ -202,7 +226,7 @@ class JsonStorage:
                 "last_updated": now,
             }
 
-        if self.json_file == os.path.abspath(TAGS_JSON_FILE):
+        if file_name == "tags_database.json":
             return {
                 "collection_name": "标签库",
                 "user": "用户名",
@@ -210,15 +234,7 @@ class JsonStorage:
                 "tags": [],
             }
 
-        if file_name == os.path.basename(TAGS_JSON_FILE).lower():
-            return {
-                "collection_name": "标签库",
-                "user": "用户名",
-                "last_updated": now,
-                "tags": [],
-            }
-
-        if self.json_file == os.path.abspath(LISTS_JSON_FILE):
+        if file_name == "lists_database.json":
             return {
                 "collection_name": "清单库",
                 "user": "用户名",
@@ -226,15 +242,7 @@ class JsonStorage:
                 "lists": [],
             }
 
-        if file_name == os.path.basename(LISTS_JSON_FILE).lower():
-            return {
-                "collection_name": "清单库",
-                "user": "用户名",
-                "last_updated": now,
-                "lists": [],
-            }
-
-        if self.json_file == os.path.abspath(JSON_FILE):
+        if file_name == "comics_database.json":
             return {
                 "collection_name": "我的收藏集",
                 "user": "用户名",
@@ -248,21 +256,7 @@ class JsonStorage:
                 },
             }
 
-        if file_name == os.path.basename(JSON_FILE).lower():
-            return {
-                "collection_name": "我的收藏集",
-                "user": "用户名",
-                "total_comics": 0,
-                "last_updated": now,
-                "comics": [],
-                "user_config": {
-                    "default_page_mode": "up_down",
-                    "default_background": "white",
-                    "single_page_browsing": False,
-                },
-            }
-
-        if self.json_file == os.path.abspath(RECOMMENDATION_JSON_FILE):
+        if file_name == "recommendations_database.json":
             return {
                 "collection_name": "推荐漫画",
                 "user": "用户名",
@@ -276,21 +270,7 @@ class JsonStorage:
                 },
             }
 
-        if file_name == os.path.basename(RECOMMENDATION_JSON_FILE).lower():
-            return {
-                "collection_name": "推荐漫画",
-                "user": "用户名",
-                "total_recommendations": 0,
-                "last_updated": now,
-                "recommendations": [],
-                "user_config": {
-                    "default_page_mode": "up_down",
-                    "default_background": "dark",
-                    "single_page_browsing": False,
-                },
-            }
-
-        if self.json_file == os.path.abspath(VIDEO_JSON_FILE):
+        if file_name == "videos_database.json":
             return {
                 "collection_name": "视频库",
                 "user": "用户名",
@@ -299,16 +279,7 @@ class JsonStorage:
                 "videos": [],
             }
 
-        if file_name == os.path.basename(VIDEO_JSON_FILE).lower():
-            return {
-                "collection_name": "视频库",
-                "user": "用户名",
-                "total_videos": 0,
-                "last_updated": now,
-                "videos": [],
-            }
-
-        if self.json_file == os.path.abspath(VIDEO_RECOMMENDATION_JSON_FILE):
+        if file_name == "video_recommendations_database.json":
             return {
                 "collection_name": "推荐视频",
                 "user": "用户名",
@@ -317,44 +288,25 @@ class JsonStorage:
                 "video_recommendations": [],
             }
 
-        if file_name == os.path.basename(VIDEO_RECOMMENDATION_JSON_FILE).lower():
-            return {
-                "collection_name": "推荐视频",
-                "user": "用户名",
-                "total_video_recommendations": 0,
-                "last_updated": now,
-                "video_recommendations": [],
-            }
-
-        if self.json_file == os.path.abspath(ACTOR_JSON_FILE):
+        if file_name == "actors_database.json":
             return {"last_updated": now, "actors": []}
 
-        if file_name == os.path.basename(ACTOR_JSON_FILE).lower():
-            return {"last_updated": now, "actors": []}
-
-        if self.json_file == os.path.abspath(AUTHOR_JSON_FILE):
+        if file_name == "authors_database.json":
             return {"last_updated": now, "authors": []}
 
-        if file_name == os.path.basename(AUTHOR_JSON_FILE).lower():
-            return {"last_updated": now, "authors": []}
-
-        if self.json_file == os.path.abspath(IMPORT_TASKS_JSON_FILE):
+        if file_name == "import_tasks.json":
             return {"last_updated": now, "tasks": []}
 
-        if file_name == os.path.basename(IMPORT_TASKS_JSON_FILE).lower():
-            return {"last_updated": now, "tasks": []}
-
-        if self.json_file == os.path.abspath(UI_STATE_JSON_FILE):
-            return {"last_updated": now, "ui_state": {}}
-
-        if file_name == os.path.basename(UI_STATE_JSON_FILE).lower():
+        if file_name == "ui_state_database.json":
             return {"last_updated": now, "ui_state": {}}
 
         return {"last_updated": now}
 
     def restore_backup(self) -> dict:
-        backup_file = self.json_file + BACKUP_SUFFIX
-        with self._lock:
+        lock = self._get_lock()
+        json_file = self._get_json_file()
+        backup_file = json_file + BACKUP_SUFFIX
+        with lock:
             try:
                 if not os.path.exists(backup_file):
                     app_logger.warning("备份文件不存在")
@@ -370,7 +322,8 @@ class JsonStorage:
 
     def atomic_update(self, update_func: Callable[[dict], Optional[dict]], max_retries: int = 3) -> bool:
         del max_retries
-        with self._lock:
+        lock = self._get_lock()
+        with lock:
             try:
                 data = self._read_unlocked()
                 updated = update_func(data)
@@ -378,7 +331,7 @@ class JsonStorage:
                     return False
                 return self._write_unlocked(updated)
             except json.JSONDecodeError as e:
-                error_logger.error(f"原子更新时 JSON 文件损坏: path={self.json_file}, error={e}")
+                error_logger.error(f"原子更新时 JSON 文件损坏: path={self._get_json_file()}, error={e}")
                 data = self.restore_backup()
                 updated = update_func(data)
                 if updated is None:

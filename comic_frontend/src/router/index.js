@@ -2,8 +2,15 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { setDocumentTitle } from '@/runtime/browser'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useModeStore } from '@/stores/mode'
+import { useAuthStore } from '@/stores/auth'
 
 const routes = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/Login.vue'),
+    meta: { title: '登录', requiresAuth: false }
+  },
   {
     path: '/',
     component: MainLayout,
@@ -200,11 +207,53 @@ const router = createRouter({
   routes
 })
 
-// 璺敱瀹堝崼锛氭洿鏂伴〉闈㈡爣棰?
-router.beforeEach((to, from, next) => {
+// 路由守卫：更新页面标题 + 认证检查
+let authChecked = false
+
+router.beforeEach(async (to, from, next) => {
   if (to.meta.title) {
     setDocumentTitle(`${to.meta.title} - Ultimate`)
   }
+
+  const authStore = useAuthStore()
+
+  // 首次进入时检查认证状态
+  if (!authChecked) {
+    try {
+      await authStore.checkStatus()
+    } catch (e) {
+      // 检查失败也继续，可能是网络问题
+    }
+    authChecked = true
+  }
+
+  // 未启用认证 → 直接通过
+  if (!authStore.enabled) {
+    next()
+    return
+  }
+
+  // 登录页：如果已经登录过（无论成功失败），跳转到首页
+  if (to.name === 'Login') {
+    if (authStore.hasAttemptedLogin) {
+      next('/library')
+      return
+    }
+    next()
+    return
+  }
+
+  // 其他页面：如果还没登录过，跳转到登录页
+  if (!authStore.hasAttemptedLogin) {
+    next({
+      name: 'Login',
+      query: { redirect: to.fullPath }
+    })
+    return
+  }
+
+  // 已经登录过（无论成功失败）→ 允许访问
+  // 成功 → normal 模式，失败 → private 模式（隐私保护）
   next()
 })
 

@@ -15,6 +15,14 @@ DEFAULT_SERVER_CONFIG = {
     },
     "frontend": {"host": "0.0.0.0", "port": 5173},
     "storage": {"data_dir": "./../UltimateData"},
+    "auth": {
+        "enabled": False,
+        "password": "",
+        "private_data_dir": "./../UltimateData_private",
+        "private_port": 5000,
+        "normal_port": 5001,
+        "secret_key": "ultimate-web-default-secret-key-change-me",
+    },
 }
 
 DEFAULT_THIRD_PARTY_CONFIG = {

@@ -8,18 +8,33 @@ import os from 'os'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function loadServerConfig() {
-  const configPath = resolve(__dirname, '../server_config.json')
-  if (existsSync(configPath)) {
+  // 优先读取项目根目录的配置
+  const projectConfigPath = resolve(__dirname, '../server_config.json')
+  if (existsSync(projectConfigPath)) {
     try {
-      const configFile = JSON.parse(readFileSync(configPath, 'utf-8'))
+      const configFile = JSON.parse(readFileSync(projectConfigPath, 'utf-8'))
       return configFile
     } catch (e) {
-      console.warn('Failed to load server_config.json, using defaults')
+      console.warn('Failed to load server_config.json from project root, trying AppData')
+    }
+  }
+  // 其次读取 AppData 里的配置（与后端一致）
+  const appData = process.env.APPDATA || (process.platform === 'darwin'
+    ? `${process.env.HOME}/Library/Application Support`
+    : `${process.env.HOME}/.config`)
+  const appDataConfigPath = resolve(appData, 'ULTIMATE_WEB', 'server_config.json')
+  if (existsSync(appDataConfigPath)) {
+    try {
+      const configFile = JSON.parse(readFileSync(appDataConfigPath, 'utf-8'))
+      return configFile
+    } catch (e) {
+      console.warn('Failed to load server_config.json from AppData, using defaults')
     }
   }
   return {
     backend: { host: '0.0.0.0', port: 5000, ssl_enabled: true },
-    frontend: { host: '0.0.0.0', port: 5173 }
+    frontend: { host: '0.0.0.0', port: 5173 },
+    auth: { enabled: false, normal_port: 5001, private_port: 5000 }
   }
 }
 
@@ -37,7 +52,14 @@ function resolveSslCertPaths() {
 const serverConfig = loadServerConfig()
 const frontendConfig = serverConfig.frontend || {}
 const backendConfig = serverConfig.backend || {}
-const backendPort = backendConfig.port || 5000
+const authConfig = serverConfig.auth || {}
+
+// auth 启用时，开发环境默认连接 normal 端口（需要认证）
+const authEnabled = !!authConfig.enabled
+const backendPort = authEnabled
+  ? (authConfig.normal_port || 5001)
+  : (backendConfig.port || 5000)
+
 const backendSslEnabled = backendConfig.ssl_enabled !== false
 const backendProtocol = backendSslEnabled ? 'https' : 'http'
 const backendHost = backendConfig.host === '0.0.0.0' ? '127.0.0.1' : (backendConfig.host || '127.0.0.1')
@@ -61,6 +83,9 @@ if (backendSslEnabled) {
     console.warn('[vite] SSL cert files not found, Vite dev server will use HTTP')
   }
 }
+
+console.log(`[vite] Backend target: ${backendTarget}`)
+console.log(`[vite] Auth enabled: ${authEnabled}`)
 
 export default defineConfig({
   plugins: [vue()],
@@ -94,6 +119,9 @@ export default defineConfig({
   },
   define: {
     'import.meta.env.VITE_BACKEND_PORT': JSON.stringify(backendPort),
-    'import.meta.env.VITE_BACKEND_SSL_ENABLED': JSON.stringify(backendSslEnabled)
+    'import.meta.env.VITE_BACKEND_SSL_ENABLED': JSON.stringify(backendSslEnabled),
+    'import.meta.env.VITE_AUTH_ENABLED': JSON.stringify(authEnabled),
+    'import.meta.env.VITE_PRIVATE_PORT': JSON.stringify(authConfig.private_port || 5000),
+    'import.meta.env.VITE_NORMAL_PORT': JSON.stringify(authConfig.normal_port || 5001)
   }
 })

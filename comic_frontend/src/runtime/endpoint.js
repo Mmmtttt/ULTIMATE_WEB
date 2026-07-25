@@ -47,11 +47,7 @@ export function resolveApiBaseUrl() {
     return trimTrailingSlash(envBase)
   }
 
-  if (import.meta.env.DEV) {
-    const origin = getDevBackendOrigin()
-    return origin ? `${origin}/api` : '/api'
-  }
-
+  // 开发环境默认走 Vite 代理（相对路径），避免跨域导致 cookie 问题
   return '/api'
 }
 

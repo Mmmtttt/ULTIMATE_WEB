@@ -38,6 +38,14 @@
     <van-cell-group class="mine-menu" inset>
       <van-cell title="系统设置" icon="setting-o" to="/config" is-link />
     </van-cell-group>
+
+    <van-cell-group v-if="authEnabled" class="mine-menu" inset>
+      <van-cell title="退出登录" icon="logout" @click="handleLogout" is-link>
+        <template #value>
+          <span style="color: var(--text-tertiary); font-size: 13px;">{{ currentModeText }}</span>
+        </template>
+      </van-cell>
+    </van-cell-group>
     
     <div class="about">
       <div class="about-card">
@@ -184,12 +192,14 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useComicStore, useVideoStore, useCacheStore, useTagStore, useListStore, useModeStore, useImportTaskStore, useAppUpdateStore } from '@/stores'
+import { useAuthStore } from '@/stores/auth'
 import { showFailToast, showConfirmDialog, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
 import { fetchProtocolPlatformOptions } from '@/utils'
 
 const router = useRouter()
 const modeStore = useModeStore()
+const authStore = useAuthStore()
 const comicStore = useComicStore()
 const videoStore = useVideoStore()
 const cacheStore = useCacheStore()
@@ -199,6 +209,8 @@ const importTaskStore = useImportTaskStore()
 const appUpdateStore = useAppUpdateStore()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
+const authEnabled = computed(() => authStore.enabled)
+const currentModeText = computed(() => authStore.mode === 'normal' ? '正常模式' : '隐私模式')
 
 // State
 const showImportDialog = ref(false)
@@ -262,6 +274,31 @@ function handleOpenReleasePage() {
 function goToFavorites() {
   const favoritesListId = isVideoMode.value ? 'list_favorites_video' : 'list_favorites_comic'
   router.push(`/list/${favoritesListId}`)
+}
+
+async function handleLogout() {
+  try {
+    await showConfirmDialog({
+      title: '退出登录',
+      message: '确定要退出登录吗？退出后将进入隐私模式。',
+      confirmButtonText: '退出',
+      cancelButtonText: '取消'
+    })
+  } catch (e) {
+    // 用户取消
+    return
+  }
+
+  try {
+    await authStore.logout()
+    showSuccessToast('已退出登录')
+  } catch (e) {
+    showFailToast('退出失败')
+    return
+  }
+
+  // 跳转到登录页
+  router.replace('/login')
 }
 
 async function loadImportPlatformOptions() {
