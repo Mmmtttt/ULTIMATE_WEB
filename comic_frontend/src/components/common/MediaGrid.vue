@@ -21,7 +21,7 @@
             @click.stop="$emit('direct-read', item)"
           >
             <van-icon name="play-circle-o" size="16" />
-            <span>直接阅读</span>
+            <span></span>
           </div>
           <van-image 
             :src="getCoverUrl(item)" 
@@ -413,24 +413,25 @@ function displaySubtitle(item) {
   left: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
   z-index: 3;
-  opacity: 0.88;
-  background: rgba(20, 31, 49, 0.40);
-  border: 2px solid rgba(255, 255, 255, 0.45);
+  opacity: 0.9;
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.85);
   border-radius: 50%;
   width: 52px;
   height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
   cursor: pointer;
 }
 
 .play-btn:hover {
   opacity: 1;
-  background: rgba(20, 31, 49, 0.58);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 1);
   transform: translate(-50%, -50%) scale(1.08);
 }
 
@@ -443,8 +444,8 @@ function displaySubtitle(item) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(16, 27, 48, 0.78);
-  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
   border-radius: 999px;
   color: #fff;
   padding: 7px 16px 7px 12px;
@@ -452,8 +453,8 @@ function displaySubtitle(item) {
   font-weight: 600;
   cursor: pointer;
   z-index: 5;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -465,7 +466,8 @@ function displaySubtitle(item) {
     transform 0.22s ease,
     background 0.2s ease,
     border-color 0.2s ease;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
 }
 
 .read-now-btn.visible {
@@ -474,8 +476,8 @@ function displaySubtitle(item) {
 }
 
 .read-now-btn:hover {
-  background: rgba(47, 116, 255, 0.88);
-  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.95);
   transform: translate(-50%, -50%) scale(1.06);
 }
 
