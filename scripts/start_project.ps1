@@ -11,6 +11,28 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "=== Start Project ===" -ForegroundColor Green
 
+# 读取服务器配置，判断后端协议
+$backendProtocol = "http"
+$backendPort = 5000
+$frontendPort = 5173
+$configPath = Join-Path $rootDir "server_config.json"
+if (Test-Path $configPath) {
+    try {
+        $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($config.backend) {
+            $backendPort = [int]$config.backend.port
+            if ($config.backend.ssl_enabled -ne $false -and $config.backend.ssl_enabled -ne "false") {
+                $backendProtocol = "https"
+            }
+        }
+        if ($config.frontend -and $config.frontend.port) {
+            $frontendPort = [int]$config.frontend.port
+        }
+    } catch {
+        Write-Host "Warning: Failed to parse server_config.json, using defaults" -ForegroundColor Yellow
+    }
+}
+
 # 先停止已运行的服务
 Write-Host "Stopping existing services..." -ForegroundColor Cyan
 & "$scriptDir\stop_services.ps1"
@@ -52,8 +74,8 @@ Start-Sleep -Seconds 8
 
 # 显示服务状态
 Write-Host "`n=== Services Started ===" -ForegroundColor Green
-Write-Host "Backend: http://127.0.0.1:5000" -ForegroundColor Yellow
-Write-Host "Frontend: http://localhost:5173/" -ForegroundColor Yellow
+Write-Host "Backend: $($backendProtocol)://127.0.0.1:$backendPort" -ForegroundColor Yellow
+Write-Host "Frontend: $($backendProtocol)://localhost:$frontendPort/" -ForegroundColor Yellow
 Write-Host "" -ForegroundColor Green
 Write-Host "To stop services, run: .\scripts\stop_services.ps1" -ForegroundColor Yellow
 Write-Host "To view status, run: .\scripts\view_status.ps1" -ForegroundColor Yellow

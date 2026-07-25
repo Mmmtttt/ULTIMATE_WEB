@@ -11,6 +11,28 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "=== View Service Status ===" -ForegroundColor Green
 
+# 读取服务器配置，判断后端协议
+$backendProtocol = "http"
+$backendPort = 5000
+$frontendPort = 5173
+$configPath = Join-Path $rootDir "server_config.json"
+if (Test-Path $configPath) {
+    try {
+        $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($config.backend) {
+            $backendPort = [int]$config.backend.port
+            if ($config.backend.ssl_enabled -ne $false -and $config.backend.ssl_enabled -ne "false") {
+                $backendProtocol = "https"
+            }
+        }
+        if ($config.frontend -and $config.frontend.port) {
+            $frontendPort = [int]$config.frontend.port
+        }
+    } catch {
+        Write-Host "Warning: Failed to parse server_config.json, using defaults" -ForegroundColor Yellow
+    }
+}
+
 Write-Host "Backend service processes:" -ForegroundColor Cyan
 $backendProcesses = Get-Process python -ErrorAction SilentlyContinue
 if ($backendProcesses) {
@@ -31,26 +53,46 @@ if ($frontendProcesses) {
 Write-Host "" -ForegroundColor Green
 Write-Host "Testing service availability:" -ForegroundColor Cyan
 
+# 后端健康检查（支持 HTTPS 自签名证书）
+$backendUrl = "$backendProtocol`://127.0.0.1:$backendPort/health"
 try {
-    $backendResponse = Invoke-WebRequest -Uri "http://127.0.0.1:5000/health" -TimeoutSec 3 -UseBasicParsing
+    if ($backendProtocol -eq "https") {
+        # 忽略自签名证书验证
+        $callback = { return $true }
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $callback
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    }
+    $backendResponse = Invoke-WebRequest -Uri $backendUrl -TimeoutSec 3 -UseBasicParsing
     if ($backendResponse.StatusCode -eq 200) {
-        Write-Host "Backend service: OK (Status: $($backendResponse.StatusCode))" -ForegroundColor Green
+        Write-Host "Backend service: OK ($backendUrl, Status: $($backendResponse.StatusCode))" -ForegroundColor Green
     } else {
-        Write-Host "Backend service: ERROR (Status: $($backendResponse.StatusCode))" -ForegroundColor Red
+        Write-Host "Backend service: ERROR ($backendUrl, Status: $($backendResponse.StatusCode))" -ForegroundColor Red
     }
 } catch {
-    Write-Host "Backend service: ERROR (Not accessible)" -ForegroundColor Red
+    Write-Host "Backend service: ERROR ($backendUrl, Not accessible)" -ForegroundColor Red
+} finally {
+    # 恢复证书验证
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 }
 
+# 前端健康检查
+$frontendUrl = "$backendProtocol`://localhost:$frontendPort/"
 try {
-    $frontendResponse = Invoke-WebRequest -Uri "http://localhost:5173/" -TimeoutSec 3 -UseBasicParsing
+    if ($backendProtocol -eq "https") {
+        $callback = { return $true }
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $callback
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    }
+    $frontendResponse = Invoke-WebRequest -Uri $frontendUrl -TimeoutSec 3 -UseBasicParsing
     if ($frontendResponse.StatusCode -eq 200) {
-        Write-Host "Frontend service: OK (Status: $($frontendResponse.StatusCode))" -ForegroundColor Green
+        Write-Host "Frontend service: OK ($frontendUrl, Status: $($frontendResponse.StatusCode))" -ForegroundColor Green
     } else {
-        Write-Host "Frontend service: ERROR (Status: $($frontendResponse.StatusCode))" -ForegroundColor Red
+        Write-Host "Frontend service: ERROR ($frontendUrl, Status: $($frontendResponse.StatusCode))" -ForegroundColor Red
     }
 } catch {
-    Write-Host "Frontend service: ERROR (Not accessible)" -ForegroundColor Red
+    Write-Host "Frontend service: ERROR ($frontendUrl, Not accessible)" -ForegroundColor Red
+} finally {
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 }
 
 Write-Host "" -ForegroundColor Green

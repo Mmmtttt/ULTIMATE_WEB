@@ -1,7 +1,11 @@
 {
   "backend": {
     "host": "0.0.0.0",
-    "port": 5000
+    "port": 5000,
+    "ssl_enabled": true,
+    "ssl_auto_generate": true,
+    "ssl_cert_path": "",
+    "ssl_key_path": ""
   },
   "frontend": {
     "host": "0.0.0.0",

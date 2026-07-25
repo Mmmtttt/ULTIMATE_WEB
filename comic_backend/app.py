@@ -23,6 +23,7 @@ from core.constants import (
     VIDEO_DIR,
     ensure_storage_layout,
 )
+from core.ssl_cert import get_ssl_context_tuple
 from infrastructure.archive import ensure_rar_backend_configured, probe_7z_encryption_capability
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
 from infrastructure.logger import app_logger
@@ -76,6 +77,77 @@ def _resolve_backend_debug():
     if env_debug is not None:
         return _as_bool(env_debug, default=False)
     return not getattr(sys, "frozen", False)
+
+
+def _is_android_runtime() -> bool:
+    runtime_profile = str(os.environ.get("BACKEND_RUNTIME_PROFILE", "")).strip().lower()
+    android_files_dir = str(os.environ.get("ANDROID_APP_FILES_DIR", "")).strip()
+    return runtime_profile == "android" or bool(android_files_dir)
+
+
+def _resolve_ssl_enabled() -> bool:
+    env_ssl = os.environ.get("BACKEND_SSL_ENABLED")
+    if env_ssl is not None:
+        return _as_bool(env_ssl, default=False)
+    if _is_android_runtime():
+        return False
+    config_val = SERVER_CONFIG.get("backend", {}).get("ssl_enabled")
+    if config_val is None:
+        return not _is_android_runtime()
+    return _as_bool(config_val, default=not _is_android_runtime())
+
+
+def _resolve_ssl_auto_generate() -> bool:
+    env_auto = os.environ.get("BACKEND_SSL_AUTO_GENERATE")
+    if env_auto is not None:
+        return _as_bool(env_auto, default=True)
+    return _as_bool(
+        SERVER_CONFIG.get("backend", {}).get("ssl_auto_generate", True),
+        default=True,
+    )
+
+
+def _resolve_ssl_cert_path() -> str:
+    env_cert = str(os.environ.get("BACKEND_SSL_CERT_PATH", "")).strip()
+    if env_cert:
+        return os.path.abspath(os.path.expanduser(env_cert))
+    config_cert = str(SERVER_CONFIG.get("backend", {}).get("ssl_cert_path", "")).strip()
+    if config_cert:
+        return os.path.abspath(os.path.expanduser(config_cert))
+    return ""
+
+
+def _resolve_ssl_key_path() -> str:
+    env_key = str(os.environ.get("BACKEND_SSL_KEY_PATH", "")).strip()
+    if env_key:
+        return os.path.abspath(os.path.expanduser(env_key))
+    config_key = str(SERVER_CONFIG.get("backend", {}).get("ssl_key_path", "")).strip()
+    if config_key:
+        return os.path.abspath(os.path.expanduser(config_key))
+    return ""
+
+
+def _resolve_ssl_context():
+    if not _resolve_ssl_enabled():
+        return None
+    cert_path = _resolve_ssl_cert_path()
+    key_path = _resolve_ssl_key_path()
+    auto_generate = _resolve_ssl_auto_generate()
+    try:
+        result = get_ssl_context_tuple(
+            cert_path=cert_path or None,
+            key_path=key_path or None,
+            auto_generate=auto_generate,
+        )
+        if result:
+            app_logger.info(
+                f"SSL enabled: cert={result[0]}, key={result[1]}"
+            )
+            return result
+        app_logger.warning("SSL enabled but certificate unavailable, falling back to HTTP")
+    except Exception as e:
+        app_logger.warning(f"SSL setup failed, falling back to HTTP: {e}")
+    return None
 
 
 HOST = _resolve_backend_host()
@@ -296,6 +368,9 @@ def run_backend_server(host=None, port=None, debug=None):
         resolved_port = PORT
     resolved_debug = DEBUG if debug is None else bool(debug)
 
+    ssl_context = _resolve_ssl_context()
+    protocol = "https" if ssl_context else "http"
+
     ensure_rar_backend_configured(logger=app_logger, force=True)
     sevenzip_capability = probe_7z_encryption_capability()
     app_logger.info(
@@ -314,13 +389,14 @@ def run_backend_server(host=None, port=None, debug=None):
     init_tag_schema()
     init_default_data()
     init_backup()
-    app_logger.info(f"Starting backend service at {resolved_host}:{resolved_port}")
+    app_logger.info(f"Starting backend service at {protocol}://{resolved_host}:{resolved_port}")
     app.run(
         host=resolved_host,
         port=resolved_port,
         debug=resolved_debug,
         use_reloader=False,
         threaded=True,
+        ssl_context=ssl_context,
     )
 
 
