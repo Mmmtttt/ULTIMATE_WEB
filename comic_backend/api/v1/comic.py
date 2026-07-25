@@ -383,6 +383,50 @@ def comic_detail():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/third-party/detail', methods=['GET'])
+def third_party_comic_detail():
+    from protocol.adapter_api import ProtocolAdapterAPI
+    from protocol.presentation import annotate_item
+    from core.runtime_profile import is_third_party_enabled
+
+    if not is_third_party_enabled():
+        return error_response(503, "third-party integration is disabled")
+
+    try:
+        comic_id = request.args.get('comic_id')
+        platform = request.args.get('platform')
+
+        if not comic_id:
+            return error_response(400, "缺少参数")
+
+        if not platform:
+            return error_response(400, "缺少 platform 参数")
+
+        adapter_api = ProtocolAdapterAPI()
+        app_logger.info(f"第三方漫画详情: comic_id={comic_id}, platform={platform}")
+        result = adapter_api.get_album_by_id(comic_id, adapter_name=platform)
+
+        if result:
+            albums = result.get('albums') or [result]
+            if albums:
+                detail = albums[0]
+                if isinstance(detail, dict) and detail.get("found") is False:
+                    error_logger.warning(f"第三方漫画详情未找到: comic_id={comic_id}, platform={platform}")
+                    return error_response(404, "漫画在第三方平台不存在")
+                annotated = annotate_item(detail, platform_name=platform, media_type="comic", capability="catalog.detail")
+                return success_response(annotated)
+            else:
+                error_logger.warning(f"第三方漫画详情返回空 albums: comic_id={comic_id}, platform={platform}")
+
+        return error_response(404, "漫画不存在")
+    except RuntimeError as e:
+        error_logger.error(f"获取第三方漫画详情失败(配置/运行时): {e}")
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"获取第三方漫画详情失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/images', methods=['GET'])
 def comic_images():
     try:

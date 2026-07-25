@@ -1,5 +1,5 @@
 <template>
-  <div class="comic-reader" :style="{ background: background }" ref="readerRoot">
+  <div class="comic-reader" :class="{ 'reader-fullscreen': !isMobile }" :style="{ background: background }" ref="readerRoot">
     <van-nav-bar 
       class="reader-nav"
       v-show="showMenu"
@@ -196,6 +196,9 @@ import {
 const route = useRoute()
 const comicStore = useComicStore()
 const configStore = useConfigStore()
+
+const isThirdPartyMode = computed(() => route.query.mode === 'third_party')
+const platform = computed(() => route.query.platform)
 
 const resolvePageMode = (mode) => (mode === 'left_right' || mode === 'up_down' ? mode : 'up_down')
 
@@ -876,10 +879,14 @@ const commitReadingPage = (page, immediateProgress = false) => {
 
   if (safePage !== lastCommittedPage.value) {
     lastCommittedPage.value = safePage
-    preloadImages(safePage)
+    if (!isThirdPartyMode.value) {
+      preloadImages(safePage)
+    }
   }
 
-  scheduleProgressSave(safePage, immediateProgress)
+  if (!isThirdPartyMode.value) {
+    scheduleProgressSave(safePage, immediateProgress)
+  }
   return safePage
 }
 
@@ -991,6 +998,10 @@ const preloadImages = (startPage) => {
 
 const getImageSrc = (pageNum) => {
   const safePage = clampPage(pageNum, totalPage.value)
+  // 第三方模式：图片 URL 已全部可用，直接返回
+  if (isThirdPartyMode.value) {
+    return images.value[safePage - 1] || ''
+  }
   if (!loadedPages.value.has(safePage)) {
     return ''
   }
@@ -1166,36 +1177,78 @@ const loadImages = async () => {
   loadQueue.value = []
 
   try {
-    const comic = await comicStore.fetchComicDetail(comicId.value)
-    const imageData = await fetchImagesWithSoftRefPasswordFallback()
+    if (isThirdPartyMode.value) {
+      // 第三方模式：从插件 API 获取图片 URL
+      const response = await comicApi.thirdPartyDetail(comicId.value, platform.value)
+      if (response.code === 200 && response.data) {
+        const urls = response.data.image_urls || []
+        if (urls.length === 0) {
+          throw new Error('empty images')
+        }
+        images.value = urls
+        totalPage.value = urls.length
+        const routePage = Number(route.query.page)
+        const hasExplicitPage = Number.isFinite(routePage) && routePage > 0
+        const initialPage = clampPage(
+          hasExplicitPage ? routePage : 1,
+          totalPage.value
+        )
+        currentPage.value = initialPage
+        sliderPage.value = initialPage
+        lastCommittedPage.value = initialPage
+        if (hasExplicitPage) {
+          pendingRestorePage.value = initialPage
+          startRestoreBootstrap()
+          preloadImages(initialPage)
+        }
+      } else {
+        throw new Error(response?.msg || '获取漫画详情失败')
+      }
+    } else {
+      // 本地模式：从 store 加载
+      const comic = await comicStore.fetchComicDetail(comicId.value)
+      const imageData = await fetchImagesWithSoftRefPasswordFallback()
 
-    if (!imageData || imageData.length === 0) {
-      throw new Error('empty images')
+      if (!imageData || imageData.length === 0) {
+        throw new Error('empty images')
+      }
+
+      images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
+      totalPage.value = images.value.length
+
+      const routePage = Number(route.query.page)
+      const hasExplicitPage = Number.isFinite(routePage) && routePage > 0
+      const initialPage = clampPage(
+        hasExplicitPage ? routePage : comic?.current_page || 1,
+        totalPage.value
+      )
+
+      currentPage.value = initialPage
+      sliderPage.value = initialPage
+      lastCommittedPage.value = initialPage
+      lastSavedPage.value = initialPage
+
+      if (hasExplicitPage) {
+        // 有明确 ?page=N 参数：等待目标页图片加载后再跳转
+        // 保留 pendingRestorePage，由 handlePageImageLoad 在图片加载完成后
+        // 触发 tryRestorePendingPage，避免图片未加载时页宽为 0 导致 scroll 被钳位
+        pendingRestorePage.value = initialPage
+        restoreRetryCount = 0
+        clearRestoreRetry()
+        startRestoreBootstrap()
+        preloadImages(initialPage)
+      } else {
+        // 无明确参数：使用恢复机制回到上次阅读位置
+        pendingRestorePage.value = initialPage
+        restoreRetryCount = 0
+        clearRestoreRetry()
+        startRestoreBootstrap()
+        preloadImages(initialPage)
+        await nextTick()
+        await nextAnimationFrame()
+        void tryRestorePendingPage(restoreSession)
+      }
     }
-
-    images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
-    totalPage.value = images.value.length
-
-    const routePage = Number(route.query.page)
-    const initialPage = clampPage(
-      Number.isFinite(routePage) && routePage > 0 ? routePage : comic?.current_page || 1,
-      totalPage.value
-    )
-
-    currentPage.value = initialPage
-    sliderPage.value = initialPage
-    lastCommittedPage.value = initialPage
-    lastSavedPage.value = initialPage
-    pendingRestorePage.value = initialPage
-    restoreRetryCount = 0
-    clearRestoreRetry()
-    startRestoreBootstrap()
-
-    preloadImages(initialPage)
-
-    await nextTick()
-    await nextAnimationFrame()
-    void tryRestorePendingPage(restoreSession)
   } catch (err) {
     error.value = true
     console.error('加载图片失败:', err)
@@ -1298,6 +1351,7 @@ const handleScroll = () => {
 }
 
 const flushProgressBeforeLeave = () => {
+  if (isThirdPartyMode.value) return
   if (saveProgressTimer) {
     clearTimeout(saveProgressTimer)
     saveProgressTimer = null
@@ -1989,6 +2043,7 @@ const handleKeydown = (event) => {
 }
 
 const handleVisibilityChange = () => {
+  if (isThirdPartyMode.value) return
   if (getVisibilityState() === 'hidden') {
     flushProgressBeforeLeave()
   }
@@ -2071,6 +2126,12 @@ onUnmounted(() => {
   position: relative;
   background: #000;
   overflow: hidden;
+}
+
+.comic-reader.reader-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
 }
 
 .loading, .error {

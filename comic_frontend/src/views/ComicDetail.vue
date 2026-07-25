@@ -2,26 +2,33 @@
   <div class="comic-detail desktop-page-shell">
     <van-nav-bar title="漫画详情" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
-        <van-icon
-          :name="isFavorited ? 'star' : 'star-o'"
-          class="nav-icon"
-          :class="{ active: isFavorited }"
-          @click="handleToggleFavorite"
-          :title="isFavorited ? '取消收藏' : '收藏'"
-        />
-        <van-icon
-          name="delete-o"
-          class="nav-icon"
-          @click="handleMoveToTrash"
-          title="移入回收站"
-        />
+        <template v-if="isThirdPartyMode">
+          <van-button size="small" type="primary" @click="handleThirdPartyImport" :loading="importing">
+            导入
+          </van-button>
+        </template>
+        <template v-else>
+          <van-icon
+            :name="isFavorited ? 'star' : 'star-o'"
+            class="nav-icon"
+            :class="{ active: isFavorited }"
+            @click="handleToggleFavorite"
+            :title="isFavorited ? '取消收藏' : '收藏'"
+          />
+          <van-icon
+            name="delete-o"
+            class="nav-icon"
+            @click="handleMoveToTrash"
+            title="移入回收站"
+          />
+        </template>
       </template>
     </van-nav-bar>
     
     <van-loading v-if="isLoading" type="spinner" color="#1989fa" />
     
     <div v-else-if="!comic" class="empty">
-      <van-empty description="漫画不存在" />
+      <van-empty :description="emptyDescription" />
     </div>
     
     <div v-else class="detail-content">
@@ -40,7 +47,13 @@
               </template>
             </van-image>
             <van-tag
-              v-if="comic.source === 'preview'"
+              v-if="isThirdPartyMode"
+              type="warning"
+              size="small"
+              class="source-tag"
+            >{{ route.query.platform }}</van-tag>
+            <van-tag
+              v-else-if="comic.source === 'preview'"
               type="primary"
               size="small"
               class="source-tag"
@@ -53,7 +66,7 @@
             >本地库</van-tag>
           </div>
           <div class="info">
-            <van-icon name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
+            <van-icon v-if="!isThirdPartyMode" name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
             <h1 class="title">{{ comic.title }}</h1>
             <div class="author-row">
               <p class="author" v-if="comic.author">
@@ -61,7 +74,7 @@
               </p>
               <p class="author" v-else>未知作者</p>
               <van-button 
-                v-if="comic.author && !isSubscribed" 
+                v-if="!isThirdPartyMode && comic.author && !isSubscribed" 
                 size="mini" 
                 type="primary" 
                 plain
@@ -70,30 +83,29 @@
               >
                 订阅作者
               </van-button>
-              <van-tag v-else-if="comic.author && isSubscribed" type="success" size="medium">
+              <van-tag v-else-if="!isThirdPartyMode && comic.author && isSubscribed" type="success" size="medium">
                 已订阅
               </van-tag>
             </div>
             
-            <div class="stats">
+            <div v-if="!isThirdPartyMode" class="stats">
               <span class="stat-item">ID: {{ comic.id }}</span>
               <span class="stat-item">总页数: {{ comic.total_page }}</span>
               <span class="stat-item">进度: {{ comic.current_page }}/{{ comic.total_page }}</span>
               <span class="stat-item">{{ progressPercent }}%</span>
             </div>
 
-            <div v-if="comicStoragePath" class="storage-path-row" :title="comicStoragePath">
+            <div v-if="!isThirdPartyMode && comicStoragePath" class="storage-path-row" :title="comicStoragePath">
               <span class="storage-path-label">Path:</span>
               <span class="storage-path-value">{{ comicStoragePath }}</span>
             </div>
           </div>
         </div>
 
-        <div class="score-section">
+        <div v-if="!isThirdPartyMode" class="score-section">
           <div class="score-display">
             <div class="score-summary">
               <span class="score-label">评分</span>
-              <van-icon name="star" class="score-star" />
             </div>
           </div>
           <div class="score-rate-wrap">
@@ -108,7 +120,7 @@
         </div>
       </div>
       
-      <div class="tags-section">
+      <div v-if="!isThirdPartyMode" class="tags-section">
         <h2 class="section-title">标签</h2>
         <div class="tags-container">
           <van-tag 
@@ -195,21 +207,38 @@
         </div>
       </div>
       
-      <div class="preview-section" v-if="comic.preview_pages && comic.preview_pages.length > 0">
+      <div class="preview-section" v-if="previewImages.length > 0">
         <h2 class="section-title">内容预览</h2>
         <div class="preview-grid">
           <div 
-            v-for="(page, index) in comic.preview_pages" 
+            v-for="(item, index) in displayedPreviewItems" 
             :key="index" 
             class="preview-item" 
             @click="previewImage(index)"
           >
             <img 
-              :src="getImageUrl(comic.id, page)" 
+              :src="item.url" 
               class="preview-image"
             />
-            <span class="preview-page">第{{ page }}页</span>
+            <div class="preview-hover-overlay">
+              <button class="preview-jump-btn" @click.stop="goToPreviewPage(item.pageNum)">
+                跳转到此页
+              </button>
+            </div>
+            <span class="preview-page">第{{ item.pageNum }}页</span>
           </div>
+        </div>
+        <div class="preview-actions">
+          <button
+            v-if="isPreviewLimited && hasMorePreviews"
+            class="preview-action-btn"
+            @click="expandPreview"
+          >
+            展开更多 ({{ previewImages.length - previewLimit }})
+          </button>
+          <button class="preview-action-btn preview-action-btn--primary" @click="showAllPreviews">
+            显示全部 ({{ previewImages.length }})
+          </button>
         </div>
       </div>
       
@@ -224,7 +253,15 @@
       />
       
       <div class="action-section">
-        <van-button type="primary" size="large" @click="startReading" class="read-button">
+        <template v-if="isThirdPartyMode">
+          <van-button type="primary" size="large" @click="startThirdPartyReading" :disabled="!comic.image_urls || comic.image_urls.length === 0" class="read-button">
+            在线阅读
+          </van-button>
+          <van-button plain size="large" @click="handleThirdPartyImport" :loading="importing">
+            导入到本地
+          </van-button>
+        </template>
+        <van-button v-else type="primary" size="large" @click="startReading" class="read-button">
           {{ comic.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
       </div>
@@ -359,11 +396,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { authorApi } from '@/api'
+import { authorApi, comicApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
@@ -385,6 +422,8 @@ const newTagName = ref('')
 const tagAdding = ref(false)
 const showPreview = ref(false)
 const previewIndex = ref(0)
+const previewLimit = ref(0)
+const previewColumns = ref(2)
 const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedListIds = ref([])
@@ -394,6 +433,12 @@ const downloadLoading = ref(false)
 const subscribing = ref(false)
 const isSubscribed = ref(false)
 const refreshingLocalMetadata = ref(false)
+
+const isThirdPartyMode = computed(() => {
+  return Boolean(route.query.platform)
+})
+const importing = ref(false)
+const thirdPartyError = ref('')
 
 const editForm = ref({
   title: '',
@@ -420,9 +465,65 @@ const progressPercent = computed(() => {
 })
 
 const previewImages = computed(() => {
-  if (!comic.value || !comic.value.preview_pages) return []
+  if (!comic.value) return []
+  if (isThirdPartyMode.value) {
+    if (comic.value.preview_urls && comic.value.preview_urls.length > 0) {
+      return comic.value.preview_urls
+    }
+    if (!comic.value.preview_pages) return []
+    return comic.value.preview_pages.map((page) => {
+      return typeof page === 'string' && page.startsWith('http')
+        ? page
+        : buildImageUrl(comic.value.id, page)
+    })
+  }
+  if (!comic.value.preview_pages) return []
   return comic.value.preview_pages.map(page => getImageUrl(comic.value.id, page))
 })
+
+function updatePreviewColumns() {
+  const w = window.innerWidth
+  if (w >= 1200) previewColumns.value = 5
+  else if (w >= 768) previewColumns.value = 4
+  else if (w >= 480) previewColumns.value = 3
+  else previewColumns.value = 2
+}
+
+const displayedPreviews = computed(() => {
+  if (previewLimit.value <= 0) return previewImages.value
+  return previewImages.value.slice(0, previewLimit.value)
+})
+
+const previewItems = computed(() => {
+  if (!comic.value) return []
+  const urls = previewImages.value
+  const pages = comic.value.preview_pages || []
+  return urls.map((url, i) => ({
+    url,
+    pageNum: pages[i] || (i + 1)
+  }))
+})
+
+const displayedPreviewItems = computed(() => {
+  if (previewLimit.value <= 0) return previewItems.value
+  return previewItems.value.slice(0, previewLimit.value)
+})
+
+const hasMorePreviews = computed(() => {
+  return previewImages.value.length > previewColumns.value
+})
+
+const isPreviewLimited = computed(() => {
+  return previewLimit.value > 0 && previewLimit.value < previewImages.value.length
+})
+
+function expandPreview() {
+  previewLimit.value = Math.min(previewLimit.value + previewColumns.value, previewImages.value.length)
+}
+
+function showAllPreviews() {
+  previewLimit.value = previewImages.value.length
+}
 
 const isFavorited = computed(() => {
   return listStore.isFavorited(comic.value)
@@ -442,6 +543,16 @@ const comicStoragePath = computed(() => {
 
 const hasChapters = computed(() => {
   return Array.isArray(comic.value?.chapters) && comic.value.chapters.length > 1
+})
+
+const emptyDescription = computed(() => {
+  if (isThirdPartyMode.value && route.query.platform) {
+    if (thirdPartyError.value) {
+      return thirdPartyError.value
+    }
+    return `无法从 ${route.query.platform} 加载漫画详情，请确认该平台插件已启用并配置正确`
+  }
+  return '漫画不存在'
 })
 
 const chapterCards = computed(() => {
@@ -475,7 +586,12 @@ function getImageUrl(comicId, pageNum) {
 async function fetchComicDetail() {
   const comicId = route.params.id
   isLoading.value = true
-  
+
+  if (isThirdPartyMode.value) {
+    await fetchThirdPartyDetail(comicId)
+    return
+  }
+
   try {
     const detail = await comicStore.fetchComicDetail(comicId)
     if (detail) {
@@ -493,6 +609,61 @@ async function fetchComicDetail() {
     console.error('获取漫画详情失败:', error)
   } finally {
     isLoading.value = false
+  }
+}
+
+async function fetchThirdPartyDetail(comicId) {
+  try {
+    const response = await comicApi.thirdPartyDetail(comicId, route.query.platform)
+    if (response.code === 200 && response.data) {
+      const data = response.data
+      comic.value = {
+        id: data.id || data.album_id || comicId,
+        title: data.title || data.name || '',
+        author: data.author || data.artist || '',
+        desc: data.description || data.desc || '',
+        cover_path: data.cover_path || data.cover_url || '',
+        total_page: data.total_page || data.page_count || data.pages || 0,
+        preview_urls: data.preview_urls || [],
+        image_urls: data.image_urls || [],
+        preview_pages: data.preview_pages || data.preview_images || [],
+        tags: data.tags || [],
+        chapters: data.chapters || [],
+        score: data.score || 0,
+        source: route.query.platform,
+      }
+    } else {
+      thirdPartyError.value = response?.msg || '获取漫画详情失败'
+      console.warn('[ThirdParty] 响应异常:', response)
+    }
+  } catch (error) {
+    thirdPartyError.value = error?.message || '获取第三方漫画详情失败'
+    console.error('[ThirdParty] 获取第三方漫画详情失败:', error)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+async function handleThirdPartyImport() {
+  if (!comic.value) return
+  importing.value = true
+  try {
+    const response = await comicApi.onlineImport({
+      import_type: 'by_id',
+      target: 'home',
+      platform: route.query.platform,
+      comic_id: route.params.id,
+    })
+    if (response.code === 200) {
+      showSuccessToast('导入成功')
+      router.replace({ query: {} })
+    } else {
+      showFailToast(response.msg || '导入失败')
+    }
+  } catch {
+    showFailToast('导入失败')
+  } finally {
+    importing.value = false
   }
 }
 
@@ -546,8 +717,29 @@ function startReading() {
   router.push(`/reader/${comic.value.id}`)
 }
 
+function startThirdPartyReading() {
+  if (!comic.value.image_urls || comic.value.image_urls.length === 0) return
+  router.push({
+    name: 'ComicReader',
+    params: { id: route.params.id },
+    query: { mode: 'third_party', platform: route.query.platform, title: comic.value.title }
+  })
+}
+
 function goToPage(page) {
   router.push(`/reader/${comic.value.id}?page=${page}`)
+}
+
+function goToPreviewPage(page) {
+  if (isThirdPartyMode.value) {
+    router.push({
+      name: 'ComicReader',
+      params: { id: route.params.id },
+      query: { mode: 'third_party', platform: route.query.platform, title: comic.value.title, page: String(page) }
+    })
+  } else {
+    router.push(`/reader/${comic.value.id}?page=${page}`)
+  }
 }
 
 function openChapter(chapter) {
@@ -906,7 +1098,18 @@ onMounted(async () => {
   }
   await fetchAllTags()
   await listStore.fetchLists('comic')
+  updatePreviewColumns()
+  previewLimit.value = previewColumns.value
+  window.addEventListener('resize', onWindowResize)
 })
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize)
+})
+
+function onWindowResize() {
+  updatePreviewColumns()
+}
 
 watch(() => route.params.id, async (newId) => {
   console.log('[Detail] watch id:', newId)
@@ -931,6 +1134,8 @@ watch(showListPopup, async (val) => {
 .comic-detail {
   padding-bottom: 20px;
   background: transparent;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .nav-icon {
@@ -961,7 +1166,6 @@ watch(showListPopup, async (val) => {
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 18px;
-  overflow: hidden;
   box-shadow: 0 16px 30px rgba(2, 8, 18, 0.38);
 }
 
@@ -1101,15 +1305,17 @@ watch(showListPopup, async (val) => {
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
-  padding: 12px 14px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .score-display {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .score-summary {
@@ -1153,6 +1359,8 @@ watch(showListPopup, async (val) => {
   overflow-x: auto;
   overflow-y: hidden;
   padding-bottom: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .score-rate {
@@ -1385,6 +1593,70 @@ watch(showListPopup, async (val) => {
   border-radius: 999px;
 }
 
+.preview-hover-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.preview-item:hover .preview-hover-overlay {
+  opacity: 1;
+}
+
+.preview-jump-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand-500);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.preview-jump-btn:hover {
+  background: var(--brand-600);
+}
+
+.preview-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.preview-action-btn {
+  flex: 1;
+  height: 38px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.preview-action-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.preview-action-btn--primary {
+  background: var(--brand-500);
+  border-color: transparent;
+  color: #fff;
+}
+
+.preview-action-btn--primary:hover {
+  opacity: 0.9;
+}
+
 .action-section {
   padding: 16px;
   text-align: center;
@@ -1502,12 +1774,7 @@ watch(showListPopup, async (val) => {
 }
 
 @media (min-width: 1024px) {
-  .comic-detail {
-    padding: 16px;
-  }
-
   .detail-content {
-    max-width: 1180px;
     margin: 0 auto;
   }
 }
