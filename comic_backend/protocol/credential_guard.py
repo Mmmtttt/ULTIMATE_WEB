@@ -1,10 +1,15 @@
 """
 Protocol-level credential validation helpers for plugin configuration.
+
+Validation rules are read from each plugin's ultimate-plugin.json under
+configuration.credential. No plugin-specific hardcoding in this file.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from .registry import get_plugin_registry
 
 
 _PLACEHOLDER_TEXTS = (
@@ -48,71 +53,83 @@ def _as_enabled(raw_value) -> bool:
     return True
 
 
+def _get_nested_value(config: Dict, field_path: str):
+    current = config
+    for part in field_path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _find_plugin_manifest(adapter_name: str):
+    adapter_key = _normalize_text(adapter_name).lower()
+    if not adapter_key:
+        return None
+    try:
+        registry = get_plugin_registry()
+    except Exception:
+        return None
+    return registry.find_by_config_key(adapter_key)
+
+
+def _get_credential_config(manifest) -> Dict:
+    if manifest is None:
+        return {}
+    configuration = getattr(manifest, "configuration", None) or {}
+    if not isinstance(configuration, dict):
+        return {}
+    cred = configuration.get("credential") or {}
+    return cred if isinstance(cred, dict) else {}
+
+
 def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Dict[str, object]:
     adapter_key = _normalize_text(adapter_name).lower()
     config = dict(adapter_config or {})
-    enabled = _as_enabled(config.get("enabled", True))
+    manifest = _find_plugin_manifest(adapter_key)
+    cred_cfg = _get_credential_config(manifest)
 
-    if adapter_key == "jmcomic":
-        if not enabled:
-            return {
-                "configured": False,
-                "message": "JM 平台未启用，不能使用该平台查询。",
-                "missing_fields": ["enabled"],
-            }
-        missing = []
-        if _looks_unconfigured(config.get("username")):
-            missing.append("username")
-        if _looks_unconfigured(config.get("password")):
-            missing.append("password")
-        configured = len(missing) == 0
+    enabled_field = str(cred_cfg.get("enabled_field") or "enabled").strip() or "enabled"
+    enabled = _as_enabled(config.get(enabled_field, True))
+
+    plugin_label = ""
+    if manifest is not None:
+        plugin_label = _normalize_text(getattr(manifest, "name", "") or "") or adapter_key
+    if not plugin_label:
+        plugin_label = adapter_key
+
+    if not enabled:
+        disabled_message = str(cred_cfg.get("disabled_message") or "").strip()
+        if not disabled_message:
+            disabled_message = f"{plugin_label} 未启用，不能使用该平台查询。"
         return {
-            "configured": configured,
-            "message": "" if configured else "JM 平台未配置账号或密码，不能使用该平台查询。",
-            "missing_fields": missing,
+            "configured": False,
+            "message": disabled_message,
+            "missing_fields": [enabled_field],
         }
 
-    if adapter_key == "picacomic":
-        if not enabled:
-            return {
-                "configured": False,
-                "message": "PK 平台未启用，不能使用该平台查询。",
-                "missing_fields": ["enabled"],
-            }
-        missing = []
-        if _looks_unconfigured(config.get("account")):
-            missing.append("account")
-        if _looks_unconfigured(config.get("password")):
-            missing.append("password")
-        configured = len(missing) == 0
-        return {
-            "configured": configured,
-            "message": "" if configured else "PK 平台未配置账号或密码，不能使用该平台查询。",
-            "missing_fields": missing,
-        }
+    required_fields = cred_cfg.get("required_fields") or []
+    if not isinstance(required_fields, list):
+        required_fields = []
 
-    if adapter_key == "javdb":
-        if not enabled:
-            return {
-                "configured": False,
-                "message": "JAV 平台未启用，不能使用该平台查询。",
-                "missing_fields": ["enabled"],
-            }
-        cookies = config.get("cookies") or {}
-        if not isinstance(cookies, dict):
-            cookies = {}
-        session_cookie = _normalize_text(cookies.get("_jdb_session"))
-        configured = not _looks_unconfigured(session_cookie)
-        return {
-            "configured": configured,
-            "message": "" if configured else "JAV 平台未配置 cookie（_jdb_session），不能使用该平台查询。",
-            "missing_fields": [] if configured else ["cookies._jdb_session"],
-        }
+    missing = []
+    for field in required_fields:
+        field_name = str(field or "").strip()
+        if not field_name:
+            continue
+        value = _get_nested_value(config, field_name)
+        if _looks_unconfigured(value):
+            missing.append(field_name)
+
+    configured = len(missing) == 0
+    unconfigured_message = str(cred_cfg.get("unconfigured_message") or "").strip()
+    if not unconfigured_message and not configured:
+        unconfigured_message = f"{plugin_label} 配置不完整，不能使用该平台查询。"
 
     return {
-        "configured": True,
-        "message": "",
-        "missing_fields": [],
+        "configured": configured,
+        "message": "" if configured else unconfigured_message,
+        "missing_fields": missing,
     }
 
 

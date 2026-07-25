@@ -34,6 +34,12 @@
   "configuration": {
     "order": 90,
     "label": "TeleDrive",
+    "credential": {
+      "enabled_field": "enabled",
+      "required_fields": ["bridge_base_url"],
+      "unconfigured_message": "TeleDrive 未配置 Bridge 地址，不能使用该平台查询。",
+      "disabled_message": "TeleDrive 未启用，不能使用该平台查询。"
+    },
     "sections": [
       {
         "id": "bridge",
