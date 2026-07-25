@@ -78,7 +78,11 @@
           v-model="sourcePath"
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
-        />
+        >
+          <template #right-icon>
+            <DirectoryPicker v-model="sourcePath" />
+          </template>
+        </van-field>
         <van-field
           v-if="pathImportMode === 'softlink_ref'"
           v-model="pathArchivePassword"
@@ -281,6 +285,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
+import DirectoryPicker from '@/components/common/DirectoryPicker.vue'
 import { comicApi } from '@/api'
 import { useComicStore, useTagStore } from '@/stores'
 

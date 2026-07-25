@@ -31,7 +31,11 @@
         label="本地路径"
         placeholder="例如 D:\\Videos\\LOCAL"
         clearable
-      />
+      >
+        <template #right-icon>
+          <DirectoryPicker v-model="sourcePath" />
+        </template>
+      </van-field>
 
       <div class="import-mode-switch">
         <div class="switch-main">
@@ -153,6 +157,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { closeToast, showConfirmDialog, showFailToast, showLoadingToast, showSuccessToast } from 'vant'
+import DirectoryPicker from '@/components/common/DirectoryPicker.vue'
 import { videoApi } from '@/api'
 import { useVideoStore } from '@/stores'
 
