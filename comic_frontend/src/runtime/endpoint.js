@@ -32,7 +32,7 @@ function getRuntimeApiBase() {
 function getDevBackendOrigin() {
   const location = getLocation()
   if (!location) return ''
-  const backendPort = import.meta.env.VITE_BACKEND_PORT || 5050
+  const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
   return `${location.protocol}//${location.hostname}:${backendPort}`
 }
 
