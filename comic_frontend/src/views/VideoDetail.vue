@@ -234,15 +234,6 @@
         >
           {{ localThumbnailImages.length > 0 ? '重新生成缩略图' : '生成缩略图' }}
         </van-button>
-        <van-button
-          v-if="preferredThumbnailImages.length > 0"
-          type="default"
-          plain
-          size="small"
-          @click="showPreviewImages = !showPreviewImages"
-        >
-          {{ showPreviewImages ? '隐藏预览图' : '显示预览图' }}
-        </van-button>
       </div>
     </div>
       
@@ -270,7 +261,7 @@
         </van-cell-group>
       </div>
 
-      <div v-if="video && !isLocalVideo" class="preview-video-section">
+      <div v-if="video" class="preview-video-section">
         <van-cell-group title="预览视频">
           <div class="preview-video-actions">
             <van-button
@@ -322,7 +313,7 @@
         </van-cell-group>
       </div>
       
-      <div v-if="preferredThumbnailImages.length > 0" v-show="showPreviewImages" class="thumbnails-section">
+      <div v-if="preferredThumbnailImages.length > 0" class="thumbnails-section">
         <van-cell-group title="预览图">
           <div class="thumbnail-grid">
             <div
@@ -636,7 +627,6 @@ const refreshingPreviewVideo = ref(false)
 const refreshingLocalMetadata = ref(false)
 const generatingLocalThumbnails = ref(false)
 const savingThumbnailCover = ref(false)
-const showPreviewImages = ref(false)
 
 const hls = ref(null)
 const previewHls = ref(null)
