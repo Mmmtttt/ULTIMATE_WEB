@@ -63,6 +63,14 @@
               <div v-if="isSelected(item)" class="select-overlay">
                 <van-icon name="success" class="select-icon" />
               </div>
+              <div v-if="!isVideoMode" class="card-hover-actions">
+                <div class="hover-action-btn" title="查看详情" @click.stop="goToDetail(item)">
+                  <van-icon name="eye-o" />
+                </div>
+                <div class="hover-action-btn" title="选中" @click.stop="toggleSelection(item)">
+                  <van-icon name="success" />
+                </div>
+              </div>
             </div>
             <div class="card-info">
               <div class="card-title">{{ item.title }}</div>
@@ -221,6 +229,18 @@ function toggleSelection(item) {
     selectedIds.value = selectedIds.value.filter((itemId) => itemId !== id)
   } else {
     selectedIds.value.push(id)
+  }
+}
+
+function goToDetail(item) {
+  const id = getItemId(item)
+  if (id) {
+    const platform = resolveImportPlatform(item) || item?.platform || item?.plugin_name || ''
+    if (!platform) {
+      console.warn('[goToDetail] 无法解析平台信息:', item)
+      return
+    }
+    router.push({ name: 'ComicDetail', params: { id }, query: { platform } })
   }
 }
 
@@ -652,6 +672,50 @@ onMounted(() => {
   background: var(--brand-500);
   border-radius: 50%;
   padding: 8px;
+}
+
+.card-hover-actions {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-standard);
+  pointer-events: none;
+}
+
+.remote-result-card:hover .card-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hover-action-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background var(--motion-fast) var(--ease-standard);
+}
+
+.hover-action-btn:hover {
+  transform: scale(1.12);
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.hover-action-btn .van-icon {
+  font-size: 20px;
+  color: #fff;
 }
 
 .card-info {

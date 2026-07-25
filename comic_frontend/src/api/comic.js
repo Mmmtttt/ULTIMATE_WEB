@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 漫画相关 API
  */
 import request from './request'
@@ -173,6 +173,18 @@ export const comicApi = {
   searchThirdParty: (keyword, platform = 'all', page = 1, limit = 20) => {
     return request.get('/v1/comic/search-third-party', {
       params: { keyword, platform, page, limit }
+    })
+  },
+
+  /**
+   * 获取第三方平台漫画详情
+   * @param {string} comicId - 第三方平台漫画ID
+   * @param {string} platform - 平台标识
+   * @returns {Promise}
+   */
+  thirdPartyDetail: (comicId, platform) => {
+    return request.get('/v1/comic/third-party/detail', {
+      params: { comic_id: comicId, platform }
     })
   },
   

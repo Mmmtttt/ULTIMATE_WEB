@@ -50,13 +50,20 @@ def validate_score(score) -> tuple:
 
 
 def get_preview_pages(total_page: int) -> list:
+    if total_page <= 0:
+        return []
+    if total_page <= 10:
+        return list(range(1, total_page + 1))
+
     pages = []
-    if total_page >= 1:
-        pages.append(1)
-    if total_page >= 5:
-        pages.append(5)
-    if total_page >= 10:
-        pages.append(10)
-    if total_page > 10:
-        pages.append(total_page)
-    return pages
+    # 前 5 页
+    for i in range(1, 6):
+        pages.append(i)
+    # 中间均匀采样
+    step = max(1, (total_page - 5) // 5)
+    for p in range(5 + step, total_page, step):
+        if len(pages) < 9:
+            pages.append(p)
+    # 最后一页
+    pages.append(total_page)
+    return sorted(pages)
