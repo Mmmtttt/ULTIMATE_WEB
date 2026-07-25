@@ -4,6 +4,14 @@
 import request from './request'
 import { triggerBlobDownload } from '@/runtime/browser'
 
+/**
+ * 列出服务端目录下的文件夹/文件
+ * @param {string} path - 目录路径（空字符串则返回驱动器列表）
+ */
+export function listDirectory(path = '') {
+  return request.get('/v1/config/list-directory', { params: { path } })
+}
+
 export const comicApi = {
   /**
    * 初始化漫画数据

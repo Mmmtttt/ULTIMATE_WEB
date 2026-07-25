@@ -78,7 +78,7 @@
       :style="isDesktop ? { marginLeft: sidebarWidthPx, width: 'calc(100% - ' + sidebarWidthPx + ')' } : {}"
     >
       <router-view v-slot="{ Component }">
-        <transition name="slide-left" mode="out-in">
+        <transition name="slide-left">
           <keep-alive :include="cachedViewNames">
             <component :is="Component" />
           </keep-alive>
