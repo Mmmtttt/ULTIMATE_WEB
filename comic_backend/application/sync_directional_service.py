@@ -12,6 +12,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import requests
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 from application.persisted_content_metadata import normalize_data_relative_path
 from core.constants import (
@@ -1485,6 +1488,7 @@ class DirectionalSyncService:
                     headers=headers,
                     files=files,
                     timeout=self.HTTP_TIMEOUT_SECONDS,
+                    verify=False,
                 )
             if response.status_code in (404, 405):
                 self._report_progress(progress_cb, 90, "asset_push_upload", "remote does not support assets apply")
@@ -1551,6 +1555,7 @@ class DirectionalSyncService:
                 },
                 timeout=self.HTTP_TIMEOUT_SECONDS,
                 stream=True,
+                verify=False,
             )
             if response.status_code == 204:
                 self._report_progress(progress_cb, 90, "asset_pull", "no remote asset changes")
@@ -1563,6 +1568,7 @@ class DirectionalSyncService:
                         headers=headers,
                         timeout=self.HTTP_TIMEOUT_SECONDS,
                         stream=True,
+                        verify=False,
                     )
                     if response.status_code == 204:
                         self._report_progress(progress_cb, 90, "asset_pull", "no remote asset changes")
@@ -2859,15 +2865,35 @@ class DirectionalSyncService:
         headers: Optional[Dict[str, str]],
         body: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=headers or {},
-            json=body,
-            timeout=self.HTTP_TIMEOUT_SECONDS,
+        logger.info(
+            f"[sync] outgoing request: {method} {url} "
+            f"(timeout={self.HTTP_TIMEOUT_SECONDS}s, verify=False)"
         )
+        try:
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers or {},
+                json=body,
+                timeout=self.HTTP_TIMEOUT_SECONDS,
+                verify=False,
+            )
+        except requests.exceptions.SSLError as exc:
+            logger.error(f"[sync] SSL error connecting to {url}: {exc!r}")
+            raise RuntimeError(f"SSL certificate error connecting to {url}: {exc}") from exc
+        except requests.exceptions.ConnectionError as exc:
+            logger.error(f"[sync] connection error connecting to {url}: {exc!r}")
+            raise RuntimeError(f"Connection refused/unreachable at {url}: {exc}") from exc
+        except requests.exceptions.Timeout as exc:
+            logger.error(f"[sync] timeout connecting to {url}: {exc!r}")
+            raise RuntimeError(f"Request timeout after {self.HTTP_TIMEOUT_SECONDS}s at {url}") from exc
+        except Exception as exc:
+            logger.error(f"[sync] request failed to {url}: {exc!r}")
+            raise
+
         status = int(response.status_code)
         content_type = str(response.headers.get("Content-Type", "")).lower()
+        logger.info(f"[sync] response received: HTTP {status} from {url}")
 
         payload: Any = None
         if "application/json" in content_type:

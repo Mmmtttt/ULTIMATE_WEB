@@ -337,13 +337,18 @@ function sleep(ms) {
 async function createInvite() {
   creatingInvite.value = true
   try {
+    const requesterBaseUrl = resolveAutoRequesterBaseUrl()
+    console.log('[SyncCenter] createInvite: requesterBaseUrl =', requesterBaseUrl)
     const res = await syncApi.createPairingInvite({
-      ttl_minutes: Number(inviteTtlMinutes.value || 10)
+      ttl_minutes: Number(inviteTtlMinutes.value || 10),
+      requester_base_url: requesterBaseUrl
     })
     inviteInfo.value = res.data
+    console.log('[SyncCenter] createInvite success:', res.data)
     appendLog(`已生成配对码: code=${res?.data?.pairing_code || '-'}`)
     showSuccessToast('配对码已生成')
   } catch (error) {
+    console.error('[SyncCenter] createInvite failed:', error)
     showFailToast(error?.message || '生成配对码失败')
   } finally {
     creatingInvite.value = false
@@ -358,6 +363,11 @@ async function connectPeer() {
 
   const requesterBaseUrl = resolveAutoRequesterBaseUrl()
   autoRequesterBaseUrl.value = requesterBaseUrl
+  console.log(
+    '[SyncCenter] connectPeer: remoteBaseUrl =', connectForm.remoteBaseUrl,
+    'pairingCode =', connectForm.pairingCode,
+    'requesterBaseUrl =', requesterBaseUrl
+  )
   if (!requesterBaseUrl) {
     showFailToast('无法自动检测本机地址')
     return
@@ -370,11 +380,14 @@ async function connectPeer() {
       pairing_code: connectForm.pairingCode,
       requester_base_url: requesterBaseUrl
     })
+    console.log('[SyncCenter] connectPeer success:', res.data)
     appendLog(`已连接设备: ${res?.data?.peer_id || '-'}, 本机=${requesterBaseUrl}`)
     showSuccessToast('设备已连接')
     connectForm.pairingCode = ''
     await loadPeers()
   } catch (error) {
+    console.error('[SyncCenter] connectPeer failed:', error)
+    appendLog(`连接失败: ${error?.message || error || 'unknown error'}`)
     showFailToast(error?.message || '连接失败')
   } finally {
     connectingPeer.value = false

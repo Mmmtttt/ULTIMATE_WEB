@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from application.sync_app_service import SyncAppService
 from application.sync_directional_service import DirectionalSyncService
-from infrastructure.logger import error_logger
+from infrastructure.logger import error_logger, app_logger as logger
 
 
 sync_bp = Blueprint("sync", __name__)
@@ -129,9 +129,16 @@ def get_session(session_id):
 def create_pairing_invite():
     try:
         payload = request.get_json(silent=True) or {}
+        requester_base_url = payload.get("requester_base_url")
+        logger.info(
+            f"[sync] create_pairing_invite requested: requester_base_url={requester_base_url!r} "
+            f"ttl_minutes={payload.get('ttl_minutes')}"
+        )
         invite = directional_service.create_invite(payload)
+        logger.info(f"[sync] pairing invite created: code={invite.get('code')} peer_id={invite.get('peer_id')}")
         return success_response(invite)
     except ValueError as exc:
+        logger.warning(f"[sync] create_pairing_invite bad request: {exc}")
         return error_response(400, str(exc))
     except Exception as exc:
         error_logger.exception(f"sync create pairing invite failed: {exc}")
@@ -142,9 +149,17 @@ def create_pairing_invite():
 def claim_pairing_invite():
     try:
         payload = request.get_json(silent=True) or {}
+        code = payload.get("code")
+        remote_base_url = payload.get("remote_base_url")
+        logger.info(
+            f"[sync] claim_pairing_invite requested: code={code!r} "
+            f"remote_base_url={remote_base_url!r}"
+        )
         result = directional_service.claim_invite(payload)
         if not result:
+            logger.warning(f"[sync] claim_pairing_invite failed: code {code!r} invalid or expired")
             return error_response(404, "pairing code invalid or expired")
+        logger.info(f"[sync] pairing invite claimed: code={code!r} peer_id={result.get('peer_id')}")
         return success_response(result)
     except Exception as exc:
         error_logger.error(f"sync claim pairing invite failed: {exc}")
@@ -155,12 +170,25 @@ def claim_pairing_invite():
 def connect_pairing():
     try:
         payload = request.get_json(silent=True) or {}
+        pairing_code = payload.get("pairing_code")
+        remote_base_url = payload.get("remote_base_url")
+        requester_base_url = payload.get("requester_base_url")
+        logger.info(
+            f"[sync] connect_pairing requested: pairing_code={pairing_code!r} "
+            f"remote_base_url={remote_base_url!r} "
+            f"requester_base_url={requester_base_url!r}"
+        )
         peer = directional_service.connect_peer(payload)
+        logger.info(
+            f"[sync] pairing connected: peer_id={peer.get('peer_id')} "
+            f"remote_base_url={remote_base_url!r}"
+        )
         return success_response(peer)
     except ValueError as exc:
+        logger.warning(f"[sync] connect_pairing bad request: {exc}")
         return error_response(400, str(exc))
     except Exception as exc:
-        error_logger.error(f"sync connect pairing failed: {exc}")
+        error_logger.exception(f"sync connect pairing failed: {exc}")
         return error_response(500, "connect pairing failed")
 
 
