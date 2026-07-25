@@ -95,7 +95,7 @@ def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Di
         if not enabled:
             return {
                 "configured": False,
-                "message": "JAVDB 平台未启用，不能使用该平台查询。",
+                "message": "JAV 平台未启用，不能使用该平台查询。",
                 "missing_fields": ["enabled"],
             }
         cookies = config.get("cookies") or {}
@@ -105,7 +105,7 @@ def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Di
         configured = not _looks_unconfigured(session_cookie)
         return {
             "configured": configured,
-            "message": "" if configured else "JAVDB 平台未配置 cookie（_jdb_session），不能使用该平台查询。",
+            "message": "" if configured else "JAV 平台未配置 cookie（_jdb_session），不能使用该平台查询。",
             "missing_fields": [] if configured else ["cookies._jdb_session"],
         }
 
