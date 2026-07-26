@@ -477,8 +477,8 @@ def prepare_profile(profile: str, clean: bool = True) -> Dict[str, str]:
     _write_json(
         server_config_path,
         {
-            "backend": {"host": "127.0.0.1", "port": 5000},
-            "frontend": {"host": "127.0.0.1", "port": 5173},
+            "backend": {"host": "127.0.0.1", "port": 5035},
+            "frontend": {"host": "127.0.0.1", "port": 3100},
             "storage": {"data_dir": str(data_dir.resolve())},
         },
     )

@@ -38,17 +38,13 @@
       </van-field>
 
       <div class="import-mode-switch">
-        <div class="switch-main">
-          <span class="switch-side" :class="{ active: importMode === 'hardlink_move' }">硬链接</span>
-          <van-switch
-            v-model="isSoftlinkMode"
-            size="20px"
-          />
-          <span class="switch-side" :class="{ active: importMode === 'softlink_ref' }">软连接</span>
-        </div>
-        <div class="switch-desc">
-          {{ importMode === 'softlink_ref' ? '软连接：保留源文件，直接引用源路径播放' : '硬链接：移动源文件到本地库目录' }}
-        </div>
+        <span class="switch-side" :class="{ active: importMode === 'hardlink_move' }">硬链接</span>
+        <van-switch
+          v-model="isSoftlinkMode"
+          size="20px"
+        />
+        <span class="switch-side" :class="{ active: importMode === 'softlink_ref' }">软连接</span>
+        <span class="switch-desc">{{ importMode === 'softlink_ref' ? '软连接：保留源文件，直接引用源路径播放' : '硬链接：移动源文件到本地库目录' }}</span>
       </div>
 
       <div class="picker-tip">
@@ -304,6 +300,9 @@ async function runImport() {
   border-radius: 12px;
   background: var(--surface-1);
   padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .grouping-mode-switch {
@@ -328,13 +327,6 @@ async function runImport() {
   min-width: 156px;
 }
 
-.switch-main {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-}
-
 .switch-side {
   font-size: 13px;
   color: var(--text-tertiary);
@@ -347,10 +339,13 @@ async function runImport() {
 }
 
 .switch-desc {
-  margin-top: 6px;
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.45;
+  margin-left: auto;
+  text-align: right;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .mode-tip {

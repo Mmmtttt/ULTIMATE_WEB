@@ -1007,18 +1007,57 @@ def stream_local_video(video_id):
         if not resolved or not os.path.isfile(resolved):
             return make_response("Not Found", 404)
 
+        file_size = os.path.getsize(resolved)
         guessed_type, _ = mimetypes.guess_type(resolved)
-        response = make_response(
-            send_file(
-                resolved,
-                mimetype=guessed_type or "application/octet-stream",
-                conditional=True,
-            )
-        )
-        response.headers["Accept-Ranges"] = "bytes"
-        return response
+        content_type = guessed_type or "video/mp4"
+
+        # Handle Range requests — Android WebView requires proper 206 responses
+        range_header = request.headers.get("Range")
+        if range_header:
+            range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+            if range_match:
+                start = int(range_match.group(1))
+                end_str = range_match.group(2)
+                end = int(end_str) if end_str else file_size - 1
+                end = min(end, file_size - 1)
+
+                if start >= file_size:
+                    resp = make_response("", 416)
+                    resp.headers["Content-Range"] = f"bytes */{file_size}"
+                    return resp
+
+                chunk_size = end - start + 1
+                with open(resolved, "rb") as f:
+                    f.seek(start)
+                    data = f.read(chunk_size)
+
+                resp = make_response(data, 206)
+                resp.headers["Content-Type"] = content_type
+                resp.headers["Content-Length"] = str(chunk_size)
+                resp.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+                resp.headers["Accept-Ranges"] = "bytes"
+                return resp
+
+        # Full file response
+        resp = make_response()
+        resp.headers["Content-Type"] = content_type
+        resp.headers["Content-Length"] = str(file_size)
+        resp.headers["Accept-Ranges"] = "bytes"
+
+        # Stream the file directly instead of using Flask's send_file
+        # (send_file relies on wsgi.file_wrapper which may not work on Chaquopy/Android)
+        def generate():
+            with open(resolved, "rb") as f:
+                while True:
+                    chunk = f.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        resp.response = generate()
+        return resp
     except Exception as e:
-        error_logger.error(f"stream local video failed: id={video_id}, error={e}")
+        error_logger.error(f"stream local video failed: id={video_id}, error={e}", exc_info=True)
         return make_response("Internal Server Error", 500)
 
 

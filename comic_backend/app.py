@@ -68,7 +68,7 @@ def _resolve_backend_port():
             return int(env_port)
         except Exception:
             pass
-    return int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+    return int(SERVER_CONFIG.get("backend", {}).get("port", 5035))
 
 
 def _resolve_backend_debug():

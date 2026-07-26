@@ -710,8 +710,26 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 
 <style scoped>
 .base-tag-manage {
-  min-height: 95vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   background: var(--surface-0);
+}
+
+.base-tag-manage :deep(.van-tabs) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.base-tag-manage :deep(.van-tabs__content) {
+  flex: 1;
+}
+
+.base-tag-manage :deep(.van-tab__panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 .tag-list {
@@ -839,7 +857,10 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .batch-pagination {
-  margin-bottom: 16px;
+  margin-top: auto;
+  background: var(--surface-1);
+  padding: 8px 0 12px;
+  margin-bottom: 0;
 }
 
 .content-select-item {

@@ -5,8 +5,8 @@ import sys
 
 
 DEFAULT_SERVER_CONFIG = {
-    "backend": {"host": "0.0.0.0", "port": 5000},
-    "frontend": {"host": "0.0.0.0", "port": 5173},
+    "backend": {"host": "0.0.0.0", "port": 5035},
+    "frontend": {"host": "0.0.0.0", "port": 3100},
     "storage": {"data_dir": "./../UltimateData"},
 }
 

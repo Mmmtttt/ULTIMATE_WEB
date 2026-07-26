@@ -16,7 +16,7 @@ function loadServerConfig() {
       console.warn('Failed to load server_config.json, using defaults')
     }
   }
-  return { backend: { host: '0.0.0.0', port: 5050 }, frontend: { host: '0.0.0.0', port: 5173 } }
+  return { backend: { host: '0.0.0.0', port: 5035 }, frontend: { host: '0.0.0.0', port: 3100 } }
 }
 
 const serverConfig = loadServerConfig()
@@ -33,7 +33,7 @@ export default defineConfig({
   },
   server: {
     host: frontendConfig.host || '0.0.0.0',
-    port: frontendConfig.port || 5173,
+    port: frontendConfig.port || 3100,
     proxy: {
       '/api': {
         target: `http://${backendConfig.host === '0.0.0.0' ? '127.0.0.1' : backendConfig.host}:${backendPort}`,
