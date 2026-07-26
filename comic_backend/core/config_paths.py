@@ -5,9 +5,24 @@ import sys
 
 
 DEFAULT_SERVER_CONFIG = {
-    "backend": {"host": "0.0.0.0", "port": 5035},
-    "frontend": {"host": "0.0.0.0", "port": 3100},
+    "backend": {
+        "host": "0.0.0.0",
+        "port": 5000,
+        "ssl_enabled": True,
+        "ssl_auto_generate": True,
+        "ssl_cert_path": "",
+        "ssl_key_path": "",
+    },
+    "frontend": {"host": "0.0.0.0", "port": 5173},
     "storage": {"data_dir": "./../UltimateData"},
+    "auth": {
+        "enabled": False,
+        "password": "",
+        "private_data_dir": "./../UltimateData_private",
+        "private_port": 5000,
+        "normal_port": 5001,
+        "secret_key": "ultimate-web-default-secret-key-change-me",
+    },
 }
 
 DEFAULT_THIRD_PARTY_CONFIG = {
