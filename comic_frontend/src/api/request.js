@@ -2,6 +2,19 @@ import axios from 'axios'
 import { resolveApiBaseUrl } from '@/runtime/endpoint'
 import { showFailToast } from 'vant'
 
+let _authStore = null
+function _getAuthStore() {
+  if (!_authStore) {
+    try {
+      const { useAuthStore } = require('@/stores/auth')
+      _authStore = useAuthStore()
+    } catch (_) {
+      // ignore
+    }
+  }
+  return _authStore
+}
+
 const request = axios.create({
   baseURL: resolveApiBaseUrl(),
   timeout: 30000,
@@ -11,6 +24,12 @@ const request = axios.create({
 request.interceptors.request.use(
   config => {
     console.log('[request]', config.method?.toUpperCase(), config.url)
+
+    const authStore = _getAuthStore()
+    if (authStore?.mode) {
+      config.headers['X-Space-Mode'] = authStore.mode
+    }
+
     return config
   },
   error => Promise.reject(error)

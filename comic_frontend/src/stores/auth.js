@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { login as loginApi, getAuthStatus, logout as logoutApi } from '@/api/auth'
-import { resolveBackendOrigin } from '@/runtime/endpoint'
 
 function getPrivateApiBase() {
   const privatePort = import.meta.env.VITE_PRIVATE_PORT || 5000
@@ -49,7 +48,6 @@ export const useAuthStore = defineStore('auth', {
           this.enabled = res.data.enabled
           this.authenticated = res.data.authenticated
           this.mode = res.data.mode
-          // 如果已经认证了，说明之前登录过
           if (res.data.authenticated) {
             this.hasAttemptedLogin = true
           }
@@ -70,16 +68,16 @@ export const useAuthStore = defineStore('auth', {
           this.mode = res.data.mode
           this.hasAttemptedLogin = true
 
-          // 密码错误（未认证）→ 切换到 private 端口，进入隐私模式
-          if (!res.data.authenticated) {
-            setRuntimeApiBase(getPrivateApiBase())
-          } else {
-            // 登录成功 → 确保使用 normal 端口
-            // 开发环境走代理，不需要切换
-            if (!import.meta.env.DEV) {
-              setRuntimeApiBase(getNormalApiBase())
+          if (import.meta.env.DEV) {
+            // 开发模式：通过切换端口来切换空间
+            if (!res.data.authenticated) {
+              setRuntimeApiBase(getPrivateApiBase())
+            } else {
+              // 开发环境走 Vite 代理（相对路径），不需要切换绝对 URL
+              setRuntimeApiBase('')
             }
           }
+          // 生产模式：始终走相对路径 /api，通过 X-Space-Mode header 由前端服务器路由
         }
         return res.data
       } finally {
@@ -97,27 +95,33 @@ export const useAuthStore = defineStore('auth', {
       this.mode = 'private'
       this.hasAttemptedLogin = false
 
-      // 退出登录后清除自定义 API 地址，让路由守卫把用户送到登录页
       try {
         window.localStorage.removeItem('ULTIMATE_API_BASE_URL')
         delete window.__ULTIMATE_API_BASE_URL
       } catch (e) {
         // ignore
       }
+
+      if (import.meta.env.DEV) {
+        // 开发模式：退出后切到 private 端口
+        setRuntimeApiBase(getPrivateApiBase())
+      }
     },
 
     switchToPrivateMode() {
-      setRuntimeApiBase(getPrivateApiBase())
       this.authenticated = false
       this.mode = 'private'
+      if (import.meta.env.DEV) {
+        setRuntimeApiBase(getPrivateApiBase())
+      }
     },
 
     switchToNormalMode() {
-      if (!import.meta.env.DEV) {
-        setRuntimeApiBase(getNormalApiBase())
-      }
       this.authenticated = true
       this.mode = 'normal'
+      if (import.meta.env.DEV) {
+        setRuntimeApiBase('')
+      }
     }
   }
 })

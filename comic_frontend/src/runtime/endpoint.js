@@ -47,7 +47,8 @@ export function resolveApiBaseUrl() {
     return trimTrailingSlash(envBase)
   }
 
-  // 开发环境默认走 Vite 代理（相对路径），避免跨域导致 cookie 问题
+  // 开发环境和生产环境都走相对路径 /api
+  // 开发环境走 Vite 代理，生产环境走前端服务器代理
   return '/api'
 }
 
