@@ -1774,9 +1774,11 @@ def write_desktop_bundle_scripts(
     bundle_dir: Path,
     binary_name: str,
     runtime_env: Dict[str, str],
+    frontend_binary_name: str = "",
 ) -> None:
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
+    has_frontend = bool(frontend_binary_name)
 
     bat = (
         "@echo off\n"
@@ -1829,6 +1831,52 @@ def write_desktop_bundle_scripts(
     )
     write_text(bundle_dir / "start_backend.ps1", ps1)
 
+    if has_frontend:
+        fe_bat = (
+            "@echo off\n"
+            "setlocal\n"
+            "set SCRIPT_DIR=%~dp0\n"
+            "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
+            "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
+            "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
+            "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
+            "if exist \"%FFMPEG_TOOLS_DIR%\" set PATH=%FFMPEG_TOOLS_DIR%;%PATH%\n"
+            "set FRONTEND_DIST_DIR=%SCRIPT_DIR%frontend_dist\n"
+            "cd /d \"%SCRIPT_DIR%\"\n"
+            f"if exist \"%SCRIPT_DIR%bin\\{frontend_binary_name}.exe\" (\n"
+            f"  \"%SCRIPT_DIR%bin\\{frontend_binary_name}.exe\"\n"
+            "  exit /b %ERRORLEVEL%\n"
+            ")\n"
+            "cd /d \"%SCRIPT_DIR%frontend_source\"\n"
+            "python frontend_server.py\n"
+        )
+        write_text(bundle_dir / "start_frontend.bat", fe_bat)
+
+        fe_ps1 = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+            "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
+            "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
+            "if (Test-Path $archiveTools) {\n"
+            "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
+            "}\n"
+            "$ffmpegTools = Join-Path $scriptDir \"tools/ffmpeg\"\n"
+            "if (Test-Path $ffmpegTools) {\n"
+            "    $env:PATH = \"$ffmpegTools;$env:PATH\"\n"
+            "}\n"
+            "$env:FRONTEND_DIST_DIR = Join-Path $scriptDir \"frontend_dist\"\n"
+            "Set-Location $scriptDir\n"
+            f"$exePath = Join-Path $scriptDir \"bin/{frontend_binary_name}.exe\"\n"
+            "if (Test-Path $exePath) {\n"
+            "    & $exePath\n"
+            "    exit $LASTEXITCODE\n"
+            "}\n"
+            "$frontendSource = Join-Path $scriptDir \"frontend_source\"\n"
+            "Set-Location $frontendSource\n"
+            "python frontend_server.py\n"
+        )
+        write_text(bundle_dir / "start_frontend.ps1", fe_ps1)
+
     sh = (
         "#!/usr/bin/env sh\n"
         "set -e\n"
@@ -1863,7 +1911,123 @@ def write_desktop_bundle_scripts(
     except OSError:
         pass
 
-    app_bat = (
+    if has_frontend:
+        fe_sh = (
+            "#!/usr/bin/env sh\n"
+            "set -e\n"
+            "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+            "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
+            "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
+            "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
+            "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
+            "fi\n"
+            "FFMPEG_TOOLS_DIR=\"$SCRIPT_DIR/tools/ffmpeg\"\n"
+            "if [ -d \"$FFMPEG_TOOLS_DIR\" ]; then\n"
+            "  export PATH=\"$FFMPEG_TOOLS_DIR:$PATH\"\n"
+            "fi\n"
+            "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/frontend_dist\"\n"
+            "cd \"$SCRIPT_DIR\"\n"
+            f"if [ -x \"$SCRIPT_DIR/bin/{frontend_binary_name}\" ]; then\n"
+            f"  exec \"$SCRIPT_DIR/bin/{frontend_binary_name}\"\n"
+            "fi\n"
+            "cd \"$SCRIPT_DIR/frontend_source\"\n"
+            "if command -v python3 >/dev/null 2>&1; then\n"
+            "  exec python3 frontend_server.py\n"
+            "fi\n"
+            "exec python frontend_server.py\n"
+        )
+        fe_sh_path = bundle_dir / "start_frontend.sh"
+        write_text(fe_sh_path, fe_sh)
+        try:
+            fe_sh_path.chmod(0o755)
+        except OSError:
+            pass
+
+    # ---- start_app: starts both backend + frontend (if available) ----
+
+    if has_frontend:
+        _port_ps_cmd = (
+            "$p = 5173; "
+            "$defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'; "
+            "$cfgDir = $defaultCfgDir; "
+            "$envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR; "
+            "if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) { "
+            "  $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir) "
+            "} else { "
+            "  $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'; "
+            "  if (Test-Path -LiteralPath $overridePath) { "
+            "    try { "
+            "      $ov = Get-Content -LiteralPath $overridePath -Raw | ConvertFrom-Json; "
+            "      $persisted = [string]$ov.config_dir; "
+            "      if (-not [string]::IsNullOrWhiteSpace($persisted)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted) } "
+            "    } catch {} "
+            "  } "
+            "}; "
+            "$cfgPath = Join-Path $cfgDir 'server_config.json'; "
+            "if (Test-Path -LiteralPath $cfgPath) { "
+            "  try { "
+            "    $cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json; "
+            "    if ($cfg.frontend.port -ne $null) { $p = [int]$cfg.frontend.port } "
+            "  } catch {} "
+            "}; "
+            "Write-Output $p"
+        )
+
+        app_bat = (
+            "@echo off\n"
+            "setlocal\n"
+            "set SCRIPT_DIR=%~dp0\n"
+            "set APP_PORT=5173\n"
+            f"for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"{_port_ps_cmd.replace('\"', '^"')}\"`) do set APP_PORT=%%I\n"
+            "start \"UltimateWeb-Backend\" \"%SCRIPT_DIR%start_backend.bat\"\n"
+            "timeout /t 2 >nul\n"
+            "start \"UltimateWeb-Frontend\" \"%SCRIPT_DIR%start_frontend.bat\"\n"
+            "timeout /t 2 >nul\n"
+            "start \"\" \"https://127.0.0.1:%APP_PORT%/\"\n"
+        )
+        write_text(bundle_dir / "start_app.bat", app_bat)
+
+        app_ps1 = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+            "$appPort = 5173\n"
+            "$defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'\n"
+            "$cfgDir = $defaultCfgDir\n"
+            "$envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR\n"
+            "if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) {\n"
+            "    $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir)\n"
+            "} else {\n"
+            "    $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'\n"
+            "    if (Test-Path -LiteralPath $overridePath) {\n"
+            "        try {\n"
+            "            $ov = Get-Content -LiteralPath $overridePath -Raw | ConvertFrom-Json\n"
+            "            $persisted = [string]$ov.config_dir\n"
+            "            if (-not [string]::IsNullOrWhiteSpace($persisted)) {\n"
+            "                $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted)\n"
+            "            }\n"
+            "        } catch {\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "$configPath = Join-Path $cfgDir 'server_config.json'\n"
+            "if (Test-Path -LiteralPath $configPath) {\n"
+            "    try {\n"
+            "        $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json\n"
+            "        if ($null -ne $cfg.frontend.port) {\n"
+            "            $appPort = [int]$cfg.frontend.port\n"
+            "        }\n"
+            "    } catch {\n"
+            "    }\n"
+            "}\n"
+            "Start-Process -FilePath (Join-Path $scriptDir 'start_backend.ps1') -WindowStyle Normal\n"
+            "Start-Sleep -Seconds 2\n"
+            "Start-Process -FilePath (Join-Path $scriptDir 'start_frontend.ps1') -WindowStyle Normal\n"
+            "Start-Sleep -Seconds 2\n"
+            "Start-Process (\"https://127.0.0.1:{0}/\" -f $appPort)\n"
+        )
+        write_text(bundle_dir / "start_app.ps1", app_ps1)
+    else:
+        app_bat = (
         "@echo off\n"
         "set SCRIPT_DIR=%~dp0\n"
         "set APP_PORT=5000\n"
@@ -1920,13 +2084,18 @@ def prepare_desktop_release_bundle(
     binary_name: str,
     runtime_env: Dict[str, str],
     plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
+    frontend_binary_name: str = "",
+    frontend_entry: str = "",
 ) -> Path:
     plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     bundle_dir = target_out_dir / "release_bundle"
     ensure_clean_dir(bundle_dir)
 
+    has_frontend = bool(frontend_binary_name)
+
     backend_src = staged_target_dir / "comic_backend"
     frontend_dist = staged_target_dir / "comic_frontend_dist"
+    frontend_src = staged_target_dir / "comic_frontend" if frontend_entry else None
 
     if backend_src.exists():
         shutil.copytree(backend_src, bundle_dir / "backend_source")
@@ -1935,6 +2104,11 @@ def prepare_desktop_release_bundle(
         if frontend_target.exists():
             shutil.rmtree(frontend_target)
         shutil.copytree(frontend_dist, frontend_target)
+    if has_frontend and frontend_src and frontend_src.exists():
+        fe_src_target = bundle_dir / "frontend_source"
+        if fe_src_target.exists():
+            shutil.rmtree(fe_src_target)
+        shutil.copytree(frontend_src, fe_src_target, ignore=shutil.ignore_patterns("node_modules", "dist", ".git", "__pycache__"))
 
     runtime_env_src = staged_target_dir / "runtime.env"
     if runtime_env_src.exists():
@@ -1973,6 +2147,9 @@ def prepare_desktop_release_bundle(
         "- `plugins/`: external hot-pluggable protocol plugins",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
     ]
+    if has_frontend:
+        notes.insert(3, "- `frontend_source/`: fallback frontend server source")
+        notes.append("- `bin/` also contains frontend server executable")
     if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
         notes.append("- default repository plugins are bundled into the executable; `plugins/` is reserved for extra plugins")
     else:
@@ -1985,16 +2162,23 @@ def prepare_desktop_release_bundle(
         [
             "",
             "Start commands:",
-            "- Windows cmd: `start_backend.bat`",
-            "- Windows PowerShell: `start_backend.ps1`",
-            "- Linux/macOS: `start_backend.sh`",
+            "- Windows cmd: `start_app.bat` (starts both backend + frontend)",
+            "- Windows PowerShell: `start_app.ps1`",
+            "- Linux/macOS: `bash start_app.sh` (if frontend server available)",
+            "- Start backend only: `start_backend.bat` / `start_backend.ps1` / `start_backend.sh`",
+            "- Start frontend only: `start_frontend.bat` / `start_frontend.ps1` / `start_frontend.sh` (if available)",
             "- Install external plugin deps manually if needed: `install_plugin_deps.ps1` / `install_plugin_deps.sh`",
         ]
     )
     write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
 
     (bundle_dir / "bin").mkdir(parents=True, exist_ok=True)
-    write_desktop_bundle_scripts(bundle_dir, binary_name=binary_name, runtime_env=runtime_env)
+    write_desktop_bundle_scripts(
+        bundle_dir,
+        binary_name=binary_name,
+        runtime_env=runtime_env,
+        frontend_binary_name=frontend_binary_name,
+    )
     return bundle_dir
 
 
@@ -2604,6 +2788,8 @@ def package_pyinstaller(
     binary_name = str(packager_cfg.get("binary_name", f"ultimate_backend_{target}")).strip()
     entry = str(packager_cfg.get("entry", "comic_backend/app.py")).strip()
     frontend_dist_dir = str(packager_cfg.get("frontend_dist_dir", "comic_frontend_dist")).strip()
+    frontend_binary_name = str(packager_cfg.get("frontend_binary_name", "")).strip()
+    frontend_entry = str(packager_cfg.get("frontend_entry", "")).strip()
 
     cmd = write_pyinstaller_scripts(
         out_dir=target_out_dir,
@@ -2621,14 +2807,19 @@ def package_pyinstaller(
         binary_name=binary_name,
         runtime_env=runtime_env,
         plugin_package_mode=plugin_mode,
+        frontend_binary_name=frontend_binary_name,
+        frontend_entry=frontend_entry,
     )
     external_plugin_roots = sorted((bundle_dir / "plugins").iterdir(), key=lambda item: item.name.lower()) if (bundle_dir / "plugins").exists() else []
 
     if not execute:
+        extra_msg = ""
+        if frontend_binary_name:
+            extra_msg = f"; frontend server binary={frontend_binary_name}"
         return PackageResult(
             target=target,
             status="prepared",
-            message=f"pyinstaller scripts generated; desktop release bundle prepared (plugin_package_mode={plugin_mode}, execution skipped)",
+            message=f"pyinstaller scripts generated; desktop release bundle prepared (plugin_package_mode={plugin_mode}{extra_msg})",
             output_dir=str(target_out_dir),
             command=cmd,
         )
@@ -2664,6 +2855,7 @@ def package_pyinstaller(
             command=cmd,
         )
 
+    # ---- build backend binary ----
     code, output = run_cmd(cmd, cwd=staged_target_dir, env=runtime_env)
     build_log = target_out_dir / "pyinstaller.log"
     write_text(build_log, output)
@@ -2682,6 +2874,37 @@ def package_pyinstaller(
     if built_binary.exists():
         shutil.copy2(built_binary, bundle_dir / "bin" / built_binary.name)
 
+    # ---- build frontend server binary (if configured) ----
+    frontend_built = False
+    if frontend_binary_name and frontend_entry:
+        fe_out_dir = target_out_dir / "frontend_pyinstaller"
+        fe_cmd = _write_frontend_pyinstaller_script(
+            out_dir=fe_out_dir,
+            staged_target_dir=staged_target_dir,
+            target=target,
+            binary_name=frontend_binary_name,
+            entry=frontend_entry,
+            runtime_env=runtime_env,
+        )
+        fe_code, fe_output = run_cmd(fe_cmd, cwd=staged_target_dir, env=runtime_env)
+        fe_build_log = target_out_dir / "pyinstaller_frontend.log"
+        write_text(fe_build_log, fe_output)
+        if fe_code != 0:
+            return PackageResult(
+                target=target,
+                status="failed",
+                message=f"frontend pyinstaller failed with code {fe_code}; see {fe_build_log}",
+                output_dir=str(target_out_dir),
+                command=fe_cmd,
+            )
+        fe_dist_dir = fe_out_dir / "dist"
+        fe_built_binary = fe_dist_dir / frontend_binary_name
+        if target == "windows":
+            fe_built_binary = fe_built_binary.with_suffix(".exe")
+        if fe_built_binary.exists():
+            shutil.copy2(fe_built_binary, bundle_dir / "bin" / fe_built_binary.name)
+            frontend_built = True
+
     # Copy frontend dist if available
     frontend_source_dir = staged_target_dir / frontend_dist_dir
     if frontend_source_dir.exists():
@@ -2690,13 +2913,90 @@ def package_pyinstaller(
             shutil.rmtree(frontend_target_dir)
         shutil.copytree(frontend_source_dir, frontend_target_dir, ignore=shutil.ignore_patterns("__pycache__"))
 
+    status_msg = f"pyinstaller build completed and desktop release bundle updated (plugin_package_mode={plugin_mode}"
+    if frontend_binary_name:
+        status_msg += f"; frontend={'built' if frontend_built else 'failed'}"
+    status_msg += ")"
+
     return PackageResult(
         target=target,
         status="built",
-        message=f"pyinstaller build completed and desktop release bundle updated (plugin_package_mode={plugin_mode})",
+        message=status_msg,
         output_dir=str(target_out_dir),
         command=cmd,
     )
+
+
+def _write_frontend_pyinstaller_script(
+    out_dir: Path,
+    staged_target_dir: Path,
+    target: str,
+    binary_name: str,
+    entry: str,
+    runtime_env: Dict[str, str],
+) -> List[str]:
+    """Generate PyInstaller command for the frontend server."""
+    dist_dir = out_dir / "dist"
+    work_dir = out_dir / "build"
+    spec_dir = out_dir / "spec"
+    sep = ";" if os.name == "nt" else ":"
+
+    staged_backend = staged_target_dir / "comic_backend"
+    cmd = [
+        "python",
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
+        "--name",
+        binary_name,
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
+        "--specpath",
+        str(spec_dir),
+        "--collect-all", "flask",
+        "--collect-all", "requests",
+        "--collect-all", "cryptography",
+        "--hidden-import", "core.config_paths",
+        "--hidden-import", "core.ssl_cert",
+    ]
+    # Include backend core modules that frontend_server imports
+    if staged_backend.exists():
+        cmd.extend(["--paths", str(staged_backend)])
+
+    cmd.append(entry)
+
+    ps1 = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "param(\n"
+        f"    [string]$StagedDir = \"{staged_target_dir}\"\n"
+        ")\n"
+        "Set-Location $StagedDir\n"
+        + " ".join([f"\"{part}\"" if " " in part else part for part in cmd])
+        + "\n"
+    )
+    write_text(out_dir / "run_pyinstaller.ps1", ps1)
+
+    sh = (
+        "#!/usr/bin/env sh\n"
+        "set -e\n"
+        "STAGED_DIR=\"${1:-"
+        + str(staged_target_dir).replace("\\", "/")
+        + "}\"\n"
+        "cd \"$STAGED_DIR\"\n"
+        + " ".join(cmd)
+        + "\n"
+    )
+    sh_path = out_dir / "run_pyinstaller.sh"
+    write_text(sh_path, sh)
+    try:
+        sh_path.chmod(0o755)
+    except OSError:
+        pass
+    return cmd
 
 
 def write_android_capacitor_plan(

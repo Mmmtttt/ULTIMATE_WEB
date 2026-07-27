@@ -7,7 +7,9 @@
       "entry": "comic_backend/app.py",
       "mode": "onefile",
       "frontend_dist_dir": "comic_frontend_dist",
-      "frontend_serve_path": "/"
+      "frontend_serve_path": "/",
+      "frontend_binary_name": "ultimate_frontend_windows",
+      "frontend_entry": "comic_frontend/frontend_server.py"
     },
     "linux": {
       "type": "pyinstaller",
@@ -15,7 +17,9 @@
       "entry": "comic_backend/app.py",
       "mode": "onefile",
       "frontend_dist_dir": "comic_frontend_dist",
-      "frontend_serve_path": "/"
+      "frontend_serve_path": "/",
+      "frontend_binary_name": "ultimate_frontend_linux",
+      "frontend_entry": "comic_frontend/frontend_server.py"
     },
     "android": {
       "type": "capacitor",
