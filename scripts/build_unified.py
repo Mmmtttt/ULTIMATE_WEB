@@ -250,6 +250,14 @@ def build_target(target: Dict, frontend_dist_dir: Path, output_dir: Path, app_ve
     )
     shutil.copytree(frontend_dist_dir, target_dir / "comic_frontend_dist")
 
+    # Copy frontend server (only for desktop targets; android uses webview)
+    if target["id"] in {"windows", "linux"}:
+        frontend_server_file = FRONTEND_DIR / "frontend_server.py"
+        if frontend_server_file.exists():
+            frontend_target_dir = target_dir / "comic_frontend"
+            frontend_target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(frontend_server_file, frontend_target_dir / "frontend_server.py")
+
     server_config_src = ROOT_DIR / "server_config.json"
     if server_config_src.exists():
         shutil.copy2(server_config_src, target_dir / "server_config.json")
