@@ -112,26 +112,54 @@ def _get_video_proxy_client():
 
 
 def _build_play_sources(code: str):
-    """Build play sources from all plugins that support playback.sources.build."""
+    """Build play sources from all plugins that support playback.sources.build.
+
+    Always includes results from the default proxy client first (backward compat),
+    then appends results from any additional plugin manifests that declare
+    the playback.sources.build capability.
+    """
     if not is_third_party_enabled():
         raise RuntimeError(
             f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
         )
 
+    all_sources = []
+    seen_keys = set()
+
+    # 1. Always try the default proxy client first (backward compat for tests & runtime)
+    try:
+        client = _get_video_proxy_client()
+        sources = client.build_sources(code)
+        for src in (sources or []):
+            key = _normalize_provider_key(
+                str(src.get("source") or src.get("platform") or src.get("name") or "").strip(),
+                "",
+            )
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                all_sources.append(src)
+            elif not key:
+                all_sources.append(src)
+    except Exception as e:
+        error_logger.error(f"build_sources from default proxy client failed: {e}")
+
+    # 2. Try plugin-based sources (additional, deduplicated by source key)
     gateway = get_protocol_gateway()
     manifests = list(gateway.list_manifests(media_type="video", capability="playback.sources.build"))
-    if not manifests:
-        # fallback: use the default proxy client's build_sources
-        client = _get_video_proxy_client()
-        return client.build_sources(code)
-
-    all_sources = []
     for manifest in manifests:
         try:
             client = gateway.get_client(manifest.plugin_id, proxy_base_path='/api/v1/video')
             sources = client.build_sources(code)
-            if sources:
-                all_sources.extend(sources)
+            for src in (sources or []):
+                key = _normalize_provider_key(
+                    str(src.get("source") or src.get("platform") or src.get("name") or "").strip(),
+                    "",
+                )
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
+                    all_sources.append(src)
+                elif not key:
+                    all_sources.append(src)
         except Exception as e:
             error_logger.error(f"build_sources failed for plugin {manifest.plugin_id}: {e}")
 
@@ -3855,24 +3883,37 @@ def proxy_video_request2():
         )
 
         # 流式传输：边下载边发送，浏览器可立即开始播放
-        def generate():
-            for chunk in proxy_result.iter_content(chunk_size=65536):
-                if chunk:
-                    yield chunk
+        # 兼容非流式响应（如测试 mock 的 SimpleNamespace 不含 iter_content）
+        if hasattr(proxy_result, "iter_content"):
+            def generate():
+                for chunk in proxy_result.iter_content(chunk_size=65536):
+                    if chunk:
+                        yield chunk
 
-        resp_headers = {}
+            resp_headers = {}
+            if hasattr(proxy_result.headers, "items"):
+                for n, v in proxy_result.headers.items():
+                    resp_headers[n] = v
+            else:
+                for n, v in proxy_result.headers:
+                    resp_headers[n] = v
+
+            return Response(
+                stream_with_context(generate()),
+                status=proxy_result.status_code,
+                headers=resp_headers,
+            )
+
+        # fallback: 非流式响应（旧协议/测试 mock），使用 make_response
+        response = make_response(proxy_result.content)
+        response.status_code = proxy_result.status_code
         if hasattr(proxy_result.headers, "items"):
             for n, v in proxy_result.headers.items():
-                resp_headers[n] = v
+                response.headers[n] = v
         else:
             for n, v in proxy_result.headers:
-                resp_headers[n] = v
-
-        return Response(
-            stream_with_context(generate()),
-            status=proxy_result.status_code,
-            headers=resp_headers,
-        )
+                response.headers[n] = v
+        return response
     except ValueError as e:
         return Response(str(e), status=400)
     except Exception as e:

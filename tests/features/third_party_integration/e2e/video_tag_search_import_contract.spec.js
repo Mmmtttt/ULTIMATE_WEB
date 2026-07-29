@@ -173,7 +173,7 @@ test("video tag search forwards third-party query and import contracts", async (
     platform: "JAVDB",
     content_type: "video",
   });
-  expect(importTaskBodies[0].comic_ids).toEqual(["JVID-1"]);
+  expect(importTaskBodies[0].video_ids).toEqual(["JVID-1"]);
 
   expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();
