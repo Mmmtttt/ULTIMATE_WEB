@@ -235,6 +235,16 @@
           {{ localThumbnailImages.length > 0 ? '重新生成缩略图' : '生成缩略图' }}
         </van-button>
       </div>
+      <div v-else-if="isThirdParty && preferredThumbnailImages.length > 0" class="thumbnail-actions" style="margin-top: 12px;">
+        <van-button
+          type="default"
+          plain
+          size="small"
+          @click="showPreviewImages = !showPreviewImages"
+        >
+          {{ showPreviewImages ? '隐藏预览图' : `显示预览图（${preferredThumbnailImages.length} 张）` }}
+        </van-button>
+      </div>
     </div>
       
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
@@ -635,6 +645,7 @@ const ASSET_REFRESH_DELAY_MS = 2500
 
 const videoId = computed(() => route.params.id)
 const isLocalVideo = computed(() => video.value?.source !== 'preview')
+const isThirdParty = computed(() => Boolean(route.query.platform))
 
 const actions = computed(() => {
   if (video.value?.is_deleted) {
@@ -671,6 +682,7 @@ const preferredCoverPath = computed(() => {
 const preferredCoverUrl = computed(() => getCoverUrl({
   cover_path_local: String(video.value?.cover_path_local || '').trim(),
   cover_path: String(video.value?.cover_path || '').trim() || preferredCoverPath.value,
+  cover_url: String(video.value?.cover_url || '').trim(),
   local_cover_asset_version: String(video.value?.local_cover_asset_version || '').trim()
 }))
 const preferredThumbnailImages = computed(() => {
@@ -1278,32 +1290,76 @@ async function loadVideo() {
   clearAssetRefreshTimer()
   assetRefreshAttempts.value = 0
   loading.value = true
+  const platform = route.query.platform
+  const isThirdPartyDetail = Boolean(platform)
   try {
-    const data = await videoStore.fetchDetail(videoId.value)
-    video.value = data
-    showMagnets.value = false
-    if (data?.score) {
-      scoreValue.value = data.score
+    if (isThirdPartyDetail) {
+      // 第三方视频：通过第三方 API 获取详情
+      try {
+        const res = await videoApi.thirdPartyDetail(videoId.value, { platform })
+        if (res.code === 200 && res.data) {
+          const raw = res.data
+          // 标准化 tags：若为字符串数组则转为 {id, name} 对象数组
+          if (Array.isArray(raw.tags)) {
+            raw.tags = raw.tags
+              .map((tag, index) => {
+                if (typeof tag === 'string') {
+                  const name = tag.trim()
+                  if (!name) return null
+                  return { id: `tp-${index}`, name }
+                }
+                if (tag && typeof tag === 'object') {
+                  const name = String(tag.name || '').trim()
+                  if (!name) return null
+                  return { ...tag, name }
+                }
+                return null
+              })
+              .filter(Boolean)
+          }
+          video.value = { ...raw, source: 'preview' }
+          if (raw?.score) {
+            scoreValue.value = raw.score
+          }
+          syncEditFormFromVideo(raw)
+          syncPrimarySourceSelection(raw)
+          syncPreviewAssetSelection(raw)
+          syncThumbnailSelectionState(raw)
+        } else {
+          video.value = null
+        }
+      } catch {
+        video.value = null
+      }
+    } else {
+      const data = await videoStore.fetchDetail(videoId.value)
+      video.value = data
+      showMagnets.value = false
+      if (data?.score) {
+        scoreValue.value = data.score
+      }
+      if (data?.list_ids) {
+        selectedListIds.value = [...data.list_ids]
+      }
+      selectedTagIds.value = [...(data?.tag_ids || [])]
+      syncEditFormFromVideo(data)
+      syncPrimarySourceSelection(data)
+      syncPreviewAssetSelection(data)
+      syncThumbnailSelectionState(data)
+      scheduleLocalAssetRefresh()
     }
-    if (data?.list_ids) {
-      selectedListIds.value = [...data.list_ids]
-    }
-    selectedTagIds.value = [...(data?.tag_ids || [])]
-    syncEditFormFromVideo(data)
-    syncPrimarySourceSelection(data)
-    syncPreviewAssetSelection(data)
-    syncThumbnailSelectionState(data)
-    scheduleLocalAssetRefresh()
   } finally {
     loading.value = false
   }
 
-  Promise.allSettled([
-    listStore.fetchLists('video'),
-    actorStore.fetchList()
-  ]).catch((error) => {
-    console.warn('加载附加数据失败:', error)
-  })
+  if (!isThirdPartyDetail) {
+    Promise.allSettled([
+      listStore.fetchLists('video'),
+      actorStore.fetchList()
+    ]).catch((error) => {
+      console.warn('加载附加数据失败:', error)
+    })
+  }
 
   if (route.query.autoplay === '1') {
     loadPlayUrls()
@@ -1758,6 +1814,11 @@ async function loadPlayUrls(options = {}) {
     }
     if (playbackSource === 'remote' && options.providerKey) {
       params.remote_provider = options.providerKey
+    }
+    // 第三方视频传递 platform 参数
+    const platform = route.query.platform
+    if (platform) {
+      params.platform = platform
     }
     const response = await videoStore.getPlayUrls(videoId.value, params)
     if (!options.silentLoading) {

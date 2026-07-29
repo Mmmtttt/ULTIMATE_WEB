@@ -27,7 +27,7 @@ from core.constants import (
 from core.utils import normalize_total_page
 from protocol.compatibility import get_query_status_for_adapter_name
 from protocol.gateway import get_protocol_gateway
-from protocol.presentation import annotate_items
+from protocol.presentation import annotate_items, annotate_item
 from .runtime_guard import require_third_party
 from application.teledrive_app_service import (
     TeleDriveBridgeError,
@@ -725,7 +725,18 @@ def search_third_party_comics():
         supported_platforms = sorted(platform_lookup.keys())
         if platform == 'all':
             platforms_to_search = available_plugins
+            is_multi_platform = False
+        elif ',' in platform:
+            platform_names = [p.strip().upper() for p in platform.split(',') if p.strip()]
+            platforms_to_search = []
+            for pname in platform_names:
+                descriptor = platform_lookup.get(pname)
+                if descriptor is None:
+                    return error_response(400, f"不支持的漫画平台: {pname}，支持的平台: {supported_platforms}")
+                platforms_to_search.append(descriptor)
+            is_multi_platform = True
         else:
+            is_multi_platform = False
             descriptor = platform_lookup.get(str(platform or "").strip().upper())
             if descriptor is None:
                 return error_response(400, f"不支持的漫画平台: {platform}，支持的平台: {supported_platforms}")
@@ -743,7 +754,7 @@ def search_third_party_comics():
             credential_status = get_query_status_for_adapter_name(adapter_name)
             if not bool(credential_status.get("configured", False)):
                 platform_errors[plat] = str(credential_status.get("message") or f"{plat} 平台未配置查询凭据")
-                if platform != 'all':
+                if not is_multi_platform and platform != 'all':
                     return error_response(400, platform_errors[plat])
                 continue
 
@@ -783,12 +794,12 @@ def search_third_party_comics():
             except RuntimeError as e:
                 platform_errors[plat] = str(e)
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
-                if platform != 'all':
+                if not is_multi_platform and platform != 'all':
                     return error_response(400, platform_errors[plat])
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
                 platform_errors[plat] = f"{plat} 平台搜索失败"
-                if platform != 'all':
+                if not is_multi_platform and platform != 'all':
                     return error_response(500, platform_errors[plat])
                 continue
         
@@ -807,6 +818,105 @@ def search_third_party_comics():
     except Exception as e:
         error_logger.error(f"第三方搜索失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/<platform>/health-status', methods=['GET'])
+@require_third_party(error_response)
+def comic_third_party_health_status(platform):
+    try:
+        from protocol.host_service import get_protocol_host_service
+        host_service = get_protocol_host_service()
+        payload = host_service.execute_comic_platform(platform, "health.query.status")
+        return success_response(dict(payload or {}))
+    except Exception as e:
+        error_logger.error(f"检查漫画平台配置状态失败 platform={platform}: {e}")
+        return error_response(500, "server error")
+
+
+@comic_bp.route('/third-party/<platform>/tags', methods=['GET'])
+@require_third_party(error_response)
+def comic_third_party_tags(platform):
+    try:
+        keyword = (request.args.get('keyword') or '').strip().lower()
+        category_filter = (request.args.get('category') or '').strip().lower()
+        from protocol.host_service import get_protocol_host_service
+        host_service = get_protocol_host_service()
+        payload = host_service.execute_comic_platform(
+            platform,
+            "taxonomy.tags",
+            params={
+                "keyword": keyword,
+                "category": category_filter,
+            },
+        )
+        return success_response(dict(payload or {}))
+    except Exception as e:
+        error_logger.error(f"获取漫画平台标签失败 platform={platform}: {e}")
+        return error_response(500, "server error")
+
+
+@comic_bp.route('/third-party/<platform>/search-by-tags', methods=['GET', 'POST'])
+@require_third_party(error_response)
+def comic_third_party_tag_search(platform):
+    try:
+        page = request.args.get('page', 1, type=int) or 1
+        page = max(page, 1)
+
+        requested_tag_ids = request.args.getlist('tag_ids')
+        if not requested_tag_ids:
+            csv_tag_ids = (request.args.get('tag_ids') or '').strip()
+            if csv_tag_ids:
+                requested_tag_ids = [part.strip() for part in csv_tag_ids.split(',') if part.strip()]
+
+        from protocol.host_service import get_protocol_host_service
+        host_service = get_protocol_host_service()
+        payload = host_service.execute_comic_platform(
+            platform,
+            "taxonomy.tag_search",
+            params={
+                "page": page,
+                "tag_ids": requested_tag_ids,
+            },
+        )
+
+        result = dict(payload or {})
+        works = result.get('albums') or result.get('videos') or result.get('works') or []
+        albums = []
+
+        for work in works:
+            album = dict(work or {})
+            album['platform'] = platform
+            albums.append(
+                annotate_item(
+                    album,
+                    platform_name=platform,
+                    media_type="comic",
+                    capability="taxonomy.tag_search",
+                )
+            )
+
+        return success_response({
+            "platform": platform,
+            "page": result.get('page', page),
+            "has_next": result.get('has_next', False),
+            "total_pages": result.get('total_pages'),
+            "albums": albums,
+            "videos": albums,  # 兼容前端 video 字段约定
+            "query": result.get('query'),
+            "requested_tag_ids": result.get('requested_tag_ids', requested_tag_ids),
+            "effective_tag_ids": result.get('effective_tag_ids', []),
+            "invalid_tag_ids": result.get('invalid_tag_ids', []),
+            "overridden_tag_ids": result.get('overridden_tag_ids', []),
+        })
+    except ValueError as e:
+        error_logger.error(f"漫画平台标签搜索失败(参数) platform={platform}: {e}")
+        return error_response(400, str(e))
+    except PermissionError as e:
+        error_logger.error(f"漫画平台标签搜索失败(鉴权) platform={platform}: {e}")
+        return error_response(403, str(e))
+    except Exception as e:
+        error_logger.error(f"漫画平台标签搜索失败 platform={platform}: {e}")
+        return error_response(500, "server error")
 
 
 @comic_bp.route('/filter', methods=['GET'])

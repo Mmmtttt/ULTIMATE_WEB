@@ -114,8 +114,8 @@ export const videoApi = {
     return request.get(`/v1/video/third-party/${normalizedPlatform}/search-by-tags?${params.toString()}`)
   },
   
-  thirdPartyDetail(videoId) {
-    return request.get('/v1/video/third-party/detail', { params: { video_id: videoId } })
+  thirdPartyDetail(videoId, params = {}) {
+    return request.get('/v1/video/third-party/detail', { params: { video_id: videoId, ...params } })
   },
   
   thirdPartyActorSearch(actorName) {

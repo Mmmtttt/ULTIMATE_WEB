@@ -498,7 +498,26 @@ export const comicApi = {
    */
   batchDeletePermanently: (comicIds) => {
     return request.delete('/v1/comic/trash/batch-delete', { data: { comic_ids: comicIds } })
-  }
+  },
+
+  // ---------- 第三方平台标签搜索（漫画模式） ----------
+
+  thirdPartyPlatformHealthStatus(platform) {
+    return request.get(`/v1/comic/third-party/${platform}/health-status`)
+  },
+
+  thirdPartyPlatformTags(platform, keyword = '', category = '') {
+    return request.get(`/v1/comic/third-party/${platform}/tags`, {
+      params: { keyword, category }
+    })
+  },
+
+  thirdPartyPlatformSearchByTags(platform, tagIds = [], page = 1) {
+    const params = new URLSearchParams()
+    tagIds.forEach(tagId => params.append('tag_ids', tagId))
+    params.append('page', String(page))
+    return request.get(`/v1/comic/third-party/${platform}/search-by-tags?${params.toString()}`)
+  },
 }
 
 /**

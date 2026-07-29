@@ -19,8 +19,28 @@
 
       <div class="search-subtitle">仅搜索全网内容，输入关键词后点击搜索或按回车触发。</div>
 
+      <!-- 平台选择器（多选） -->
+      <div v-if="platformOptions.length > 0" class="platform-selector">
+        <div
+          class="platform-chip"
+          :class="{ active: selectedPlatforms.length === 0 }"
+          @click="handlePlatformChange('all')"
+        >
+          全部
+        </div>
+        <div
+          v-for="opt in platformOptions"
+          :key="opt.platform"
+          class="platform-chip"
+          :class="{ active: selectedPlatforms.includes(opt.platform) }"
+          @click="handlePlatformChange(opt.platform)"
+        >
+          {{ opt.label }}
+        </div>
+      </div>
+
       <div v-if="isVideoMode" class="tag-search-entry">
-        <van-button size="small" plain type="primary" icon="filter-o" @click="goToVideoTagSearch">
+        <van-button size="small" plain type="primary" icon="filter-o" @click="goToTagSearch">
           标签搜索
         </van-button>
       </div>
@@ -63,7 +83,7 @@
               <div v-if="isSelected(item)" class="select-overlay">
                 <van-icon name="success" class="select-icon" />
               </div>
-              <div v-if="!isVideoMode" class="card-hover-actions">
+              <div class="card-hover-actions">
                 <div class="hover-action-btn" title="查看详情" @click.stop="goToDetail(item)">
                   <van-icon name="eye-o" />
                 </div>
@@ -116,10 +136,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useModeStore, useComicStore, useImportTaskStore } from '@/stores'
-import { videoApi } from '@/api'
+import { storeToRefs } from 'pinia'
+import { useModeStore, useComicStore, useImportTaskStore, useVideoStore, useGlobalSearchStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import {
@@ -137,18 +157,27 @@ import {
 const router = useRouter()
 const modeStore = useModeStore()
 const comicStore = useComicStore()
+const videoStore = useVideoStore()
 const importTaskStore = useImportTaskStore()
+const searchStore = useGlobalSearchStore()
 
-const keyword = ref('')
+// 持久化状态 — 来自 store，页面导航间保持
+const {
+  keyword,
+  results,
+  hasMore,
+  currentPage,
+  selectedIds,
+  paginationInfo,
+  searchExecuted,
+  selectedPlatforms,
+  platformOptions,
+} = storeToRefs(searchStore)
+
+// 临时 UI 状态 — 组件销毁即消失
 const loading = ref(false)
 const loadingMore = ref(false)
-const results = ref([])
-const hasMore = ref(false)
-const currentPage = ref(0)
-const selectedIds = ref([])
 const showImportSheet = ref(false)
-const paginationInfo = ref(null)
-const searchExecuted = ref(false)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -240,7 +269,8 @@ function goToDetail(item) {
       console.warn('[goToDetail] 无法解析平台信息:', item)
       return
     }
-    router.push({ name: 'ComicDetail', params: { id }, query: { platform } })
+    const routeName = isVideoMode.value ? 'VideoDetail' : 'ComicDetail'
+    router.push({ name: routeName, params: { id }, query: { platform } })
   }
 }
 
@@ -248,7 +278,7 @@ function toggleSelectAllRemote() {
   toggleSelectAll(selectedIds, normalizedResults.value, (item) => getItemId(item))
 }
 
-async function goToVideoTagSearch() {
+async function goToTagSearch() {
   try {
     const platformOptions = await fetchProtocolPlatformOptions({
       mediaType: 'video',
@@ -259,26 +289,14 @@ async function goToVideoTagSearch() {
       throw new Error('当前没有声明标签搜索能力的视频平台')
     }
 
-    const res = await videoApi.thirdPartyPlatformHealthStatus(targetPlatform.platform)
-    const configured = Boolean(res?.code === 200 && res?.data?.configured)
-    if (configured) {
-      router.push({
-        path: '/video-tag-search',
-        query: { platform: targetPlatform.platform }
-      })
-      return
-    }
-
-    await showConfirmDialog({
-      title: '提示',
-      message: `未完成 ${targetPlatform.label} 所需配置，请先在系统设置中完成配置`,
-      showCancelButton: false,
-      confirmButtonText: '知道了'
+    router.push({
+      name: 'VideoTagSearch',
+      query: { platform: targetPlatform.platform }
     })
   } catch (e) {
     await showConfirmDialog({
       title: '提示',
-      message: e?.message || '当前没有可用的标签搜索平台',
+      message: e?.message || '当前没有可用的视频标签搜索平台',
       showCancelButton: false,
       confirmButtonText: '知道了'
     })
@@ -287,6 +305,25 @@ async function goToVideoTagSearch() {
 
 function handleImport() {
   showImportSheet.value = true
+}
+
+function handlePlatformChange(platform) {
+  if (platform === 'all') {
+    // 点击"全部" → 清空选择 → 搜全部平台
+    selectedPlatforms.value = []
+  } else {
+    // 切换单个平台选/不选
+    const idx = selectedPlatforms.value.indexOf(platform)
+    if (idx >= 0) {
+      selectedPlatforms.value.splice(idx, 1)
+    } else {
+      selectedPlatforms.value.push(platform)
+    }
+  }
+  // 若有关键词则自动重新搜索
+  if (String(keyword.value || '').trim()) {
+    handleSearch()
+  }
 }
 
 async function confirmImport(target) {
@@ -326,7 +363,7 @@ async function confirmImport(target) {
       throw new Error('未找到可导入的平台标识')
     }
     showToast(`已创建 ${taskCount} 个导入任务`)
-    selectedIds.value = []
+    searchStore.clearSelection()
   } catch {
     showToast('导入失败')
   }
@@ -356,27 +393,36 @@ async function handleSearch() {
 }
 
 async function searchRemote(searchKeyword) {
+  const platform = selectedPlatforms.value.length > 0 ? selectedPlatforms.value.join(',') : 'all'
   if (isVideoMode.value) {
-    const res = await videoApi.thirdPartySearch(searchKeyword, 1)
-    if (res.code === 200 && res.data) {
-      results.value = res.data.videos || []
-      paginationInfo.value = {
-        platform: res.data.platform,
-        page: res.data.page,
-        total_pages: res.data.total_pages,
-        has_next: res.data.has_next
-      }
-      hasMore.value = res.data.has_next
+    const res = await videoStore.thirdPartySearch(searchKeyword, platform, 1, 40)
+    if (res.results) {
+      searchStore.setSearchState({
+        keyword: searchKeyword,
+        results: res.results,
+        currentPage: res.page,
+        hasMore: res.has_more,
+        paginationInfo: {
+          platform: res.platform || 'all',
+          page: res.page || 1,
+          total_pages: res.total_pages || 1,
+        },
+        videoMode: true,
+      })
     }
     return
   }
 
-  const res = await comicStore.thirdPartySearch(searchKeyword, 'all', 1, 40)
+  const res = await comicStore.thirdPartySearch(searchKeyword, platform, 1, 40)
   if (res.results) {
-    results.value = res.results
-    currentPage.value = res.page
-    hasMore.value = res.has_more
-    paginationInfo.value = res.platform_info || {}
+    searchStore.setSearchState({
+      keyword: searchKeyword,
+      results: res.results,
+      currentPage: res.page,
+      hasMore: res.has_more,
+      paginationInfo: res.platform_info || {},
+      videoMode: false,
+    })
   }
 }
 
@@ -390,43 +436,60 @@ async function loadMore() {
       return
     }
 
+    const platform = selectedPlatforms.value.length > 0 ? selectedPlatforms.value.join(',') : 'all'
+
     if (isVideoMode.value) {
-      const nextPage = paginationInfo.value ? paginationInfo.value.page + 1 : 2
-      const res = await videoApi.thirdPartySearch(normalizedKeyword, nextPage)
-      if (res.code === 200 && res.data) {
-        results.value = [...results.value, ...(res.data.videos || [])]
-        paginationInfo.value = {
-          platform: res.data.platform,
-          page: res.data.page,
-          total_pages: res.data.total_pages,
-          has_next: res.data.has_next
-        }
-        hasMore.value = res.data.has_next
+      const nextPage = currentPage.value + 1
+      const res = await videoStore.thirdPartySearch(normalizedKeyword, platform, nextPage, 40)
+      if (res.results) {
+        searchStore.appendResults(res.results, res.page, res.has_more, res.platform_info)
       }
       return
     }
 
     const nextPage = currentPage.value + 1
-    const res = await comicStore.thirdPartySearch(normalizedKeyword, 'all', nextPage, 40)
+    const res = await comicStore.thirdPartySearch(normalizedKeyword, platform, nextPage, 40)
     if (res.results) {
-      results.value = [...results.value, ...res.results]
-      currentPage.value = res.page
-      hasMore.value = res.has_more
-      paginationInfo.value = res.platform_info || {}
+      searchStore.appendResults(res.results, res.page, res.has_more, res.platform_info || {})
     }
   } finally {
     loadingMore.value = false
   }
 }
 
+/** 加载当前模式下的平台选项 */
+async function loadPlatformOptions(mediaType) {
+  try {
+    const options = await fetchProtocolPlatformOptions({
+      mediaType,
+      capability: 'catalog.search',
+    })
+    platformOptions.value = options.map((item) => ({
+      platform: item.platform,
+      label: item.label,
+    }))
+  } catch (e) {
+    console.warn('[GlobalSearch] 加载平台选项失败:', e)
+  }
+}
+
+// 监听视频/漫画模式切换：模式变化时清空数据、刷新平台列表
+watch(isVideoMode, async (newMode, oldMode) => {
+  const modeChanged = oldMode !== undefined && newMode !== oldMode
+  if (modeChanged) {
+    // 模式真正切换了 → 清空结果和平台选择
+    searchStore.clearResults()
+    selectedPlatforms.value = []
+    platformOptions.value = []
+    await loadPlatformOptions(newMode ? 'video' : 'comic')
+  } else if (platformOptions.value.length === 0) {
+    // 首次挂载或选项已丢失时加载
+    await loadPlatformOptions(newMode ? 'video' : 'comic')
+  }
+}, { immediate: true })
+
 onMounted(() => {
-  keyword.value = ''
-  results.value = []
-  hasMore.value = false
-  currentPage.value = 0
-  selectedIds.value = []
-  paginationInfo.value = null
-  searchExecuted.value = false
+  // onMounted 不再处理 —— watch 的 immediate: true 已覆盖
 })
 </script>
 
@@ -484,9 +547,48 @@ onMounted(() => {
   color: var(--text-tertiary);
 }
 
+.platform-selector {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 10px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+}
+
+.platform-selector::-webkit-scrollbar {
+  display: none;
+}
+
+.platform-chip {
+  flex-shrink: 0;
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.platform-chip:hover {
+  border-color: var(--brand-400);
+  color: var(--brand-500);
+}
+
+.platform-chip.active {
+  background: var(--brand-500);
+  border-color: var(--brand-500);
+  color: #fff;
+}
+
 .tag-search-entry {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   padding: 0 12px 10px;
 }
 
