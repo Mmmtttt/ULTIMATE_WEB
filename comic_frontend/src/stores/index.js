@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Store 统一导出
  * 集中管理所有 Pinia Store
  */
@@ -50,3 +50,6 @@ export { useRandomFeedStore } from './randomFeed'
 
 // 应用更新
 export { useAppUpdateStore } from './appUpdate'
+
+// 全网搜索
+export { useGlobalSearchStore } from './globalSearch'

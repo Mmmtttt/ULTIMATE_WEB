@@ -3,25 +3,18 @@
     <div class="page-header">
       <van-icon name="arrow-left" class="back-icon" @click="$router.back()" />
       <div class="header-copy">
-        <div class="header-title">{{ currentPlatformLabel }} 标签搜索</div>
-        <div class="header-subtitle">多选平台内置标签后搜索并导入</div>
-      </div>
+      <div class="header-title">{{ currentPlatformLabel }} 标签搜索</div>
+      <div class="header-subtitle">多选平台内置标签后搜索并导入</div>
     </div>
+  </div>
 
-    <div v-if="!isVideoMode" class="mode-empty">
-      <EmptyState title="仅视频模式可用" description="请先切换到视频模式" />
-      <van-button type="primary" class="mode-switch-btn" @click="switchToVideoMode">
-        切换到视频模式
-      </van-button>
-    </div>
-
-    <template v-else>
+  <template>
       <van-loading v-if="!platformsLoaded || !platformStatusChecked" class="loading-center" />
 
       <div v-else-if="availablePlatforms.length === 0" class="mode-empty">
         <EmptyState
           title="暂无可用平台"
-          description="当前没有声明标签搜索能力的视频插件"
+          :description="`当前没有声明标签搜索能力的${isVideoMode ? '视频' : '漫画'}插件`"
         />
       </div>
 
@@ -137,7 +130,7 @@
             </van-button>
           </div>
 
-          <div class="remote-results-grid video-mode">
+          <div class="remote-results-grid" :class="isVideoMode ? 'video-mode' : 'comic-mode'">
             <div
               v-for="item in normalizedResults"
               :key="getItemId(item)"
@@ -181,7 +174,7 @@
       </template>
     </template>
 
-    <div v-if="selectedResultIds.length > 0 && isVideoMode" class="floating-import-bar">
+    <div v-if="selectedResultIds.length > 0" class="floating-import-bar">
       <span class="floating-selection-info">已选 {{ selectedResultIds.length }} 项</span>
       <van-button type="primary" @click="showImportSheet = true">导入选中</van-button>
     </div>
@@ -200,6 +193,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useImportTaskStore } from '@/stores'
 import { uiStateApi, videoApi } from '@/api'
+import { comicApi } from '@/api/comic'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showConfirmDialog, showToast } from 'vant'
 import {
@@ -222,6 +216,7 @@ const modeStore = useModeStore()
 const importTaskStore = useImportTaskStore()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
+const tagApi = computed(() => isVideoMode.value ? videoApi : comicApi)
 
 const loadingTags = ref(false)
 const loading = ref(false)
@@ -257,7 +252,7 @@ const platformConfigMessage = computed(() => {
 })
 
 function getUiStateScope() {
-  return buildUiStateScope('video_tag_search', true)
+  return buildUiStateScope(isVideoMode.value ? 'video_tag_search' : 'comic_tag_search', true)
 }
 
 function buildPersistedStatePayload() {
@@ -361,7 +356,7 @@ async function ensurePlatformConfigured(showDialog = false) {
   }
 
   try {
-    const res = await videoApi.thirdPartyPlatformHealthStatus(platform)
+    const res = await tagApi.value.thirdPartyPlatformHealthStatus(platform)
     const configured = Boolean(res?.code === 200 && res?.data?.configured)
     platformConfigured.value = configured
     platformStatusChecked.value = true
@@ -396,11 +391,6 @@ async function ensurePlatformConfigured(showDialog = false) {
     }
     return false
   }
-}
-
-async function switchToVideoMode() {
-  modeStore.setMode('video')
-  await loadAvailablePlatforms()
 }
 
 async function toggleTag(tagId) {
@@ -485,7 +475,7 @@ async function loadAvailablePlatforms(restoredState = null) {
   platformsLoaded.value = false
   try {
     const options = await fetchProtocolPlatformOptions({
-      mediaType: 'video',
+      mediaType: isVideoMode.value ? 'video' : 'comic',
       capability: 'taxonomy.tag_search'
     })
     availablePlatforms.value = options
@@ -519,11 +509,11 @@ async function selectPlatform(platform) {
 }
 
 async function loadTags(restoredState = null) {
-  if (!isVideoMode.value || !platformConfigured.value || !platformStatusChecked.value) return
+  if (!platformConfigured.value || !platformStatusChecked.value) return
 
   loadingTags.value = true
   try {
-    const res = await videoApi.thirdPartyPlatformTags(selectedPlatform.value)
+    const res = await tagApi.value.thirdPartyPlatformTags(selectedPlatform.value)
     if (res.code === 200 && res.data) {
       if (res.data.cookie_configured === false) {
         platformConfigured.value = false
@@ -589,9 +579,9 @@ async function handleSearch() {
   paginationInfo.value = null
 
   try {
-    const res = await videoApi.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, 1)
+    const res = await tagApi.value.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, 1)
     if (res.code === 200 && res.data) {
-      results.value = res.data.videos || []
+      results.value = res.data.videos || res.data.albums || []
       paginationInfo.value = {
         page: res.data.page || 1
       }
@@ -618,9 +608,9 @@ async function loadMore() {
   loadingMore.value = true
   try {
     const nextPage = (paginationInfo.value?.page || 1) + 1
-    const res = await videoApi.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, nextPage)
+    const res = await tagApi.value.thirdPartyPlatformSearchByTags(selectedPlatform.value, selectedTagIds.value, nextPage)
     if (res.code === 200 && res.data) {
-      results.value = [...results.value, ...(res.data.videos || [])]
+      results.value = [...results.value, ...(res.data.videos || res.data.albums || [])]
       paginationInfo.value = {
         page: res.data.page || nextPage
       }
@@ -646,24 +636,26 @@ async function confirmImport(target) {
   }
 
   const itemsByPlatform = {}
+  const idFieldName = isVideoMode.value ? 'video_ids' : 'comic_ids'
+  const contentType = isVideoMode.value ? 'video' : 'comic'
   selectedItems.forEach(item => {
     const platform = String(resolveImportPlatform(item) || selectedPlatform.value || '').trim().toUpperCase()
-    const videoId = getItemId(item)
-    if (!videoId) return
+    const itemId = getItemId(item)
+    if (!itemId) return
     if (!itemsByPlatform[platform]) {
       itemsByPlatform[platform] = []
     }
-    itemsByPlatform[platform].push(videoId)
+    itemsByPlatform[platform].push(itemId)
   })
 
   let taskCount = 0
-  for (const [platform, videoIds] of Object.entries(itemsByPlatform)) {
+  for (const [platform, itemIds] of Object.entries(itemsByPlatform)) {
     const created = await importTaskStore.createImportTask({
       import_type: 'by_list',
       target,
       platform,
-      comic_ids: videoIds,
-      content_type: 'video'
+      [idFieldName]: itemIds,
+      content_type: contentType
     })
     if (created) {
       taskCount += 1
@@ -878,7 +870,8 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.remote-results-grid.video-mode {
+.remote-results-grid.video-mode,
+.remote-results-grid.comic-mode {
   align-items: start;
 }
 
@@ -890,7 +883,8 @@ onMounted(async () => {
   transition: all 0.16s ease;
 }
 
-.remote-results-grid.video-mode .remote-result-card {
+.remote-results-grid.video-mode .remote-result-card,
+.remote-results-grid.comic-mode .remote-result-card {
   align-self: start;
 }
 
@@ -1032,12 +1026,14 @@ onMounted(async () => {
     aspect-ratio: var(--media-cover-aspect-ratio-mobile, var(--media-cover-aspect-ratio, 2 / 3));
   }
 
-  .remote-results-grid.video-mode .card-title {
+  .remote-results-grid.video-mode .card-title,
+  .remote-results-grid.comic-mode .card-title {
     font-size: 12px;
     min-height: 32px;
   }
 
-  .remote-results-grid.video-mode .card-code {
+  .remote-results-grid.video-mode .card-code,
+  .remote-results-grid.comic-mode .card-code {
     font-size: 11px;
   }
 }

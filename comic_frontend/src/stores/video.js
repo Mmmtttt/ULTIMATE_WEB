@@ -216,16 +216,28 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
   
-  async function thirdPartySearch(keyword) {
+  async function thirdPartySearch(keyword, platform = 'all', page = 1, limit = 20) {
+    if (!keyword || keyword.trim() === '') {
+      return { results: [], platform_info: {}, page: 1, limit: 20, has_more: false }
+    }
     loading.value = true
     try {
-      const res = await videoApi.thirdPartySearch(keyword)
-      if (res.code === 200) {
-        return res.data || []
+      const res = await videoApi.thirdPartySearch(keyword, page, platform)
+      if (res.code === 200 && res.data) {
+        return {
+          results: Array.isArray(res.data.videos) ? res.data.videos : [],
+          platform: res.data.platform || 'all',
+          platform_info: res.data.platform_info || {},
+          page: res.data.page || 1,
+          total_pages: res.data.total_pages || 1,
+          has_more: Boolean(res.data.has_next),
+          total: res.data.total || 0,
+        }
       }
-      return []
+      return { results: [], platform: 'all', platform_info: {}, page: 1, limit: 20, has_more: false }
     } catch (e) {
-      return []
+      console.error('[Video] 第三方搜索失败:', e)
+      return { results: [], platform: 'all', platform_info: {}, page: 1, limit: 20, has_more: false }
     } finally {
       loading.value = false
     }

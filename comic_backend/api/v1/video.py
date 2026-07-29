@@ -2,7 +2,7 @@
 视频 API 路由
 """
 
-from flask import Blueprint, request, jsonify, Response, make_response, send_file
+from flask import Blueprint, request, jsonify, Response, make_response, send_file, stream_with_context
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.content_sorting import (
@@ -41,6 +41,8 @@ from domain.tag.entity import ContentType
 import os
 import threading
 import time
+import base64
+from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 import mimetypes
 import re
@@ -110,8 +112,30 @@ def _get_video_proxy_client():
 
 
 def _build_play_sources(code: str):
-    client = _get_video_proxy_client()
-    return client.build_sources(code)
+    """Build play sources from all plugins that support playback.sources.build."""
+    if not is_third_party_enabled():
+        raise RuntimeError(
+            f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}"
+        )
+
+    gateway = get_protocol_gateway()
+    manifests = list(gateway.list_manifests(media_type="video", capability="playback.sources.build"))
+    if not manifests:
+        # fallback: use the default proxy client's build_sources
+        client = _get_video_proxy_client()
+        return client.build_sources(code)
+
+    all_sources = []
+    for manifest in manifests:
+        try:
+            client = gateway.get_client(manifest.plugin_id, proxy_base_path='/api/v1/video')
+            sources = client.build_sources(code)
+            if sources:
+                all_sources.extend(sources)
+        except Exception as e:
+            error_logger.error(f"build_sources failed for plugin {manifest.plugin_id}: {e}")
+
+    return all_sources
 
 
 def _get_video_recommendation_document_repository() -> JsonDocumentRepository:
@@ -484,6 +508,70 @@ def _resolve_remote_video_sources(video_id: str, video: dict, *, remote_provider
             requested_provider_key=requested_provider,
         )
     )
+
+
+def _resolve_third_party_play_urls(
+    video_id: str,
+    platform: str,
+    playback_source: str,
+    remote_provider: str = "",
+) -> Response:
+    """通过第三方平台 provider 解析播放链接。
+
+    当本地数据库中没有该视频（例如直接从第三方搜索结果进入详情页）时，
+    通过 protocol gateway 调用第三方 provider 获取详情和播放源。
+    """
+    try:
+        adapter = get_video_adapter(platform)
+        detail = adapter.get_video_detail(video_id)
+
+        if not detail or detail.get("found") is False:
+            return error_response(404, "视频不存在或无法获取详情")
+
+        detail_video = detail
+        if isinstance(detail_video.get("videos"), list) and len(detail_video["videos"]) > 0:
+            detail_video = detail_video["videos"][0]
+
+        code = str(detail_video.get("code") or detail_video.get("video_id") or video_id or "").strip()
+        title = str(detail_video.get("title") or "").strip()
+
+        if not is_third_party_enabled():
+            return error_response(
+                503,
+                f"third-party integration is disabled in current runtime profile: {get_runtime_profile()}",
+            )
+
+        provider_groups = []
+        if code:
+            try:
+                provider_groups.extend(_build_online_provider_groups(code))
+            except Exception as e:
+                error_logger.error(
+                    "[third_party_play_urls] build sources failed: video_id=%s, code=%s, error=%s",
+                    video_id,
+                    code,
+                    e,
+                )
+
+        if not provider_groups:
+            return error_response(400, "远程播放源不可用")
+
+        return success_response(
+            _build_play_urls_payload(
+                video_id=video_id,
+                code=code,
+                title=title,
+                playback_source="remote",
+                provider_groups=provider_groups,
+                requested_provider_key=remote_provider,
+            )
+        )
+    except RuntimeError as e:
+        error_logger.error("[third_party_play_urls] config error: %s", e)
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error("[third_party_play_urls] error: %s", e)
+        return error_response(500, "服务器内部错误")
 
 
 @video_bp.route('/list', methods=['GET'])
@@ -2314,7 +2402,19 @@ def third_party_search():
         supported_platforms = sorted({item["canonical_platform"] for item in search_plugins})
         if normalized_platform == 'all':
             platforms_to_search = search_plugins
+            is_multi_platform = False
+        elif ',' in normalized_platform:
+            # 多平台逗号分隔，如 "hanime1,javbus"
+            platform_names = [p.strip() for p in normalized_platform.split(',') if p.strip()]
+            platforms_to_search = []
+            for pname in platform_names:
+                descriptor = search_lookup.get(pname)
+                if descriptor is None:
+                    return error_response(400, f"不支持的视频平台: {pname}，支持的平台: {supported_platforms}")
+                platforms_to_search.append(descriptor)
+            is_multi_platform = True
         else:
+            is_multi_platform = False
             descriptor = search_lookup.get(normalized_platform)
             if descriptor is None:
                 return error_response(400, f"不支持的视频平台: {platform}，支持的平台: {supported_platforms}")
@@ -2330,7 +2430,7 @@ def third_party_search():
             status = _get_video_platform_query_status(plat)
             if not bool(status.get("configured", False)):
                 platform_errors[plat] = str(status.get("message") or f"{plat} 平台未配置查询凭据")
-                if normalized_platform != "all":
+                if not is_multi_platform and normalized_platform != "all":
                     return error_response(400, platform_errors[plat])
                 continue
 
@@ -2377,12 +2477,12 @@ def third_party_search():
             except RuntimeError as e:
                 platform_errors[plat] = str(e)
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
-                if normalized_platform != "all":
+                if not is_multi_platform and normalized_platform != "all":
                     return error_response(400, platform_errors[plat])
             except Exception as e:
                 error_logger.error(f"搜索平台 {plat} 失败: {e}")
                 platform_errors[plat] = f"{plat} 平台搜索失败"
-                if normalized_platform != "all":
+                if not is_multi_platform and normalized_platform != "all":
                     return error_response(500, platform_errors[plat])
                 continue
         
@@ -2392,7 +2492,10 @@ def third_party_search():
         total_pages = max(total_pages_list) if total_pages_list else 1
         
         response_data = {
-            "platform": 'all' if normalized_platform == 'all' else normalized_platform,
+            "platform": (
+                'all' if normalized_platform == 'all'
+                else normalized_platform
+            ),
             "page": page,
             "has_next": has_more,
             "total_pages": total_pages,
@@ -2441,19 +2544,50 @@ def third_party_detail():
             return error_response(400, "缺少参数")
         
         adapter = get_video_adapter(platform)
-        detail = adapter.get_video_detail(video_id)
+        resolved_platform, raw_id, manifest = _resolve_video_lookup_context(
+            video_id=video_id,
+            platform_name=platform,
+        )
+        detail = adapter.get_video_detail(raw_id or video_id)
         
-        if detail:
+        if detail and detail.get('found') is not False:
+            # get_video_detail 可能返回 {"videos": [detail]} 结构
+            detail_video = detail
+            if isinstance(detail_video.get('videos'), list) and len(detail_video['videos']) > 0:
+                detail_video = detail_video['videos'][0]
+
+            content_id = str(detail_video.get('video_id') or detail_video.get('id') or video_id or "").strip()
+            cover_url = str(detail_video.get('cover_url') or "").strip()
+            if cover_url:
+                detail_video['cover_url'] = to_proxy_image_url(
+                    cover_url,
+                    asset_kind="cover",
+                    video_id=content_id,
+                    platform_name=platform,
+                    content_id=content_id,
+                )
+            thumbs = detail_video.get('thumbnail_images') or []
+            if thumbs:
+                detail_video['thumbnail_images'] = [
+                    to_proxy_image_url(
+                        str(t),
+                        asset_kind="image",
+                        video_id=content_id,
+                        platform_name=platform,
+                        content_id=content_id,
+                    )
+                    for t in thumbs if str(t).strip()
+                ]
             return success_response(
                 annotate_item(
-                    detail,
+                    detail_video,
                     platform_name=platform,
                     media_type="video",
                     capability="catalog.detail",
                 )
             )
         else:
-            return error_response(404, "视频不存在")
+            return error_response(404, "视频不存在或未找到")
     except RuntimeError as e:
         error_logger.error(f"获取第三方详情失败(配置): {e}")
         return error_response(400, str(e))
@@ -3491,8 +3625,17 @@ def get_video_play_urls(video_id):
     try:
         playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
         remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
+        platform = str(request.args.get("platform") or "").strip()
         result = video_service.get_video_detail(video_id)
         if not result.success or not result.data:
+            # 如果本地找不到视频但有 platform 参数，尝试第三方渠道
+            if platform:
+                app_logger.info(
+                    "[play-urls] video not found locally, trying third-party platform=%s, video_id=%s",
+                    platform,
+                    video_id,
+                )
+                return _resolve_third_party_play_urls(video_id, platform, playback_source, remote_provider)
             return error_response(404, "视频不存在")
         
         video = result.data
@@ -3588,19 +3731,119 @@ def proxy_video_request(domain, path):
         return Response(f'Proxy error: {str(e)}', status=500)
 
 
+def _extract_target_url(body_url: str, query_string: str) -> str:
+    """从请求参数中提取目标 URL。"""
+    target_url = str(body_url or "").strip()
+    if not target_url and query_string:
+        parsed = parse_qs(query_string)
+        url_param = parsed.get("url", [])
+        if url_param:
+            encoded = url_param[0]
+            try:
+                target_url = base64.b64decode(encoded).decode("utf-8")
+            except Exception:
+                target_url = encoded
+    return target_url
+
+
+def _find_proxy_client_for_url(target_url: str) -> Any:
+    """Find the matching playback proxy client by URL pattern.
+
+    Iterates over all video plugins with playback.proxy.url capability
+    and selects the one whose resource_policy match_hosts matches the target URL.
+    Falls back to the first available proxy client.
+    """
+    if not target_url:
+        app_logger.info(f"[proxy_route] target_url is empty, using fallback")
+        return _get_video_proxy_client()
+
+    parsed = urlparse(target_url)
+    target_host = str(parsed.netloc or "").strip().lower()
+    if not target_host:
+        app_logger.info(f"[proxy_route] target_url=%s: no host found, using fallback", target_url[:80])
+        return _get_video_proxy_client()
+
+    gateway = get_protocol_gateway()
+    manifests = list(gateway.list_manifests(media_type="video", capability="playback.proxy.url"))
+    app_logger.info(
+        "[proxy_route] target_host=%s, manifests_with_proxy_url=%s",
+        target_host,
+        [m.plugin_id for m in manifests],
+    )
+
+    for manifest in manifests:
+        try:
+            rp = manifest.resource_policy
+            app_logger.info(
+                "[proxy_route] checking manifest=%s, resource_policy_keys=%s",
+                manifest.plugin_id,
+                list(rp.keys()) if isinstance(rp, dict) else type(rp).__name__,
+            )
+            if not isinstance(rp, dict):
+                continue
+            # resource_policy 结构: {"assets": {"image": {...}, "cover": {...}}}
+            assets = rp.get("assets", {})
+            if not isinstance(assets, dict):
+                app_logger.info("[proxy_route]   assets is not dict, type=%s", type(assets).__name__)
+                continue
+            for asset_key in ("image", "cover", "preview_video", "video", "asset"):
+                asset_policy = assets.get(asset_key, {})
+                if not isinstance(asset_policy, dict):
+                    continue
+                for raw_profile in (asset_policy.get("request_profiles") or []):
+                    if not isinstance(raw_profile, dict):
+                        continue
+                    match_hosts = [
+                        str(item or "").strip().lower()
+                        for item in (raw_profile.get("match_hosts") or [])
+                        if str(item or "").strip()
+                    ]
+                    if match_hosts and any(c in target_host for c in match_hosts):
+                        app_logger.info(
+                            "[proxy_route] => MATCHED: plugin=%s, match_hosts=%s, target_host=%s",
+                            manifest.plugin_id,
+                            match_hosts,
+                            target_host,
+                        )
+                        return gateway.get_client(
+                            manifest.plugin_id,
+                            proxy_base_path="/api/v1/video",
+                        )
+        except Exception as e:
+            error_logger.error(f"[proxy_route] EXCEPTION for {manifest.plugin_id}: {e}")
+            continue
+
+    fallback = _get_video_proxy_client()
+    app_logger.info(
+        "[proxy_route] => FALLBACK to %s (no match for host=%s)",
+        fallback.plugin_id if hasattr(fallback, 'plugin_id') else str(fallback),
+        target_host,
+    )
+    # fallback: use the first available proxy client
+    return _get_video_proxy_client()
+
+
 @video_bp.route('/proxy2', methods=['GET', 'POST', 'HEAD'])
 @require_third_party(error_response)
 def proxy_video_request2():
-    """代理视频请求（完整URL方式，支持重写m3u8）"""
+    """代理视频请求（完整URL方式，支持流式传输）。
+
+    关键优化：使用流式响应（chunked transfer），后端边下载边转发，
+    避免等待完整视频文件下载后才开始播放，大幅减少首帧时间。
+    """
     try:
         body_url = ''
         if request.method == 'POST':
             data = request.get_json(silent=True) or {}
             body_url = data.get('url', '')
 
-        proxy_result = _get_video_proxy_client().proxy_url(
+        query_string = request.query_string.decode()
+        target_url = _extract_target_url(body_url, query_string)
+        proxy_client = _find_proxy_client_for_url(target_url)
+
+        proxy_result = proxy_client.proxy_url(
             method=request.method,
-            query_string=request.query_string.decode(),
+            query_string=query_string,
             body_url=body_url,
             incoming_referer=request.headers.get('Referer', ''),
             incoming_headers={
@@ -3611,11 +3854,25 @@ def proxy_video_request2():
             }
         )
 
-        response = make_response(proxy_result.content)
-        response.status_code = proxy_result.status_code
-        for n, v in proxy_result.headers:
-            response.headers[n] = v
-        return response
+        # 流式传输：边下载边发送，浏览器可立即开始播放
+        def generate():
+            for chunk in proxy_result.iter_content(chunk_size=65536):
+                if chunk:
+                    yield chunk
+
+        resp_headers = {}
+        if hasattr(proxy_result.headers, "items"):
+            for n, v in proxy_result.headers.items():
+                resp_headers[n] = v
+        else:
+            for n, v in proxy_result.headers:
+                resp_headers[n] = v
+
+        return Response(
+            stream_with_context(generate()),
+            status=proxy_result.status_code,
+            headers=resp_headers,
+        )
     except ValueError as e:
         return Response(str(e), status=400)
     except Exception as e:

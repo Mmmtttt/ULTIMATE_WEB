@@ -335,7 +335,7 @@ class ProtocolHostService:
             raise ValueError(f"未知平台: {platform}")
         return self._gateway.get_client(manifest.plugin_id)
 
-    def execute_comic_platform(self, platform: Any, capability: str, params: Dict[str, Any]):
+    def execute_comic_platform(self, platform: Any, capability: str, params: Optional[Dict[str, Any]] = None):
         manifest = self._find_manifest(platform, media_type="comic", capability=capability)
         if manifest is None:
             raise ValueError(f"未知平台: {platform}")
