@@ -179,7 +179,7 @@ test("video tag search load more forwards page and imports to recommendation", a
     platform: "JAVDB",
     content_type: "video",
   });
-  expect(importTaskBodies[0].comic_ids).toEqual(["JVID-2"]);
+  expect(importTaskBodies[0].video_ids).toEqual(["JVID-2"]);
 
   expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();

@@ -8,171 +8,171 @@
     </div>
   </div>
 
-  <template>
-      <van-loading v-if="!platformsLoaded || !platformStatusChecked" class="loading-center" />
+  <van-loading v-if="!platformsLoaded || !platformStatusChecked" class="loading-center" />
 
-      <div v-else-if="availablePlatforms.length === 0" class="mode-empty">
-        <EmptyState
-          title="暂无可用平台"
-          :description="`当前没有声明标签搜索能力的${isVideoMode ? '视频' : '漫画'}插件`"
-        />
+  <div v-else-if="availablePlatforms.length === 0" class="mode-empty">
+    <EmptyState
+      title="暂无可用平台"
+      :description="`当前没有声明标签搜索能力的${isVideoMode ? '视频' : '漫画'}插件`"
+    />
+  </div>
+
+  <div v-else-if="!platformConfigured" class="mode-empty">
+    <EmptyState
+      title="未完成平台配置"
+      :description="platformConfigMessage"
+    />
+  </div>
+
+  <template v-else>
+    <div v-if="availablePlatforms.length > 1" class="platform-switch">
+      <button
+        v-for="platform in availablePlatforms"
+        :key="platform.platform"
+        type="button"
+        class="platform-pill"
+        :class="{ active: selectedPlatform === platform.platform }"
+        @click="selectPlatform(platform.platform)"
+      >
+        {{ platform.label }}
+      </button>
+    </div>
+
+    <div class="filters-card">
+    <div class="filter-actions">
+      <span class="selected-summary">已选 {{ selectedTagIds.length }} 个标签</span>
+      <div class="filter-action-btns">
+        <van-button
+          size="small"
+          plain
+          :disabled="selectedTagIds.length === 0"
+          @click="clearSelectedTags"
+        >
+          清空
+        </van-button>
+        <van-button
+          size="small"
+          type="primary"
+          :disabled="selectedTagIds.length === 0 || loadingTags"
+          :loading="loading"
+          @click="handleSearch"
+        >
+          搜索
+        </van-button>
       </div>
+    </div>
 
-      <div v-else-if="!platformConfigured" class="mode-empty">
-        <EmptyState
-          title="未完成平台配置"
-          :description="platformConfigMessage"
-        />
-      </div>
+    <div v-if="selectedTags.length > 0" class="selected-tags">
+      <van-tag
+        v-for="tag in selectedTags"
+        :key="tag.id"
+        closeable
+        type="primary"
+        @close="removeSelectedTag(tag.id)"
+      >
+        {{ tag.name }}
+      </van-tag>
+    </div>
 
-      <template v-else>
-        <div v-if="availablePlatforms.length > 1" class="platform-switch">
+    <van-loading v-if="loadingTags" class="loading-center" />
+
+    <template v-else>
+      <div class="tags-container">
+        <van-tabs v-model:active="activeCategory" shrink>
+          <van-tab
+            v-for="category in categoryTabs"
+            :key="category.key"
+            :title="`${category.name} (${category.count})`"
+            :name="category.key"
+          />
+        </van-tabs>
+
+        <div class="tag-grid">
           <button
-            v-for="platform in availablePlatforms"
-            :key="platform.platform"
-            type="button"
-            class="platform-pill"
-            :class="{ active: selectedPlatform === platform.platform }"
-            @click="selectPlatform(platform.platform)"
-          >
-            {{ platform.label }}
-          </button>
-        </div>
-
-        <div class="filters-card">
-        <div class="filter-actions">
-          <span class="selected-summary">已选 {{ selectedTagIds.length }} 个标签</span>
-          <div class="filter-action-btns">
-            <van-button
-              size="small"
-              plain
-              :disabled="selectedTagIds.length === 0"
-              @click="clearSelectedTags"
-            >
-              清空
-            </van-button>
-            <van-button
-              size="small"
-              type="primary"
-              :disabled="selectedTagIds.length === 0 || loadingTags"
-              :loading="loading"
-              @click="handleSearch"
-            >
-              搜索
-            </van-button>
-          </div>
-        </div>
-
-        <div v-if="selectedTags.length > 0" class="selected-tags">
-          <van-tag
-            v-for="tag in selectedTags"
+            v-for="tag in filteredTags"
             :key="tag.id"
-            closeable
-            type="primary"
-            @close="removeSelectedTag(tag.id)"
+            type="button"
+            class="tag-pill"
+            :class="{ selected: selectedTagIds.includes(tag.id) }"
+            @click="toggleTag(tag.id)"
           >
             {{ tag.name }}
-          </van-tag>
+          </button>
         </div>
+      </div>
+    </template>
+  </div>
 
-        <van-loading v-if="loadingTags" class="loading-center" />
+    <div class="results-card">
+    <div class="results-header">
+      <span class="results-title">搜索结果</span>
+      <span v-if="searchExecuted" class="results-count">{{ normalizedResults.length }} 项</span>
+    </div>
 
-        <template v-else>
-          <van-tabs v-model:active="activeCategory" shrink>
-            <van-tab
-              v-for="category in categoryTabs"
-              :key="category.key"
-              :title="`${category.name} (${category.count})`"
-              :name="category.key"
-            />
-          </van-tabs>
+    <van-loading v-if="loading" class="loading-center" />
 
-          <div class="tag-grid">
-            <button
-              v-for="tag in filteredTags"
-              :key="tag.id"
-              type="button"
-              class="tag-pill"
-              :class="{ selected: selectedTagIds.includes(tag.id) }"
-              @click="toggleTag(tag.id)"
-            >
-              {{ tag.name }}
-            </button>
-          </div>
-        </template>
+    <EmptyState
+      v-else-if="searchExecuted && normalizedResults.length === 0"
+      title="未找到结果"
+      description="尝试调整标签组合后重新搜索"
+    />
+
+    <EmptyState
+      v-else-if="!searchExecuted"
+      title="先选标签再搜索"
+      :description="`标签来源于 ${currentPlatformLabel} 内置标签能力`"
+    />
+
+    <div v-else class="results-container">
+      <div class="remote-select-bar">
+        <span class="selected-count">已选 {{ selectedResultIds.length }} 项</span>
+        <van-button size="small" plain type="primary" @click="toggleSelectAllResults">
+          {{ isAllResultsSelected ? '取消全选' : '全选' }}
+        </van-button>
       </div>
 
-        <div class="results-card">
-        <div class="results-header">
-          <span class="results-title">搜索结果</span>
-          <span v-if="searchExecuted" class="results-count">{{ normalizedResults.length }} 项</span>
-        </div>
-
-        <van-loading v-if="loading" class="loading-center" />
-
-        <EmptyState
-          v-else-if="searchExecuted && normalizedResults.length === 0"
-          title="未找到结果"
-          description="尝试调整标签组合后重新搜索"
-        />
-
-        <EmptyState
-          v-else-if="!searchExecuted"
-          title="先选标签再搜索"
-          :description="`标签来源于 ${currentPlatformLabel} 内置标签能力`"
-        />
-
-        <div v-else class="results-container">
-          <div class="remote-select-bar">
-            <span class="selected-count">已选 {{ selectedResultIds.length }} 项</span>
-            <van-button size="small" plain type="primary" @click="toggleSelectAllResults">
-              {{ isAllResultsSelected ? '取消全选' : '全选' }}
-            </van-button>
-          </div>
-
-          <div class="remote-results-grid" :class="isVideoMode ? 'video-mode' : 'comic-mode'">
-            <div
-              v-for="item in normalizedResults"
-              :key="getItemId(item)"
-              class="remote-result-card"
-              :class="{ selected: isResultSelected(item) }"
-              @click="toggleResultSelection(item)"
-            >
-              <div
-                class="card-cover"
-                :style="getCardCoverStyle(item)"
-              >
-                <van-image
-                  :src="getCoverUrl(item)"
-                  :fit="getCardCoverFit(item)"
-                  class="cover-image"
-                  lazy-load
-                />
-                <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
-                <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
-                <div v-if="isResultSelected(item)" class="select-overlay">
-                  <van-icon name="success" class="select-icon" />
-                </div>
-              </div>
-              <div class="card-info">
-                <div class="card-title">{{ item.title }}</div>
-                <div v-if="item.code" class="card-code">{{ item.code }}</div>
-              </div>
+      <div class="remote-results-grid" :class="isVideoMode ? 'video-mode' : 'comic-mode'">
+        <div
+          v-for="item in normalizedResults"
+          :key="getItemId(item)"
+          class="remote-result-card"
+          :class="{ selected: isResultSelected(item) }"
+          @click="toggleResultSelection(item)"
+        >
+          <div
+            class="card-cover"
+            :style="getCardCoverStyle(item)"
+          >
+            <van-image
+              :src="getCoverUrl(item)"
+              :fit="getCardCoverFit(item)"
+              class="cover-image"
+              lazy-load
+            />
+            <div v-if="shouldRenderPlatformBadge(item)" class="platform-badge">{{ getPlatformBadgeLabel(item) }}</div>
+            <div v-if="item.score" class="card-score score-badge">{{ formatScore(item.score) }}</div>
+            <div v-if="isResultSelected(item)" class="select-overlay">
+              <van-icon name="success" class="select-icon" />
             </div>
           </div>
-
-          <div v-if="hasMore" class="load-more">
-            <div v-if="paginationInfo" class="pagination-info">
-              <span class="page-info">第 {{ paginationInfo.page }} 页</span>
-            </div>
-            <van-button block plain :loading="loadingMore" @click="loadMore">
-              加载更多
-            </van-button>
+          <div class="card-info">
+            <div class="card-title">{{ item.title }}</div>
+            <div v-if="item.code" class="card-code">{{ item.code }}</div>
           </div>
         </div>
+      </div>
+
+      <div v-if="hasMore" class="load-more">
+        <div v-if="paginationInfo" class="pagination-info">
+          <span class="page-info">第 {{ paginationInfo.page }} 页</span>
         </div>
-      </template>
-    </template>
+        <van-button block plain :loading="loadingMore" @click="loadMore">
+          加载更多
+        </van-button>
+      </div>
+    </div>
+    </div>
+  </template>
 
     <div v-if="selectedResultIds.length > 0" class="floating-import-bar">
       <span class="floating-selection-info">已选 {{ selectedResultIds.length }} 项</span>
@@ -189,7 +189,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useModeStore, useImportTaskStore } from '@/stores'
 import { uiStateApi, videoApi } from '@/api'
@@ -268,19 +268,43 @@ function buildPersistedStatePayload() {
   }
 }
 
+/** 给 API 调用包装超时，防止长时间阻塞 */
+async function withTimeout(promise, timeoutMs = 3000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`API timeout after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ])
+}
+
 async function persistViewState() {
-  const payload = buildPersistedStatePayload()
-  if (!payload) {
-    await uiStateApi.clear(getUiStateScope(), uiStateClientId)
-    return
+  try {
+    const payload = buildPersistedStatePayload()
+    if (!payload) {
+      await withTimeout(uiStateApi.clear(getUiStateScope(), uiStateClientId))
+      return
+    }
+    await withTimeout(uiStateApi.save(getUiStateScope(), payload, uiStateClientId))
+  } catch (e) {
+    console.warn('[VideoTagSearch] persistViewState 失败（非关键错误）:', e)
   }
-  await uiStateApi.save(getUiStateScope(), payload, uiStateClientId)
 }
 
 async function restoreViewState() {
-  const response = await uiStateApi.get(getUiStateScope(), uiStateClientId)
+  const response = await withTimeout(uiStateApi.get(getUiStateScope(), uiStateClientId))
   const state = response?.data?.state
   return state && typeof state === 'object' ? state : null
+}
+
+/** 带超时的 restoreViewState，防止后端无响应时阻塞初始化长达分钟级别 */
+async function restoreViewStateWithTimeout(timeoutMs = 5000) {
+  return Promise.race([
+    restoreViewState(),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`restoreViewState timeout after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ])
 }
 
 const categoryTabs = computed(() => {
@@ -672,11 +696,33 @@ async function confirmImport(target) {
 }
 
 onMounted(async () => {
-  const restoredState = await restoreViewState()
+  let restoredState = null
+  try {
+    restoredState = await restoreViewStateWithTimeout(5000)
+  } catch (e) {
+    console.warn('[VideoTagSearch] restoreViewState 失败（非关键错误）:', e)
+  }
   await loadAvailablePlatforms(restoredState)
+  await nextTick()
   if (Array.isArray(selectedTagIds.value) && selectedTagIds.value.length > 0) {
     await handleSearch()
   }
+})
+
+// 安全兜底：防止 loading 状态卡死，5 秒后强制显示内容（无论平台是否就绪）
+let safetyTimer = null
+onMounted(() => {
+  safetyTimer = setTimeout(() => {
+    if (platformStatusChecked.value === false && platformsLoaded.value === true) {
+      platformStatusChecked.value = true
+      platformConfigured.value = true
+      loadingTags.value = false
+      console.warn('[VideoTagSearch] 平台配置检查超时，强制进入可用状态')
+    }
+  }, 5000)
+})
+onUnmounted(() => {
+  if (safetyTimer) clearTimeout(safetyTimer)
 })
 </script>
 
@@ -796,12 +842,16 @@ onMounted(async () => {
 }
 
 .tag-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  max-height: 44vh;
-  overflow-y: auto;
   padding-top: 10px;
+  min-height: 36px;
+}
+
+.tags-container {
+  display: block;
+  width: 100%;
 }
 
 .tag-pill {
