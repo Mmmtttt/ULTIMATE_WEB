@@ -143,6 +143,10 @@ class Aria2Provider(ProtocolProvider):
             return self._handle_task_status(normalized, params)
         if capability == "download.task.list":
             return self._handle_task_list(normalized, params)
+        if capability == "download.task.pause":
+            return self._handle_task_pause(normalized, params)
+        if capability == "download.task.resume":
+            return self._handle_task_resume(normalized, params)
         if capability == "download.task.remove":
             return self._handle_task_remove(normalized, params)
 
@@ -281,6 +285,58 @@ class Aria2Provider(ProtocolProvider):
         tasks = [self._normalize_task(item) for item in raw_items if isinstance(item, dict)]
         return {"tasks": tasks, "count": len(tasks)}
 
+    def _handle_task_pause(
+        self,
+        config: Dict[str, Any],
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """处理 download.task.pause — 暂停任务。
+
+        aria2.pause 只对 active/waiting 任务有效；已暂停任务幂等返回。
+        """
+        gid = str(params.get("gid") or "").strip()
+        if not gid:
+            raise ValueError("download.task.pause 缺少 gid 参数。")
+
+        status = self._query_task_status(config, gid)
+        if status in {"paused"}:
+            return {"gid": gid, "paused": True, "already": True}
+        if status in {"active", "waiting"}:
+            result = self._rpc_call(config, "aria2.pause", [gid])
+            return {"gid": gid, "paused": result == "OK", "already": False}
+        raise RuntimeError(f"任务状态为 {status or 'unknown'}，无法暂停。")
+
+    def _handle_task_resume(
+        self,
+        config: Dict[str, Any],
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """处理 download.task.resume — 继续（恢复）任务。
+
+        aria2.unpause 只对 paused 任务有效；已在下载/等待的任务幂等返回。
+        """
+        gid = str(params.get("gid") or "").strip()
+        if not gid:
+            raise ValueError("download.task.resume 缺少 gid 参数。")
+
+        status = self._query_task_status(config, gid)
+        if status in {"active", "waiting"}:
+            return {"gid": gid, "resumed": True, "already": True}
+        if status == "paused":
+            result = self._rpc_call(config, "aria2.unpause", [gid])
+            return {"gid": gid, "resumed": result == "OK", "already": False}
+        raise RuntimeError(f"任务状态为 {status or 'unknown'}，无法继续。")
+
+    def _query_task_status(self, config: Dict[str, Any], gid: str) -> str:
+        """查询任务状态；查询失败返回空字符串（调用方自行处理）。"""
+        try:
+            raw = self._rpc_call(config, "aria2.tellStatus", [gid])
+        except Exception:
+            return ""
+        if not isinstance(raw, dict):
+            return ""
+        return str(raw.get("status") or "").strip()
+
     def _handle_task_remove(
         self,
         config: Dict[str, Any],
@@ -298,13 +354,7 @@ class Aria2Provider(ProtocolProvider):
         force = _as_bool(params.get("force"), True)
 
         # 先查询状态，决定调用哪个 Aria2 方法
-        status = ""
-        try:
-            raw = self._rpc_call(config, "aria2.tellStatus", [gid])
-            if isinstance(raw, dict):
-                status = str(raw.get("status") or "").strip()
-        except Exception:
-            status = ""
+        status = self._query_task_status(config, gid)
 
         if status in {"complete", "error", "removed"}:
             result = self._rpc_call(config, "aria2.removeDownloadResult", [gid])

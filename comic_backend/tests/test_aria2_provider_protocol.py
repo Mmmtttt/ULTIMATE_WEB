@@ -90,7 +90,7 @@ def test_aria2_plugin_discovered_and_loaded():
     manifest = registry.get_manifest(ARIA2_PLUGIN_ID)
     assert manifest is not None
     keys = set(manifest.capability_keys)
-    assert {"download.magnet.add", "download.task.status", "download.task.list", "download.task.remove", "health.query.status"} <= keys
+    assert {"download.magnet.add", "download.task.status", "download.task.list", "download.task.pause", "download.task.resume", "download.task.remove", "health.query.status"} <= keys
 
     provider = _make_provider()
     assert provider is not None
@@ -263,6 +263,55 @@ def test_task_remove_falls_back_to_force_remove_when_status_unknown(monkeypatch)
     result = provider.execute("download.task.remove", {"gid": "gid-001"}, {}, _base_config())
     assert result["removed"] is True
     assert rpc.calls[-1]["method"] == "aria2.forceRemove"
+
+
+def test_task_pause_active_task(monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "active"})
+    rpc.register("aria2.pause", result="OK")
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    result = provider.execute("download.task.pause", {"gid": "gid-001"}, {}, _base_config())
+    assert result["paused"] is True
+    assert result["already"] is False
+    assert rpc.calls[-1]["method"] == "aria2.pause"
+
+
+def test_task_pause_already_paused_is_idempotent(monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "paused"})
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    result = provider.execute("download.task.pause", {"gid": "gid-001"}, {}, _base_config())
+    assert result["paused"] is True
+    assert result["already"] is True
+    assert all(call["method"] != "aria2.pause" for call in rpc.calls)
+
+
+def test_task_resume_paused_task(monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "paused"})
+    rpc.register("aria2.unpause", result="OK")
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    result = provider.execute("download.task.resume", {"gid": "gid-001"}, {}, _base_config())
+    assert result["resumed"] is True
+    assert result["already"] is False
+    assert rpc.calls[-1]["method"] == "aria2.unpause"
+
+
+def test_task_resume_already_active_is_idempotent(monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "active"})
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    result = provider.execute("download.task.resume", {"gid": "gid-001"}, {}, _base_config())
+    assert result["resumed"] is True
+    assert result["already"] is True
 
 
 def test_rpc_error_raises_runtime_error(monkeypatch):

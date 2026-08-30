@@ -19,6 +19,8 @@
     { "key": "download.magnet.add" },
     { "key": "download.task.status" },
     { "key": "download.task.list" },
+    { "key": "download.task.pause" },
+    { "key": "download.task.resume" },
     { "key": "download.task.remove" }
   ],
   "configuration": {

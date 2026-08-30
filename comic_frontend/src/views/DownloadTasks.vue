@@ -6,30 +6,59 @@
       @click-left="$router.back()"
     >
       <template #right>
-        <van-icon
-          name="replay"
-          size="20"
-          class="refresh-icon"
-          :class="{ spinning: loading }"
-          @click="refreshAll"
-        />
+        <span class="nav-actions">
+          <van-icon
+            name="plus"
+            size="20"
+            class="nav-action-icon"
+            @click="openAddPopup"
+          />
+          <van-icon
+            name="replay"
+            size="20"
+            class="refresh-icon"
+            :class="{ spinning: loading }"
+            @click="refreshAll"
+          />
+        </span>
       </template>
     </van-nav-bar>
 
-    <div class="engine-bar" v-if="engines.length > 0">
-      <van-tabs
-        v-model:active="activeEngineIndex"
-        animated
-        swipeable
-        @change="handleEngineChange"
-      >
-        <van-tab
-          v-for="engine in engines"
-          :key="engine.plugin_id"
-          :title="engine.name"
+    <van-popup
+      v-model:show="showAddPopup"
+      round
+      position="bottom"
+      class="add-popup"
+    >
+      <div class="add-popup-content">
+        <div class="add-popup-header">
+          <span class="add-popup-title">手动添加下载链接</span>
+          <van-icon name="cross" class="add-popup-close" @click="showAddPopup = false" />
+        </div>
+        <div class="add-popup-hint">
+          支持磁力链接、HTTP/FTP 直链、BT 种子文件链接，每行一个。
+        </div>
+        <van-field
+          v-model="manualLinks"
+          type="textarea"
+          rows="6"
+          autosize
+          maxlength="8000"
+          placeholder="每行一个链接&#10;magnet:?xt=urn:btih:...&#10;https://example.com/file.torrent"
         />
-      </van-tabs>
-    </div>
+        <div class="add-popup-actions">
+          <van-button
+            block
+            type="primary"
+            :loading="addingLinks"
+            :disabled="!canAddLinks"
+            @click="submitManualLinks"
+          >
+            创建任务
+          </van-button>
+        </div>
+      </div>
+    </van-popup>
 
     <div class="tasks-container">
       <div v-if="!loading && engines.length === 0" class="empty-wrap">
@@ -45,8 +74,8 @@
           <div class="hero-copy">
             <div class="hero-title">下载任务</div>
             <div class="hero-subtitle">
-              {{ currentEngineName }}
-              <template v-if="currentEngineStatus"> · {{ currentEngineStatus }}</template>
+              共 {{ engines.length }} 个下载引擎
+              <template v-if="engineSummary"> · {{ engineSummary }}</template>
             </div>
           </div>
           <div class="hero-stats">
@@ -84,55 +113,80 @@
               <div class="task-header">
                 <div class="task-heading">
                   <span class="task-title">{{ task.name || '未知任务' }}</span>
-                  <span class="task-gid">{{ task.gid }}</span>
+                  <div class="task-subtitle">
+                    <span class="engine-tag">{{ task.engine_name || '下载引擎' }}</span>
+                    <span class="task-status-text">{{ progressMetaText(task) }}</span>
+                  </div>
                 </div>
-                <van-tag :color="getStatusColor(task.status)">
-                  {{ getStatusText(task.status) }}
-                </van-tag>
+                <div class="task-header-right">
+                  <van-tag :color="getStatusColor(task.status)">
+                    {{ getStatusText(task.status) }}
+                  </van-tag>
+                  <div class="task-actions">
+                    <button
+                      v-if="task.status === 'paused'"
+                      class="icon-btn"
+                      :disabled="taskActionGid === task.gid"
+                      title="继续下载"
+                      @click="handleResume(task)"
+                    >
+                      <van-icon name="play-circle-o" size="20" />
+                    </button>
+                    <button
+                      v-else
+                      class="icon-btn"
+                      :disabled="taskActionGid === task.gid"
+                      title="暂停下载"
+                      @click="handlePause(task)"
+                    >
+                      <van-icon name="pause-circle-o" size="20" />
+                    </button>
+                    <button
+                      class="icon-btn danger"
+                      :disabled="taskActionGid === task.gid"
+                      title="删除任务"
+                      @click="handleRemove(task)"
+                    >
+                      <van-icon name="delete-o" size="20" />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div class="progress-section">
-                <div class="progress-header">
-                  <span class="progress-text">{{ progressMetaText(task) }}</span>
-                  <span class="progress-percent">{{ Math.round(task.progress * 100) }}%</span>
-                </div>
                 <van-progress
                   :percentage="Math.round(task.progress * 100)"
                   :stroke-width="8"
                   :color="getStatusColor(task.status)"
                 />
                 <div class="progress-speed">
-                  <span v-if="task.download_speed > 0">↓ {{ formatSpeed(task.download_speed) }}</span>
                   <span v-if="task.upload_speed > 0">↑ {{ formatSpeed(task.upload_speed) }}</span>
                   <span>{{ formatBytes(task.completed_length) }} / {{ formatBytes(task.total_length) }}</span>
                 </div>
-              </div>
-
-              <div class="task-actions">
-                <van-button
-                  size="small"
-                  type="danger"
-                  plain
-                  @click="handleRemove(task)"
-                >
-                  删除任务
-                </van-button>
               </div>
             </article>
           </div>
         </div>
 
         <div class="section history-section">
-          <div class="section-title">
+          <div class="section-title collapsible" @click="showHistory = !showHistory">
             <van-icon name="completed" />
             <span>已结束</span>
+            <span v-if="historyTasks.length > 0" class="section-count">
+              {{ historyTasks.length }}
+            </span>
+            <van-icon
+              :name="showHistory ? 'arrow-up' : 'arrow-down'"
+              class="section-toggle"
+            />
           </div>
 
-          <div v-if="historyTasks.length === 0" class="empty-state">
-            <van-empty description="暂无已结束的下载任务" />
-          </div>
+          <template v-if="showHistory">
+            <div v-if="historyTasks.length === 0" class="empty-state">
+              <van-empty description="暂无已结束的下载任务" />
+            </div>
 
-          <div v-else class="task-list">
+            <div v-else class="task-list">
             <article
               v-for="task in historyTasks"
               :key="task.gid"
@@ -142,11 +196,26 @@
               <div class="task-header">
                 <div class="task-heading">
                   <span class="task-title">{{ task.name || '未知任务' }}</span>
-                  <span class="task-gid">{{ task.gid }}</span>
+                  <div class="task-subtitle">
+                    <span class="engine-tag">{{ task.engine_name || '下载引擎' }}</span>
+                    <span class="task-gid">{{ task.gid }}</span>
+                  </div>
                 </div>
-                <van-tag :color="getStatusColor(task.status)">
-                  {{ getStatusText(task.status) }}
-                </van-tag>
+                <div class="task-header-right">
+                  <van-tag :color="getStatusColor(task.status)">
+                    {{ getStatusText(task.status) }}
+                  </van-tag>
+                  <div class="task-actions">
+                    <button
+                      class="icon-btn danger"
+                      :disabled="taskActionGid === task.gid"
+                      title="删除记录"
+                      @click="handleRemove(task)"
+                    >
+                      <van-icon name="delete-o" size="20" />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div class="task-meta">
@@ -158,24 +227,9 @@
                 <van-icon name="warning-o" />
                 <span>{{ task.error_message }}</span>
               </div>
-
-              <div class="task-actions">
-                <van-button
-                  size="small"
-                  type="default"
-                  plain
-                  @click="handleRemove(task)"
-                >
-                  删除记录
-                </van-button>
-              </div>
             </article>
-          </div>
-        </div>
-
-        <div class="footer-tip">
-          <van-icon name="info-o" />
-          <span>任务由下载引擎（Aria2 等）在后台执行，此处每 3 秒自动刷新。</span>
+            </div>
+          </template>
         </div>
       </template>
     </div>
@@ -185,27 +239,28 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { showConfirmDialog, showFailToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { downloadApi } from '@/api/download'
 
 const router = useRouter()
 
 const engines = ref([])
-const activeEngineIndex = ref(0)
 const tasks = ref([])
 const loading = ref(false)
+const showAddPopup = ref(false)
+const manualLinks = ref('')
+const addingLinks = ref(false)
+const taskActionGid = ref('')
+const showHistory = ref(false)
 
 const POLL_INTERVAL_MS = 3000
 let pollTimer = null
 
-const currentEngine = computed(() => engines.value[activeEngineIndex.value] || null)
-const currentEngineName = computed(() => currentEngine.value?.name || '未选择引擎')
-const currentEngineStatus = computed(() => {
-  const status = currentEngine.value?.status || {}
-  if (status.configured === false) {
-    return '未配置'
-  }
-  return ''
+const engineSummary = computed(() => {
+  const names = engines.value
+    .filter(engine => engine?.status?.configured !== false)
+    .map(engine => engine.name)
+  return names.length > 0 ? names.join('、') : ''
 })
 
 const ACTIVE_STATUSES = new Set(['active', 'waiting', 'paused'])
@@ -248,8 +303,11 @@ function getStatusColor(status) {
 }
 
 function progressMetaText(task) {
-  if (task.status === 'active' && task.download_speed > 0) {
-    return `正在下载 ${formatSpeed(task.download_speed)}`
+  if (task.status === 'active') {
+    if (task.download_speed > 0) {
+      return `正在下载 ${formatSpeed(task.download_speed)}`
+    }
+    return '正在下载中...'
   }
   if (task.status === 'waiting') {
     return '排队等待中'
@@ -280,7 +338,8 @@ function formatSpeed(bytesPerSecond) {
 }
 
 async function refreshAll() {
-  await Promise.all([loadEngines(), loadTasks()])
+  await loadEngines()
+  await loadTasks(true)
 }
 
 async function loadEngines() {
@@ -290,35 +349,42 @@ async function loadEngines() {
     engines.value = list
     if (list.length === 0) {
       tasks.value = []
-      return
-    }
-    if (activeEngineIndex.value >= list.length) {
-      activeEngineIndex.value = 0
     }
   } catch (error) {
     console.error('获取下载引擎失败:', error)
   }
 }
 
-async function loadTasks() {
-  if (loading.value || !currentEngine.value) {
+async function loadTasks(force = false) {
+  const engineList = engines.value
+  if ((loading.value && !force) || engineList.length === 0) {
     return
   }
   loading.value = true
   try {
-    const res = await downloadApi.listTasks({ engine: currentEngine.value.plugin_id })
-    const list = res?.data?.tasks || []
-    tasks.value = Array.isArray(list) ? list : []
-  } catch (error) {
-    console.error('获取下载任务失败:', error)
+    // 并行拉取所有引擎的任务并合并，任务附带所属引擎信息
+    const results = await Promise.all(
+      engineList.map(engine =>
+        downloadApi.listTasks({ engine: engine.plugin_id })
+          .then(res => {
+            const list = res?.data?.tasks || []
+            const items = Array.isArray(list) ? list : []
+            return items.map(task => ({
+              ...task,
+              engine: engine.plugin_id,
+              engine_name: engine.name
+            }))
+          })
+          .catch(error => {
+            console.error(`获取 ${engine.name} 任务失败:`, error)
+            return []
+          })
+      )
+    )
+    tasks.value = results.flat()
   } finally {
     loading.value = false
   }
-}
-
-function handleEngineChange() {
-  tasks.value = []
-  loadTasks()
 }
 
 async function handleRemove(task) {
@@ -333,20 +399,116 @@ async function handleRemove(task) {
     return
   }
 
-  if (!currentEngine.value) {
+  if (!task.engine) {
     return
   }
+  taskActionGid.value = task.gid
   try {
-    await downloadApi.removeTask(task.gid, currentEngine.value.plugin_id, true)
+    await downloadApi.removeTask(task.gid, task.engine, true)
     loadTasks()
   } catch (error) {
     console.error('删除下载任务失败:', error)
     showFailToast(error?.message || '删除任务失败')
+  } finally {
+    taskActionGid.value = ''
+  }
+}
+
+async function handlePause(task) {
+  await runTaskAction(task, 'pause')
+}
+
+async function handleResume(task) {
+  await runTaskAction(task, 'resume')
+}
+
+async function runTaskAction(task, action) {
+  if (!task.engine || taskActionGid.value) {
+    return
+  }
+  taskActionGid.value = task.gid
+  try {
+    if (action === 'pause') {
+      await downloadApi.pauseTask(task.gid, task.engine)
+    } else {
+      await downloadApi.resumeTask(task.gid, task.engine)
+    }
+    loadTasks()
+  } catch (error) {
+    console.error(`任务${action}失败:`, error)
+    showFailToast(error?.message || (action === 'pause' ? '暂停任务失败' : '继续任务失败'))
+  } finally {
+    taskActionGid.value = ''
   }
 }
 
 function goToConfig() {
   router.push({ name: 'ThirdPartyConfig' })
+}
+
+const canAddLinks = computed(() => {
+  return manualLinks.value.trim().length > 0 && engines.value.length > 0
+})
+
+function openAddPopup() {
+  if (engines.value.length === 0) {
+    showFailToast('未配置下载引擎，请先到第三方插件配置启用下载引擎')
+    return
+  }
+  showAddPopup.value = true
+}
+
+function parseManualLinks() {
+  return manualLinks.value
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+}
+
+async function submitManualLinks() {
+  const engine = engines.value[0]
+  if (!engine) {
+    return
+  }
+  const uris = parseManualLinks()
+  if (uris.length === 0) {
+    showFailToast('请输入下载链接')
+    return
+  }
+  addingLinks.value = true
+  let created = 0
+  let failed = 0
+  try {
+    // 逐条投递：aria2.addUri 的多 URI 会被视为同一任务的备用源，
+    // 因此每条链接单独创建任务，确保互不干扰。
+    for (const uri of uris) {
+      try {
+        const res = await downloadApi.addMagnet({
+          magnet: uri,
+          engine: engine.plugin_id
+        })
+        if (res?.data?.added) {
+          created += 1
+        } else {
+          failed += 1
+        }
+      } catch (error) {
+        console.error(`创建任务失败: ${uri}`, error)
+        failed += 1
+      }
+    }
+  } finally {
+    addingLinks.value = false
+  }
+
+  if (created > 0) {
+    showSuccessToast(`已创建 ${created} 个任务${failed > 0 ? `，${failed} 个失败` : ''}`)
+    showAddPopup.value = false
+    manualLinks.value = ''
+    loadTasks()
+  } else {
+    showFailToast('创建任务失败，请检查链接格式')
+  }
 }
 
 function startPolling() {
@@ -381,6 +543,17 @@ onUnmounted(() => {
   padding-bottom: 64px;
 }
 
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.nav-action-icon {
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .refresh-icon {
   color: var(--text-secondary);
   cursor: pointer;
@@ -395,12 +568,37 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-.engine-bar {
-  margin: 4px 12px 0;
-  border-radius: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
-  overflow: hidden;
+.add-popup-content {
+  padding: 16px 16px 20px;
+}
+
+.add-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.add-popup-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.add-popup-close {
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.add-popup-hint {
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.add-popup-actions {
+  margin-top: 14px;
 }
 
 .tasks-container {
@@ -480,6 +678,25 @@ onUnmounted(() => {
   color: var(--text-strong);
 }
 
+.section-title.collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-3, rgba(127, 143, 166, 0.18));
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.section-toggle {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
 .task-list {
   display: flex;
   flex-direction: column;
@@ -513,8 +730,15 @@ onUnmounted(() => {
 .task-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
+}
+
+.task-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .task-heading {
@@ -522,6 +746,31 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.task-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.engine-tag {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(47, 116, 255, 0.12);
+  color: #2f74ff;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.task-status-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .task-title {
@@ -553,25 +802,6 @@ onUnmounted(() => {
   border-top: 1px solid var(--border-soft);
 }
 
-.progress-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.progress-text {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.progress-percent {
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: #2f74ff;
-}
-
 .progress-speed {
   display: flex;
   flex-wrap: wrap;
@@ -582,9 +812,32 @@ onUnmounted(() => {
 }
 
 .task-actions {
-  margin-top: 14px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.icon-btn.danger {
+  color: #ee0a24;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .error-message {
@@ -602,20 +855,6 @@ onUnmounted(() => {
 .empty-state,
 .empty-wrap {
   padding: 18px 0;
-}
-
-.footer-tip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 0 0 16px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 @media (max-width: 767px) {

@@ -22,6 +22,16 @@ export const downloadApi = {
     return request.get('/v1/download/tasks', { params })
   },
 
+  // 暂停任务
+  pauseTask(gid, engine = '') {
+    return request.post('/v1/download/task/pause', { gid, engine })
+  },
+
+  // 继续任务
+  resumeTask(gid, engine = '') {
+    return request.post('/v1/download/task/resume', { gid, engine })
+  },
+
   // 删除任务
   removeTask(gid, engine = '', force = true) {
     return request.post('/v1/download/task/remove', { gid, engine, force })

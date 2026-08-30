@@ -5,6 +5,8 @@
 - POST   /api/v1/download/magnet         投递磁力链接到下载引擎
 - GET    /api/v1/download/task           按 gid 查询任务状态
 - GET    /api/v1/download/tasks          查询任务列表
+- POST   /api/v1/download/task/pause     暂停任务
+- POST   /api/v1/download/task/resume    继续任务
 - POST   /api/v1/download/task/remove    删除任务
 """
 from flask import Blueprint, request, jsonify
@@ -124,6 +126,50 @@ def task_list():
     except Exception as exc:
         error_logger.error(f"download task list failed: {exc}")
         return error_response(500, f"查询任务列表失败: {exc}")
+    return success_response(payload)
+
+
+@download_bp.route('/task/pause', methods=['POST'])
+@require_third_party(error_response)
+def task_pause():
+    """暂停下载任务。
+
+    body: { gid, engine? }
+    """
+    body = request.get_json(silent=True) or {}
+    gid = str(body.get("gid") or "").strip()
+    if not gid:
+        return error_response(400, "缺少 gid 参数")
+    engine = str(body.get("engine") or "").strip()
+    try:
+        _plugin_id, _platform_label, payload = _host_service().execute_download_capability(
+            engine, "download.task.pause", {"gid": gid}
+        )
+    except Exception as exc:
+        error_logger.error(f"download task pause failed: {exc}")
+        return error_response(500, f"暂停任务失败: {exc}")
+    return success_response(payload)
+
+
+@download_bp.route('/task/resume', methods=['POST'])
+@require_third_party(error_response)
+def task_resume():
+    """继续下载任务。
+
+    body: { gid, engine? }
+    """
+    body = request.get_json(silent=True) or {}
+    gid = str(body.get("gid") or "").strip()
+    if not gid:
+        return error_response(400, "缺少 gid 参数")
+    engine = str(body.get("engine") or "").strip()
+    try:
+        _plugin_id, _platform_label, payload = _host_service().execute_download_capability(
+            engine, "download.task.resume", {"gid": gid}
+        )
+    except Exception as exc:
+        error_logger.error(f"download task resume failed: {exc}")
+        return error_response(500, f"继续任务失败: {exc}")
     return success_response(payload)
 
 
