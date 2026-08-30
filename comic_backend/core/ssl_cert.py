@@ -122,6 +122,12 @@ def _generate_self_signed_cert(private_key, san_names: List[str]):
         .not_valid_after(now + timedelta(days=CERT_VALIDITY_DAYS))
     )
 
+    # 标记为 CA 证书，浏览器才允许将其作为受信任根使用
+    cert_builder = cert_builder.add_extension(
+        x509.BasicConstraints(ca=True, path_length=None),
+        critical=True,
+    )
+
     if san_names:
         san_entries = []
         for name in san_names:

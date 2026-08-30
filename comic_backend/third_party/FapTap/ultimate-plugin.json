@@ -1,0 +1,91 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "video.faptap",
+    "name": "FapTap",
+    "version": "0.1.0",
+    "entrypoint": "./ultimate_provider.py:FapTapProvider",
+    "config_key": "faptap"
+  },
+  "media_types": ["video"],
+  "identity": {
+    "content_type": "video",
+    "host_id_prefix": "FAPTAP",
+    "platform_label": "FapTap",
+    "aliases": ["faptap", "fap"]
+  },
+  "presentation": {
+    "media_card": {
+      "cover": {
+        "aspect_ratio": "16 / 9",
+        "fit": "cover"
+      },
+      "badge": {
+        "show_platform_label": true,
+        "label": "FapTap"
+      }
+    }
+  },
+  "capabilities": [
+    { "key": "catalog.search" },
+    { "key": "catalog.detail" },
+    { "key": "taxonomy.tags" },
+    { "key": "playback.sources.build" },
+    { "key": "playback.proxy.url" },
+    { "key": "health.query.status" }
+  ],
+  "configuration": {
+    "order": 50,
+    "label": "FapTap",
+    "sections": [
+      {
+        "id": "basic",
+        "label": "基础配置",
+        "fields": [
+          { "key": "enabled", "label": "启用", "type": "boolean" },
+          { "key": "domain", "label": "站点域名", "type": "text", "placeholder": "https://faptap.net" },
+          { "key": "cdn_host", "label": "Bunny CDN 主机", "type": "text", "placeholder": "https://vz-3d77bc0a-a87.b-cdn.net" },
+          { "key": "timeout_seconds", "label": "请求超时秒数", "type": "number", "placeholder": "30" },
+          { "key": "proxy", "label": "HTTP 代理", "type": "text", "placeholder": "http://127.0.0.1:7890" }
+        ]
+      }
+    ]
+  },
+  "resource_policy": {
+    "assets": {
+      "cover": {
+        "available": true,
+        "download_enabled": true,
+        "request_profiles": [
+          {
+            "match_hosts": ["faptap.net", "b-cdn.net"],
+            "referer": "https://faptap.net/",
+            "proxy_mode": "frontend"
+          }
+        ]
+      },
+      "image": {
+        "available": true,
+        "download_enabled": true,
+        "request_profiles": [
+          {
+            "match_hosts": ["faptap.net", "b-cdn.net"],
+            "referer": "https://faptap.net/",
+            "proxy_mode": "frontend"
+          }
+        ]
+      },
+      "video": {
+        "available": true,
+        "download_enabled": true,
+        "request_profiles": [
+          {
+            "match_hosts": ["b-cdn.net", "mediadelivery.net"],
+            "referer": "https://faptap.net/",
+            "proxy_mode": "frontend"
+          }
+        ]
+      }
+    }
+  }
+}

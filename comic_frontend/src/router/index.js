@@ -120,6 +120,12 @@ const routes = [
         meta: { title: '任务中心' }
       },
       {
+        path: 'download-tasks',
+        name: 'DownloadTasks',
+        component: () => import('@/views/DownloadTasks.vue'),
+        meta: { title: '下载任务' }
+      },
+      {
         path: 'comic-local-import',
         name: 'ComicLocalImport',
         component: () => import('@/views/ComicLocalImport.vue'),

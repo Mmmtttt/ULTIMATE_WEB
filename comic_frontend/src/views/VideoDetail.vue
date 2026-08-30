@@ -250,11 +250,25 @@
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
         <van-cell
           class="magnets-toggle"
-          :title="`磁力链接（${video.magnets.length}）`"
-          :value="showMagnets ? '收起' : '展开'"
-          is-link
           @click="showMagnets = !showMagnets"
-        />
+        >
+          <template #title>
+            <span>磁力链接（{{ video.magnets.length }}）</span>
+          </template>
+          <template #right-icon>
+            <span class="magnet-toggle-actions" @click.stop>
+              <van-button
+                size="mini"
+                plain
+                type="default"
+                @click="goToDownloadTasks"
+              >
+                下载任务
+              </van-button>
+              <van-icon :name="showMagnets ? 'arrow-up' : 'arrow-down'" />
+            </span>
+          </template>
+        </van-cell>
         <van-cell-group v-show="showMagnets">
           <van-cell 
             v-for="(magnet, index) in video.magnets" 
@@ -265,7 +279,18 @@
             @click="copyMagnet(magnet)"
           >
             <template #right-icon>
-              <van-icon name="description" />
+              <span class="magnet-actions" @click.stop>
+                <van-button
+                  size="mini"
+                  plain
+                  type="primary"
+                  :loading="magnetSendingIndex === index"
+                  @click="sendMagnetToDownloader(magnet, index)"
+                >
+                  发送到下载器
+                </van-button>
+                <van-icon name="description" class="magnet-copy-icon" />
+              </span>
             </template>
           </van-cell>
         </van-cell-group>
@@ -569,6 +594,7 @@ import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImag
 import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
 import { tagApi } from '@/api/tag'
 import { videoApi } from '@/api/video'
+import { downloadApi } from '@/api/download'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
@@ -1529,6 +1555,62 @@ async function copyMagnet(magnet) {
   } catch (error) {
     console.error('复制磁力链接失败:', error)
     showFailToast('复制失败，请手动复制')
+  }
+}
+
+const magnetSendingIndex = ref(-1)
+const downloadEngines = ref([])
+
+function goToDownloadTasks() {
+  router.push({ name: 'DownloadTasks' })
+}
+
+async function ensureDownloadEngines() {
+  if (downloadEngines.value.length > 0) {
+    return downloadEngines.value
+  }
+  try {
+    const res = await downloadApi.listEngines()
+    const engines = res?.data?.engines || []
+    downloadEngines.value = engines
+    return engines
+  } catch (error) {
+    console.error('获取下载引擎失败:', error)
+    return []
+  }
+}
+
+async function sendMagnetToDownloader(magnet, index) {
+  const text = getMagnetText(magnet)
+  if (!text) {
+    showFailToast('磁力链接为空')
+    return
+  }
+
+  const engines = await ensureDownloadEngines()
+  const available = engines.filter(engine => engine.status?.configured !== false)
+  if (available.length === 0) {
+    showFailToast('未配置可用的下载引擎，请到系统设置启用 Aria2')
+    return
+  }
+
+  magnetSendingIndex.value = index
+  try {
+    const engine = available[0]
+    const res = await downloadApi.addMagnet({
+      magnet: text,
+      engine: engine.plugin_id
+    })
+    if (res?.data?.added) {
+      showSuccessToast(`已投递到 ${engine.name}（gid: ${res.data.gid || '未知'}）`)
+    } else {
+      showFailToast(res?.msg || '投递失败')
+    }
+  } catch (error) {
+    console.error('投递磁力链接失败:', error)
+    showFailToast('投递失败，请检查下载引擎配置')
+  } finally {
+    magnetSendingIndex.value = -1
   }
 }
 
@@ -2535,6 +2617,35 @@ onUnmounted(() => {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   overflow: hidden;
+}
+
+.magnet-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.magnet-toggle-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+}
+
+.magnet-toggle-actions .van-button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.magnet-copy-icon {
+  color: var(--text-3);
+}
+
+.magnet-actions .van-button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .preview-video-section {

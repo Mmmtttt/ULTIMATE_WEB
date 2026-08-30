@@ -471,6 +471,62 @@ class ProtocolHostService:
     def get_preview_request_client(self, *args, **kwargs) -> ProtocolVideoClient:
         return self.get_video_client("", *args, capability="transport.http.request", **kwargs)
 
+    # ---------- 下载能力（磁力/种子，Aria2 等） ----------
+
+    def list_download_engines(self) -> List[Dict[str, Any]]:
+        """列出声明了 download.magnet.add 能力的下载插件及其就绪状态。"""
+        engines: List[Dict[str, Any]] = []
+        for manifest in self._gateway.list_manifests(capability="download.magnet.add"):
+            try:
+                status = self._gateway.get_query_status(manifest.plugin_id) or {}
+            except Exception:
+                status = {}
+            engines.append({
+                "plugin_id": manifest.plugin_id,
+                "name": manifest.name,
+                "config_key": manifest.config_key,
+                "platform_label": _resolve_canonical_platform_name(manifest, fallback=manifest.name),
+                "capabilities": [
+                    key
+                    for key in manifest.capability_keys
+                    if key.startswith("download.") or key == "health.query.status"
+                ],
+                "status": dict(status) if isinstance(status, dict) else {},
+            })
+        return engines
+
+    def get_download_client(
+        self,
+        engine_name: str = "",
+        capability: str = "download.magnet.add",
+    ) -> ProtocolVideoClient:
+        """按引擎名（或默认第一个）解析下载插件，返回可执行 client。"""
+        manifest = None
+        name = str(engine_name or "").strip()
+        if name:
+            manifest = self._find_manifest(name, capability=capability)
+        if manifest is None:
+            manifests = list(self._gateway.list_manifests(capability=capability))
+            manifest = manifests[0] if manifests else None
+        if manifest is None:
+            raise ValueError(f"未找到支持 {capability} 的下载插件")
+        return ProtocolVideoClient(
+            gateway=self._gateway,
+            manifest=manifest,
+            platform_name=_resolve_canonical_platform_name(manifest, fallback=manifest.name),
+        )
+
+    def execute_download_capability(
+        self,
+        engine_name: str,
+        capability: str,
+        params: Optional[Dict[str, Any]] = None,
+    ):
+        """执行下载能力，返回 (plugin_id, platform_label, payload)。"""
+        client = self.get_download_client(engine_name, capability=capability)
+        payload = client.execute(capability, dict(params or {}))
+        return client.plugin_id, client.platform_name, payload
+
 
 _host_service_singleton: Optional[ProtocolHostService] = None
 

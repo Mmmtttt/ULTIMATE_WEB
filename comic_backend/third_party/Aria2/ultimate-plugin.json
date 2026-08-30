@@ -1,0 +1,41 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "download.aria2",
+    "name": "Aria2",
+    "version": "0.1.0",
+    "entrypoint": "./ultimate_provider.py:Aria2Provider",
+    "config_key": "aria2"
+  },
+  "media_types": ["video", "comic"],
+  "identity": {
+    "content_type": "video",
+    "host_id_prefix": "ARIA2",
+    "platform_label": "Aria2",
+    "aliases": ["aria2", "aria"]
+  },
+  "capabilities": [
+    { "key": "health.query.status" },
+    { "key": "download.magnet.add" },
+    { "key": "download.task.status" },
+    { "key": "download.task.list" },
+    { "key": "download.task.remove" }
+  ],
+  "configuration": {
+    "order": 80,
+    "label": "Aria2",
+    "sections": [
+      {
+        "id": "basic",
+        "label": "基础配置",
+        "fields": [
+          { "key": "enabled", "label": "启用", "type": "boolean", "default": true },
+          { "key": "rpc_url", "label": "RPC 地址", "type": "text", "placeholder": "http://127.0.0.1:6800/jsonrpc" },
+          { "key": "secret", "label": "RPC Secret（rpc-secret）", "type": "password", "secret": true },
+          { "key": "dir", "label": "默认下载目录", "type": "text", "placeholder": "例如 D:\\downloads 或 /downloads" },
+          { "key": "timeout_seconds", "label": "请求超时秒数", "type": "number", "placeholder": "30" }
+        ]
+      }
+    ]
+  }
+}
