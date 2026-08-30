@@ -786,7 +786,7 @@ def ensure_android_project_chaquopy_app(
     )
 
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip() or "com.ultimate.web"
-    backend_port = int(packager_cfg.get("backend_port", 5000))
+    backend_port = int(packager_cfg.get("backend_port", 5035))
     third_party_enabled = str(packager_cfg.get("android_backend_enable_third_party", "false")).strip().lower()
     java_rel = Path(*app_id.split(".")) / "MainActivity.java"
     java_path = android_project_dir / "app" / "src" / "main" / "java" / java_rel
@@ -804,9 +804,14 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -823,23 +828,75 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
+import android.widget.Toast;
 
 public class MainActivity extends BridgeActivity {{
     private static final String TAG = "UltimateEmbeddedBackend";
     private static final AtomicBoolean BACKEND_STARTED = new AtomicBoolean(false);
     private static final int REQUEST_STORAGE_PERMISSION = 1101;
+    private static final int REQUEST_DIRECTORY_PICKER = 1102;
+    private static final int MAX_DIR_PICKER_RETRIES = 8;
+    private static final long DIR_PICKER_RETRY_MS = 600;
     private static final int ARCHIVE_EVENT_RETRY_COUNT = 6;
     private static final long ARCHIVE_EVENT_RETRY_INTERVAL_MS = 420L;
     private static final String ARCHIVE_SESSION_KEY = "ultimate_android_open_archive_path";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingArchiveDispatchTask = null;
     private volatile String pendingArchivePath = null;
+    private boolean storagePermissionGranted = false;
+    private volatile String directoryPickerCallbackId = null;
+    private ActivityResultLauncher<Intent> directoryPickerLauncher = null;
+    // Pending result when bridge is not ready at onActivityResult time (before onResume)
+    private volatile String pendingDirPickerCallbackId = null;
+    private volatile String pendingDirPickerPath = null;
+    private int pendingDirPickerRetries = 0;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         normalizeWebViewTextScale();
         ensureStorageAccessPermission();
+
+        // Use AndroidX ActivityResultLauncher — more reliable than onActivityResult
+        // which Capacitor's BridgeActivity may intercept.
+        directoryPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {{
+                final String callbackId = directoryPickerCallbackId;
+                directoryPickerCallbackId = null;
+                if (callbackId == null) return;
+
+                if (result.getResultCode() != RESULT_OK || result.getData() == null) {{
+                    emitDirectoryPickerError(callbackId, "cancelled");
+                    return;
+                }}
+
+                try {{
+                    Uri treeUri = result.getData().getData();
+                    if (treeUri == null) {{
+                        emitDirectoryPickerError(callbackId, "no uri returned");
+                        return;
+                    }}
+
+                    // Take persistable permission so the backend can still access it
+                    try {{
+                        getContentResolver().takePersistableUriPermission(treeUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }} catch (SecurityException e) {{
+                        Log.w(TAG, "Cannot take persistable uri permission", e);
+                    }}
+
+                    String realPath = resolveTreeUriPath(treeUri);
+                    String finalPath = realPath != null ? realPath : treeUri.toString();
+                    emitDirectoryPickerResult(callbackId, finalPath);
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to handle directory picker result", ex);
+                    emitDirectoryPickerError(callbackId, ex.getMessage());
+                }}
+            }}
+        );
+
+        addNativeDirectoryPicker();
         startEmbeddedBackend();
         captureArchiveIntent(getIntent());
     }}
@@ -848,7 +905,22 @@ public class MainActivity extends BridgeActivity {{
     public void onResume() {{
         super.onResume();
         normalizeWebViewTextScale();
+        // Android 11+: re-check if user granted all-files access after returning from Settings
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {{
+            if (Environment.isExternalStorageManager()) {{
+                if (!storagePermissionGranted) {{
+                    storagePermissionGranted = true;
+                    Log.i(TAG, "All-files access permission granted");
+                }}
+            }} else {{
+                if (storagePermissionGranted) {{
+                    storagePermissionGranted = false;
+                    Log.w(TAG, "All-files access permission revoked");
+                }}
+            }}
+        }}
         dispatchPendingArchivePathWithRetry();
+        flushPendingDirectoryResult();
     }}
 
     @Override
@@ -893,9 +965,22 @@ public class MainActivity extends BridgeActivity {{
         try {{
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {{
                 if (!Environment.isExternalStorageManager()) {{
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    startActivity(intent);
+                    try {{
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        Toast.makeText(this, "请在设置中开启「允许访问所有文件」权限", Toast.LENGTH_LONG).show();
+                    }} catch (Exception e) {{
+                        // Fallback: open app details settings
+                        Log.w(TAG, "Cannot open all-files-access settings, falling back to app details", e);
+                        Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        fallback.setData(Uri.parse("package:" + getPackageName()));
+                        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(fallback);
+                    }}
+                }} else {{
+                    storagePermissionGranted = true;
                 }}
                 return;
             }}
@@ -913,9 +998,36 @@ public class MainActivity extends BridgeActivity {{
                     }},
                     REQUEST_STORAGE_PERMISSION
                 );
+            }} else {{
+                storagePermissionGranted = true;
             }}
         }} catch (Throwable ex) {{
             Log.w(TAG, "Failed to request storage permissions", ex);
+        }}
+    }}
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {{
+            boolean allGranted = true;
+            if (grantResults != null) {{
+                for (int result : grantResults) {{
+                    if (result != PackageManager.PERMISSION_GRANTED) {{
+                        allGranted = false;
+                        break;
+                    }}
+                }}
+            }} else {{
+                allGranted = false;
+            }}
+            storagePermissionGranted = allGranted;
+            if (allGranted) {{
+                Log.i(TAG, "Storage permissions granted");
+            }} else {{
+                Log.w(TAG, "Storage permissions denied");
+                Toast.makeText(this, "存储权限被拒绝，部分功能可能受限", Toast.LENGTH_LONG).show();
+            }}
         }}
     }}
 
@@ -1161,6 +1273,180 @@ public class MainActivity extends BridgeActivity {{
             }}
         }};
         mainHandler.postDelayed(pendingArchiveDispatchTask, 240L);
+    }}
+
+    private void addNativeDirectoryPicker() {{
+        try {{
+            if (bridge == null) {{
+                Log.w(TAG, "Bridge not ready for native directory picker");
+                return;
+            }}
+            WebView webView = bridge.getWebView();
+            if (webView == null) {{
+                Log.w(TAG, "WebView not ready for native directory picker");
+                return;
+            }}
+            webView.addJavascriptInterface(new DirectoryPickerInterface(), "AndroidBridge");
+            Log.i(TAG, "Native directory picker bridge registered");
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to register native directory picker", ex);
+        }}
+    }}
+
+    private class DirectoryPickerInterface {{
+        @JavascriptInterface
+        public void pickDirectory(final String callbackId) {{
+            mainHandler.post(() -> {{
+                try {{
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    directoryPickerCallbackId = callbackId;
+                    if (directoryPickerLauncher != null) {{
+                        directoryPickerLauncher.launch(intent);
+                    }} else {{
+                        Log.e(TAG, "directoryPickerLauncher is null — fallback to startActivityForResult");
+                        startActivityForResult(intent, REQUEST_DIRECTORY_PICKER);
+                    }}
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to launch directory picker", ex);
+                    emitDirectoryPickerError(callbackId, ex.getMessage());
+                    directoryPickerCallbackId = null;
+                }}
+            }});
+        }}
+    }}
+
+    private void emitDirectoryPickerResult(String callbackId, String pathStr) {{
+        Log.i(TAG, "emitDirectoryPickerResult cb=" + callbackId + " path=" + pathStr);
+        if (callbackId == null) {{
+            Log.w(TAG, "emitDirectoryPickerResult: callbackId is null");
+            return;
+        }}
+
+        // Always save to pending — the ActivityResultLauncher fires during
+        // activity restoration when the WebView JS engine is still paused.
+        // onResume → flushPendingDirectoryResult will inject JS when ready.
+        pendingDirPickerCallbackId = callbackId;
+        pendingDirPickerPath = pathStr;
+        pendingDirPickerRetries = 0;
+        Log.i(TAG, "emitDirectoryPickerResult: saved to pending, will flush in onResume");
+    }}
+
+    private WebView getWebViewSafe() {{
+        if (bridge == null) return null;
+        try {{
+            return bridge.getWebView();
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "getWebViewSafe threw", ex);
+            return null;
+        }}
+    }}
+
+    private void flushPendingDirectoryResult() {{
+        final String callbackId = pendingDirPickerCallbackId;
+        if (callbackId == null) return;
+
+        final WebView webView = getWebViewSafe();
+        if (webView != null) {{
+            Log.i(TAG, "flushPendingDirectoryResult: WebView ready, emitting result for cb=" + callbackId);
+            // Must quote both callbackId AND path — callbackId contains underscore
+            // and would be a JS syntax error if unquoted (e.g. 1766234567890_a1b2c3)
+            final String qCallbackId = JSONObject.quote(callbackId);
+            final String qPath = JSONObject.quote(pendingDirPickerPath != null ? pendingDirPickerPath : "");
+            final String callbackJs = "try{{window.AndroidBridge.onDirectoryPicked("
+                + qCallbackId + "," + qPath
+                + ");}}catch(e){{}}";
+            final String storageJs = "try{{sessionStorage.setItem('__native_dir_path',"
+                + qPath
+                + ");}}catch(e){{}}";
+            // Use loadUrl("javascript:...") — more reliable than evaluateJavascript
+            // in some WebView versions when the JS engine is recovering from pause.
+            final String js = "javascript:" + callbackJs + storageJs + "void(0);";
+            webView.post(() -> {{
+                try {{
+                    webView.loadUrl(js);
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to loadUrl dir picker JS", ex);
+                }}
+            }});
+            pendingDirPickerCallbackId = null;
+            pendingDirPickerPath = null;
+            pendingDirPickerRetries = 0;
+            return;
+        }}
+
+        pendingDirPickerRetries++;
+        Log.w(TAG, "flushPendingDirectoryResult: retry " + pendingDirPickerRetries
+            + "/" + MAX_DIR_PICKER_RETRIES + " (bridge still not ready)");
+        if (pendingDirPickerRetries >= MAX_DIR_PICKER_RETRIES) {{
+            Log.e(TAG, "flushPendingDirectoryResult: giving up after " + MAX_DIR_PICKER_RETRIES + " retries");
+            pendingDirPickerCallbackId = null;
+            pendingDirPickerPath = null;
+            pendingDirPickerRetries = 0;
+        }} else {{
+            mainHandler.postDelayed(this::flushPendingDirectoryResult, DIR_PICKER_RETRY_MS);
+        }}
+    }}
+
+    private void emitDirectoryPickerError(String callbackId, String error) {{
+        if (callbackId == null) return;
+        emitDirectoryPickerResult(callbackId, "__error__:" + (error != null ? error : "unknown"));
+    }}
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {{
+        super.onActivityResult(requestCode, resultCode, data);
+        // REQUEST_DIRECTORY_PICKER is now handled by ActivityResultLauncher.
+        // Fallback only if launcher was null (shouldn't happen).
+        if (requestCode == REQUEST_DIRECTORY_PICKER) {{
+            Log.w(TAG, "onActivityResult REQUEST_DIRECTORY_PICKER fired as fallback");
+            // Let the launcher's callback handle it — or if launcher is null, try manual
+            if (directoryPickerLauncher == null) {{
+                final String callbackId = directoryPickerCallbackId;
+                directoryPickerCallbackId = null;
+                if (callbackId != null) {{
+                    if (resultCode != RESULT_OK || data == null) {{
+                        emitDirectoryPickerError(callbackId, "cancelled");
+                    }} else {{
+                        try {{
+                            Uri uri = data.getData();
+                            if (uri != null) {{
+                                String path = resolveTreeUriPath(uri);
+                                emitDirectoryPickerResult(callbackId, path != null ? path : uri.toString());
+                            }}
+                        }} catch (Throwable ex) {{
+                            emitDirectoryPickerError(callbackId, ex.getMessage());
+                        }}
+                    }}
+                }}
+            }}
+        }}
+    }}
+
+    private String resolveTreeUriPath(Uri treeUri) {{
+        if (treeUri == null) return null;
+        try {{
+            String docId = DocumentsContract.getTreeDocumentId(treeUri);
+            if (docId == null) return null;
+
+            // docId format: "primary:Download" or "XXXX-XXXX:some/path"
+            String[] parts = docId.split(":");
+            String type = parts.length > 0 ? parts[0] : "";
+            String relativePath = parts.length > 1 ? parts[1] : "";
+
+            if ("primary".equalsIgnoreCase(type)) {{
+                String base = Environment.getExternalStorageDirectory().getAbsolutePath();
+                return relativePath.isEmpty() ? base : base + "/" + relativePath;
+            }}
+
+            // Secondary / SD card storage
+            String base = "/storage/" + type;
+            return relativePath.isEmpty() ? base : base + "/" + relativePath;
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to resolve tree URI path", ex);
+            return treeUri.toString();
+        }}
     }}
 }}
 """
@@ -1443,7 +1729,7 @@ def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
         return ""
 
 
-def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false", internal_exec_dir=""):
+def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="false", internal_exec_dir=""):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
     with _lock:
@@ -1454,7 +1740,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_RUNTIME_PROFILE"] = "android"
     os.environ["ANDROID_APP_FILES_DIR"] = str(files_dir or "")
     os.environ["BACKEND_HOST"] = str(host or "127.0.0.1")
-    os.environ["BACKEND_PORT"] = str(int(port or 5000))
+    os.environ["BACKEND_PORT"] = str(int(port or 5035))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
@@ -1494,7 +1780,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
         raise
 
     try:
-        backend_app.run_backend_server(host="0.0.0.0", port=int(port or 5000), debug=False)
+        backend_app.run_backend_server(host="0.0.0.0", port=int(port or 5035), debug=False)
     except Exception as ex:
         _write_boot_log(files_dir, f"backend run failed: {ex!r}")
         raise
@@ -1779,12 +2065,31 @@ def write_desktop_bundle_scripts(
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
     has_frontend = bool(frontend_binary_name)
+    backend_proxy_mode_bat = (
+        "set BACKEND_HOST=127.0.0.1\n"
+        "set BACKEND_SERVE_FRONTEND=false\n"
+        if has_frontend
+        else ""
+    )
+    backend_proxy_mode_ps1 = (
+        "$env:BACKEND_HOST = \"127.0.0.1\"\n"
+        "$env:BACKEND_SERVE_FRONTEND = \"false\"\n"
+        if has_frontend
+        else ""
+    )
+    backend_proxy_mode_sh = (
+        "export BACKEND_HOST=\"127.0.0.1\"\n"
+        "export BACKEND_SERVE_FRONTEND=\"false\"\n"
+        if has_frontend
+        else ""
+    )
 
     bat = (
         "@echo off\n"
         "setlocal\n"
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        f"{backend_proxy_mode_bat}"
         "set SCRIPT_DIR=%~dp0\n"
         "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
         "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
@@ -1808,6 +2113,7 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        f"{backend_proxy_mode_ps1}"
         "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
         "if (Test-Path $archiveTools) {\n"
@@ -1882,6 +2188,7 @@ def write_desktop_bundle_scripts(
         "set -e\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        f"{backend_proxy_mode_sh}"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
         "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
@@ -2030,8 +2337,8 @@ def write_desktop_bundle_scripts(
         app_bat = (
         "@echo off\n"
         "set SCRIPT_DIR=%~dp0\n"
-        "set APP_PORT=5000\n"
-        "for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"$p=5000; $defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'; $cfgDir = $defaultCfgDir; $envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR; if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir) } else { $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'; if (Test-Path -LiteralPath $overridePath) { try { $ov = Get-Content -LiteralPath $overridePath -Raw ^| ConvertFrom-Json; $persisted = [string]$ov.config_dir; if (-not [string]::IsNullOrWhiteSpace($persisted)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted) } } catch {} } }; $cfgPath = Join-Path $cfgDir 'server_config.json'; if (Test-Path -LiteralPath $cfgPath) { try { $cfg = Get-Content -LiteralPath $cfgPath -Raw ^| ConvertFrom-Json; if ($cfg.backend.port -ne $null) { $p = [int]$cfg.backend.port } } catch {} }; Write-Output $p\"`) do set APP_PORT=%%I\n"
+        "set APP_PORT=5035\n"
+        "for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"$p=5035; $defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'; $cfgDir = $defaultCfgDir; $envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR; if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir) } else { $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'; if (Test-Path -LiteralPath $overridePath) { try { $ov = Get-Content -LiteralPath $overridePath -Raw ^| ConvertFrom-Json; $persisted = [string]$ov.config_dir; if (-not [string]::IsNullOrWhiteSpace($persisted)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted) } } catch {} } }; $cfgPath = Join-Path $cfgDir 'server_config.json'; if (Test-Path -LiteralPath $cfgPath) { try { $cfg = Get-Content -LiteralPath $cfgPath -Raw ^| ConvertFrom-Json; if ($cfg.backend.port -ne $null) { $p = [int]$cfg.backend.port } } catch {} }; Write-Output $p\"`) do set APP_PORT=%%I\n"
         "start \"\" \"%SCRIPT_DIR%start_backend.bat\"\n"
         "timeout /t 2 >nul\n"
         "start \"\" \"http://127.0.0.1:%APP_PORT%/\"\n"
@@ -2041,7 +2348,7 @@ def write_desktop_bundle_scripts(
     app_ps1 = (
         "$ErrorActionPreference = 'Stop'\n"
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
-        "$appPort = 5000\n"
+        "$appPort = 5035\n"
         "$defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'\n"
         "$cfgDir = $defaultCfgDir\n"
         "$envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR\n"
@@ -3008,7 +3315,7 @@ def write_android_capacitor_plan(
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip()
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
     embed_backend = bool(packager_cfg.get("embed_backend", False))
-    backend_port = int(packager_cfg.get("backend_port", 5000))
+    backend_port = int(packager_cfg.get("backend_port", 5035))
     staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
     workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     workspace_backend_dir_name = get_android_workspace_backend_dir(packager_cfg)

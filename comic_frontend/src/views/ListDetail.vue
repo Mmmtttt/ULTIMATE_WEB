@@ -1183,8 +1183,11 @@ onMounted(async () => {
 
 <style scoped>
 .list-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   background: var(--surface-0);
-  padding-bottom: 20px;
+  padding-bottom: 0;
 }
 
 .loading-center {
@@ -1298,7 +1301,9 @@ onMounted(async () => {
 }
 
 .content-pagination {
-  padding: 0 10px 6px;
+  margin-top: auto;
+  padding: 8px 10px 12px;
+  background: var(--surface-1);
 }
 
 .comic-card {

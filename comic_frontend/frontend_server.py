@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import json
 from pathlib import Path
 
 import requests
@@ -31,7 +32,6 @@ from core.ssl_cert import get_ssl_context_tuple  # noqa: E402
 
 
 def _load_server_config():
-    import json
     if os.path.exists(SERVER_CONFIG_PATH):
         try:
             with open(SERVER_CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -41,7 +41,27 @@ def _load_server_config():
     return copy.deepcopy(DEFAULT_SERVER_CONFIG)
 
 
+def _get_server_config_mtime():
+    try:
+        return os.path.getmtime(SERVER_CONFIG_PATH)
+    except Exception:
+        return None
+
+
 SERVER_CONFIG = _load_server_config()
+_SERVER_CONFIG_MTIME = _get_server_config_mtime()
+SPACE_COOKIE_NAME = "ultimate_space_mode"
+SPACE_MODE_NORMAL = "normal"
+SPACE_MODE_PRIVATE = "private"
+
+
+def _refresh_server_config_if_changed() -> None:
+    global SERVER_CONFIG, _SERVER_CONFIG_MTIME
+    current_mtime = _get_server_config_mtime()
+    if current_mtime == _SERVER_CONFIG_MTIME:
+        return
+    SERVER_CONFIG = _load_server_config()
+    _SERVER_CONFIG_MTIME = current_mtime
 
 
 # ---------- config ----------
@@ -185,6 +205,15 @@ def _resolve_private_backend_base() -> str:
     return f"{protocol}://{host}:{port}"
 
 
+def _resolve_single_backend_base() -> str:
+    """Base URL for legacy/single-backend mode."""
+    host = "127.0.0.1"
+    port = int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+    ssl = _as_bool(SERVER_CONFIG.get("backend", {}).get("ssl_enabled", True), default=True)
+    protocol = "https" if ssl else "http"
+    return f"{protocol}://{host}:{port}"
+
+
 # ---------- proxy helpers ----------
 
 _PROXY_HEADERS_PASS = (
@@ -247,6 +276,42 @@ def _build_flask_response(proxy_resp) -> make_response:
     return response
 
 
+def _read_requested_space_mode() -> str:
+    mode = request.cookies.get(SPACE_COOKIE_NAME, "").strip().lower()
+    if mode == SPACE_MODE_NORMAL:
+        return SPACE_MODE_NORMAL
+    return SPACE_MODE_PRIVATE
+
+
+def _set_space_mode_cookie(response, mode: str) -> None:
+    normalized = SPACE_MODE_NORMAL if str(mode or "").strip().lower() == SPACE_MODE_NORMAL else SPACE_MODE_PRIVATE
+    response.set_cookie(
+        SPACE_COOKIE_NAME,
+        normalized,
+        httponly=True,
+        secure=bool(request.is_secure),
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _apply_space_cookie_from_auth_response(response, proxy_resp, path: str) -> None:
+    normalized_path = f"/{str(path or '').lstrip('/')}"
+    if normalized_path.startswith("/api/v1/auth/") or normalized_path == "/api/v1/auth":
+        try:
+            payload = json.loads(proxy_resp.content.decode("utf-8") or "{}")
+            data = payload.get("data") if isinstance(payload, dict) else {}
+            mode = data.get("mode") if isinstance(data, dict) else ""
+            if mode:
+                _set_space_mode_cookie(response, mode)
+                return
+        except Exception:
+            pass
+
+    if int(getattr(proxy_resp, "status_code", 0) or 0) == 401:
+        _set_space_mode_cookie(response, SPACE_MODE_PRIVATE)
+
+
 def _proxy_to_backend(backend_base: str, path: str):
     url = f"{backend_base.rstrip('/')}/{path.lstrip('/')}"
     headers = _build_proxy_headers()
@@ -281,7 +346,9 @@ def _proxy_to_backend(backend_base: str, path: str):
         print(f"[frontend proxy] error proxying to {url}: {e}")
         return make_response({"error": "proxy error", "detail": str(e)}, 502)
 
-    return _build_flask_response(resp)
+    response = _build_flask_response(resp)
+    _apply_space_cookie_from_auth_response(response, resp, path)
+    return response
 
 
 # ---------- app factory ----------
@@ -290,28 +357,27 @@ def create_app() -> Flask:
     app = Flask(__name__)
 
     dist_dir = _resolve_frontend_dist_dir()
-    normal_base = _resolve_normal_backend_base()
-    private_base = _resolve_private_backend_base()
-    auth_enabled = _is_auth_enabled()
-
     print(f"[frontend] dist_dir: {dist_dir}")
-    print(f"[frontend] normal backend: {normal_base}")
-    print(f"[frontend] private backend: {private_base}")
-    print(f"[frontend] auth enabled: {auth_enabled}")
+    print(f"[frontend] single backend: {_resolve_single_backend_base()}")
+    print(f"[frontend] normal backend: {_resolve_normal_backend_base()}")
+    print(f"[frontend] private backend: {_resolve_private_backend_base()}")
+    print(f"[frontend] auth enabled: {_is_auth_enabled()}")
 
     def _resolve_backend_for_request() -> str:
+        _refresh_server_config_if_changed()
+        auth_enabled = _is_auth_enabled()
         if not auth_enabled:
-            return private_base
+            return _resolve_single_backend_base()
 
         # Auth-related endpoints always go to normal backend (the one that holds the real session)
         path = request.path or ""
         if path.startswith("/api/v1/auth/") or path == "/api/v1/auth":
-            return normal_base
+            return _resolve_normal_backend_base()
 
-        mode = request.headers.get("X-Space-Mode", "").strip().lower()
-        if mode == "normal":
-            return normal_base
-        return private_base
+        mode = _read_requested_space_mode()
+        if mode == SPACE_MODE_NORMAL:
+            return _resolve_normal_backend_base()
+        return _resolve_private_backend_base()
 
     # ---- API proxy ----
 

@@ -139,7 +139,7 @@ def _resolve_backend_port():
             return int(env_port)
         except Exception:
             pass
-    return int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+    return int(SERVER_CONFIG.get("backend", {}).get("port", 5035))
 
 
 def _resolve_backend_debug():
@@ -147,6 +147,13 @@ def _resolve_backend_debug():
     if env_debug is not None:
         return _as_bool(env_debug, default=False)
     return not getattr(sys, "frozen", False)
+
+
+def _resolve_backend_serve_frontend_enabled() -> bool:
+    env_enabled = os.environ.get("BACKEND_SERVE_FRONTEND")
+    if env_enabled is not None:
+        return _as_bool(env_enabled, default=True)
+    return True
 
 
 def _resolve_ssl_enabled() -> bool:
@@ -244,7 +251,8 @@ def resolve_frontend_dist_dir() -> str:
 
 
 FRONTEND_DIST_DIR = resolve_frontend_dist_dir()
-FRONTEND_ENABLED = bool(FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
+BACKEND_SERVE_FRONTEND = _resolve_backend_serve_frontend_enabled()
+FRONTEND_ENABLED = bool(BACKEND_SERVE_FRONTEND and FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
 
 
 def success_response(data=None):
@@ -296,9 +304,10 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             public_paths = (
                 '/api/v1/auth/login',
                 '/api/v1/auth/status',
+                '/api/v1/auth/logout',
                 '/health',
             )
-            if path in public_paths or path.startswith('/static/') or path.startswith('/media/'):
+            if path in public_paths:
                 return
             if not session.get('authenticated', False):
                 return jsonify({

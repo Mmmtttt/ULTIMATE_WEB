@@ -1005,6 +1005,7 @@ onMounted(async () => {
 .preview-page {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
 }
 
 .active-filters {
@@ -1116,9 +1117,7 @@ onMounted(async () => {
 }
 
 .content-pagination {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  margin-top: auto;
   padding: 8px 8px 12px;
   background: var(--surface-1);
 }

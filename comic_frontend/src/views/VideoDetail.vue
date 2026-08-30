@@ -2006,8 +2006,12 @@ async function playStream(stream) {
     console.warn('播放地址不可用', stream)
     return
   }
-  
-  console.log('播放URL:', url)
+
+  // Resolve relative URLs to absolute — <video> src isn't routed through axios
+  // and would resolve against Capacitor's WebView origin instead of Flask backend.
+  const absoluteUrl = toBackendUrl(url) || url
+
+  console.log('播放URL:', absoluteUrl)
   
   // 销毁之前的 HLS 实例
   if (hls.value) {
@@ -2020,21 +2024,21 @@ async function playStream(stream) {
   videoPlayer.value.load()
   
   // 判断是否是 m3u8
-  if (url.includes('.m3u8') || url.includes('m3u8')) {
+  if (absoluteUrl.includes('.m3u8') || absoluteUrl.includes('m3u8')) {
     if (Hls.isSupported()) {
       hls.value = new Hls({
         debug: false,
         enableWorker: true
       })
-      
-      hls.value.loadSource(url)
+
+      hls.value.loadSource(absoluteUrl)
       hls.value.attachMedia(videoPlayer.value)
-      
+
       hls.value.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log('HLS manifest 解析成功')
         videoPlayer.value.play().catch(e => console.log('自动播放被阻止:', e))
       })
-      
+
       hls.value.on(Hls.Events.ERROR, (event, data) => {
         console.error('HLS 错误:', event, data)
         if (data.fatal) {
@@ -2042,28 +2046,44 @@ async function playStream(stream) {
         }
       })
     } else if (videoPlayer.value.canPlayType('application/vnd.apple.mpegurl')) {
-      videoPlayer.value.src = url
+      videoPlayer.value.src = absoluteUrl
       videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
     } else {
       showFailToast('当前浏览器不支持播放此格式')
     }
   } else {
     // 普通视频格式
-    videoPlayer.value.src = url
+    videoPlayer.value.src = absoluteUrl
     videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
   }
 }
 
 async function handlePlayerElementError(event) {
-  const mediaErrorCode = event?.target?.error?.code
+  const mediaError = event?.target?.error
+  const mediaErrorCode = mediaError?.code
+  const mediaErrorMessage = mediaError?.message || ''
+
+  const errorLabels = { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK', 3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' }
+  const errorLabel = errorLabels[mediaErrorCode] || `UNKNOWN(${mediaErrorCode})`
+
+  const videoSrc = event?.target?.src || event?.target?.currentSrc || ''
+
   console.error('主播放器加载失败', {
     videoId: videoId.value,
     activeSource: activePrimarySourceKey.value,
     providerKey: activeProviderKey.value,
     currentSource: currentSource.value,
-    mediaErrorCode
+    mediaErrorCode,
+    mediaErrorMessage,
+    errorLabel,
+    videoSrc: videoSrc.substring(0, 120),
   })
-  showFailToast('当前平台播放失败，请手动切换播放平台')
+
+  // Show a more specific error message for debugging
+  const msgParts = ['当前平台播放失败']
+  if (errorLabel) msgParts.push(`[${errorLabel}]`)
+  if (mediaErrorMessage) msgParts.push(mediaErrorMessage)
+  showFailToast(msgParts.join(' '))
 }
 
 onMounted(() => {

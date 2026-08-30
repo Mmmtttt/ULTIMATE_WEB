@@ -443,6 +443,8 @@ watch(activeTab, () => {
 
 <style scoped>
 .base-trash {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   background: var(--surface-0);
 }
@@ -480,7 +482,25 @@ watch(activeTab, () => {
 }
 
 .tab-pagination {
-  padding: 0 10px 10px;
+  margin-top: auto;
+  background: var(--surface-1);
+  padding: 8px 10px 12px;
+}
+
+.base-trash :deep(.van-tabs) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.base-trash :deep(.van-tabs__content) {
+  flex: 1;
+}
+
+.base-trash :deep(.van-tab__panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 .media-item {

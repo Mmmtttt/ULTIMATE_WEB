@@ -1084,6 +1084,7 @@ onMounted(async () => {
 .library-page {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
 }
 
 .toolbar {
@@ -1195,9 +1196,7 @@ onMounted(async () => {
 }
 
 .content-pagination {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  margin-top: auto;
   padding: 8px 8px 12px;
   background: var(--surface-1);
 }

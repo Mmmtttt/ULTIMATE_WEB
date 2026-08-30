@@ -175,7 +175,7 @@ def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir()
             "app_id": "com.ultimate.web",
             "app_name": "UltimateWeb",
             "embed_backend": True,
-            "backend_port": 5000,
+            "backend_port": 5035,
             "web_dir": "comic_frontend_dist",
             "workspace_web_dir": "web",
             "workspace_backend_dir": "_backend_build_input",
@@ -302,7 +302,7 @@ def test_package_android_injects_embedded_backend_after_cap_sync(monkeypatch):
                 "web_dir": "comic_frontend_dist",
                 "workspace_web_dir": "web",
                 "embed_backend": True,
-                "backend_port": 5000,
+                "backend_port": 5035,
                 "gradle_task": "assembleDebug",
             },
             target_out_dir=out_dir,
@@ -359,7 +359,7 @@ def test_ensure_android_project_chaquopy_app_embeds_snapshot_into_bootstrap():
         package_unified.ensure_android_project_chaquopy_app(
             android_project_dir=android_project_dir,
             workspace_dir=workspace_dir,
-            packager_cfg={"app_id": "com.ultimate.web", "backend_port": 5000},
+            packager_cfg={"app_id": "com.ultimate.web", "backend_port": 5035},
             app_version="1.2.3",
         )
 

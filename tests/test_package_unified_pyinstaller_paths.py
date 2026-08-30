@@ -406,6 +406,40 @@ def test_desktop_bundle_scripts_export_external_plugin_root():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_desktop_bundle_scripts_lock_backend_to_loopback_when_frontend_proxy_exists():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_proxy_mode_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bundle_dir = temp_dir / "bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        package_unified.write_desktop_bundle_scripts(
+            bundle_dir=bundle_dir,
+            binary_name="ultimate_backend_test",
+            frontend_binary_name="ultimate_frontend_test",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+        )
+
+        bat_text = (bundle_dir / "start_backend.bat").read_text(encoding="utf-8")
+        ps1_text = (bundle_dir / "start_backend.ps1").read_text(encoding="utf-8")
+        sh_text = (bundle_dir / "start_backend.sh").read_text(encoding="utf-8")
+
+        assert "BACKEND_HOST=127.0.0.1" in bat_text
+        assert "$env:BACKEND_HOST = \"127.0.0.1\"" in ps1_text
+        assert "export BACKEND_HOST=\"127.0.0.1\"" in sh_text
+        assert "BACKEND_SERVE_FRONTEND=false" in bat_text
+        assert "$env:BACKEND_SERVE_FRONTEND = \"false\"" in ps1_text
+        assert "export BACKEND_SERVE_FRONTEND=\"false\"" in sh_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_prepare_desktop_release_bundle_copies_ffmpeg_runtime_tool_and_launchers_add_path(monkeypatch):
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"

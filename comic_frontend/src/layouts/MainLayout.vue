@@ -87,7 +87,7 @@
     </main>
 
     <!-- Mobile Bottom Tabbar -->
-    <van-tabbar v-if="isMobile" route fixed placeholder>
+    <van-tabbar v-if="isMobile" route fixed>
       <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
       <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
       <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
@@ -252,6 +252,7 @@ async function loadTeleDriveNavState() {
   --mobile-safe-top: 0px;
   --mobile-header-height: 0px;
   --mobile-header-offset: 0px;
+  --mobile-tabbar-offset: 0px;
   min-height: 100vh;
   background: transparent;
   display: flex;
@@ -549,14 +550,14 @@ async function loadTeleDriveNavState() {
 }
 
 .with-header {
-  padding-top: var(--mobile-header-offset);
-}
+    padding-top: var(--mobile-header-offset);
+  }
 
-.with-tabbar {
-  padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
-}
+  .with-tabbar {
+    padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
+  }
 
-.slide-left-enter-active,
+  .slide-left-enter-active,
 .slide-left-leave-active {
   transition:
     opacity var(--motion-base) var(--ease-standard),
@@ -577,6 +578,11 @@ async function loadTeleDriveNavState() {
   background: var(--layout-tabbar-bg);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-soft);
+  will-change: auto;
+}
+
+:deep(.van-tabbar-item) {
+  will-change: auto;
 }
 
 :deep(.van-tabbar-item--active) {
@@ -588,7 +594,15 @@ async function loadTeleDriveNavState() {
     --mobile-safe-top: env(safe-area-inset-top, 0px);
     --mobile-header-height: 58px;
     --mobile-header-offset: calc(var(--mobile-header-height) + var(--mobile-safe-top));
-    display: block;
+    --mobile-tabbar-offset: calc(54px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    min-height: 0;
+  }
+
+  .main-content {
+    flex: 1;
   }
 
   .with-sidebar {

@@ -30,7 +30,7 @@
       "workspace_web_dir": "web",
       "api_base_url": "",
       "embed_backend": true,
-      "backend_port": 5000,
+      "backend_port": 5035,
       "android_backend_enable_third_party": false,
       "chaquopy_version": "17.0.0",
       "chaquopy_python_version": "3.13",
