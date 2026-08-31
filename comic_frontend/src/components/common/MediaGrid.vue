@@ -57,9 +57,8 @@
           <div v-if="displaySubtitle(item)" class="media-subtitle">
             {{ displaySubtitle(item) }}
           </div>
-          <div class="media-meta">
-            <span v-if="item.date">{{ item.date }}</span>
-            <span v-else-if="item.total_page">{{ item.total_page }}P</span>
+          <div v-if="displayMeta(item)" class="media-meta">
+            <span>{{ displayMeta(item) }}</span>
           </div>
         </div>
       </template>
@@ -75,8 +74,7 @@
               <span v-if="showProgress && item.current_page && item.current_page > 0">
                 {{ item.current_page }}{{ item.total_page ? `/${item.total_page}` : '' }}
               </span>
-              <span v-else-if="item.date">{{ item.date }}</span>
-              <span v-else-if="item.total_page">{{ item.total_page }}P</span>
+              <span v-else-if="displayMeta(item)">{{ displayMeta(item) }}</span>
               <span v-else>-</span>
             </div>
           </div>
@@ -232,10 +230,27 @@ function formatScore(score) {
 }
 
 function displaySubtitle(item) {
+  if (isVideoItem(item)) {
+    const actorText = Array.isArray(item.actors) && item.actors.length > 0
+      ? item.actors.slice(0, 2).join(', ')
+      : String(item.actor || item.creator || '').trim()
+    const code = String(item.code || '').trim()
+    if (actorText && code) return `${actorText} · ${code}`
+    return actorText || code
+  }
   if (item.actors && item.actors.length > 0) {
     return item.actors.slice(0, 2).join(', ')
   }
   return item.author || item.creator || item.actor || ''
+}
+
+function displayMeta(item) {
+  if (isVideoItem(item)) {
+    return ''
+  }
+  if (item.date) return item.date
+  if (item.total_page) return `${item.total_page}P`
+  return ''
 }
 </script>
 
@@ -355,12 +370,16 @@ function displaySubtitle(item) {
   font-weight: 600;
   z-index: 1;
   backdrop-filter: blur(4px);
+  max-width: calc(100% - 72px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .media-code {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  right: 8px;
+  bottom: 8px;
   background: var(--surface-3);
   border: 1px solid var(--border-soft);
   color: var(--text-primary);
@@ -369,6 +388,11 @@ function displaySubtitle(item) {
   font-size: 10px;
   font-weight: 600;
   backdrop-filter: blur(4px);
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .media-score {
@@ -376,6 +400,10 @@ function displaySubtitle(item) {
   top: 8px;
   right: 8px;
   z-index: 2;
+}
+
+.media-card.video-item .favorite-btn {
+  bottom: 40px;
 }
 
 .media-progress {

@@ -19,26 +19,6 @@
 
       <div class="search-subtitle">仅搜索全网内容，输入关键词后点击搜索或按回车触发。</div>
 
-      <!-- 平台选择器（多选） -->
-      <div v-if="platformOptions.length > 0" class="platform-selector">
-        <div
-          class="platform-chip"
-          :class="{ active: selectedPlatforms.length === 0 }"
-          @click="handlePlatformChange('all')"
-        >
-          全部
-        </div>
-        <div
-          v-for="opt in platformOptions"
-          :key="opt.platform"
-          class="platform-chip"
-          :class="{ active: selectedPlatforms.includes(opt.platform) }"
-          @click="handlePlatformChange(opt.platform)"
-        >
-          {{ opt.label }}
-        </div>
-      </div>
-
       <div v-if="isVideoMode" class="tag-search-entry">
         <van-button size="small" plain type="primary" icon="filter-o" @click="goToTagSearch">
           标签搜索
@@ -499,6 +479,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   color: var(--text-primary);
+  width: 100%;
+  margin: 0 auto;
 }
 
 .search-header {
@@ -532,6 +514,10 @@ onMounted(() => {
   background: transparent;
 }
 
+.search-input-wrapper :deep(.van-search__content) {
+  background: var(--surface-1);
+}
+
 .search-action-btn {
   border: 0;
   background: transparent;
@@ -545,45 +531,6 @@ onMounted(() => {
   padding: 0 14px 10px;
   font-size: 12px;
   color: var(--text-tertiary);
-}
-
-.platform-selector {
-  display: flex;
-  gap: 8px;
-  padding: 0 14px 10px;
-  overflow-x: auto;
-  flex-shrink: 0;
-  scrollbar-width: none;
-}
-
-.platform-selector::-webkit-scrollbar {
-  display: none;
-}
-
-.platform-chip {
-  flex-shrink: 0;
-  padding: 4px 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--surface-3);
-  border: 1px solid var(--border-soft);
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.platform-chip:hover {
-  border-color: var(--brand-400);
-  color: var(--brand-500);
-}
-
-.platform-chip.active {
-  background: var(--brand-500);
-  border-color: var(--brand-500);
-  color: #fff;
 }
 
 .tag-search-entry {
@@ -660,7 +607,7 @@ onMounted(() => {
 
 .floating-import-bar {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
@@ -853,6 +800,10 @@ onMounted(() => {
 }
 
 @media (min-width: 768px) {
+  .search-page {
+    max-width: min(1520px, calc(100vw - 28px));
+  }
+
   .search-header {
     margin-inline: 14px;
   }

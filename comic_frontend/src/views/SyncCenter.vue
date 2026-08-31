@@ -771,7 +771,17 @@ onUnmounted(() => {
 }
 
 .sync-group {
-  margin-top: 12px;
+  margin: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.sync-group :deep(.van-cell),
+.sync-group :deep(.van-field) {
+  background: transparent;
 }
 
 .group-actions {
@@ -779,11 +789,12 @@ onUnmounted(() => {
 }
 
 .peer-card {
-  margin: 10px 12px;
+  margin: 12px;
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  padding: 12px;
-  background: var(--surface-2);
+  border-radius: 18px;
+  padding: 14px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-xs);
 }
 
 .peer-main {
@@ -792,9 +803,9 @@ onUnmounted(() => {
 
 .peer-progress {
   margin-bottom: 10px;
-  padding: 8px;
-  border-radius: 8px;
-  background: var(--surface-1);
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
 }
 
@@ -809,8 +820,8 @@ onUnmounted(() => {
 
 .peer-name {
   font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-weight: 800;
+  color: var(--text-strong);
 }
 
 .peer-meta {
@@ -823,7 +834,13 @@ onUnmounted(() => {
 .peer-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+.peer-actions .van-button {
+  flex: 1 1 120px;
+  min-width: 112px;
 }
 
 .peer-actions-second {
@@ -935,6 +952,20 @@ onUnmounted(() => {
 }
 
 @media (max-width: 640px) {
+  .sync-group {
+    margin-inline: 10px;
+    border-radius: 16px;
+  }
+
+  .peer-card {
+    margin-inline: 10px;
+    padding: 12px;
+  }
+
+  .peer-actions .van-button {
+    flex: 1 1 calc(50% - 4px);
+  }
+
   .list-scope-popup-actions {
     grid-template-columns: 1fr;
   }

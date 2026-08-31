@@ -730,20 +730,35 @@ onUnmounted(() => {
 .tag-search-page {
   padding: 12px 10px 90px;
   color: var(--text-primary);
+  width: 100%;
 }
 
 .page-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
-  padding: 6px 4px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(12px);
 }
 
 .back-icon {
   font-size: 20px;
   padding: 8px;
   color: var(--text-primary);
+  border-radius: 999px;
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.back-icon:hover {
+  color: var(--brand-600);
+  background: rgba(89, 160, 255, 0.12);
 }
 
 .header-copy {
@@ -779,6 +794,10 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
 }
 
 .platform-pill {
@@ -927,10 +946,16 @@ onUnmounted(() => {
 
 .remote-result-card {
   border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
   background: var(--surface-2);
   transition: all 0.16s ease;
+  box-shadow: var(--shadow-xs);
+}
+
+.remote-result-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
 }
 
 .remote-results-grid.video-mode .remote-result-card,
@@ -1032,9 +1057,9 @@ onUnmounted(() => {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  border-radius: 999px;
   background: var(--surface-2);
   backdrop-filter: blur(10px);
   box-shadow: 0 12px 24px rgba(17, 27, 45, 0.16);
@@ -1061,6 +1086,24 @@ onUnmounted(() => {
 @media (max-width: 767px) {
   .tag-search-page {
     padding: 10px 8px 102px;
+  }
+
+  .page-header {
+    border-radius: 16px;
+  }
+
+  .filter-actions,
+  .remote-select-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filter-action-btns {
+    width: 100%;
+  }
+
+  .filter-action-btns .van-button {
+    flex: 1;
   }
 
   .tag-grid {
@@ -1098,7 +1141,7 @@ onUnmounted(() => {
   .floating-import-bar {
     left: calc(var(--sidebar-width) + 20px);
     right: 20px;
-    bottom: 18px;
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   }
 }
 </style>

@@ -1103,6 +1103,7 @@ watch(
   padding: 10px 12px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1206,6 +1207,8 @@ watch(
 .tree-footer-actions {
   margin-top: 10px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
 }
 
@@ -1369,6 +1372,61 @@ watch(
 
   .tree-name {
     max-width: 170px;
+  }
+}
+
+@media (max-width: 640px) {
+  .comic-local-import-page {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .card-surface {
+    margin-inline: 10px;
+    border-radius: 18px;
+  }
+
+  .section-title,
+  .picker-row,
+  .recover-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hero-steps span,
+  .mode-btn,
+  .mark-mode-btn {
+    flex: 1 1 100%;
+  }
+
+  .mode-toggle,
+  .mark-mode-row {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mode-btn + .mode-btn,
+  .mark-mode-btn + .mark-mode-btn {
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .switch-desc {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .tree-card {
+    min-height: 420px;
+  }
+
+  .tree-list {
+    max-height: 52vh;
+  }
+
+  .tree-footer-actions .van-button,
+  .result-actions .van-button {
+    flex: 1 1 100%;
   }
 }
 </style>

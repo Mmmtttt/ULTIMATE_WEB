@@ -302,6 +302,7 @@ async function runImport() {
   padding: 10px 12px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -413,6 +414,45 @@ async function runImport() {
 @media (max-width: 1080px) {
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .video-local-import-page {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .card-surface {
+    margin-inline: 10px;
+    border-radius: 18px;
+  }
+
+  .hero-steps span {
+    flex: 1 1 100%;
+  }
+
+  .section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .import-mode-switch {
+    align-items: flex-start;
+  }
+
+  .switch-desc {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .grouping-button {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

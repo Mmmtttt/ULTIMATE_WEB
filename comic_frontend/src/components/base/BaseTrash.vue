@@ -446,7 +446,8 @@ watch(activeTab, () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: var(--surface-0);
+  background: transparent;
+  padding-bottom: 18px;
 }
 
 .loading-center {
@@ -459,9 +460,13 @@ watch(activeTab, () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  gap: 12px;
+  margin: 12px;
+  padding: 12px 14px;
   background: var(--surface-2);
-  border-bottom: 1px solid var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
 }
 
 .selected-info {
@@ -471,14 +476,16 @@ watch(activeTab, () => {
 
 .manage-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
-  padding: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+  padding: 0 12px 12px;
 }
 
 .tab-pagination {
@@ -506,14 +513,24 @@ watch(activeTab, () => {
 .media-item {
   position: relative;
   background: var(--surface-2);
-  border-radius: 8px;
+  border-radius: 16px;
   overflow: hidden;
-  border: 2px solid transparent;
-  transition: all 0.2s;
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.media-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .media-item.selected {
-  border-color: #1989fa;
+  border-color: rgba(89, 160, 255, 0.68);
+  box-shadow: 0 0 0 2px rgba(89, 160, 255, 0.16);
 }
 
 .media-thumb {
@@ -541,7 +558,7 @@ watch(activeTab, () => {
   right: 4px;
   width: 20px;
   height: 20px;
-  background: #1989fa;
+  background: var(--brand-600);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -552,11 +569,28 @@ watch(activeTab, () => {
 
 .item-actions {
   display: flex;
-  gap: 4px;
-  padding: 0 6px 6px;
+  gap: 6px;
+  padding: 0 8px 8px;
 }
 
 .item-actions .van-button {
   flex: 1;
+}
+
+@media (max-width: 640px) {
+  .manage-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manage-actions .van-button {
+    flex: 1 1 calc(33.333% - 6px);
+  }
+
+  .media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding-inline: 10px;
+  }
 }
 </style>

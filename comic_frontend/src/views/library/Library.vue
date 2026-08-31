@@ -1104,7 +1104,7 @@ onMounted(async () => {
   padding: 0;
   background: transparent;
   --van-search-background: transparent;
-  --van-search-content-background: transparent;
+  --van-search-content-background: var(--surface-1);
   --van-field-input-text-color: var(--text-primary);
 }
 
@@ -1112,7 +1112,7 @@ onMounted(async () => {
   height: 40px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
-  background: transparent;
+  background: var(--surface-1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 

@@ -2,7 +2,10 @@
   <div class="base-tag-manage">
     <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
-        <van-icon name="plus" @click="showAddPopup = true" />
+        <button type="button" class="nav-add-button" @click="showAddPopup = true">
+          <van-icon name="plus" />
+          <span>添加</span>
+        </button>
       </template>
     </van-nav-bar>
     
@@ -193,7 +196,7 @@
       v-model:show="showAddPopup" 
       position="bottom" 
       round 
-      :style="{ height: '40%' }"
+      :style="{ height: 'min(360px, 72vh)' }"
     >
       <div class="popup-content">
         <van-nav-bar title="添加标签">
@@ -216,7 +219,7 @@
       v-model:show="showEditPopup" 
       position="bottom" 
       round 
-      :style="{ height: '40%' }"
+      :style="{ height: 'min(360px, 72vh)' }"
     >
       <div class="popup-content">
         <van-nav-bar title="编辑标签">
@@ -713,7 +716,23 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: var(--surface-0);
+  background: transparent;
+  padding-bottom: 18px;
+}
+
+.nav-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--plain-primary-border);
+  border-radius: 999px;
+  background: var(--plain-btn-bg);
+  color: var(--plain-primary-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .base-tag-manage :deep(.van-tabs) {
@@ -733,12 +752,18 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .tag-list {
-  margin-top: 10px;
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
 }
 
 .tag-list-desktop {
   display: grid;
   gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
 .tag-icon {
@@ -747,7 +772,8 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .tag-search-bar {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  grid-column: 1 / -1;
 }
 
 .tag-search-bar :deep(.van-search) {
@@ -766,10 +792,11 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .tag-cell-desktop {
+  min-height: 72px;
   border-radius: 16px;
   border: 1px solid var(--border-soft);
-  background: var(--surface-2);
-  box-shadow: 0 10px 24px rgba(12, 24, 43, 0.08);
+  background: var(--surface-1);
+  box-shadow: none;
   transition:
     transform var(--motion-fast) var(--ease-standard),
     border-color var(--motion-fast) var(--ease-standard),
@@ -803,7 +830,11 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .empty {
+  margin: 12px;
   padding: 40px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
   text-align: center;
 }
 
@@ -822,7 +853,12 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .batch-section {
-  padding: 16px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
 }
 
 .section-header {
@@ -851,8 +887,8 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 
 .content-select-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
   margin-bottom: 20px;
 }
 
@@ -865,15 +901,24 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 
 .content-select-item {
   position: relative;
-  background: var(--surface-2);
-  border-radius: 8px;
+  background: var(--surface-1);
+  border-radius: 14px;
   overflow: hidden;
-  border: 2px solid transparent;
-  transition: all 0.2s;
+  border: 1px solid var(--border-soft);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.content-select-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .content-select-item.selected {
-  border-color: #1989fa;
+  border-color: rgba(89, 160, 255, 0.68);
+  box-shadow: 0 0 0 2px rgba(89, 160, 255, 0.16);
 }
 
 .content-thumb {
@@ -911,7 +956,7 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   right: 4px;
   width: 20px;
   height: 20px;
-  background: #1989fa;
+  background: var(--brand-600);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -938,14 +983,38 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .batch-actions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
 @media (max-width: 767px) {
   .tag-list {
     margin-top: 8px;
+    padding: 10px;
+  }
+
+  .nav-add-button span {
+    display: none;
+  }
+
+  .content-select-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .section-header {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .section-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .batch-actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -216,6 +216,20 @@ onMounted(() => {
   padding: 12px 0 20px;
 }
 
+.adapter-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.adapter-panel :deep(.van-cell),
+.adapter-panel :deep(.van-field) {
+  background: transparent;
+}
+
 .adapter-actions {
   margin: 12px 16px 0;
   display: grid;
@@ -224,7 +238,7 @@ onMounted(() => {
 
 .adapter-action-card {
   padding: 14px;
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-xs);
@@ -239,5 +253,16 @@ onMounted(() => {
 
 .save-area {
   padding: 16px;
+}
+
+@media (max-width: 767px) {
+  .adapter-panel :deep(.van-cell-group),
+  .adapter-actions {
+    margin-inline: 10px;
+  }
+
+  .save-area {
+    padding-inline: 10px;
+  }
 }
 </style>

@@ -1,5 +1,12 @@
 <template>
-  <div class="main-layout" :class="{ dragging: isDragging }">
+  <div
+    class="main-layout"
+    :class="{
+      dragging: isDragging,
+      'mobile-chrome-hidden': mobileChromeHidden,
+      'mobile-chrome-disabled': !mobileChromeEnabled
+    }"
+  >
     <!-- Desktop Sidebar -->
     <aside v-if="isDesktop" class="sidebar" :class="{ collapsed: sidebarCollapsed, hidden: sidebarHidden, dragging: isDragging }" :style="{ width: sidebarWidthPx }">
       <div class="sidebar-inner">
@@ -57,7 +64,7 @@
     </aside>
 
     <!-- Mobile Top Navbar -->
-    <header v-if="isMobile" class="mobile-header">
+    <header v-if="isMobile && mobileChromeEnabled" class="mobile-header">
       <div class="header-content">
         <div class="page-title">{{ pageTitle }}</div>
         <ModeSwitch class="header-mode-switch" />
@@ -71,8 +78,10 @@
         'with-sidebar': isDesktop,
         'sidebar-collapsed-layout': isDesktop && sidebarCollapsed,
         'sidebar-hidden-layout': isDesktop && sidebarHidden,
-        'with-header': isMobile,
-        'with-tabbar': isMobile,
+        'with-header': isMobile && mobileChromeEnabled,
+        'with-tabbar': isMobile && mobileChromeEnabled,
+        'mobile-safe-content': isMobile && !mobileChromeEnabled && !isReaderRoute,
+        'reader-immersive': isReaderRoute,
         'random-feed-immersive': isRandomFeedRoute
       }"
       :style="isDesktop ? { marginLeft: sidebarWidthPx, width: 'calc(100% - ' + sidebarWidthPx + ')' } : {}"
@@ -87,7 +96,7 @@
     </main>
 
     <!-- Mobile Bottom Tabbar -->
-    <van-tabbar v-if="isMobile" route fixed>
+    <van-tabbar v-if="isMobile && mobileChromeEnabled" route fixed>
       <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
       <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
       <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
@@ -135,6 +144,20 @@ const sidebarCurrentWidth = computed(() =>
 const sidebarCollapsed = computed(() => sidebarCurrentWidth.value <= SIDEBAR_WIDTHS[0] * 0.70)
 const sidebarHidden = computed(() => sidebarCurrentWidth.value <= SIDEBAR_WIDTHS[1] * 0.35)
 const isRandomFeedRoute = computed(() => route.path === '/random-feed')
+const isReaderRoute = computed(() => ['ComicReader', 'RecommendationReader'].includes(String(route.name || '')))
+const mobileChromeHidden = ref(false)
+const lastScrollTop = ref(0)
+const mobileChromeRoutes = new Set([
+  'Library',
+  'Preview',
+  'RandomFeed',
+  'TeleDriveImport',
+  'Subscribe',
+  'Mine'
+])
+const mobileChromeEnabled = computed(() => {
+  return isMobile.value && mobileChromeRoutes.has(String(route.name || ''))
+})
 
 const pageTitle = computed(() => {
   const title = route.meta?.title
@@ -164,15 +187,24 @@ onMounted(() => {
   loadTeleDriveNavState()
   window.addEventListener('mousemove', onDragMove)
   window.addEventListener('mouseup', onDragEnd)
+  window.addEventListener('scroll', onMobileScroll, { passive: true })
 })
 
 // 运行时状态加载后重试，以及路由切换时重试
 watch(() => runtimeStore.loaded, (loaded) => { if (loaded) loadTeleDriveNavState() })
-watch(() => route.path, () => { loadTeleDriveNavState() })
+watch(() => route.path, () => {
+  loadTeleDriveNavState()
+  resetMobileChrome()
+})
+
+watch(isMobile, () => {
+  resetMobileChrome()
+})
 
 onUnmounted(() => {
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', onDragEnd)
+  window.removeEventListener('scroll', onMobileScroll)
 })
 
 function snapToNearest(width) {
@@ -217,6 +249,33 @@ function onDragEnd() {
     snapToNearest(dragWidth.value)
   }
   dragWidth.value = null
+}
+
+function getScrollTop() {
+  return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
+}
+
+function resetMobileChrome() {
+  mobileChromeHidden.value = false
+  lastScrollTop.value = getScrollTop()
+}
+
+function onMobileScroll() {
+  if (!mobileChromeEnabled.value) {
+    mobileChromeHidden.value = false
+    return
+  }
+
+  const currentTop = getScrollTop()
+  const delta = currentTop - lastScrollTop.value
+  if (currentTop < 24) {
+    mobileChromeHidden.value = false
+  } else if (delta > 14) {
+    mobileChromeHidden.value = true
+  } else if (delta < -8) {
+    mobileChromeHidden.value = false
+  }
+  lastScrollTop.value = currentTop
 }
 
 async function loadTeleDriveNavState() {
@@ -485,6 +544,10 @@ async function loadTeleDriveNavState() {
   box-shadow: var(--layout-header-shadow);
   min-height: var(--mobile-header-offset);
   padding-top: var(--mobile-safe-top);
+  transition:
+    transform 220ms var(--ease-standard),
+    opacity 220ms var(--ease-standard);
+  will-change: transform;
 }
 
 .header-content {
@@ -557,6 +620,10 @@ async function loadTeleDriveNavState() {
     padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px));
   }
 
+  .mobile-safe-content {
+    padding-top: var(--mobile-safe-top);
+  }
+
   .slide-left-enter-active,
 .slide-left-leave-active {
   transition:
@@ -578,7 +645,10 @@ async function loadTeleDriveNavState() {
   background: var(--layout-tabbar-bg);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-soft);
-  will-change: auto;
+  transition:
+    transform 220ms var(--ease-standard),
+    opacity 220ms var(--ease-standard);
+  will-change: transform;
 }
 
 :deep(.van-tabbar-item) {
@@ -589,9 +659,33 @@ async function loadTeleDriveNavState() {
   color: var(--brand-600);
 }
 
+.mobile-chrome-hidden .mobile-header {
+  transform: translateY(-105%);
+  opacity: 0.96;
+}
+
+.mobile-chrome-hidden :deep(.van-tabbar) {
+  transform: translateY(calc(100% + env(safe-area-inset-bottom, 0px)));
+}
+
+.mobile-chrome-hidden :deep(.library-page .toolbar),
+.mobile-chrome-hidden :deep(.preview-page .toolbar) {
+  transform: translateY(calc(-1 * var(--mobile-header-offset) - 18px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+:deep(.library-page .toolbar),
+:deep(.preview-page .toolbar) {
+  transition:
+    transform 220ms var(--ease-standard),
+    opacity 220ms var(--ease-standard);
+  will-change: transform;
+}
+
 @media (max-width: 1023px) {
   .main-layout {
-    --mobile-safe-top: env(safe-area-inset-top, 0px);
+    --mobile-safe-top: max(env(safe-area-inset-top, 0px), 24px);
     --mobile-header-height: 58px;
     --mobile-header-offset: calc(var(--mobile-header-height) + var(--mobile-safe-top));
     --mobile-tabbar-offset: calc(54px + env(safe-area-inset-bottom, 0px));

@@ -1,7 +1,7 @@
 <template>
   <div class="mine-page">
     <div class="stats-overview">
-      <van-grid :column-num="4" :border="false">
+      <van-grid :column-num="statsColumnNum" :border="false">
         <van-grid-item icon="photo-o" :text="stats.count + ' 内容'" />
         <van-grid-item icon="bookmark-o" :text="stats.read + ' 已读'" />
         <van-grid-item icon="label-o" :text="stats.tags + ' 标签'" />
@@ -196,6 +196,7 @@ import { useAuthStore } from '@/stores/auth'
 import { showFailToast, showConfirmDialog, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
 import { fetchProtocolPlatformOptions } from '@/utils'
+import { useDevice } from '@/composables/useDevice'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -207,8 +208,10 @@ const tagStore = useTagStore()
 const listStore = useListStore()
 const importTaskStore = useImportTaskStore()
 const appUpdateStore = useAppUpdateStore()
+const { isMobile } = useDevice()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
+const statsColumnNum = computed(() => 4)
 const authEnabled = computed(() => authStore.enabled)
 const currentModeText = computed(() => authStore.mode === 'normal' ? '正常模式' : '隐私模式')
 
@@ -505,57 +508,68 @@ watch(() => modeStore.currentMode, async () => {
 
 <style scoped>
 .mine-page {
-  padding-bottom: 20px;
+  padding: 2px 0 20px;
 }
 
 .stats-overview {
   background: var(--surface-2);
-  padding: 20px 0;
-  margin: 0 16px 12px;
+  padding: 10px;
+  margin: 12px 16px;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
 }
 
 .stats-overview :deep(.van-grid-item__content) {
-  background: transparent;
+  min-height: 68px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--surface-1);
   color: var(--text-primary);
   padding: clamp(4px, 1vw, 10px) clamp(2px, 0.5vw, 4px);
 }
 
 .stats-overview :deep(.van-grid-item__text) {
   color: var(--text-secondary);
-  font-size: clamp(11px, 1.2vw, 14px);
+  font-size: clamp(10px, 1.1vw, 13px);
   margin-top: clamp(4px, 0.6vw, 8px);
+  white-space: nowrap;
 }
 
 .stats-overview :deep(.van-icon) {
   color: var(--brand-600);
-  font-size: clamp(18px, 2.4vw, 28px);
+  font-size: clamp(16px, 2vw, 22px);
 }
 
 .stats-overview :deep(.van-grid-item__icon) {
   color: var(--brand-600);
-  font-size: clamp(18px, 2.4vw, 28px);
+  font-size: clamp(16px, 2vw, 22px);
 }
 
 .mine-menu {
-  margin-bottom: 12px;
+  margin: 0 16px 12px;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: 18px;
   overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+
+.mine-menu :deep(.van-cell) {
+  background: transparent;
+  min-height: 52px;
 }
 
 .about {
-  padding: 28px 16px 16px;
+  padding: 16px 16px;
   color: var(--text-tertiary);
 }
 
 .about-card {
   width: 100%;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  border-radius: 18px;
   background: var(--surface-2);
   box-shadow: var(--shadow-sm);
 }
@@ -734,8 +748,34 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 @media (max-width: 767px) {
+  .stats-overview {
+    padding: 8px;
+    border-radius: 16px;
+  }
+
+  .stats-overview :deep(.van-grid-item__content) {
+    min-height: 58px;
+    border-radius: 12px;
+    padding: 4px 2px;
+  }
+
+  .stats-overview :deep(.van-grid-item__text) {
+    font-size: 10px;
+    margin-top: 4px;
+  }
+
+  .stats-overview :deep(.van-icon),
+  .stats-overview :deep(.van-grid-item__icon) {
+    font-size: 16px;
+  }
+
+  .stats-overview,
+  .mine-menu {
+    margin-inline: 10px;
+  }
+
   .about {
-    padding: 22px 12px 12px;
+    padding: 12px 10px;
   }
 
   .update-actions {
