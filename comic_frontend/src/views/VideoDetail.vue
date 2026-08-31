@@ -347,7 +347,7 @@
             </div>
           </div>
           <div v-else class="thumbnail-empty">
-            还没有生成缩略图
+            暂无本地缩略图
           </div>
         </van-cell-group>
       </div>

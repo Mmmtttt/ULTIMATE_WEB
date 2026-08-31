@@ -8,6 +8,15 @@ import os from 'os'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 function loadServerConfig() {
+  const envConfigPath = process.env.SERVER_CONFIG_PATH
+  if (envConfigPath && existsSync(envConfigPath)) {
+    try {
+      return JSON.parse(readFileSync(envConfigPath, 'utf-8'))
+    } catch (e) {
+      console.warn('Failed to load server config from SERVER_CONFIG_PATH, trying defaults')
+    }
+  }
+
   // 优先读取项目根目录的配置
   const projectConfigPath = resolve(__dirname, '../server_config.json')
   if (existsSync(projectConfigPath)) {

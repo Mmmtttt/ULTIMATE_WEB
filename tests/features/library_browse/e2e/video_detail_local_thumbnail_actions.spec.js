@@ -126,10 +126,9 @@ test("local video detail supports generating thumbnails and selecting cover from
   await page.goto(`/video/${VIDEO_ID}`);
   await expect(page.locator(".video-title").first()).toContainText(VIDEO_TITLE);
 
-  // 使用更精确的选择器，避免匹配到收藏和删除两个 van-icon
-  await page.locator(".van-nav-bar__right .van-icon").first().click();
-  await expect(page.getByText("生成缩略图")).toBeVisible();
-  await page.getByText("生成缩略图").click();
+  const generateButton = page.getByRole("button", { name: "生成缩略图", exact: true });
+  await expect(generateButton).toBeVisible();
+  await generateButton.click();
 
   await expect.poll(() => routeCalls.generate.length).toBe(1);
   await expect.poll(() => coverRequests.some((url) => url.includes("cover-v-1"))).toBe(true);
