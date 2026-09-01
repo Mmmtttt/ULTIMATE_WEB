@@ -13,3 +13,4 @@ from .organize import organize_bp
 from .ui_state import ui_state_bp
 from .teledrive import teledrive_bp
 from .auth import auth_bp
+from .performance import performance_bp

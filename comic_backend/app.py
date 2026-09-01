@@ -13,6 +13,7 @@ from flask_cors import CORS
 from api import register_blueprints
 from application.list_app_service import ListAppService
 from core.constants import (
+    CACHE_MAX_AGE,
     CACHE_ROOT_DIR,
     COMIC_DIR,
     COVER_DIR,
@@ -39,6 +40,7 @@ from core.ssl_cert import get_ssl_context_tuple
 from infrastructure.archive import ensure_rar_backend_configured, probe_7z_encryption_capability
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
 from infrastructure.logger import app_logger
+from infrastructure.performance.timing import request_elapsed_ms, start_request_timer
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 
@@ -255,6 +257,15 @@ BACKEND_SERVE_FRONTEND = _resolve_backend_serve_frontend_enabled()
 FRONTEND_ENABLED = bool(BACKEND_SERVE_FRONTEND and FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
 
 
+def _apply_static_asset_cache_headers(response):
+    version = str(request.args.get("v", "") or "").strip()
+    if version:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        response.headers["Cache-Control"] = f"public, max-age={CACHE_MAX_AGE}"
+    return response
+
+
 def success_response(data=None):
     return {
         "code": 200,
@@ -294,6 +305,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     # before_request: 设置当前线程的空间模式 + 认证检查
     @app.before_request
     def set_space_mode_on_request():
+        start_request_timer()
         set_current_space_mode(space_mode)
         g.space_mode = space_mode
 
@@ -315,6 +327,14 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
                     "msg": "Authentication required",
                     "data": {"authenticated": False, "mode": "private"}
                 }), 401
+
+    @app.after_request
+    def add_performance_headers(response):
+        elapsed_ms = request_elapsed_ms()
+        if elapsed_ms is not None:
+            response.headers["X-Ultimate-Elapsed-Ms"] = f"{elapsed_ms:.3f}"
+            response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.3f}"
+        return response
 
     # ========== 路由 ==========
 
@@ -363,6 +383,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             response.headers['Content-Type'] = 'image/png'
         elif filename.endswith('.webp'):
             response.headers['Content-Type'] = 'image/webp'
+        _apply_static_asset_cache_headers(response)
         return response
 
     @app.route('/static/cover/<platform>/author_cache/<filename>')
@@ -376,6 +397,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             response.headers['Content-Type'] = 'image/jpeg'
         elif filename.endswith('.png'):
             response.headers['Content-Type'] = 'image/png'
+        _apply_static_asset_cache_headers(response)
         return response
 
     @app.route('/media/<path:filename>')
@@ -425,6 +447,8 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             response.headers["Content-Type"] = "image/png"
         elif lowered.endswith(".webp"):
             response.headers["Content-Type"] = "image/webp"
+        if lowered.endswith((".jpg", ".jpeg", ".png", ".webp")):
+            _apply_static_asset_cache_headers(response)
         return response
 
     return app

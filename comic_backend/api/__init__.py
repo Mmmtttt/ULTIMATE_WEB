@@ -16,6 +16,7 @@ from .v1 import (
     ui_state_bp,
     video_bp,
     auth_bp,
+    performance_bp,
 )
 
 
@@ -35,3 +36,4 @@ def register_blueprints(app):
     app.register_blueprint(ui_state_bp, url_prefix='/api/v1/ui-state')
     app.register_blueprint(teledrive_bp, url_prefix='/api/v1/teledrive')
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
+    app.register_blueprint(performance_bp, url_prefix='/api/v1/performance')

@@ -21,6 +21,7 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.catalog_query_service import CatalogQueryService
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -213,6 +214,7 @@ class VideoAppService(BaseContentAppService):
             "video_recommendations",
             "total_video_recommendations",
         )
+        self._catalog_query_service = CatalogQueryService()
 
     def _get_repo_by_source(self, source: str = "local"):
         return self._video_rec_repo if source == "preview" else self._video_repo
@@ -513,6 +515,43 @@ class VideoAppService(BaseContentAppService):
         include_storage_usage: bool = False
     ) -> ServiceResult:
         try:
+            if paginate and not include_storage_usage:
+                tags = self._tag_repo.get_all()
+                tag_map = {t.id: t.name for t in tags}
+
+                def indexed_serializer(item: Dict[str, Any]) -> Dict[str, Any]:
+                    video = Video.from_dict(item)
+                    if summary_only:
+                        return self._video_to_card_dict(video)
+                    return {
+                        **video.to_dict(),
+                        **self._storage_fields_from_item(video),
+                        "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+                    }
+
+                indexed_payload = self._catalog_query_service.query_local_page(
+                    media_type="video",
+                    serializer=indexed_serializer,
+                    sort_type=sort_type,
+                    sort_order=sort_order,
+                    min_score=min_score,
+                    max_score=max_score,
+                    keyword=keyword,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    authors=authors,
+                    list_ids=list_ids,
+                    page=page,
+                    page_size=page_size,
+                    include_available_authors=include_available_authors,
+                )
+                if indexed_payload is not None:
+                    app_logger.info(
+                        f"通过 SQLite 索引获取视频分页列表成功，页 {indexed_payload['page']}/"
+                        f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个视频"
+                    )
+                    return ServiceResult.ok(indexed_payload)
+
             videos = self._video_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}

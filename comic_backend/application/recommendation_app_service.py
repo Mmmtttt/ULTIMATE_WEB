@@ -6,6 +6,7 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.catalog_query_service import CatalogQueryService
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -61,6 +62,7 @@ class RecommendationAppService:
             "recommendations",
             "total_recommendations",
         )
+        self._catalog_query_service = CatalogQueryService()
 
     @staticmethod
     def _recommendation_to_summary_dict(recommendation: Recommendation, tag_map: Dict[str, str]) -> Dict[str, Any]:
@@ -221,6 +223,41 @@ class RecommendationAppService:
         """获取推荐漫画列表 - 支持排序和评分筛选"""
         try:
             app_logger.info(f"[get_recommendation_list] sort_type={sort_type}, sort_order={sort_order}, min_score={min_score}, max_score={max_score}")
+            if paginate and not include_storage_usage:
+                tags = self._tag_repo.get_all()
+                tag_map = {t.id: t.name for t in tags}
+                base_serializer = self._recommendation_to_card_dict if summary_only else (
+                    lambda recommendation: self._recommendation_to_summary_dict(recommendation, tag_map)
+                )
+
+                def indexed_serializer(item: Dict[str, Any]) -> Dict[str, Any]:
+                    return base_serializer(Recommendation.from_dict(item))
+
+                indexed_payload = self._catalog_query_service.query_local_page(
+                    media_type="comic",
+                    source="preview",
+                    serializer=indexed_serializer,
+                    sort_type=sort_type,
+                    sort_order=sort_order,
+                    min_score=min_score,
+                    max_score=max_score,
+                    keyword=keyword,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    authors=authors,
+                    list_ids=list_ids,
+                    unread_only=unread_only,
+                    page=page,
+                    page_size=page_size,
+                    include_available_authors=include_available_authors,
+                )
+                if indexed_payload is not None:
+                    app_logger.info(
+                        f"通过 SQLite 索引获取推荐漫画分页列表成功，页 {indexed_payload['page']}/"
+                        f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个"
+                    )
+                    return ServiceResult.ok(indexed_payload)
+
             recommendations = self._recommendation_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}

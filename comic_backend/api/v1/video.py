@@ -5,6 +5,7 @@
 from flask import Blueprint, request, jsonify, Response, make_response, send_file, stream_with_context
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
+from application.catalog_query_service import CatalogQueryService
 from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
@@ -3016,13 +3017,44 @@ def get_video_recommendation_list():
         page = request.args.get('page', default=1, type=int)
         page_size = request.args.get('page_size', default=24, type=int)
 
-        document_repo = _get_video_recommendation_document_repository()
-        db_data = document_repo.read_document()
-        videos = db_data.get('video_recommendations', [])
-
         tag_service = TagAppService()
         tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         tag_map = {t["id"]: t["name"] for t in tags}
+
+        def serialize_card(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _build_preview_video_card_dict(item, tag_map=tag_map)
+
+        def serialize_detail(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _decorate_video_recommendation_item(item, tag_map=tag_map)
+
+        if paginate and not include_storage_usage:
+            indexed_payload = CatalogQueryService().query_local_page(
+                media_type="video",
+                source="preview",
+                serializer=serialize_card if summary_only else serialize_detail,
+                sort_type=sort_type or "create_time",
+                sort_order=sort_order,
+                min_score=min_score,
+                max_score=max_score,
+                keyword=keyword,
+                include_tags=include_tag_ids,
+                exclude_tags=exclude_tag_ids,
+                authors=authors,
+                list_ids=list_ids,
+                page=page,
+                page_size=page_size,
+                include_available_authors=include_available_authors,
+            )
+            if indexed_payload is not None:
+                return success_response(indexed_payload)
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
+        videos = db_data.get('video_recommendations', [])
 
         filtered_videos = []
         for video in videos:
@@ -3062,16 +3094,6 @@ def get_video_recommendation_list():
             sort_type or 'create_time',
             sort_order,
         )
-
-        def serialize_card(item):
-            if include_storage_usage:
-                annotate_video_storage_usage([item], source="preview")
-            return _build_preview_video_card_dict(item, tag_map=tag_map)
-
-        def serialize_detail(item):
-            if include_storage_usage:
-                annotate_video_storage_usage([item], source="preview")
-            return _decorate_video_recommendation_item(item, tag_map=tag_map)
 
         if paginate:
             payload = build_paginated_payload(
