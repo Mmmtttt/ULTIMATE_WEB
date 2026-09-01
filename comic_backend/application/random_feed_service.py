@@ -202,12 +202,6 @@ class RandomFeedService:
         self.register_strategy(PureRandomWeightStrategy.name, PureRandomWeightStrategy)
         self.register_strategy(RandomPriorityWeightStrategy.name, RandomPriorityWeightStrategy)
 
-        # Generate startup sequence snapshots for both modes.
-        for mode in ("comic", "video"):
-            session = self.create_session(mode=mode, strategy_name=self._default_strategy_name)
-            if session:
-                self._startup_session_ids[mode] = session["session_id"]
-
     def register_strategy(self, name: str, factory: Callable[[], FeedWeightStrategy]) -> None:
         strategy_name = _clean_str(name)
         if not strategy_name:
@@ -586,4 +580,3 @@ class RandomFeedService:
 
 
 random_feed_service = RandomFeedService()
-
