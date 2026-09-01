@@ -170,6 +170,8 @@ def write_runtime_env(target: Dict, target_dir: Path, app_version: str) -> Path:
         f"BACKEND_ENABLE_THIRD_PARTY={'true' if target['third_party_enabled'] else 'false'}",
         f"ULTIMATE_APP_VERSION={app_version}",
     ]
+    if target.get("id") in {"windows", "linux"}:
+        lines.append("BACKEND_HOST=127.0.0.1")
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return env_path
 
@@ -177,11 +179,15 @@ def write_runtime_env(target: Dict, target_dir: Path, app_version: str) -> Path:
 def write_launchers(target: Dict, target_dir: Path) -> None:
     runtime_profile = target["runtime_profile"]
     third_party_enabled = "true" if target["third_party_enabled"] else "false"
+    lock_backend_to_loopback = target.get("id") in {"windows", "linux"}
+    backend_host_bat = "set BACKEND_HOST=127.0.0.1\n" if lock_backend_to_loopback else ""
+    backend_host_sh = "export BACKEND_HOST=\"127.0.0.1\"\n" if lock_backend_to_loopback else ""
 
     windows_launcher = (
         "@echo off\n"
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        f"{backend_host_bat}"
         "set BACKEND_DEBUG=false\n"
         "set FRONTEND_DIST_DIR=%~dp0comic_frontend_dist\n"
         "cd /d %~dp0comic_backend\n"
@@ -194,6 +200,7 @@ def write_launchers(target: Dict, target_dir: Path) -> None:
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        f"{backend_host_sh}"
         "export BACKEND_DEBUG=\"false\"\n"
         "export FRONTEND_DIST_DIR=\"$SCRIPT_DIR/comic_frontend_dist\"\n"
         "cd \"$SCRIPT_DIR/comic_backend\"\n"

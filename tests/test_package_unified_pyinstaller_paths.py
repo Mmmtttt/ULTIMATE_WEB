@@ -402,6 +402,9 @@ def test_desktop_bundle_scripts_export_external_plugin_root():
         assert "ULTIMATE_PLUGIN_ROOTS" in bat_text
         assert "ULTIMATE_PLUGIN_ROOTS" in ps1_text
         assert "ULTIMATE_PLUGIN_ROOTS" in sh_text
+        assert "BACKEND_HOST=127.0.0.1" in bat_text
+        assert "$env:BACKEND_HOST = \"127.0.0.1\"" in ps1_text
+        assert "export BACKEND_HOST=\"127.0.0.1\"" in sh_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

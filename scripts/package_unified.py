@@ -2064,31 +2064,21 @@ def write_desktop_bundle_scripts(
 ) -> None:
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
+    backend_host = str(runtime_env.get("BACKEND_HOST", "127.0.0.1")).strip() or "127.0.0.1"
     has_frontend = bool(frontend_binary_name)
-    backend_proxy_mode_bat = (
-        "set BACKEND_HOST=127.0.0.1\n"
-        "set BACKEND_SERVE_FRONTEND=false\n"
-        if has_frontend
-        else ""
-    )
-    backend_proxy_mode_ps1 = (
-        "$env:BACKEND_HOST = \"127.0.0.1\"\n"
-        "$env:BACKEND_SERVE_FRONTEND = \"false\"\n"
-        if has_frontend
-        else ""
-    )
-    backend_proxy_mode_sh = (
-        "export BACKEND_HOST=\"127.0.0.1\"\n"
-        "export BACKEND_SERVE_FRONTEND=\"false\"\n"
-        if has_frontend
-        else ""
-    )
+    backend_host_bat = f"set BACKEND_HOST={backend_host}\n"
+    backend_host_ps1 = f"$env:BACKEND_HOST = \"{backend_host}\"\n"
+    backend_host_sh = f"export BACKEND_HOST=\"{backend_host}\"\n"
+    backend_proxy_mode_bat = "set BACKEND_SERVE_FRONTEND=false\n" if has_frontend else ""
+    backend_proxy_mode_ps1 = "$env:BACKEND_SERVE_FRONTEND = \"false\"\n" if has_frontend else ""
+    backend_proxy_mode_sh = "export BACKEND_SERVE_FRONTEND=\"false\"\n" if has_frontend else ""
 
     bat = (
         "@echo off\n"
         "setlocal\n"
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        f"{backend_host_bat}"
         f"{backend_proxy_mode_bat}"
         "set SCRIPT_DIR=%~dp0\n"
         "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
@@ -2113,6 +2103,7 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        f"{backend_host_ps1}"
         f"{backend_proxy_mode_ps1}"
         "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
@@ -2188,6 +2179,7 @@ def write_desktop_bundle_scripts(
         "set -e\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        f"{backend_host_sh}"
         f"{backend_proxy_mode_sh}"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
