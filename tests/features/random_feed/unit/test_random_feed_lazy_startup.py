@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import sys
 from pathlib import Path
 
@@ -22,3 +23,28 @@ def test_random_feed_service_does_not_build_candidates_on_startup(monkeypatch):
     assert service.list_strategies()
     assert service.get_startup_session_id("comic") is None
     assert service.get_startup_session_id("video") is None
+
+
+def test_local_comic_random_feed_samples_page_without_prebuilt_page_list():
+    from application.random_feed_service import FeedWorkCandidate, RandomFeedService
+
+    service = RandomFeedService()
+    candidate = FeedWorkCandidate(
+        mode="comic",
+        source="local",
+        content_id="COMIC_LAZY_PAGE",
+        title="Lazy Page Comic",
+        author="Tester",
+        score=8.0,
+        total_units=12,
+        current_unit=1,
+        page_numbers=[],
+    )
+
+    pages = {
+        service._materialize_item(candidate, random.Random(seed))["page_num"]
+        for seed in range(30)
+    }
+
+    assert pages
+    assert all(1 <= page <= 12 for page in pages)

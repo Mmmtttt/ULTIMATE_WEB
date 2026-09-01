@@ -377,6 +377,8 @@ class RandomFeedService:
             image_url = ""
             if candidate.page_numbers:
                 page_num = candidate.page_numbers[rng.randrange(len(candidate.page_numbers))]
+            elif candidate.total_units > 0:
+                page_num = rng.randint(1, candidate.total_units)
             if candidate.source == "preview":
                 image_url = (
                     f"/api/v1/recommendation/cache/image?recommendation_id={candidate.content_id}&page_num={page_num}"
@@ -438,7 +440,6 @@ class RandomFeedService:
                     tag_ids=_clean_str_list(getattr(comic, "tag_ids", [])),
                     total_units=total_page,
                     current_unit=max(1, _safe_int(getattr(comic, "current_page", 1), 1)),
-                    page_numbers=list(range(1, total_page + 1)),
                 )
             )
 
