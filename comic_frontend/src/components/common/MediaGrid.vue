@@ -1,7 +1,7 @@
 <template>
   <div class="media-grid" :class="gridClassList">
     <div 
-      v-for="item in items" 
+      v-for="(item, index) in items" 
       :key="item.id" 
       class="media-card"
       :class="{
@@ -27,7 +27,7 @@
             :src="getCoverUrl(item)" 
             :fit="resolveCoverFit(item)"
             class="cover-image"
-            lazy-load
+            :lazy-load="shouldLazyLoadCover(index)"
           />
           <div v-if="shouldRenderPlatformBadge(item)" class="media-platform">{{ getPlatformBadgeLabel(item) }}</div>
           <div v-if="item.code" class="media-code">{{ item.code }}</div>
@@ -180,6 +180,18 @@ const resolvedViewMode = computed(() => {
 
 const isListMode = computed(() => resolvedViewMode.value === 'list')
 
+const priorityCoverCount = computed(() => {
+  if (isListMode.value) return 0
+  if (isMobile.value) {
+    if (resolvedViewMode.value === 'small') return 12
+    if (resolvedViewMode.value === 'medium') return 9
+    return 6
+  }
+  if (resolvedViewMode.value === 'small') return 18
+  if (resolvedViewMode.value === 'medium') return 14
+  return 10
+})
+
 const gridClassList = computed(() => ({
   'grid-mobile': isMobile.value,
   'grid-desktop': isDesktop.value,
@@ -197,6 +209,10 @@ function getCoverUrl(item) {
     })
   }
   return resolveCoverUrl(item)
+}
+
+function shouldLazyLoadCover(index) {
+  return Number(index) >= priorityCoverCount.value
 }
 
 function isSelected(item) {
