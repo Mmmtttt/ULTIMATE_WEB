@@ -21,6 +21,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   const filteredRecommendations = ref([])
   const isFiltering = ref(false)
   const trashList = ref([])
+  let listFetchSeq = 0
 
   // Getters
   const recommendationList = computed(() => isFiltering.value ? filteredRecommendations.value : recommendations.value)
@@ -36,6 +37,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       return
     }
 
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
     
@@ -54,6 +56,9 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       }
       
       const res = await videoApi.getVideoRecommendationList(queryParams)
+      if (requestSeq !== listFetchSeq) {
+        return recommendations.value
+      }
       if (res.code === 200) {
         const payload = res.data
         if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
@@ -75,10 +80,14 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
         filteredRecommendations.value = []
       }
     } catch (e) {
-      error.value = e.message
+      if (requestSeq === listFetchSeq) {
+        error.value = e.message
+      }
       console.error('获取视频推荐列表失败:', e)
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
 

@@ -18,6 +18,7 @@ export const useVideoStore = defineStore('video', () => {
   const isFiltering = ref(false)
   const currentSort = ref(null)
   const currentSortOrder = ref('desc')
+  let listFetchSeq = 0
   
   const videoCount = computed(() => videos.value.length)
   const queryTotalCount = computed(() => totalCountState.value || videos.value.length)
@@ -28,6 +29,7 @@ export const useVideoStore = defineStore('video', () => {
   const videoList = computed(() => isFiltering.value ? filteredVideos.value : videos.value)
   
   async function fetchList(params = {}) {
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
     try {
@@ -41,6 +43,9 @@ export const useVideoStore = defineStore('video', () => {
         queryParams.sort_order = sortOrderToUse
       }
       const res = await videoApi.getList(queryParams)
+      if (requestSeq !== listFetchSeq) {
+        return videos.value
+      }
       if (res.code === 200) {
         const payload = res.data
         if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
@@ -62,9 +67,13 @@ export const useVideoStore = defineStore('video', () => {
         filteredVideos.value = []
       }
     } catch (e) {
-      error.value = e.message
+      if (requestSeq === listFetchSeq) {
+        error.value = e.message
+      }
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
   

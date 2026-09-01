@@ -40,6 +40,7 @@ export const useComicStore = defineStore('comic', () => {
   
   // 是否正在筛选
   const isFiltering = ref(false)
+  let listFetchSeq = 0
   
   // ============ Getters ============
   
@@ -113,6 +114,7 @@ export const useComicStore = defineStore('comic', () => {
       }
     }
     
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
     
@@ -128,6 +130,9 @@ export const useComicStore = defineStore('comic', () => {
         params.sort_order = sortOrderToUse
       }
       const response = await comicApi.getList(params)
+      if (requestSeq !== listFetchSeq) {
+        return comics.value
+      }
       console.log('[Comic] API响应:', response)
       const payload = response.data
       if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
@@ -154,11 +159,15 @@ export const useComicStore = defineStore('comic', () => {
       
       return comics.value
     } catch (err) {
-      error.value = err.message
+      if (requestSeq === listFetchSeq) {
+        error.value = err.message
+      }
       console.error('[Comic] 获取漫画列表失败:', err)
       return []
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
   

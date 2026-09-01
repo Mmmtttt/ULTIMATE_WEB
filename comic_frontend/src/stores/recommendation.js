@@ -41,6 +41,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
   // 是否正在筛选
   const isFiltering = ref(false)
+  let listFetchSeq = 0
 
   // ============ Getters ============
 
@@ -114,6 +115,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       }
     }
 
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
 
@@ -136,6 +138,9 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
       console.log('[Recommendation] 调用 API 获取列表, params:', params)
       const response = await recommendationApi.getList(params)
+      if (requestSeq !== listFetchSeq) {
+        return recommendations.value
+      }
       console.log('[Recommendation] API 返回数据:', response)
 
       if (response.code === 200) {
@@ -168,10 +173,14 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       }
     } catch (err) {
       console.error('[Recommendation] 获取推荐列表失败:', err)
-      error.value = '获取推荐列表失败'
+      if (requestSeq === listFetchSeq) {
+        error.value = '获取推荐列表失败'
+      }
       return []
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
 
