@@ -20,6 +20,7 @@ from infrastructure.persistence.repositories.video_recommendation_repository_imp
     VideoRecommendationJsonRepository,
 )
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
+from infrastructure.persistence.catalog_index import CatalogIndex
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 
 
@@ -411,9 +412,34 @@ class RandomFeedService:
             return self._build_video_candidates()
         return self._build_comic_candidates()
 
-    def _build_comic_candidates(self) -> List[FeedWorkCandidate]:
-        candidates: List[FeedWorkCandidate] = []
+    def _build_local_comic_candidates_from_index(self) -> Optional[List[FeedWorkCandidate]]:
+        rows = CatalogIndex().load_feed_candidates(media_type="comic", source="local")
+        if rows is None:
+            return None
 
+        candidates: List[FeedWorkCandidate] = []
+        for row in rows:
+            comic_id = _clean_str(row.get("id"))
+            total_page = max(0, _safe_int(row.get("total_units"), 0))
+            if not comic_id or total_page <= 0:
+                continue
+            candidates.append(
+                FeedWorkCandidate(
+                    mode="comic",
+                    source="local",
+                    content_id=comic_id,
+                    title=_clean_str(row.get("title") or comic_id),
+                    author=_clean_str(row.get("creator")),
+                    score=_safe_float(row.get("score"), 0.0),
+                    tag_ids=_clean_str_list(row.get("tag_ids")),
+                    total_units=total_page,
+                    current_unit=max(1, _safe_int(row.get("current_unit"), 1)),
+                )
+            )
+        return candidates
+
+    def _build_local_comic_candidates_from_json(self) -> List[FeedWorkCandidate]:
+        candidates: List[FeedWorkCandidate] = []
         try:
             local_comics: List[Comic] = self._comic_repo.get_all()
         except Exception as exc:
@@ -442,6 +468,15 @@ class RandomFeedService:
                     current_unit=max(1, _safe_int(getattr(comic, "current_page", 1), 1)),
                 )
             )
+        return candidates
+
+    def _build_comic_candidates(self) -> List[FeedWorkCandidate]:
+        candidates: List[FeedWorkCandidate] = []
+
+        local_candidates = self._build_local_comic_candidates_from_index()
+        if local_candidates is None:
+            local_candidates = self._build_local_comic_candidates_from_json()
+        candidates.extend(local_candidates)
 
         try:
             preview_recommendations: List[Recommendation] = self._recommendation_repo.get_all()

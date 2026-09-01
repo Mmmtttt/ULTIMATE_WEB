@@ -87,6 +87,56 @@ class CatalogIndex:
         with catalog_index_connection() as conn:
             return rebuild_index(conn)
 
+    def load_feed_candidates(self, *, media_type: str, source: str = "local") -> List[Dict[str, Any]] | None:
+        if not self.enabled():
+            return None
+
+        try:
+            with catalog_index_connection() as conn:
+                if self._is_stale(conn):
+                    rebuild_index(conn)
+
+                rows = conn.execute(
+                    """
+                    SELECT
+                        i.item_id,
+                        i.title,
+                        i.creator,
+                        i.score,
+                        i.current_unit,
+                        i.total_units,
+                        GROUP_CONCAT(ct.tag_id) AS tag_ids
+                    FROM catalog_item i
+                    LEFT JOIN catalog_tag ct ON ct.item_key = i.item_key
+                    WHERE i.media_type = ?
+                      AND i.source = ?
+                      AND i.is_deleted = 0
+                      AND i.total_units > 0
+                    GROUP BY i.item_key
+                    ORDER BY i.source_order ASC
+                    """,
+                    [media_type, source],
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"加载 catalog feed candidates 失败，将回退 JSON: {exc}")
+            return None
+
+        candidates: List[Dict[str, Any]] = []
+        for row in rows:
+            raw_tag_ids = str(row["tag_ids"] or "").strip()
+            candidates.append(
+                {
+                    "id": row["item_id"],
+                    "title": row["title"],
+                    "creator": row["creator"],
+                    "score": row["score"],
+                    "current_unit": row["current_unit"],
+                    "total_units": row["total_units"],
+                    "tag_ids": [tag_id for tag_id in raw_tag_ids.split(",") if tag_id],
+                }
+            )
+        return candidates
+
     def query_local_items(
         self,
         *,
