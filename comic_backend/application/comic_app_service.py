@@ -8,6 +8,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -132,6 +133,7 @@ class ComicAppService:
         payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
         payload.update(ComicAppService._storage_fields_from_item(comic))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         if not include_progress:
             payload.pop("current_page", None)
             payload.pop("last_read_time", None)
@@ -176,6 +178,7 @@ class ComicAppService:
             "custom_order": comic.custom_order,
         }
         payload.update(ComicAppService._storage_fields_from_item(comic))
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     @staticmethod

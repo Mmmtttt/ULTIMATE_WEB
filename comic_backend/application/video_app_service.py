@@ -22,6 +22,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -407,6 +408,7 @@ class VideoAppService(BaseContentAppService):
             "source": "local",
         }
         payload.update(cls._storage_fields_from_item(video))
+        annotate_cover_url(payload)
         return cls._annotate_video_record(payload)
 
     @staticmethod
@@ -523,11 +525,13 @@ class VideoAppService(BaseContentAppService):
                     video = Video.from_dict(item)
                     if summary_only:
                         return self._video_to_card_dict(video)
-                    return {
+                    payload = {
                         **video.to_dict(),
                         **self._storage_fields_from_item(video),
                         "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
                     }
+                    annotate_cover_url(payload)
+                    return payload
 
                 indexed_payload = self._catalog_query_service.query_local_page(
                     media_type="video",
@@ -594,11 +598,13 @@ class VideoAppService(BaseContentAppService):
             def serialize_video_summary(video):
                 if include_storage_usage:
                     annotate_video_storage_usage([video], source="local")
-                return {
+                payload = {
                     **video.to_dict(),
                     **self._storage_fields_from_item(video),
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
                 }
+                annotate_cover_url(payload)
+                return payload
 
             if paginate:
                 payload = build_paginated_payload(

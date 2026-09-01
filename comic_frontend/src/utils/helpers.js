@@ -85,9 +85,10 @@ export function getCoverUrl(coverInput) {
   if (typeof coverInput === 'string') {
     coverPath = coverInput
   } else if (coverInput && typeof coverInput === 'object') {
+    const versionedCoverUrl = String(coverInput.cover_url || '').trim()
     const localCoverPath = String(coverInput.cover_path_local || '').trim()
-    const fallbackCoverPath = String(coverInput.cover_path || coverInput.cover_url || '').trim()
-    coverPath = localCoverPath || fallbackCoverPath
+    const fallbackCoverPath = String(coverInput.cover_path || '').trim()
+    coverPath = versionedCoverUrl || localCoverPath || fallbackCoverPath
     usingLocalCover = Boolean(localCoverPath) && coverPath === localCoverPath
     localCoverAssetVersion = String(coverInput.local_cover_asset_version || '').trim()
   } else if (coverInput !== null && coverInput !== undefined) {

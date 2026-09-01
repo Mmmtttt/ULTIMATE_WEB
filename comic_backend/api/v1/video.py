@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify, Response, make_response, send_fil
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.catalog_query_service import CatalogQueryService
+from application.cover_versioning import annotate_cover_url
 from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
@@ -2093,6 +2094,7 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "date",
         "cover_path",
         "cover_path_local",
+        "cover_url",
         "actors",
         "source",
         "storage_size_bytes",
@@ -2102,6 +2104,7 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "storage_is_soft_ref",
         "storage_excluded_reason",
     }
+    annotate_cover_url(card)
     return {key: card.get(key) for key in allowed_keys}
 
 

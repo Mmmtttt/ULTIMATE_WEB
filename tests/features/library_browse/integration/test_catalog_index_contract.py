@@ -382,3 +382,83 @@ def test_versioned_cover_routes_use_long_cache(integration_runtime):
 
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+@pytest.mark.integration
+def test_comic_paginated_list_exposes_versioned_cover_url_without_changing_cover_path(integration_runtime):
+    base_url = integration_runtime["base_url"]
+
+    response = requests.get(
+        f"{base_url}/api/v1/comic/list",
+        params={
+            "paginate": "1",
+            "summary": "1",
+            "page": 1,
+            "page_size": 1,
+            "authors": "Tester A",
+        },
+        timeout=5,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    item = payload["data"]["items"][0]
+    assert item["cover_path"] == "/static/cover/JM/100001.png"
+    assert item["cover_url"].startswith("/static/cover/JM/100001.png?v=")
+
+
+@pytest.mark.integration
+def test_video_recommendation_list_preserves_remote_cover_url_when_no_local_cover(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+    recommendations_path = meta_dir / "video_recommendations_database.json"
+    original = load_json(recommendations_path)
+    mutated = load_json(recommendations_path)
+
+    item = {
+        "id": "PERF_REMOTE_COVER_VIDEO",
+        "code": "PRC-001",
+        "title": "Remote Cover Preview Video",
+        "creator": "Preview Maker",
+        "actors": [],
+        "desc": "remote cover fallback contract",
+        "cover_path": "",
+        "cover_path_local": "",
+        "cover_url": "https://assets.example/remote-cover.jpg",
+        "thumbnail_images": [],
+        "thumbnail_images_local": [],
+        "score": 9,
+        "tag_ids": [],
+        "list_ids": [],
+        "create_time": "2026-09-01T00:00:00",
+        "last_access_time": "2026-09-01T00:00:00",
+        "date": "2026-09-01",
+        "is_deleted": False,
+    }
+    mutated["video_recommendations"] = [item]
+    mutated["total_video_recommendations"] = 1
+
+    try:
+        save_json(recommendations_path, mutated)
+        response = requests.get(
+            f"{base_url}/api/v1/video/recommendation/list",
+            params={
+                "paginate": "1",
+                "summary": "1",
+                "page": 1,
+                "page_size": 1,
+                "keyword": "Remote Cover",
+            },
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        item = payload["data"]["items"][0]
+        assert item["cover_path"] == ""
+        assert item["cover_path_local"] == ""
+        assert item["cover_url"] == "https://assets.example/remote-cover.jpg"
+    finally:
+        save_json(recommendations_path, original)

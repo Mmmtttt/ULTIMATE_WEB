@@ -7,6 +7,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -69,6 +70,7 @@ class RecommendationAppService:
         payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else {}
         payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     @staticmethod
@@ -109,6 +111,7 @@ class RecommendationAppService:
             "custom_order": recommendation.custom_order,
         }
         payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     def _build_recommendation_persisted_metadata(
