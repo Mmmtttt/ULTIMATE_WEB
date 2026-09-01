@@ -2095,6 +2095,7 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "cover_path",
         "cover_path_local",
         "cover_url",
+        "cover_thumbnail_url",
         "actors",
         "source",
         "storage_size_bytes",

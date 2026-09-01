@@ -406,6 +406,18 @@ def test_comic_paginated_list_exposes_versioned_cover_url_without_changing_cover
     item = payload["data"]["items"][0]
     assert item["cover_path"] == "/static/cover/JM/100001.png"
     assert item["cover_url"].startswith("/static/cover/JM/100001.png?v=")
+    assert item["cover_thumbnail_url"].startswith("/api/v1/performance/cover-thumbnail?")
+
+    thumbnail_response = requests.get(f"{base_url}{item['cover_thumbnail_url']}", timeout=5)
+    assert thumbnail_response.status_code == 200
+    assert thumbnail_response.headers["Content-Type"].startswith("image/jpeg")
+    assert thumbnail_response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert thumbnail_response.headers["X-Cover-Thumbnail-Cache"] in {"miss", "hit"}
+    assert thumbnail_response.content
+
+    cached_response = requests.get(f"{base_url}{item['cover_thumbnail_url']}", timeout=5)
+    assert cached_response.status_code == 200
+    assert cached_response.headers["X-Cover-Thumbnail-Cache"] == "hit"
 
 
 @pytest.mark.integration
@@ -460,5 +472,6 @@ def test_video_recommendation_list_preserves_remote_cover_url_when_no_local_cove
         assert item["cover_path"] == ""
         assert item["cover_path_local"] == ""
         assert item["cover_url"] == "https://assets.example/remote-cover.jpg"
+        assert item["cover_thumbnail_url"] == ""
     finally:
         save_json(recommendations_path, original)

@@ -190,6 +190,12 @@ const gridClassList = computed(() => ({
 }))
 
 function getCoverUrl(item) {
+  if (item?.cover_thumbnail_url) {
+    return resolveCoverUrl({
+      ...item,
+      cover_url: item.cover_thumbnail_url
+    })
+  }
   return resolveCoverUrl(item)
 }
 
