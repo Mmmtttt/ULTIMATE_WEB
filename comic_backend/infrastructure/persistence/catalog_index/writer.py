@@ -102,13 +102,13 @@ def _sync_content_document(spec: Dict[str, str], old_items: List[Dict[str, Any]]
                         """
                         INSERT OR REPLACE INTO catalog_item (
                             item_key, media_type, source, source_order, item_id,
-                            title, title_jp, creator, actors_text, code, desc,
+                            title, title_jp, title_sort_key, creator, actors_text, code, desc,
                             search_text, score, current_unit, total_units,
                             create_time, last_access_time, date, is_deleted,
                             cover_path, cover_path_local, custom_order, payload_json
                         ) VALUES (
                             :item_key, :media_type, :source, :source_order, :item_id,
-                            :title, :title_jp, :creator, :actors_text, :code, :desc,
+                            :title, :title_jp, :title_sort_key, :creator, :actors_text, :code, :desc,
                             :search_text, :score, :current_unit, :total_units,
                             :create_time, :last_access_time, :date, :is_deleted,
                             :cover_path, :cover_path_local, :custom_order, :payload_json

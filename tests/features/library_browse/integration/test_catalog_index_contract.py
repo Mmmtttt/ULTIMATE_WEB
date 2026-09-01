@@ -217,6 +217,49 @@ def test_comic_paginated_index_preserves_default_score_semantics(integration_run
 
 
 @pytest.mark.integration
+def test_comic_paginated_name_sort_uses_sqlite_index_and_natural_order(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+    comics_path = meta_dir / "comics_database.json"
+    original = load_json(comics_path)
+    mutated = load_json(comics_path)
+    comics = mutated.get("comics") or []
+    assert len(comics) >= 3
+
+    comics[0]["title"] = "排序样例 2"
+    comics[1]["title"] = "排序样例 10"
+    comics[2]["title"] = "排序样例 1"
+
+    try:
+        save_json(comics_path, mutated)
+        response = requests.get(
+            f"{base_url}/api/v1/comic/list",
+            params={
+                "paginate": "1",
+                "summary": "1",
+                "page": 1,
+                "page_size": 3,
+                "sort_type": "name",
+                "sort_order": "asc",
+                "keyword": "排序样例",
+            },
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["performance"]["index"] == "sqlite"
+        assert [item["id"] for item in payload["data"]["items"]] == [
+            comics[2]["id"],
+            comics[0]["id"],
+            comics[1]["id"],
+        ]
+    finally:
+        save_json(comics_path, original)
+
+
+@pytest.mark.integration
 def test_video_paginated_list_uses_sqlite_index_and_matches_json_contract(integration_runtime):
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]

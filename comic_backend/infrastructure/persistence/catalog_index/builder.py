@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Tuple
 
 from core.storage_layout import get_meta_dir
 
 from .schema import catalog_search_available
+
+_NATURAL_TOKEN_RE = re.compile(r"(\d+)")
 
 
 CATALOG_DOCUMENTS: Tuple[Tuple[str, str, str, str], ...] = (
@@ -136,6 +139,26 @@ def _append_search_part(parts: List[str], value: Any) -> None:
         parts.append(text)
 
 
+def _title_sort_key(*values: Any) -> str:
+    text = ""
+    for value in values:
+        text = _normalize_text(value).casefold()
+        if text:
+            break
+    if not text:
+        return "2"
+
+    parts: List[str] = []
+    for chunk in _NATURAL_TOKEN_RE.split(text):
+        if not chunk:
+            continue
+        if chunk.isdigit():
+            parts.append(f"0{int(chunk):020d}")
+        else:
+            parts.append(f"1{chunk}")
+    return "\x00".join(parts)
+
+
 def _build_tag_map() -> Dict[str, str]:
     payload = load_document("tags_database.json")
     tag_map: Dict[str, str] = {}
@@ -190,6 +213,7 @@ def _extract_item(media_type: str, source: str, index: int, raw: Dict[str, Any],
         "item_id": item_id,
         "title": title,
         "title_jp": title_jp,
+        "title_sort_key": _title_sort_key(title, title_jp, raw.get("code"), item_id),
         "creator": creator,
         "actors_text": "\n".join(actors),
         "code": _normalize_text(raw.get("code")),
@@ -248,13 +272,13 @@ def rebuild_index(conn) -> Dict[str, Any]:
                     """
                     INSERT OR REPLACE INTO catalog_item (
                         item_key, media_type, source, source_order, item_id,
-                        title, title_jp, creator, actors_text, code, desc,
+                        title, title_jp, title_sort_key, creator, actors_text, code, desc,
                         search_text, score, current_unit, total_units,
                         create_time, last_access_time, date, is_deleted,
                         cover_path, cover_path_local, custom_order, payload_json
                     ) VALUES (
                         :item_key, :media_type, :source, :source_order, :item_id,
-                        :title, :title_jp, :creator, :actors_text, :code, :desc,
+                        :title, :title_jp, :title_sort_key, :creator, :actors_text, :code, :desc,
                         :search_text, :score, :current_unit, :total_units,
                         :create_time, :last_access_time, :date, :is_deleted,
                         :cover_path, :cover_path_local, :custom_order, :payload_json

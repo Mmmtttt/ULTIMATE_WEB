@@ -20,6 +20,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             item_id TEXT NOT NULL,
             title TEXT NOT NULL DEFAULT '',
             title_jp TEXT NOT NULL DEFAULT '',
+            title_sort_key TEXT NOT NULL DEFAULT '',
             creator TEXT NOT NULL DEFAULT '',
             actors_text TEXT NOT NULL DEFAULT '',
             code TEXT NOT NULL DEFAULT '',
@@ -79,6 +80,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON catalog_item(media_type, source, is_deleted, last_access_time);
         CREATE INDEX IF NOT EXISTS idx_catalog_item_code
             ON catalog_item(media_type, source, is_deleted, code);
+        CREATE INDEX IF NOT EXISTS idx_catalog_item_title_sort
+            ON catalog_item(media_type, source, is_deleted, title_sort_key);
         CREATE INDEX IF NOT EXISTS idx_catalog_item_date
             ON catalog_item(media_type, source, is_deleted, date);
         CREATE INDEX IF NOT EXISTS idx_catalog_tag_tag_id
@@ -89,6 +92,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON catalog_author(name, item_key);
         """
     )
+    _ensure_catalog_item_column(conn, "title_sort_key", "TEXT NOT NULL DEFAULT ''")
     _ensure_search_schema(conn)
     conn.execute(
         """
@@ -135,3 +139,10 @@ def _ensure_search_schema(conn: sqlite3.Connection) -> None:
             VALUES ('search_index', 'like_scan')
             """
         )
+
+
+def _ensure_catalog_item_column(conn: sqlite3.Connection, column_name: str, definition: str) -> None:
+    rows = conn.execute("PRAGMA table_info(catalog_item)").fetchall()
+    if any(row[1] == column_name for row in rows):
+        return
+    conn.execute(f"ALTER TABLE catalog_item ADD COLUMN {column_name} {definition}")

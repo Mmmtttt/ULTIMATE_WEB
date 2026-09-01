@@ -17,6 +17,8 @@ from .schema import catalog_search_available
 SUPPORTED_SORT_TYPES = {
     "",
     "default",
+    "name",
+    "title",
     "create_time",
     "score",
     "page_count",
@@ -280,6 +282,8 @@ class CatalogIndex:
 
         if normalized_sort_type in {"", "default"}:
             return "i.source_order ASC"
+        if normalized_sort_type in {"name", "title"}:
+            return f"i.title_sort_key {direction}, i.item_id {direction}"
         if normalized_sort_type == "score":
             return f"COALESCE(i.score, 0) {direction}, i.title {direction}, i.item_id {direction}"
         if normalized_sort_type == "create_time":
