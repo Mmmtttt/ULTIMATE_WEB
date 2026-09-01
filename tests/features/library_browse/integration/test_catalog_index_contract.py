@@ -298,6 +298,41 @@ def test_video_paginated_list_uses_sqlite_index_and_matches_json_contract(integr
 
 
 @pytest.mark.integration
+def test_video_paginated_random_sort_uses_sqlite_index(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+
+    response = requests.get(
+        f"{base_url}/api/v1/video/list",
+        params={
+            "paginate": "1",
+            "summary": "1",
+            "page": 1,
+            "page_size": 2,
+            "sort_type": "random",
+            "include_tag_ids": "tag_video",
+        },
+        timeout=5,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == 200
+    assert payload["data"]["performance"]["index"] == "sqlite"
+
+    videos = load_json(meta_dir / "videos_database.json").get("videos", [])
+    expected_ids = {
+        item["id"]
+        for item in videos
+        if not item.get("is_deleted", False) and "tag_video" in (item.get("tag_ids") or [])
+    }
+    returned_ids = {item["id"] for item in payload["data"]["items"]}
+    assert len(returned_ids) == 2
+    assert returned_ids.issubset(expected_ids)
+    assert payload["data"]["total"] == len(expected_ids)
+
+
+@pytest.mark.integration
 def test_recommendation_paginated_list_uses_sqlite_index(integration_runtime):
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]

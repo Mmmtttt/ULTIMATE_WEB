@@ -30,13 +30,19 @@ def _default_endpoints(keyword: str, page_size: int) -> tuple[tuple[str, str, Di
         **_base_params(page_size),
         "keyword": keyword,
     }
+    random_params = {
+        **_base_params(page_size),
+        "sort_type": "random",
+    }
     return (
         ("comic_list_score", "/api/v1/comic/list", dict(score_params)),
         ("comic_list_score_with_authors", "/api/v1/comic/list", {**score_params, "include_available_authors": "1"}),
         ("comic_list_search", "/api/v1/comic/list", dict(search_params)),
+        ("comic_list_random", "/api/v1/comic/list", dict(random_params)),
         ("video_list_score", "/api/v1/video/list", dict(score_params)),
         ("video_list_score_with_authors", "/api/v1/video/list", {**score_params, "include_available_authors": "1"}),
         ("video_list_search", "/api/v1/video/list", dict(search_params)),
+        ("video_list_random", "/api/v1/video/list", dict(random_params)),
         ("preview_comic_list_score", "/api/v1/recommendation/list", dict(score_params)),
         ("preview_comic_list_search", "/api/v1/recommendation/list", dict(search_params)),
         ("preview_video_list_score", "/api/v1/video/recommendation/list", dict(score_params)),
