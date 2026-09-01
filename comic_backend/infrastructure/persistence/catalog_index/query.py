@@ -11,6 +11,7 @@ from infrastructure.logger import app_logger, error_logger
 
 from .builder import document_stats, rebuild_index
 from .connection import catalog_index_connection, get_catalog_index_path
+from .schema import catalog_search_available
 
 
 SUPPORTED_SORT_TYPES = {
@@ -38,12 +39,18 @@ class CatalogQueryResult:
     available_authors: List[str]
     rebuilt: bool
     elapsed_ms: float
+    search_index: str
 
 
 class CatalogIndex:
     @staticmethod
     def enabled() -> bool:
         value = str(os.environ.get("CATALOG_INDEX_ENABLED", "1")).strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def search_enabled() -> bool:
+        value = str(os.environ.get("CATALOG_SEARCH_INDEX_ENABLED", "1")).strip().lower()
         return value not in {"0", "false", "no", "off"}
 
     @staticmethod
@@ -55,6 +62,7 @@ class CatalogIndex:
         path = get_catalog_index_path()
         with catalog_index_connection() as conn:
             stale = self._is_stale(conn)
+            search_available = self.search_enabled() and catalog_search_available(conn)
             rows = conn.execute(
                 """
                 SELECT media_type, source, COUNT(*) AS total
@@ -68,6 +76,7 @@ class CatalogIndex:
                 "path": path,
                 "exists": os.path.exists(path),
                 "stale": stale,
+                "search_index": "fts5_trigram_like" if search_available else "like_scan",
                 "counts": [dict(row) for row in rows],
             }
 
@@ -108,7 +117,8 @@ class CatalogIndex:
                 rebuild_index(conn)
                 rebuilt = True
 
-            where, params = self._build_where(
+            search_available = self.search_enabled() and catalog_search_available(conn)
+            where, params, search_index = self._build_where(
                 media_type=media_type,
                 source=source,
                 include_deleted=include_deleted,
@@ -120,6 +130,7 @@ class CatalogIndex:
                 authors=authors,
                 list_ids=list_ids,
                 unread_only=unread_only,
+                search_available=search_available,
             )
             total = int(conn.execute(f"SELECT COUNT(*) FROM catalog_item i WHERE {where}", params).fetchone()[0])
             total_pages = max(1, math.ceil(total / normalized_page_size))
@@ -152,6 +163,7 @@ class CatalogIndex:
             available_authors=available_authors,
             rebuilt=rebuilt,
             elapsed_ms=elapsed_ms,
+            search_index=search_index,
         )
 
     def _is_stale(self, conn) -> bool:
@@ -183,7 +195,8 @@ class CatalogIndex:
         authors: Iterable[Any] | None,
         list_ids: Iterable[Any] | None,
         unread_only: bool,
-    ) -> tuple[str, List[Any]]:
+        search_available: bool,
+    ) -> tuple[str, List[Any], str]:
         clauses: List[str] = ["i.media_type = ?", "i.source = ?"]
         params: List[Any] = [media_type, source]
 
@@ -234,11 +247,32 @@ class CatalogIndex:
             params.extend(normalized_list_ids)
 
         tokens = [token for token in str(keyword or "").strip().lower().split() if token]
+        use_search_index = should_use_fts_search(
+            tokens,
+            search_available=search_available,
+            include_tags=normalized_include_tags,
+            authors=normalized_authors,
+            list_ids=normalized_list_ids,
+        )
         for token in tokens:
-            clauses.append("i.search_text LIKE ?")
+            if use_search_index:
+                clauses.append(
+                    "i.item_key IN ("
+                    "SELECT cs.item_key FROM catalog_item_search cs "
+                    "WHERE cs.search_text LIKE ?"
+                    ")"
+                )
+            else:
+                clauses.append("i.search_text LIKE ?")
             params.append(f"%{token}%")
 
-        return " AND ".join(clauses), params
+        if not tokens:
+            search_index = "none"
+        elif use_search_index:
+            search_index = "fts5_trigram_like"
+        else:
+            search_index = "like_scan"
+        return " AND ".join(clauses), params, search_index
 
     def _build_order_by(self, sort_type: str | None, sort_order: str) -> str:
         normalized_sort_type = str(sort_type or "").strip().lower()
@@ -281,6 +315,21 @@ def normalize_string_list(values: Iterable[Any] | None) -> List[str]:
         if text:
             normalized.append(text)
     return normalized
+
+
+def should_use_fts_search(
+    tokens: Sequence[str],
+    *,
+    search_available: bool,
+    include_tags: Sequence[str],
+    authors: Sequence[str],
+    list_ids: Sequence[str],
+) -> bool:
+    if not search_available or not tokens:
+        return False
+    if include_tags or authors or list_ids:
+        return False
+    return all(len(token) >= 3 for token in tokens)
 
 
 def normalize_page(value: Any, default: int = 1) -> int:

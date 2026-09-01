@@ -4,7 +4,7 @@ import pytest
 import requests
 
 from tests.shared.runtime_data import find_by_id, load_json, save_json
-from tests.shared.test_constants import PRIMARY_COMIC_ID
+from tests.shared.test_constants import PRIMARY_COMIC_ID, PRIMARY_COMIC_TITLE
 
 
 @pytest.mark.integration
@@ -142,6 +142,23 @@ def test_comic_score_update_incrementally_refreshes_catalog_index(integration_ru
         assert payload["data"]["performance"]["index_rebuilt"] is False
         assert payload["data"]["items"][0]["id"] == PRIMARY_COMIC_ID
         assert payload["data"]["items"][0]["score"] == 12
+
+        search_response = requests.get(
+            f"{base_url}/api/v1/comic/list",
+            params={
+                "paginate": "1",
+                "summary": "1",
+                "page": 1,
+                "page_size": 5,
+                "keyword": PRIMARY_COMIC_TITLE,
+            },
+            timeout=5,
+        )
+        assert search_response.status_code == 200
+        search_payload = search_response.json()
+        assert search_payload["code"] == 200
+        assert search_payload["data"]["performance"]["search_index"] == "fts5_trigram_like"
+        assert PRIMARY_COMIC_ID in [item["id"] for item in search_payload["data"]["items"]]
     finally:
         requests.put(
             f"{base_url}/api/v1/comic/score",
@@ -283,6 +300,7 @@ def test_recommendation_paginated_list_uses_sqlite_index(integration_runtime):
         payload = response.json()
         assert payload["code"] == 200
         assert payload["data"]["performance"]["index"] == "sqlite"
+        assert payload["data"]["performance"]["search_index"] == "fts5_trigram_like"
         assert [entry["id"] for entry in payload["data"]["items"]] == ["PERF_INDEX_PREVIEW_COMIC"]
     finally:
         save_json(recommendations_path, original)
@@ -340,6 +358,7 @@ def test_video_recommendation_paginated_list_uses_sqlite_index(integration_runti
         payload = response.json()
         assert payload["code"] == 200
         assert payload["data"]["performance"]["index"] == "sqlite"
+        assert payload["data"]["performance"]["search_index"] == "fts5_trigram_like"
         assert [entry["id"] for entry in payload["data"]["items"]] == ["PERF_INDEX_PREVIEW_VIDEO"]
     finally:
         save_json(recommendations_path, original)
@@ -367,6 +386,7 @@ def test_catalog_index_status_and_rebuild_routes(integration_runtime):
     assert status_payload["code"] == 200
     assert status_payload["data"]["enabled"] is True
     assert status_payload["data"]["stale"] is False
+    assert status_payload["data"]["search_index"] == "fts5_trigram_like"
     assert any(item["media_type"] == "comic" for item in status_payload["data"]["counts"])
 
 

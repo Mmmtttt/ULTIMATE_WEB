@@ -14,6 +14,7 @@ from .builder import (
     rebuild_index,
 )
 from .connection import catalog_index_connection, get_catalog_index_path
+from .schema import catalog_search_available
 
 
 def sync_after_json_write(file_name: str, old_data: Dict[str, Any] | None, new_data: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -83,11 +84,14 @@ def _sync_content_document(spec: Dict[str, str], old_items: List[Dict[str, Any]]
     try:
         with catalog_index_connection() as conn:
             with conn:
+                search_available = catalog_search_available(conn)
                 for item_id in removed_ids:
                     item_key = f"{item_key_prefix}{item_id}"
                     conn.execute("DELETE FROM catalog_author WHERE item_key = ?", (item_key,))
                     conn.execute("DELETE FROM catalog_list WHERE item_key = ?", (item_key,))
                     conn.execute("DELETE FROM catalog_tag WHERE item_key = ?", (item_key,))
+                    if search_available:
+                        conn.execute("DELETE FROM catalog_item_search WHERE item_key = ?", (item_key,))
                     conn.execute("DELETE FROM catalog_item WHERE item_key = ?", (item_key,))
 
                 for index, raw in changed_items:
@@ -115,6 +119,12 @@ def _sync_content_document(spec: Dict[str, str], old_items: List[Dict[str, Any]]
                     conn.execute("DELETE FROM catalog_author WHERE item_key = ?", (item["item_key"],))
                     conn.execute("DELETE FROM catalog_list WHERE item_key = ?", (item["item_key"],))
                     conn.execute("DELETE FROM catalog_tag WHERE item_key = ?", (item["item_key"],))
+                    if search_available:
+                        conn.execute("DELETE FROM catalog_item_search WHERE item_key = ?", (item["item_key"],))
+                        conn.execute(
+                            "INSERT INTO catalog_item_search(item_key, search_text) VALUES (?, ?)",
+                            (item["item_key"], item["search_text"]),
+                        )
                     conn.executemany(
                         "INSERT OR IGNORE INTO catalog_tag(item_key, tag_id) VALUES (?, ?)",
                         [(item["item_key"], tag_id) for tag_id in item["tag_ids"]],

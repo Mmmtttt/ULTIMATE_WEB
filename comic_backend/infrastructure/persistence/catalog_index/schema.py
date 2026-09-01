@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -89,6 +89,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON catalog_author(name, item_key);
         """
     )
+    _ensure_search_schema(conn)
     conn.execute(
         """
         INSERT OR REPLACE INTO catalog_index_state(key, value)
@@ -97,3 +98,40 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+
+
+def catalog_search_available(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'catalog_item_search'
+            """
+        ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return False
+
+
+def _ensure_search_schema(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS catalog_item_search
+            USING fts5(item_key UNINDEXED, search_text, tokenize='trigram')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO catalog_index_state(key, value)
+            VALUES ('search_index', 'fts5_trigram')
+            """
+        )
+    except sqlite3.Error:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO catalog_index_state(key, value)
+            VALUES ('search_index', 'like_scan')
+            """
+        )

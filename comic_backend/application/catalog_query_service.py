@@ -61,6 +61,7 @@ class CatalogQueryService:
                 "performance": {
                     "index": "sqlite",
                     "index_rebuilt": result.rebuilt,
+                    "search_index": result.search_index,
                     "elapsed_ms": round(result.elapsed_ms, 3),
                 },
             }

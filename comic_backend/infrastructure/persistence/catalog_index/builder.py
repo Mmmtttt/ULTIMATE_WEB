@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 from core.storage_layout import get_meta_dir
 
+from .schema import catalog_search_available
+
 
 CATALOG_DOCUMENTS: Tuple[Tuple[str, str, str, str], ...] = (
     ("comic_local", "comics_database.json", "comics", "comic:local"),
@@ -226,10 +228,13 @@ def rebuild_index(conn) -> Dict[str, Any]:
     inserted_count = 0
 
     with conn:
+        search_available = catalog_search_available(conn)
         conn.execute("DELETE FROM catalog_author")
         conn.execute("DELETE FROM catalog_list")
         conn.execute("DELETE FROM catalog_tag")
         conn.execute("DELETE FROM catalog_item")
+        if search_available:
+            conn.execute("DELETE FROM catalog_item_search")
 
         for media_type, source, file_name, data_key in documents:
             payload = load_document(file_name)
@@ -257,6 +262,11 @@ def rebuild_index(conn) -> Dict[str, Any]:
                     """,
                     item,
                 )
+                if search_available:
+                    conn.execute(
+                        "INSERT INTO catalog_item_search(item_key, search_text) VALUES (?, ?)",
+                        (item["item_key"], item["search_text"]),
+                    )
                 conn.executemany(
                     "INSERT OR IGNORE INTO catalog_tag(item_key, tag_id) VALUES (?, ?)",
                     [(item["item_key"], tag_id) for tag_id in item["tag_ids"]],
