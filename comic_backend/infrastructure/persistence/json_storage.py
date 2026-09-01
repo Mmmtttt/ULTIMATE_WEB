@@ -172,7 +172,11 @@ class JsonStorage:
         lock = self._get_lock()
         with lock:
             try:
-                return self._write_unlocked(dict(data or {}))
+                payload = dict(data or {})
+                written = self._write_unlocked(payload)
+                if written:
+                    self._sync_catalog_index_after_write(None, payload)
+                return written
             except Exception as e:
                 error_logger.error(f"写入 JSON 文件失败: {e}")
                 return False
@@ -326,17 +330,76 @@ class JsonStorage:
         with lock:
             try:
                 data = self._read_unlocked()
+                old_data_for_index = self._snapshot_for_catalog_index(data)
                 updated = update_func(data)
                 if updated is None:
                     return False
-                return self._write_unlocked(updated)
+                written = self._write_unlocked(updated)
+                if written:
+                    self._sync_catalog_index_after_write(old_data_for_index, updated)
+                return written
             except json.JSONDecodeError as e:
                 error_logger.error(f"原子更新时 JSON 文件损坏: path={self._get_json_file()}, error={e}")
                 data = self.restore_backup()
+                old_data_for_index = self._snapshot_for_catalog_index(data)
                 updated = update_func(data)
                 if updated is None:
                     return False
-                return self._write_unlocked(updated)
+                written = self._write_unlocked(updated)
+                if written:
+                    self._sync_catalog_index_after_write(old_data_for_index, updated)
+                return written
             except Exception as e:
                 error_logger.error(f"原子更新失败: {e}")
                 return False
+
+    def _snapshot_for_catalog_index(self, data: dict) -> Optional[dict]:
+        data_key_by_file = {
+            "comics_database.json": "comics",
+            "recommendations_database.json": "recommendations",
+            "videos_database.json": "videos",
+            "video_recommendations_database.json": "video_recommendations",
+        }
+        data_key = data_key_by_file.get(self._file_name.lower())
+        if not data_key:
+            return None
+        try:
+            from infrastructure.persistence.catalog_index.connection import get_catalog_index_path
+
+            if not os.path.exists(get_catalog_index_path()):
+                return None
+        except Exception:
+            return None
+
+        items = data.get(data_key)
+        if not isinstance(items, list):
+            return {data_key: []}
+
+        snapshot_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            copied = dict(item)
+            for key in (
+                "tag_ids",
+                "list_ids",
+                "actors",
+                "authors",
+                "thumbnail_images",
+                "thumbnail_images_local",
+                "preview_image_urls",
+                "preview_pages",
+                "actor_refs",
+            ):
+                if key in copied and isinstance(copied[key], list):
+                    copied[key] = list(copied[key])
+            snapshot_items.append(copied)
+        return {data_key: snapshot_items}
+
+    def _sync_catalog_index_after_write(self, old_data: Optional[dict], new_data: dict) -> None:
+        try:
+            from infrastructure.persistence.catalog_index.writer import sync_after_json_write
+
+            sync_after_json_write(self._file_name, old_data, new_data)
+        except Exception as e:
+            error_logger.warning(f"同步 catalog index 失败，不影响 JSON 写入: {self._file_name}, {e}")

@@ -16,6 +16,37 @@ CATALOG_DOCUMENTS: Tuple[Tuple[str, str, str, str], ...] = (
     ("tags", "tags_database.json", "tags", "tags"),
 )
 
+CONTENT_DOCUMENT_BY_FILE: Dict[str, Dict[str, str]] = {
+    "comics_database.json": {
+        "logical_name": "comic_local",
+        "media_type": "comic",
+        "source": "local",
+        "data_key": "comics",
+    },
+    "recommendations_database.json": {
+        "logical_name": "comic_preview",
+        "media_type": "comic",
+        "source": "preview",
+        "data_key": "recommendations",
+    },
+    "videos_database.json": {
+        "logical_name": "video_local",
+        "media_type": "video",
+        "source": "local",
+        "data_key": "videos",
+    },
+    "video_recommendations_database.json": {
+        "logical_name": "video_preview",
+        "media_type": "video",
+        "source": "preview",
+        "data_key": "video_recommendations",
+    },
+}
+
+
+def content_document_spec_for_file(file_name: str) -> Dict[str, str] | None:
+    return CONTENT_DOCUMENT_BY_FILE.get(os.path.basename(str(file_name or "")).lower())
+
 
 def _document_path(file_name: str) -> str:
     return os.path.join(get_meta_dir(), file_name)
@@ -114,6 +145,10 @@ def _build_tag_map() -> Dict[str, str]:
     return tag_map
 
 
+def build_tag_map() -> Dict[str, str]:
+    return _build_tag_map()
+
+
 def _extract_item(media_type: str, source: str, index: int, raw: Dict[str, Any], tag_map: Dict[str, str]) -> Dict[str, Any]:
     item_id = _normalize_text(raw.get("id"))
     title = _normalize_text(raw.get("title"))
@@ -173,6 +208,10 @@ def _extract_item(media_type: str, source: str, index: int, raw: Dict[str, Any],
         "list_ids": list_ids,
         "author_names": author_names,
     }
+
+
+def build_index_item(media_type: str, source: str, index: int, raw: Dict[str, Any], tag_map: Dict[str, str]) -> Dict[str, Any]:
+    return _extract_item(media_type, source, index, raw, tag_map)
 
 
 def rebuild_index(conn) -> Dict[str, Any]:

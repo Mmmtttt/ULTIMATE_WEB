@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 import requests
 
-from tests.shared.runtime_data import load_json, save_json
+from tests.shared.runtime_data import find_by_id, load_json, save_json
+from tests.shared.test_constants import PRIMARY_COMIC_ID
 
 
 @pytest.mark.integration
@@ -89,6 +90,64 @@ def test_comic_paginated_index_rebuilds_after_json_changes(integration_runtime):
         assert payload["data"]["performance"]["index"] == "sqlite"
     finally:
         save_json(comics_path, original)
+
+
+@pytest.mark.integration
+def test_comic_score_update_incrementally_refreshes_catalog_index(integration_runtime):
+    base_url = integration_runtime["base_url"]
+    meta_dir = integration_runtime["meta_dir"]
+    comics_path = meta_dir / "comics_database.json"
+    original_score = find_by_id(load_json(comics_path).get("comics", []), PRIMARY_COMIC_ID)["score"]
+
+    rebuild_response = requests.post(
+        f"{base_url}/api/v1/performance/catalog-index/rebuild",
+        timeout=5,
+    )
+    assert rebuild_response.status_code == 200
+    assert rebuild_response.json()["code"] == 200
+
+    try:
+        score_response = requests.put(
+            f"{base_url}/api/v1/comic/score",
+            json={"comic_id": PRIMARY_COMIC_ID, "score": 12},
+            timeout=5,
+        )
+        assert score_response.status_code == 200
+        assert score_response.json()["code"] == 200
+
+        status_response = requests.get(
+            f"{base_url}/api/v1/performance/catalog-index/status",
+            timeout=5,
+        )
+        assert status_response.status_code == 200
+        assert status_response.json()["data"]["stale"] is False
+
+        list_response = requests.get(
+            f"{base_url}/api/v1/comic/list",
+            params={
+                "paginate": "1",
+                "summary": "1",
+                "page": 1,
+                "page_size": 1,
+                "sort_type": "score",
+                "sort_order": "desc",
+                "authors": "Tester A",
+            },
+            timeout=5,
+        )
+        assert list_response.status_code == 200
+        payload = list_response.json()
+        assert payload["code"] == 200
+        assert payload["data"]["performance"]["index"] == "sqlite"
+        assert payload["data"]["performance"]["index_rebuilt"] is False
+        assert payload["data"]["items"][0]["id"] == PRIMARY_COMIC_ID
+        assert payload["data"]["items"][0]["score"] == 12
+    finally:
+        requests.put(
+            f"{base_url}/api/v1/comic/score",
+            json={"comic_id": PRIMARY_COMIC_ID, "score": original_score},
+            timeout=5,
+        )
 
 
 @pytest.mark.integration
