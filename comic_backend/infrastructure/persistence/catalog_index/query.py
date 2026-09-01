@@ -198,11 +198,18 @@ class CatalogIndex:
         if unread_only:
             clauses.append("i.current_unit = 1")
 
-        for tag_id in normalize_string_list(include_tags):
+        normalized_include_tags = normalize_string_list(include_tags)
+        if normalized_include_tags:
+            placeholders = ",".join("?" for _ in normalized_include_tags)
             clauses.append(
-                "EXISTS (SELECT 1 FROM catalog_tag ct WHERE ct.item_key = i.item_key AND ct.tag_id = ?)"
+                "i.item_key IN ("
+                "SELECT ct.item_key FROM catalog_tag ct "
+                f"WHERE ct.tag_id IN ({placeholders}) "
+                "GROUP BY ct.item_key HAVING COUNT(DISTINCT ct.tag_id) = ?"
+                ")"
             )
-            params.append(tag_id)
+            params.extend(normalized_include_tags)
+            params.append(len(set(normalized_include_tags)))
 
         for tag_id in normalize_string_list(exclude_tags):
             clauses.append(
@@ -214,7 +221,7 @@ class CatalogIndex:
         if normalized_authors:
             placeholders = ",".join("?" for _ in normalized_authors)
             clauses.append(
-                f"EXISTS (SELECT 1 FROM catalog_author ca WHERE ca.item_key = i.item_key AND ca.name IN ({placeholders}))"
+                f"i.item_key IN (SELECT ca.item_key FROM catalog_author ca WHERE ca.name IN ({placeholders}))"
             )
             params.extend(normalized_authors)
 
@@ -222,7 +229,7 @@ class CatalogIndex:
         if normalized_list_ids:
             placeholders = ",".join("?" for _ in normalized_list_ids)
             clauses.append(
-                f"EXISTS (SELECT 1 FROM catalog_list cl WHERE cl.item_key = i.item_key AND cl.list_id IN ({placeholders}))"
+                f"i.item_key IN (SELECT cl.item_key FROM catalog_list cl WHERE cl.list_id IN ({placeholders}))"
             )
             params.extend(normalized_list_ids)
 
