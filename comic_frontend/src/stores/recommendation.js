@@ -151,7 +151,11 @@ export const useRecommendationStore = defineStore('recommendation', () => {
           currentPageState.value = Number(payload.page) || 1
           pageSizeState.value = Number(payload.page_size) || recommendations.value.length || 0
           totalPagesState.value = Number(payload.total_pages) || 1
-          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(recommendations.value)
+          if (Array.isArray(payload.available_authors)) {
+            availableAuthors.value = payload.available_authors
+          } else if (availableAuthors.value.length === 0) {
+            availableAuthors.value = extractAuthors(recommendations.value)
+          }
         } else {
           recommendations.value = Array.isArray(payload) ? payload : []
           totalCountState.value = recommendations.value.length

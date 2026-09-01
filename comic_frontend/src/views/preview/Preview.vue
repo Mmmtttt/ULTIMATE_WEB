@@ -421,13 +421,15 @@ function sanitizeFilterStateForCurrentMode() {
   tempExcludeTags.value = tempExcludeTags.value.filter((tagId) => availableTagIds.has(tagId))
 }
 
-function buildListQueryParams() {
+function buildListQueryParams(options = {}) {
   const params = {
     paginate: 1,
     summary: 1,
-    include_available_authors: 1,
     page: currentPage.value,
     page_size: pageSize.value,
+  }
+  if (options.includeAvailableAuthors) {
+    params.include_available_authors = 1
   }
 
   if (currentSortField.value) {
@@ -902,10 +904,19 @@ async function loadSupportData(force = false) {
   }
 }
 
-async function loadData(force = false) {
+async function loadData(force = false, options = {}) {
   await loadSupportData(force)
-  await currentStore.value.fetchRecommendations(force, buildListQueryParams())
+  await currentStore.value.fetchRecommendations(
+    force,
+    buildListQueryParams({
+      includeAvailableAuthors: options.includeAvailableAuthors === true || shouldRequestAvailableAuthors(),
+    })
+  )
   ensureWithinRange(isVideoMode.value ? videoRecStore.queryTotalPages : comicRecStore.queryTotalPages)
+}
+
+function shouldRequestAvailableAuthors() {
+  return (isVideoMode.value ? videoRecStore.availableAuthors : comicRecStore.availableAuthors).length === 0
 }
 
 async function applyCurrentFilters(options = {}) {
@@ -932,7 +943,7 @@ async function initializePage(force = false) {
     tempIncludeTags.value = [route.query.tagId]
   }
 
-  await loadData(force)
+  await loadData(force, { includeAvailableAuthors: true })
   sanitizeFilterStateForCurrentMode()
   if (currentVersion !== initVersion.value) {
     return

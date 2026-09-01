@@ -54,7 +54,11 @@ export const useVideoStore = defineStore('video', () => {
           currentPageState.value = Number(payload.page) || 1
           pageSizeState.value = Number(payload.page_size) || videos.value.length || 0
           totalPagesState.value = Number(payload.total_pages) || 1
-          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(videos.value)
+          if (Array.isArray(payload.available_authors)) {
+            availableAuthors.value = payload.available_authors
+          } else if (availableAuthors.value.length === 0) {
+            availableAuthors.value = extractAuthors(videos.value)
+          }
         } else {
           videos.value = Array.isArray(payload) ? payload : []
           totalCountState.value = videos.value.length

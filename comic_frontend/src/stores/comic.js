@@ -141,7 +141,11 @@ export const useComicStore = defineStore('comic', () => {
         currentPageState.value = Number(payload.page) || 1
         pageSizeState.value = Number(payload.page_size) || comics.value.length || 0
         totalPagesState.value = Number(payload.total_pages) || 1
-        availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(comics.value)
+        if (Array.isArray(payload.available_authors)) {
+          availableAuthors.value = payload.available_authors
+        } else if (availableAuthors.value.length === 0) {
+          availableAuthors.value = extractAuthors(comics.value)
+        }
       } else {
         comics.value = Array.isArray(payload) ? payload : []
         totalCountState.value = comics.value.length
