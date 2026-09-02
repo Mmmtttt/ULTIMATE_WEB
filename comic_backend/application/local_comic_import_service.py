@@ -1820,6 +1820,21 @@ class LocalComicImportService:
         return f"tag_{max_tag_num + 1:03d}"
 
     def _ensure_local_tag_id(self) -> str:
+        existing_data = self._tag_storage.read_document()
+        existing_tags = existing_data.get("tags", [])
+        if isinstance(existing_tags, list):
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                if str(item.get("name", "")).strip() != LOCAL_IMPORT_TAG_NAME:
+                    continue
+                tag_id = str(item.get("id", "")).strip()
+                if tag_id:
+                    return tag_id
+
         result = {"tag_id": ""}
 
         def updater(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1873,6 +1888,21 @@ class LocalComicImportService:
             return {}
 
         result: Dict[str, str] = {}
+        existing_data = self._tag_storage.read_document()
+        existing_tags = existing_data.get("tags", [])
+        if isinstance(existing_tags, list):
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                name = str(item.get("name", "")).strip()
+                tag_id = str(item.get("id", "")).strip()
+                if name in tag_names and tag_id and name not in result:
+                    result[name] = tag_id
+        if all(name in result for name in tag_names):
+            return result
 
         def updater(data: Dict[str, Any]) -> Dict[str, Any]:
             tags = data.get("tags", [])
@@ -2059,6 +2089,40 @@ class LocalComicImportService:
         ok = self._db_storage.atomic_update_document(updater)
         return ok, bool(status["inserted"])
 
+    def _append_comic_records_batch(self, comic_records: List[Dict[str, Any]]) -> Tuple[bool, int]:
+        normalized_records = [
+            dict(record or {})
+            for record in (comic_records or [])
+            if isinstance(record, dict) and str(record.get("id", "")).strip()
+        ]
+        if not normalized_records:
+            return True, 0
+
+        status = {"inserted": 0}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            comics = data.setdefault("comics", [])
+            if not isinstance(comics, list):
+                comics = []
+                data["comics"] = comics
+
+            existing_ids = {str(item.get("id", "")) for item in comics if isinstance(item, dict)}
+            for record in normalized_records:
+                comic_id = str(record.get("id", "")).strip()
+                if not comic_id or comic_id in existing_ids:
+                    continue
+                comics.append(record)
+                existing_ids.add(comic_id)
+                status["inserted"] += 1
+
+            if status["inserted"]:
+                data["total_comics"] = len(comics)
+                data["last_updated"] = time.strftime("%Y-%m-%d")
+            return data
+
+        ok = self._db_storage.atomic_update_document(updater)
+        return bool(ok), int(status["inserted"])
+
     def _update_softref_cover_path(self, comic_id: str, cover_path: str) -> bool:
         comic_id = str(comic_id or "").strip()
         cover_path = str(cover_path or "").strip()
@@ -2211,6 +2275,7 @@ class LocalComicImportService:
         raw_assignments: Optional[Dict[str, str]] = None,
         raw_tag_assignments: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        started_at = time.perf_counter()
         meta = self._load_meta(session_id)
         effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
         archive_password = str(meta.get("archive_password", "") or "").strip() or None
@@ -2284,6 +2349,8 @@ class LocalComicImportService:
 
         records = state.setdefault("records", {})
         softref_cover_candidates: set[str] = set()
+        pending_comic_records: List[Dict[str, Any]] = []
+        pending_record_keys_by_comic_id: Dict[str, str] = {}
 
         for entry in items:
             work_path = str(entry.get("作品文件地址") or "").strip()
@@ -2431,9 +2498,7 @@ class LocalComicImportService:
                         comic_record["storage_path_relative"] = relative_target_dir
                     comic_record["storage_path_kind"] = "local_dir"
 
-                ok, inserted = self._append_comic_record(comic_record)
-                if not ok:
-                    raise RuntimeError("写入漫画数据库失败")
+                inserted = True
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF and archive_password and self._is_softref_locator(work_path):
                     self._remember_softref_archive_password(work_path, archive_password)
                 if not inserted and target_tag_ids:
@@ -2441,6 +2506,8 @@ class LocalComicImportService:
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF:
                     softref_cover_candidates.add(comic_id)
 
+                pending_comic_records.append(comic_record)
+                pending_record_keys_by_comic_id[comic_id] = key
                 existing_ids.add(comic_id)
                 existing_source_map[key] = comic_id
                 record["status"] = "completed" if inserted else "skipped"
@@ -2452,6 +2519,32 @@ class LocalComicImportService:
                 record["status"] = "failed"
                 record["error"] = str(exc)
                 record["updated_at"] = self._timestamp()
+                self._save_state(session_id, state)
+
+        if pending_comic_records:
+            db_write_started_at = time.perf_counter()
+            ok, inserted_count = self._append_comic_records_batch(pending_comic_records)
+            db_write_elapsed_ms = (time.perf_counter() - db_write_started_at) * 1000
+            app_logger.info(
+                "本地漫画批量导入数据库写入完成: "
+                f"session_id={session_id}, pending={len(pending_comic_records)}, "
+                f"inserted={inserted_count}, elapsed_ms={db_write_elapsed_ms:.2f}"
+            )
+            if not ok or inserted_count != len(pending_comic_records):
+                failed_ids = {
+                    str(record.get("id", "")).strip()
+                    for record in pending_comic_records
+                    if str(record.get("id", "")).strip()
+                }
+                for comic_id in failed_ids:
+                    record_key = pending_record_keys_by_comic_id.get(comic_id, "")
+                    record = records.get(record_key)
+                    if not isinstance(record, dict):
+                        continue
+                    record["status"] = "failed"
+                    record["error"] = "写入漫画数据库失败"
+                    record["updated_at"] = self._timestamp()
+                softref_cover_candidates.difference_update(failed_ids)
                 self._save_state(session_id, state)
 
         summary = self._summarize_state(state)
@@ -2474,6 +2567,14 @@ class LocalComicImportService:
                 session_removed = True
             except Exception:
                 session_removed = False
+
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        app_logger.info(
+            "本地漫画批量导入提交完成: "
+            f"session_id={session_id}, mode={effective_mode}, total={len(items)}, "
+            f"imported={summary['imported_count']}, skipped={summary['skipped_count']}, "
+            f"failed={summary['failed_count']}, elapsed_ms={elapsed_ms:.2f}"
+        )
 
         return {
             "session_id": session_id,
