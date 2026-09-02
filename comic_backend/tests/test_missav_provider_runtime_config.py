@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import sys
 from pathlib import Path
@@ -139,3 +140,199 @@ def test_jable_extract_keeps_fast_http_path_when_page_already_contains_hls(monke
     assert result["browser_fallback"] is False
     assert result["m3u8_url"] == "https://cdn.example/ipx001/master.m3u8"
     assert result["streams"][0]["url"] == "https://cdn.example/ipx001/1080p.m3u8"
+
+
+def test_missav_extract_checks_each_candidate_once_without_retry_backoff(monkeypatch):
+    module = _load_client_module()
+    client = module.MissavClient(proxy_base_path="/api/v1/video")
+    calls = []
+
+    class FakePageResponse:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+
+    def fake_get(url, headers=None, timeout=None, impersonate=None):
+        calls.append(url)
+        if url.endswith("/sone-764-chinese-subtitle"):
+            return FakePageResponse(404)
+        if url.endswith("/sone-764-uncensored-leak"):
+            return FakePageResponse(404)
+        if url.endswith("/sone-764"):
+            return FakePageResponse(
+                200,
+                "https://surrit.com/46554ca9-8b3c-426b-b017-34df87681b10/playlist.m3u8",
+            )
+        if url == "https://surrit.com/46554ca9-8b3c-426b-b017-34df87681b10/playlist.m3u8":
+            return FakePageResponse(
+                200,
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=640x360\n360p/video.m3u8\n",
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(module.cffi_requests, "get", fake_get)
+
+    result, error = client.extract_from_missav("SONE-764")
+
+    assert error is None
+    assert result["page_url"] == "https://missav.ai/cn/sone-764"
+    assert result["streams"][0]["url"] == "https://surrit.com/46554ca9-8b3c-426b-b017-34df87681b10/360p/video.m3u8"
+    assert calls == [
+        "https://missav.ai/cn/sone-764-chinese-subtitle",
+        "https://missav.ai/cn/sone-764-uncensored-leak",
+        "https://missav.ai/cn/sone-764",
+        "https://surrit.com/46554ca9-8b3c-426b-b017-34df87681b10/playlist.m3u8",
+    ]
+
+
+def test_missav_extract_continues_after_200_page_without_video_source(monkeypatch):
+    module = _load_client_module()
+    client = module.MissavClient(proxy_base_path="/api/v1/video", missav_domains=["missav.ai"])
+    calls = []
+    impersonates = []
+
+    class FakePageResponse:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+
+    def fake_get(url, headers=None, timeout=None, impersonate=None):
+        calls.append(url)
+        impersonates.append(impersonate)
+        if url.endswith("/sone-764-chinese-subtitle"):
+            return FakePageResponse(200, "<html>not a video page</html>")
+        if url.endswith("/sone-764-uncensored-leak"):
+            return FakePageResponse(
+                200,
+                "https://surrit.com/5f5bca10-88e6-468b-bb1e-b68e6cae1756/playlist.m3u8",
+            )
+        if url == "https://surrit.com/5f5bca10-88e6-468b-bb1e-b68e6cae1756/playlist.m3u8":
+            return FakePageResponse(
+                200,
+                "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200,RESOLUTION=1280x720\n720p/video.m3u8\n",
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(module.cffi_requests, "get", fake_get)
+
+    result, error = client.extract_from_missav("SONE-764")
+
+    assert error is None
+    assert result["page_url"] == "https://missav.ai/cn/sone-764-uncensored-leak"
+    assert result["streams"][0]["resolution"] == "1280x720"
+    assert calls == [
+        "https://missav.ai/cn/sone-764-chinese-subtitle",
+        "https://missav.ai/cn/sone-764-uncensored-leak",
+        "https://surrit.com/5f5bca10-88e6-468b-bb1e-b68e6cae1756/playlist.m3u8",
+    ]
+    assert set(impersonates) == {"chrome131"}
+
+
+def test_missav_proxy_url_streams_media_segments_without_browser_origin_override(monkeypatch):
+    module = _load_client_module()
+    client = module.MissavClient(proxy_base_path="/api/v1/video")
+    target_url = "https://surrit.com/video/seg-001.ts"
+    encoded_url = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
+    captured = {}
+
+    class FakeStreamingResponse:
+        status_code = 206
+        headers = {
+            "Access-Control-Allow-Origin": "https://missav.ai",
+            "Content-Type": "video/mp2t",
+            "Content-Range": "bytes 0-3/8",
+        }
+
+        @property
+        def content(self):
+            raise AssertionError("media segment should be streamed, not buffered")
+
+        def iter_content(self, chunk_size=1):
+            yield b"abcd"
+
+        def close(self):
+            captured["closed"] = True
+
+    def fake_request(method, url, headers=None, stream=False, timeout=None, impersonate=None):
+        captured.update(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers or {}),
+                "stream": stream,
+                "timeout": timeout,
+                "impersonate": impersonate,
+            }
+        )
+        return FakeStreamingResponse()
+
+    monkeypatch.setattr(module.cffi_requests, "request", fake_request)
+
+    response = client.proxy_url(
+        method="GET",
+        query_string=f"url={encoded_url}",
+        incoming_referer="https://127.0.0.1:5173/video-recommendation/JAVDBEJZW4",
+        incoming_headers={
+            "Range": "bytes=0-",
+            "Accept": "*/*",
+            "Origin": "https://127.0.0.1:5173",
+            "Referer": "https://127.0.0.1:5173/video-recommendation/JAVDBEJZW4",
+            "User-Agent": "mobile-browser-agent",
+        },
+    )
+
+    assert response.status_code == 206
+    assert hasattr(response, "iter_content")
+    assert list(response.iter_content(chunk_size=2)) == [b"abcd"]
+    assert captured["url"] == target_url
+    assert captured["stream"] is True
+    assert captured["headers"]["Referer"] == "https://missav.ai/"
+    assert captured["headers"]["Origin"] == "https://missav.ai"
+    assert captured["headers"]["Range"] == "bytes=0-"
+    assert captured["headers"]["Accept"] == "*/*"
+    assert captured["headers"]["User-Agent"] != "mobile-browser-agent"
+
+
+def test_missav_proxy_url_rewrites_m3u8_and_removes_stale_length(monkeypatch):
+    module = _load_client_module()
+    client = module.MissavClient(proxy_base_path="/api/v1/video")
+    target_url = "https://surrit.com/video/index.m3u8"
+    encoded_url = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
+    captured = {"closed": False}
+
+    class FakeM3u8Response:
+        status_code = 200
+        headers = {
+            "Access-Control-Allow-Origin": "https://missav.ai",
+            "Content-Type": "application/vnd.apple.mpegurl",
+            "Content-Length": "17",
+            "Connection": "keep-alive",
+        }
+        content = (
+            b"#EXTM3U\n"
+            b"#EXT-X-KEY:METHOD=AES-128,URI=\"key.key\"\n"
+            b"#EXTINF:3,\n"
+            b"seg-001.ts\n"
+        )
+
+        def close(self):
+            captured["closed"] = True
+
+    def fake_request(method, url, headers=None, stream=False, timeout=None, impersonate=None):
+        captured["stream"] = stream
+        return FakeM3u8Response()
+
+    monkeypatch.setattr(module.cffi_requests, "request", fake_request)
+
+    response = client.proxy_url(method="GET", query_string=f"url={encoded_url}")
+    header_names = {name.lower() for name, _ in response.headers}
+    text = response.content.decode("utf-8")
+
+    assert response.status_code == 200
+    assert captured["stream"] is True
+    assert captured["closed"] is True
+    assert "access-control-allow-origin" not in header_names
+    assert "content-length" not in header_names
+    assert "connection" not in header_names
+    assert "/api/v1/video/proxy2?url=" in text
+    assert "seg-001.ts" not in text

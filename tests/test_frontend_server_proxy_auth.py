@@ -65,6 +65,25 @@ class FakeResponse:
             self.content = json.dumps(payload).encode("utf-8")
 
 
+class FakeStreamingResponse:
+    def __init__(self, chunks: list[bytes], *, status_code: int = 200, headers: dict | None = None):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.chunks = chunks
+        self.closed = False
+
+    @property
+    def content(self):
+        raise AssertionError("streaming proxy responses must not be buffered through .content")
+
+    def iter_content(self, chunk_size=1):
+        for chunk in self.chunks:
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+
 def test_frontend_proxy_routes_assets_by_per_client_space_cookie_and_ignores_header_spoofing(monkeypatch, tmp_path):
     frontend_server = _load_frontend_server()
     _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=True))
@@ -171,3 +190,66 @@ def test_frontend_proxy_reloads_server_config_without_restart(monkeypatch, tmp_p
 
     assert calls[-2]["url"] == "http://127.0.0.1:6123/api/v1/comic/list"
     assert calls[-1]["url"] == "http://127.0.0.1:6124/api/v1/comic/list"
+
+
+def test_frontend_proxy_streams_local_video_without_buffering(monkeypatch, tmp_path):
+    frontend_server = _load_frontend_server()
+    _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=False))
+
+    calls = []
+    stream_response = FakeStreamingResponse(
+        [b"video-", b"chunk"],
+        status_code=206,
+        headers={
+            "content-type": "video/mp4",
+            "content-length": "11",
+            "content-range": "bytes 0-10/100",
+            "accept-ranges": "bytes",
+        },
+    )
+
+    def fake_get(url, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return stream_response
+
+    monkeypatch.setattr(frontend_server.requests, "get", fake_get)
+
+    app = frontend_server.create_app()
+    client = app.test_client()
+    response = client.get(
+        "/api/v1/video/local-stream/VIDEO001",
+        headers={"Range": "bytes=0-"},
+    )
+
+    assert response.status_code == 206
+    assert response.data == b"video-chunk"
+    assert response.headers["Content-Range"] == "bytes 0-10/100"
+    assert response.headers["Accept-Ranges"] == "bytes"
+    assert stream_response.closed is True
+    assert calls[-1]["kwargs"]["stream"] is True
+    assert calls[-1]["kwargs"]["headers"]["range"] == "bytes=0-"
+
+
+def test_frontend_proxy_streams_missav_proxy2_without_buffering(monkeypatch, tmp_path):
+    frontend_server = _load_frontend_server()
+    _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=False))
+
+    stream_response = FakeStreamingResponse(
+        [b"#EXTM3U\n", b"#EXTINF:1,\nseg.ts\n"],
+        status_code=200,
+        headers={"content-type": "application/vnd.apple.mpegurl"},
+    )
+
+    def fake_get(url, **kwargs):
+        return stream_response
+
+    monkeypatch.setattr(frontend_server.requests, "get", fake_get)
+
+    app = frontend_server.create_app()
+    client = app.test_client()
+    response = client.get("/api/v1/video/proxy2?url=https%3A%2F%2Fmissav.example%2Findex.m3u8")
+
+    assert response.status_code == 200
+    assert response.data == b"#EXTM3U\n#EXTINF:1,\nseg.ts\n"
+    assert response.headers["Content-Type"] == "application/vnd.apple.mpegurl"
+    assert stream_response.closed is True

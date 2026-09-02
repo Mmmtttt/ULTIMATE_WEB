@@ -58,9 +58,35 @@ video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
 actor_service = ActorAppService()
 config_service = ConfigAppService()
+LOCAL_VIDEO_STREAM_CHUNK_SIZE = 1024 * 256
+LOCAL_VIDEO_STREAM_OPEN_RANGE_SIZE = 1024 * 1024 * 8
+STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS = {
+    "access-control-allow-credentials",
+    "access-control-allow-headers",
+    "access-control-allow-methods",
+    "access-control-allow-origin",
+    "access-control-expose-headers",
+    "access-control-max-age",
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+}
 _preview_refresh_lock = threading.Lock()
 _preview_refresh_last_run = {}
 _PREVIEW_REFRESH_COOLDOWN_SECONDS = 180
+
+
+def _filter_stream_proxy_response_headers(headers):
+    if hasattr(headers, "items"):
+        iterator = headers.items()
+    else:
+        iterator = headers or []
+    return {
+        name: value
+        for name, value in iterator
+        if str(name).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS
+    }
 
 
 def success_response(data=None, msg="成功"):
@@ -127,9 +153,15 @@ def _build_play_sources(code: str):
 
     all_sources = []
     seen_keys = set()
+    default_plugin_id = ""
 
     # 1. Always try the default proxy client first (backward compat for tests & runtime)
     try:
+        proxy_manifests = list(
+            get_protocol_gateway().list_manifests(media_type="video", capability="playback.proxy.stream")
+        )
+        if proxy_manifests:
+            default_plugin_id = str(proxy_manifests[0].plugin_id or "").strip()
         client = _get_video_proxy_client()
         sources = client.build_sources(code)
         for src in (sources or []):
@@ -149,6 +181,8 @@ def _build_play_sources(code: str):
     gateway = get_protocol_gateway()
     manifests = list(gateway.list_manifests(media_type="video", capability="playback.sources.build"))
     for manifest in manifests:
+        if default_plugin_id and str(manifest.plugin_id or "").strip() == default_plugin_id:
+            continue
         try:
             client = gateway.get_client(manifest.plugin_id, proxy_base_path='/api/v1/video')
             sources = client.build_sources(code)
@@ -1117,7 +1151,7 @@ def local_import_from_path():
         return error_response(500, "internal server error")
 
 
-@video_bp.route('/local-stream/<video_id>', methods=['GET'])
+@video_bp.route('/local-stream/<video_id>', methods=['GET', 'HEAD'])
 def stream_local_video(video_id):
     try:
         episode_index = request.args.get("episode", default=0, type=int) or 0
@@ -1129,27 +1163,39 @@ def stream_local_video(video_id):
         guessed_type, _ = mimetypes.guess_type(resolved)
         content_type = guessed_type or "video/mp4"
 
-        # Handle Range requests — Android WebView requires proper 206 responses
+        # Handle Range requests. Mobile browsers often probe with "bytes=0-";
+        # keep that first response bounded so playback can start quickly.
         range_header = request.headers.get("Range")
         if range_header:
             range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
             if range_match:
                 start = int(range_match.group(1))
                 end_str = range_match.group(2)
-                end = int(end_str) if end_str else file_size - 1
+                if end_str:
+                    end = int(end_str)
+                else:
+                    end = start + LOCAL_VIDEO_STREAM_OPEN_RANGE_SIZE - 1
                 end = min(end, file_size - 1)
 
-                if start >= file_size:
+                if start >= file_size or end < start:
                     resp = make_response("", 416)
                     resp.headers["Content-Range"] = f"bytes */{file_size}"
                     return resp
 
                 chunk_size = end - start + 1
-                with open(resolved, "rb") as f:
-                    f.seek(start)
-                    data = f.read(chunk_size)
 
-                resp = make_response(data, 206)
+                def generate_range():
+                    remaining = chunk_size
+                    with open(resolved, "rb") as f:
+                        f.seek(start)
+                        while remaining > 0:
+                            data = f.read(min(LOCAL_VIDEO_STREAM_CHUNK_SIZE, remaining))
+                            if not data:
+                                break
+                            remaining -= len(data)
+                            yield data
+
+                resp = Response(stream_with_context(generate_range()), status=206)
                 resp.headers["Content-Type"] = content_type
                 resp.headers["Content-Length"] = str(chunk_size)
                 resp.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
@@ -1167,7 +1213,7 @@ def stream_local_video(video_id):
         def generate():
             with open(resolved, "rb") as f:
                 while True:
-                    chunk = f.read(8192)
+                    chunk = f.read(LOCAL_VIDEO_STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
                     yield chunk
@@ -3817,7 +3863,11 @@ def proxy_video_request(domain, path):
             query_string=request.query_string.decode(),
             incoming_referer=request.headers.get('Referer', '')
         )
-        return Response(proxy_result.body, status=proxy_result.status_code, headers=proxy_result.headers)
+        return Response(
+            proxy_result.body,
+            status=proxy_result.status_code,
+            headers=_filter_stream_proxy_response_headers(proxy_result.headers),
+        )
         
     except Exception as e:
         error_logger.error(f"代理请求失败: {e}")
@@ -3951,17 +4001,24 @@ def proxy_video_request2():
         # 兼容非流式响应（如测试 mock 的 SimpleNamespace 不含 iter_content）
         if hasattr(proxy_result, "iter_content"):
             def generate():
-                for chunk in proxy_result.iter_content(chunk_size=65536):
-                    if chunk:
-                        yield chunk
+                try:
+                    for chunk in proxy_result.iter_content(chunk_size=262144):
+                        if chunk:
+                            yield chunk
+                finally:
+                    close = getattr(proxy_result, "close", None)
+                    if callable(close):
+                        close()
 
             resp_headers = {}
             if hasattr(proxy_result.headers, "items"):
                 for n, v in proxy_result.headers.items():
-                    resp_headers[n] = v
+                    if str(n).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS:
+                        resp_headers[n] = v
             else:
                 for n, v in proxy_result.headers:
-                    resp_headers[n] = v
+                    if str(n).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS:
+                        resp_headers[n] = v
 
             return Response(
                 stream_with_context(generate()),
@@ -3972,12 +4029,8 @@ def proxy_video_request2():
         # fallback: 非流式响应（旧协议/测试 mock），使用 make_response
         response = make_response(proxy_result.content)
         response.status_code = proxy_result.status_code
-        if hasattr(proxy_result.headers, "items"):
-            for n, v in proxy_result.headers.items():
-                response.headers[n] = v
-        else:
-            for n, v in proxy_result.headers:
-                response.headers[n] = v
+        for n, v in _filter_stream_proxy_response_headers(proxy_result.headers).items():
+            response.headers[n] = v
         return response
     except ValueError as e:
         return Response(str(e), status=400)

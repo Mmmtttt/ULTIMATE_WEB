@@ -600,7 +600,10 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
             return SimpleNamespace(
                 body=b"stream-ok",
                 status_code=206,
-                headers={"Content-Type": "video/mp2t"},
+                headers={
+                    "Access-Control-Allow-Origin": "https://missav.ai",
+                    "Content-Type": "video/mp2t",
+                },
             )
 
         def proxy_url(self, method, query_string, body_url, incoming_referer, incoming_headers):
@@ -616,7 +619,11 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
             return SimpleNamespace(
                 content=b"proxy2-ok",
                 status_code=200,
-                headers=[("Content-Type", "application/vnd.apple.mpegurl"), ("X-Proxy", "1")],
+                headers=[
+                    ("Access-Control-Allow-Origin", "https://missav.ai"),
+                    ("Content-Type", "application/vnd.apple.mpegurl"),
+                    ("X-Proxy", "1"),
+                ],
             )
 
     monkeypatch.setattr(video_api, "_get_video_proxy_client", lambda: FakeMissavClient())
@@ -627,6 +634,7 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
     )
     assert stream_resp.status_code == 206
     assert stream_resp.data == b"stream-ok"
+    assert stream_resp.headers.get("Access-Control-Allow-Origin") != "https://missav.ai"
     assert captured["stream"][0]["domain"] == "javdb"
     assert captured["stream"][0]["path"] == "videos/seg.ts"
     assert captured["stream"][0]["query_string"] == "token=abc"
@@ -645,6 +653,7 @@ def test_video_proxy_routes_forward_required_arguments_to_missav_client(third_pa
     )
     assert proxy2_resp.status_code == 200
     assert proxy2_resp.data == b"proxy2-ok"
+    assert proxy2_resp.headers.get("Access-Control-Allow-Origin") != "https://missav.ai"
     assert captured["proxy2"][0]["method"] == "POST"
     assert captured["proxy2"][0]["query_string"] == "url=https%3A%2F%2Fmedia.example%2Findex.m3u8"
     assert captured["proxy2"][0]["body_url"] == "https://media.example/post.m3u8"

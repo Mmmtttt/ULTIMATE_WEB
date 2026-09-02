@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 import requests
-from flask import Flask, request, make_response, send_from_directory, abort
+from flask import Flask, Response, request, make_response, send_from_directory, abort, stream_with_context
 
 # Add backend source to path so we can reuse config & SSL modules
 _BACKEND_SRC = Path(__file__).resolve().parents[1] / "comic_backend"
@@ -246,6 +246,21 @@ _RESPONSE_HEADERS_PASS = (
     "content-range",
 )
 
+_STREAM_PROXY_PATH_PREFIXES = (
+    "/api/v1/video/local-stream/",
+    "/api/v1/video/proxy/",
+    "/api/v1/video/proxy2",
+    "/api/v1/teledrive/files/",
+    "/media/",
+)
+
+_STREAM_PROXY_CONTENT_TYPES = (
+    "application/octet-stream",
+    "application/vnd.apple.mpegurl",
+    "audio/",
+    "video/",
+)
+
 
 def _build_proxy_headers() -> dict:
     headers = {}
@@ -263,8 +278,7 @@ def _build_proxy_headers() -> dict:
     return headers
 
 
-def _build_flask_response(proxy_resp) -> make_response:
-    response = make_response(proxy_resp.content, proxy_resp.status_code)
+def _copy_proxy_response_headers(response, proxy_resp) -> None:
     for header_name in _RESPONSE_HEADERS_PASS:
         header_value = proxy_resp.headers.get(header_name)
         if header_value is not None:
@@ -273,6 +287,45 @@ def _build_flask_response(proxy_resp) -> make_response:
                 response.headers.set(header_name, header_value)
             else:
                 response.headers[header_name] = header_value
+
+
+def _build_flask_response(proxy_resp) -> make_response:
+    response = make_response(proxy_resp.content, proxy_resp.status_code)
+    _copy_proxy_response_headers(response, proxy_resp)
+    return response
+
+
+def _is_stream_proxy_response(path: str, proxy_resp) -> bool:
+    if request.method == "HEAD":
+        return False
+    if not hasattr(proxy_resp, "iter_content"):
+        return False
+
+    normalized_path = f"/{str(path or '').lstrip('/')}"
+    if normalized_path.startswith(_STREAM_PROXY_PATH_PREFIXES):
+        return True
+
+    content_type = str(proxy_resp.headers.get("content-type", "") or "").lower()
+    if any(content_type.startswith(prefix) for prefix in _STREAM_PROXY_CONTENT_TYPES):
+        return True
+
+    return bool(proxy_resp.headers.get("content-range") or proxy_resp.headers.get("accept-ranges"))
+
+
+def _build_streaming_flask_response(proxy_resp) -> Response:
+    def generate():
+        try:
+            for chunk in proxy_resp.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    yield chunk
+        finally:
+            proxy_resp.close()
+
+    response = Response(
+        stream_with_context(generate()),
+        status=proxy_resp.status_code,
+    )
+    _copy_proxy_response_headers(response, proxy_resp)
     return response
 
 
@@ -346,7 +399,16 @@ def _proxy_to_backend(backend_base: str, path: str):
         print(f"[frontend proxy] error proxying to {url}: {e}")
         return make_response({"error": "proxy error", "detail": str(e)}, 502)
 
+    if _is_stream_proxy_response(path, resp):
+        response = _build_streaming_flask_response(resp)
+        if int(getattr(resp, "status_code", 0) or 0) == 401:
+            _set_space_mode_cookie(response, SPACE_MODE_PRIVATE)
+        return response
+
     response = _build_flask_response(resp)
+    close_response = getattr(resp, "close", None)
+    if callable(close_response):
+        close_response()
     _apply_space_cookie_from_auth_response(response, resp, path)
     return response
 
@@ -381,7 +443,7 @@ def create_app() -> Flask:
 
     # ---- API proxy ----
 
-    @app.route("/api/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    @app.route("/api/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
     def api_proxy(subpath):
         if request.method == "OPTIONS":
             return make_response("", 204)
@@ -395,7 +457,7 @@ def create_app() -> Flask:
         backend_base = _resolve_backend_for_request()
         return _proxy_to_backend(backend_base, f"/static/cover/{subpath}")
 
-    @app.route("/media/<path:subpath>", methods=["GET"])
+    @app.route("/media/<path:subpath>", methods=["GET", "HEAD"])
     def media_proxy(subpath):
         backend_base = _resolve_backend_for_request()
         return _proxy_to_backend(backend_base, f"/media/{subpath}")

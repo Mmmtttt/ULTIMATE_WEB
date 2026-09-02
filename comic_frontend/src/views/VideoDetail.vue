@@ -1145,7 +1145,14 @@ async function mountPreviewVideoSource() {
     if (Hls.isSupported()) {
       const instance = new Hls({
         debug: false,
-        enableWorker: true
+        enableWorker: true,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = true
+        },
+        fetchSetup: (context, initParams) => ({
+          ...(initParams || {}),
+          credentials: 'include'
+        })
       })
 
       previewHls.value = instance
@@ -2144,7 +2151,14 @@ async function playStream(stream) {
     if (Hls.isSupported()) {
       hls.value = new Hls({
         debug: false,
-        enableWorker: true
+        enableWorker: true,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = true
+        },
+        fetchSetup: (context, initParams) => ({
+          ...(initParams || {}),
+          credentials: 'include'
+        })
       })
 
       hls.value.loadSource(absoluteUrl)
