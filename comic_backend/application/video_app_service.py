@@ -1795,6 +1795,7 @@ class VideoAppService(BaseContentAppService):
         normalized_mode: str,
         title_hint: str = "",
         code_hint: str = "",
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
     ) -> Dict[str, Any]:
         sorted_filenames = sorted(
             [str(filename or "").strip() for filename in (filenames or []) if str(filename or "").strip()],
@@ -1809,7 +1810,7 @@ class VideoAppService(BaseContentAppService):
         code = normalized_code_hint or self._extract_or_generate_code(fallback_title)
         bind_existing_video = None
         if not str(code or "").startswith(self.ABNORMAL_CODE_PREFIX):
-            bind_existing_video = self._find_local_video_duplicate_entity("", code)
+            bind_existing_video = self._find_local_video_duplicate_entity("", code, local_video_cache=local_video_cache)
 
         video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
         existing_entries = self._get_local_episode_entries(bind_existing_video)
@@ -1908,6 +1909,7 @@ class VideoAppService(BaseContentAppService):
 
                 if not self._video_repo.save(existing_video):
                     raise RuntimeError("save appended local video episodes failed")
+                self._remember_local_video_in_cache(local_video_cache, existing_video)
 
                 return {
                     "status": "imported",
@@ -1950,7 +1952,7 @@ class VideoAppService(BaseContentAppService):
                 "current_unit": 1,
                 "display": {"local_episodes": merged_entries},
             }
-            result = self.import_video(payload)
+            result = self.import_video(payload, local_video_cache=local_video_cache)
             if not result.success:
                 raise RuntimeError(result.message or "import_failed")
 
@@ -2006,6 +2008,7 @@ class VideoAppService(BaseContentAppService):
             skipped_items.extend(list(import_plan.get("skipped_items") or []))
             failed_items: List[Dict[str, str]] = []
             sync_started_at = time.perf_counter()
+            local_video_cache = self._build_local_video_duplicate_cache()
             with JsonStorage.defer_catalog_index_sync():
                 for unit in list(import_plan.get("units") or []):
                     unit_root = str(unit.get("root") or source_dir).strip() or source_dir
@@ -2017,6 +2020,7 @@ class VideoAppService(BaseContentAppService):
                             normalized_mode=normalized_mode,
                             title_hint=str(unit.get("title_hint") or "").strip(),
                             code_hint=str(unit.get("code_hint") or "").strip(),
+                            local_video_cache=local_video_cache,
                         )
                         if group_result.get("status") == "imported":
                             imported_count += 1
@@ -2242,11 +2246,20 @@ class VideoAppService(BaseContentAppService):
 
         return self._apply_persisted_fields(video, updates)
 
-    def import_video(self, video_data: Dict) -> ServiceResult:
+    def import_video(
+        self,
+        video_data: Dict,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> ServiceResult:
         try:
             incoming_id = str(video_data.get("id") or "").strip()
             incoming_code = self._normalize_code_for_storage(video_data.get("code"))
-            duplicate_id = self._find_local_video_duplicate(incoming_id, incoming_code)
+            duplicate_id = self._find_local_video_duplicate(
+                incoming_id,
+                incoming_code,
+                local_video_cache=local_video_cache,
+            )
             if duplicate_id and duplicate_id != incoming_id:
                 return ServiceResult.error("该番号已存在")
 
@@ -2292,6 +2305,7 @@ class VideoAppService(BaseContentAppService):
 
             if not self._video_repo.save(video):
                 return ServiceResult.error("保存视频失败")
+            self._remember_local_video_in_cache(local_video_cache, video)
             
             app_logger.info(f"导入视频成功: {video.code}")
             return ServiceResult.ok(video.to_dict(), "导入成功")
@@ -2304,7 +2318,46 @@ class VideoAppService(BaseContentAppService):
         raw = str(code or "").upper()
         return "".join(ch for ch in raw if ch.isalnum())
 
-    def _find_local_video_duplicate_entity(self, video_id: str, code: str) -> Optional[Video]:
+    def _build_local_video_duplicate_cache(self) -> Dict[str, Dict[str, Video]]:
+        cache: Dict[str, Dict[str, Video]] = {"by_id": {}, "by_code": {}}
+        for local_video in self._video_repo.get_all():
+            self._remember_local_video_in_cache(cache, local_video)
+        return cache
+
+    def _remember_local_video_in_cache(
+        self,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]],
+        video: Optional[Video],
+    ) -> None:
+        if local_video_cache is None or not isinstance(video, Video):
+            return
+
+        video_id = str(getattr(video, "id", "") or "").strip()
+        if video_id:
+            local_video_cache.setdefault("by_id", {})[video_id] = video
+
+        normalized_code = self._normalize_code_for_compare(getattr(video, "code", ""))
+        if normalized_code:
+            local_video_cache.setdefault("by_code", {})[normalized_code] = video
+
+    def _find_local_video_duplicate_entity(
+        self,
+        video_id: str,
+        code: str,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> Optional[Video]:
+        if local_video_cache is not None:
+            if video_id:
+                existing_by_id = local_video_cache.get("by_id", {}).get(video_id)
+                if existing_by_id:
+                    return existing_by_id
+
+            normalized_code = self._normalize_code_for_compare(code)
+            if not normalized_code:
+                return None
+            return local_video_cache.get("by_code", {}).get(normalized_code)
+
         if video_id:
             existing_by_id = self._video_repo.get_by_id(video_id)
             if existing_by_id:
@@ -2319,8 +2372,18 @@ class VideoAppService(BaseContentAppService):
                 return local_video
         return None
 
-    def _find_local_video_duplicate(self, video_id: str, code: str) -> Optional[str]:
-        duplicate_video = self._find_local_video_duplicate_entity(video_id, code)
+    def _find_local_video_duplicate(
+        self,
+        video_id: str,
+        code: str,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> Optional[str]:
+        duplicate_video = self._find_local_video_duplicate_entity(
+            video_id,
+            code,
+            local_video_cache=local_video_cache,
+        )
         if not duplicate_video:
             return None
         return duplicate_video.id
