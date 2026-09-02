@@ -9,12 +9,13 @@ from domain.video_recommendation.entity import VideoRecommendation
 
 
 class VideoRecommendationJsonRepository(BaseContentJsonRepository[VideoRecommendation]):
+    _data_key = "video_recommendations"
+    _total_key = "total_video_recommendations"
     
     def __init__(self):
         from core.constants import VIDEO_RECOMMENDATION_JSON_FILE as ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE
 
         self._storage = JsonStorage(ACTIVE_VIDEO_RECOMMENDATION_JSON_FILE)
-        self._data_key = "video_recommendations"
     
     def _get_entity_class(self):
         return VideoRecommendation

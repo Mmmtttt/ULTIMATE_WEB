@@ -1,9 +1,10 @@
-from typing import List
+from typing import Callable, List
 from domain.tag import Tag, TagRepository
 from domain.comic import ComicRepository
 from domain.recommendation import RecommendationRepository
 from domain.video import VideoRepository
 from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository, VideoRecommendationJsonRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
@@ -25,6 +26,22 @@ class TagAppService:
         self._recommendation_repo = recommendation_repo or RecommendationJsonRepository()
         self._video_repo = video_repo or VideoJsonRepository()
         self._video_recommendation_repo = video_recommendation_repo or VideoRecommendationJsonRepository()
+
+    @staticmethod
+    def _batch_update_repo(repo, entity_ids: List[str], mutator: Callable) -> int:
+        if hasattr(repo, "update_many_by_ids"):
+            return int(repo.update_many_by_ids(entity_ids, mutator) or 0)
+
+        updated_count = 0
+        for entity_id in entity_ids:
+            entity = repo.get_by_id(entity_id)
+            if entity:
+                should_save = mutator(entity)
+                if should_save is False:
+                    continue
+                if repo.save(entity):
+                    updated_count += 1
+        return updated_count
     
     def get_tag_list(self, content_type: ContentType = ContentType.COMIC) -> ServiceResult:
         try:
@@ -141,50 +158,27 @@ class TagAppService:
     def _merge_tags(self, source_tag: Tag, target_tag: Tag) -> int:
         """将 source_tag 的所有内容迁移到 target_tag，然后删除 source_tag。
         Returns: 迁移的内容数量"""
+        def merge_entity_tags(entity) -> None:
+            ids = [tag_id for tag_id in entity.tag_ids if tag_id != source_tag.id]
+            if target_tag.id not in ids:
+                ids.append(target_tag.id)
+            entity.tag_ids = ids
+
         count = 0
+        with JsonStorage.defer_catalog_index_sync():
+            comic_ids = [comic.id for comic in self._comic_repo.get_all() if source_tag.id in comic.tag_ids]
+            count += self._batch_update_repo(self._comic_repo, comic_ids, merge_entity_tags)
 
-        # 漫画
-        for comic in self._comic_repo.get_all():
-            if source_tag.id in comic.tag_ids:
-                ids = [t for t in comic.tag_ids if t != source_tag.id]
-                if target_tag.id not in ids:
-                    ids.append(target_tag.id)
-                comic.tag_ids = ids
-                self._comic_repo.save(comic)
-                count += 1
+            rec_ids = [rec.id for rec in self._recommendation_repo.get_all() if source_tag.id in rec.tag_ids]
+            count += self._batch_update_repo(self._recommendation_repo, rec_ids, merge_entity_tags)
 
-        # 推荐漫画
-        for rec in self._recommendation_repo.get_all():
-            if source_tag.id in rec.tag_ids:
-                ids = [t for t in rec.tag_ids if t != source_tag.id]
-                if target_tag.id not in ids:
-                    ids.append(target_tag.id)
-                rec.tag_ids = ids
-                self._recommendation_repo.save(rec)
-                count += 1
+            video_ids = [video.id for video in self._video_repo.get_all() if source_tag.id in video.tag_ids]
+            count += self._batch_update_repo(self._video_repo, video_ids, merge_entity_tags)
 
-        # 视频
-        for video in self._video_repo.get_all():
-            if source_tag.id in video.tag_ids:
-                ids = [t for t in video.tag_ids if t != source_tag.id]
-                if target_tag.id not in ids:
-                    ids.append(target_tag.id)
-                video.tag_ids = ids
-                self._video_repo.save(video)
-                count += 1
+            vrec_ids = [vrec.id for vrec in self._video_recommendation_repo.get_all() if source_tag.id in vrec.tag_ids]
+            count += self._batch_update_repo(self._video_recommendation_repo, vrec_ids, merge_entity_tags)
 
-        # 推荐视频
-        for vrec in self._video_recommendation_repo.get_all():
-            if source_tag.id in vrec.tag_ids:
-                ids = [t for t in vrec.tag_ids if t != source_tag.id]
-                if target_tag.id not in ids:
-                    ids.append(target_tag.id)
-                vrec.tag_ids = ids
-                self._video_recommendation_repo.save(vrec)
-                count += 1
-
-        # 删除旧标签
-        self._tag_repo.delete(source_tag.id)
+            self._tag_repo.delete(source_tag.id)
         return count
     
     def delete_tag(self, tag_id: str) -> ServiceResult:
@@ -426,25 +420,18 @@ class TagAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            home_updated = 0
-            rec_updated = 0
-            
-            for item in comic_data:
-                comic_id = item.get('id')
-                source = item.get('source')
-                
-                if source == 'home':
-                    comic = self._comic_repo.get_by_id(comic_id)
-                    if comic:
-                        comic.add_tags(validated_tag_ids)
-                        if self._comic_repo.save(comic):
-                            home_updated += 1
-                elif source == 'recommendation':
-                    recommendation = self._recommendation_repo.get_by_id(comic_id)
-                    if recommendation:
-                        recommendation.add_tags(validated_tag_ids)
-                        if self._recommendation_repo.save(recommendation):
-                            rec_updated += 1
+            home_ids = [item.get('id') for item in comic_data if item.get('source') == 'home']
+            rec_ids = [item.get('id') for item in comic_data if item.get('source') == 'recommendation']
+            home_updated = self._batch_update_repo(
+                self._comic_repo,
+                home_ids,
+                lambda comic: comic.add_tags(validated_tag_ids),
+            )
+            rec_updated = self._batch_update_repo(
+                self._recommendation_repo,
+                rec_ids,
+                lambda recommendation: recommendation.add_tags(validated_tag_ids),
+            )
             
             total_updated = home_updated + rec_updated
             if total_updated == 0:
@@ -463,25 +450,18 @@ class TagAppService:
 
     def batch_remove_tags(self, comic_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
-            home_updated = 0
-            rec_updated = 0
-            
-            for item in comic_data:
-                comic_id = item.get('id')
-                source = item.get('source')
-                
-                if source == 'home':
-                    comic = self._comic_repo.get_by_id(comic_id)
-                    if comic:
-                        comic.remove_tags(tag_ids)
-                        if self._comic_repo.save(comic):
-                            home_updated += 1
-                elif source == 'recommendation':
-                    recommendation = self._recommendation_repo.get_by_id(comic_id)
-                    if recommendation:
-                        recommendation.remove_tags(tag_ids)
-                        if self._recommendation_repo.save(recommendation):
-                            rec_updated += 1
+            home_ids = [item.get('id') for item in comic_data if item.get('source') == 'home']
+            rec_ids = [item.get('id') for item in comic_data if item.get('source') == 'recommendation']
+            home_updated = self._batch_update_repo(
+                self._comic_repo,
+                home_ids,
+                lambda comic: comic.remove_tags(tag_ids),
+            )
+            rec_updated = self._batch_update_repo(
+                self._recommendation_repo,
+                rec_ids,
+                lambda recommendation: recommendation.remove_tags(tag_ids),
+            )
             
             total_updated = home_updated + rec_updated
             if total_updated == 0:
@@ -508,25 +488,18 @@ class TagAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            home_updated = 0
-            rec_updated = 0
-            
-            for item in video_data:
-                video_id = item.get('id')
-                source = item.get('source')
-                
-                if source == 'home':
-                    video = self._video_repo.get_by_id(video_id)
-                    if video:
-                        video.add_tags(validated_tag_ids)
-                        if self._video_repo.save(video):
-                            home_updated += 1
-                elif source == 'recommendation':
-                    recommendation = self._video_recommendation_repo.get_by_id(video_id)
-                    if recommendation:
-                        recommendation.add_tags(validated_tag_ids)
-                        if self._video_recommendation_repo.save(recommendation):
-                            rec_updated += 1
+            home_ids = [item.get('id') for item in video_data if item.get('source') == 'home']
+            rec_ids = [item.get('id') for item in video_data if item.get('source') == 'recommendation']
+            home_updated = self._batch_update_repo(
+                self._video_repo,
+                home_ids,
+                lambda video: video.add_tags(validated_tag_ids),
+            )
+            rec_updated = self._batch_update_repo(
+                self._video_recommendation_repo,
+                rec_ids,
+                lambda recommendation: recommendation.add_tags(validated_tag_ids),
+            )
             
             total_updated = home_updated + rec_updated
             if total_updated == 0:
@@ -545,25 +518,18 @@ class TagAppService:
     
     def batch_remove_tags_from_videos(self, video_data: List[dict], tag_ids: List[str]) -> ServiceResult:
         try:
-            home_updated = 0
-            rec_updated = 0
-            
-            for item in video_data:
-                video_id = item.get('id')
-                source = item.get('source')
-                
-                if source == 'home':
-                    video = self._video_repo.get_by_id(video_id)
-                    if video:
-                        video.remove_tags(tag_ids)
-                        if self._video_repo.save(video):
-                            home_updated += 1
-                elif source == 'recommendation':
-                    recommendation = self._video_recommendation_repo.get_by_id(video_id)
-                    if recommendation:
-                        recommendation.remove_tags(tag_ids)
-                        if self._video_recommendation_repo.save(recommendation):
-                            rec_updated += 1
+            home_ids = [item.get('id') for item in video_data if item.get('source') == 'home']
+            rec_ids = [item.get('id') for item in video_data if item.get('source') == 'recommendation']
+            home_updated = self._batch_update_repo(
+                self._video_repo,
+                home_ids,
+                lambda video: video.remove_tags(tag_ids),
+            )
+            rec_updated = self._batch_update_repo(
+                self._video_recommendation_repo,
+                rec_ids,
+                lambda recommendation: recommendation.remove_tags(tag_ids),
+            )
             
             total_updated = home_updated + rec_updated
             if total_updated == 0:

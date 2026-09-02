@@ -73,3 +73,23 @@ def test_deferred_catalog_index_sync_coalesces_repeated_writes(tmp_path, monkeyp
     assert calls[0]["file_name"] == "comics_database.json"
     assert calls[0]["old_data"] is None
     assert [item["id"] for item in calls[0]["new_data"]["comics"]] == ["LOCAL001", "LOCAL002"]
+
+
+def test_deferred_catalog_index_sync_uses_single_tag_rebuild_when_tags_changed(tmp_path, monkeypatch):
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
+    calls = []
+
+    def fake_sync(file_name, old_data, new_data):
+        calls.append(file_name)
+
+    monkeypatch.setattr(catalog_index_writer, "sync_after_json_write", fake_sync)
+    comic_storage = JsonStorage("comics_database.json")
+    tag_storage = JsonStorage("tags_database.json")
+
+    with JsonStorage.defer_catalog_index_sync():
+        assert comic_storage.write({"comics": [{"id": "LOCAL001"}], "total_comics": 1})
+        assert tag_storage.write({"tags": [{"id": "tag_local", "name": "本地"}]})
+
+    assert calls == ["tags_database.json"]

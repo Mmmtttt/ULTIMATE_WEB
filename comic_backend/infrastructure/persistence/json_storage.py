@@ -103,6 +103,11 @@ class JsonStorage:
                     current["new"] = payload.get("new")
                 return
 
+            tag_payload = pending.get("tags_database.json")
+            if tag_payload is not None:
+                cls._sync_catalog_index_payload("tags_database.json", tag_payload.get("old"), tag_payload.get("new"))
+                return
+
             for file_name, payload in pending.items():
                 cls._sync_catalog_index_payload(file_name, payload.get("old"), payload.get("new"))
 

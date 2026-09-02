@@ -521,13 +521,19 @@ class ComicAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.add_tags(validated_tag_ids)
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.add_tags(validated_tag_ids),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.add_tags(validated_tag_ids)
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -540,13 +546,19 @@ class ComicAppService:
     
     def batch_remove_tags(self, comic_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.remove_tags(tag_ids)
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.remove_tags(tag_ids),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.remove_tags(tag_ids)
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -616,13 +628,19 @@ class ComicAppService:
     def batch_move_to_trash(self, comic_ids: List[str]) -> ServiceResult:
         """批量移动漫画到回收站"""
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.move_to_trash()
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.move_to_trash()
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -636,13 +654,19 @@ class ComicAppService:
     def batch_restore_from_trash(self, comic_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复漫画"""
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.restore_from_trash()
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.restore_from_trash()
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -956,13 +980,18 @@ class ComicAppService:
     def batch_delete_permanently(self, comic_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
-            deleted_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
+            if hasattr(self._comic_repo, "get_many_by_ids") and hasattr(self._comic_repo, "delete_many_by_ids"):
+                for comic in self._comic_repo.get_many_by_ids(comic_ids):
                     self._cleanup_comic_files(comic)
-                if self._comic_repo.delete(comic_id):
-                    deleted_count += 1
+                deleted_count = self._comic_repo.delete_many_by_ids(comic_ids)
+            else:
+                deleted_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        self._cleanup_comic_files(comic)
+                    if self._comic_repo.delete(comic_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")

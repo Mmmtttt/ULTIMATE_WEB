@@ -1026,15 +1026,24 @@ class RecommendationAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
 
-            success_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    for tag_id in validated_tag_ids:
-                        if tag_id not in recommendation.tag_ids:
-                            recommendation.tag_ids.append(tag_id)
-                    if self._recommendation_repo.save(recommendation):
-                        success_count += 1
+            def add_recommendation_tags(recommendation) -> None:
+                for tag_id in validated_tag_ids:
+                    if tag_id not in recommendation.tag_ids:
+                        recommendation.tag_ids.append(tag_id)
+
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                success_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    add_recommendation_tags,
+                )
+            else:
+                success_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        add_recommendation_tags(recommendation)
+                        if self._recommendation_repo.save(recommendation):
+                            success_count += 1
             
             app_logger.info(f"批量添加标签成功: {success_count}个推荐漫画")
             return ServiceResult.ok({"success_count": success_count})
@@ -1045,15 +1054,24 @@ class RecommendationAppService:
     def batch_remove_tags(self, recommendation_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         """批量移除标签"""
         try:
-            success_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    for tag_id in tag_ids:
-                        if tag_id in recommendation.tag_ids:
-                            recommendation.tag_ids.remove(tag_id)
-                    if self._recommendation_repo.save(recommendation):
-                        success_count += 1
+            def remove_recommendation_tags(recommendation) -> None:
+                for tag_id in tag_ids:
+                    if tag_id in recommendation.tag_ids:
+                        recommendation.tag_ids.remove(tag_id)
+
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                success_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    remove_recommendation_tags,
+                )
+            else:
+                success_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        remove_recommendation_tags(recommendation)
+                        if self._recommendation_repo.save(recommendation):
+                            success_count += 1
             
             app_logger.info(f"批量移除标签成功: {success_count}个推荐漫画")
             return ServiceResult.ok({"success_count": success_count})
@@ -1183,13 +1201,19 @@ class RecommendationAppService:
     def batch_move_to_trash(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量移动漫画到回收站"""
         try:
-            updated_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    recommendation.move_to_trash()
-                    if self._recommendation_repo.save(recommendation):
-                        updated_count += 1
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                updated_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    lambda recommendation: recommendation.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        recommendation.move_to_trash()
+                        if self._recommendation_repo.save(recommendation):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -1203,13 +1227,19 @@ class RecommendationAppService:
     def batch_restore_from_trash(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复漫画"""
         try:
-            updated_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    recommendation.restore_from_trash()
-                    if self._recommendation_repo.save(recommendation):
-                        updated_count += 1
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                updated_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    lambda recommendation: recommendation.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        recommendation.restore_from_trash()
+                        if self._recommendation_repo.save(recommendation):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -1254,13 +1284,18 @@ class RecommendationAppService:
     def batch_delete_permanently(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
-            deleted_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
+            if hasattr(self._recommendation_repo, "get_many_by_ids") and hasattr(self._recommendation_repo, "delete_many_by_ids"):
+                for recommendation in self._recommendation_repo.get_many_by_ids(recommendation_ids):
                     self._cleanup_recommendation_files(recommendation)
-                if self._recommendation_repo.delete(rec_id):
-                    deleted_count += 1
+                deleted_count = self._recommendation_repo.delete_many_by_ids(recommendation_ids)
+            else:
+                deleted_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        self._cleanup_recommendation_files(recommendation)
+                    if self._recommendation_repo.delete(rec_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")

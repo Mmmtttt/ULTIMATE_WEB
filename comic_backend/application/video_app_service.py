@@ -450,23 +450,44 @@ class VideoAppService(BaseContentAppService):
             repo = self._get_repo_by_source(source)
 
             cleared_count = 0
-            if clear_previous:
-                for video in repo.get_all():
-                    if tag_id in (video.tag_ids or []):
-                        video.remove_tags([tag_id])
-                        if repo.save(video):
-                            cleared_count += 1
+            with JsonStorage.defer_catalog_index_sync():
+                if clear_previous:
+                    clearing_ids = [
+                        video.id
+                        for video in repo.get_all()
+                        if tag_id in (video.tag_ids or [])
+                    ]
+                    if hasattr(repo, "update_many_by_ids"):
+                        cleared_count = repo.update_many_by_ids(
+                            clearing_ids,
+                            lambda video: video.remove_tags([tag_id]),
+                        )
+                    else:
+                        for video_id in clearing_ids:
+                            video = repo.get_by_id(video_id)
+                            if video:
+                                video.remove_tags([tag_id])
+                                if repo.save(video):
+                                    cleared_count += 1
 
-            updated_count = 0
-            for video_id in target_ids:
-                video = repo.get_by_id(video_id)
-                if not video:
-                    continue
-                if tag_id in (video.tag_ids or []):
-                    continue
-                video.add_tags([tag_id])
-                if repo.save(video):
-                    updated_count += 1
+                def add_recent_import_tag(video) -> bool | None:
+                    if tag_id in (video.tag_ids or []):
+                        return False
+                    video.add_tags([tag_id])
+                    return None
+
+                if hasattr(repo, "update_many_by_ids"):
+                    updated_count = repo.update_many_by_ids(target_ids, add_recent_import_tag)
+                else:
+                    updated_count = 0
+                    for video_id in target_ids:
+                        video = repo.get_by_id(video_id)
+                        if not video:
+                            continue
+                        if add_recent_import_tag(video) is False:
+                            continue
+                        if repo.save(video):
+                            updated_count += 1
 
             app_logger.info(
                 f"更新视频最近导入标签完成: source={source}, tag_id={tag_id}, "
@@ -3778,13 +3799,19 @@ class VideoAppService(BaseContentAppService):
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.add_tags(validated_tag_ids)
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.add_tags(validated_tag_ids),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.add_tags(validated_tag_ids)
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -3797,13 +3824,19 @@ class VideoAppService(BaseContentAppService):
     
     def batch_remove_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.remove_tags(tag_ids)
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.remove_tags(tag_ids),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.remove_tags(tag_ids)
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5128,13 +5161,19 @@ class VideoAppService(BaseContentAppService):
     def batch_move_to_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量移动视频到回收站"""
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.move_to_trash()
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.move_to_trash()
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5148,13 +5187,19 @@ class VideoAppService(BaseContentAppService):
     def batch_restore_from_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复视频"""
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.restore_from_trash()
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.restore_from_trash()
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5168,13 +5213,18 @@ class VideoAppService(BaseContentAppService):
     def batch_delete_permanently(self, video_ids: List[str]) -> ServiceResult:
         """批量永久删除视频"""
         try:
-            deleted_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
+            if hasattr(self._video_repo, "get_many_by_ids") and hasattr(self._video_repo, "delete_many_by_ids"):
+                for video in self._video_repo.get_many_by_ids(video_ids):
                     self._cleanup_video_files(video)
-                if self._video_repo.delete(video_id):
-                    deleted_count += 1
+                deleted_count = self._video_repo.delete_many_by_ids(video_ids)
+            else:
+                deleted_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        self._cleanup_video_files(video)
+                    if self._video_repo.delete(video_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5190,18 +5240,25 @@ class VideoAppService(BaseContentAppService):
             imported = []
             imported_ids = []
             skipped = []
-            
-            for video_data in videos_data:
-                code = video_data.get("code", "")
-                if self._video_repo.get_by_code(code):
-                    skipped.append(code)
-                    continue
-                
-                result = self.import_video(video_data)
-                if result.success:
-                    imported.append(code)
-                    if result.data and result.data.get("id"):
-                        imported_ids.append(result.data["id"])
+
+            local_video_cache = self._build_local_video_duplicate_cache()
+            with JsonStorage.defer_catalog_index_sync():
+                for video_data in videos_data:
+                    code = video_data.get("code", "")
+                    normalized_code = self._normalize_code_for_storage(code)
+                    if self._find_local_video_duplicate_entity(
+                        str(video_data.get("id") or "").strip(),
+                        normalized_code,
+                        local_video_cache=local_video_cache,
+                    ):
+                        skipped.append(code)
+                        continue
+
+                    result = self.import_video(video_data, local_video_cache=local_video_cache)
+                    if result.success:
+                        imported.append(code)
+                        if result.data and result.data.get("id"):
+                            imported_ids.append(result.data["id"])
             
             return ServiceResult.ok({
                 "imported": imported,

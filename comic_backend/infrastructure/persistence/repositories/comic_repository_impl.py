@@ -1,13 +1,16 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from domain.comic import Comic, ComicRepository
 from domain.comic.entity import Comic as ComicEntity
 from infrastructure.persistence.json_storage import JsonStorage
-from infrastructure.persistence.repositories.base_repository_impl import BaseContentJsonRepository
+from infrastructure.persistence.repositories.base_repository_impl import BaseContentJsonRepository, JsonRepositoryBatchMixin
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_date
 
 
-class ComicJsonRepository(ComicRepository):
+class ComicJsonRepository(JsonRepositoryBatchMixin[Comic], ComicRepository):
+    _data_key = "comics"
+    _total_key = "total_comics"
+
     def __init__(self, storage: JsonStorage = None):
         if storage is not None:
             self._storage = storage
@@ -15,6 +18,13 @@ class ComicJsonRepository(ComicRepository):
             from core.constants import JSON_FILE as ACTIVE_JSON_FILE
 
             self._storage = JsonStorage(ACTIVE_JSON_FILE)
+
+    def _get_entity_class(self):
+        return Comic
+
+    def _touch_data(self, data: Dict[str, Any], comics: List[Dict[str, Any]]) -> None:
+        data["total_comics"] = len(comics)
+        data["last_updated"] = get_current_date()
     
     def get_by_id(self, comic_id: str) -> Optional[Comic]:
         data = self._storage.read()
@@ -130,6 +140,7 @@ class ComicJsonRepository(ComicRepository):
 
 class ComicJsonRepositoryV2(BaseContentJsonRepository):
     _data_key = "comics"
+    _total_key = "total_comics"
     
     def __init__(self, storage: JsonStorage = None):
         if storage is not None:

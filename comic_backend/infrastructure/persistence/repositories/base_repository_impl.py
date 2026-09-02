@@ -1,4 +1,4 @@
-from typing import List, Optional, TypeVar, Generic, Dict, Any
+from typing import Callable, List, Optional, TypeVar, Generic, Dict, Any
 from abc import abstractmethod
 
 from domain.base.entity import BaseEntity, BaseContent, BaseCreator
@@ -12,12 +12,18 @@ C = TypeVar('C', bound=BaseContent)
 R = TypeVar('R', bound=BaseCreator)
 
 
-class BaseJsonRepository(BaseRepository[T], Generic[T]):
+class JsonRepositoryBatchMixin(Generic[T]):
     _storage: JsonStorage
     _data_key: str
+    _total_key: Optional[str] = None
     
     def _get_entity_class(self):
         raise NotImplementedError
+
+    def _touch_data(self, data: Dict[str, Any], entities: List[Dict[str, Any]]) -> None:
+        if self._total_key:
+            data[self._total_key] = len(entities)
+        data["last_updated"] = get_current_time()
     
     def get_by_id(self, entity_id: str) -> Optional[T]:
         data = self._storage.read()
@@ -29,6 +35,97 @@ class BaseJsonRepository(BaseRepository[T], Generic[T]):
         data = self._storage.read()
         entities = data.get(self._data_key, [])
         return [self._get_entity_class().from_dict(e) for e in entities]
+
+    def get_many_by_ids(self, entity_ids: List[str]) -> List[T]:
+        wanted_ids = self._normalize_entity_ids(entity_ids)
+        if not wanted_ids:
+            return []
+        data = self._storage.read()
+        entities = data.get(self._data_key, [])
+        return [
+            self._get_entity_class().from_dict(item)
+            for item in entities
+            if str(item.get("id") or "").strip() in wanted_ids
+        ]
+
+    def update_many_by_ids(self, entity_ids: List[str], mutator: Callable[[T], Optional[bool]]) -> int:
+        wanted_ids = self._normalize_entity_ids(entity_ids)
+        if not wanted_ids:
+            return 0
+
+        updated_count = 0
+
+        try:
+            def update_data(data):
+                nonlocal updated_count
+                entities = list(data.get(self._data_key, []))
+                next_entities: List[Dict[str, Any]] = []
+                updated_count = 0
+
+                for raw in entities:
+                    if str(raw.get("id") or "").strip() not in wanted_ids:
+                        next_entities.append(raw)
+                        continue
+
+                    entity = self._get_entity_class().from_dict(raw)
+                    should_save = mutator(entity)
+                    if should_save is False:
+                        next_entities.append(raw)
+                        continue
+
+                    next_entities.append(entity.to_dict())
+                    updated_count += 1
+
+                if updated_count == 0:
+                    return None
+
+                data[self._data_key] = next_entities
+                self._touch_data(data, next_entities)
+                return data
+
+            return updated_count if self._storage.atomic_update(update_data) else 0
+        except Exception as e:
+            error_logger.error(f"批量更新实体失败: {e}")
+            return 0
+
+    def delete_many_by_ids(self, entity_ids: List[str]) -> int:
+        wanted_ids = self._normalize_entity_ids(entity_ids)
+        if not wanted_ids:
+            return 0
+
+        deleted_count = 0
+
+        try:
+            def update_data(data):
+                nonlocal deleted_count
+                entities = list(data.get(self._data_key, []))
+                next_entities = [
+                    item
+                    for item in entities
+                    if str(item.get("id") or "").strip() not in wanted_ids
+                ]
+                deleted_count = len(entities) - len(next_entities)
+                if deleted_count == 0:
+                    return None
+                data[self._data_key] = next_entities
+                self._touch_data(data, next_entities)
+                return data
+
+            return deleted_count if self._storage.atomic_update(update_data) else 0
+        except Exception as e:
+            error_logger.error(f"批量删除实体失败: {e}")
+            return 0
+
+    @staticmethod
+    def _normalize_entity_ids(entity_ids: List[str]) -> set[str]:
+        return {
+            str(entity_id or "").strip()
+            for entity_id in (entity_ids or [])
+            if str(entity_id or "").strip()
+        }
+
+
+class BaseJsonRepository(JsonRepositoryBatchMixin[T], BaseRepository[T], Generic[T]):
     
     def save(self, entity: T) -> bool:
         try:
@@ -42,7 +139,7 @@ class BaseJsonRepository(BaseRepository[T], Generic[T]):
                     entities.append(entity.to_dict())
                 
                 data[self._data_key] = entities
-                data["last_updated"] = get_current_time()
+                self._touch_data(data, entities)
                 return data
             
             return self._storage.atomic_update(update_data)
@@ -56,7 +153,7 @@ class BaseJsonRepository(BaseRepository[T], Generic[T]):
                 entities = data.get(self._data_key, [])
                 entities = [e for e in entities if e["id"] != entity_id]
                 data[self._data_key] = entities
-                data["last_updated"] = get_current_time()
+                self._touch_data(data, entities)
                 return data
             
             return self._storage.atomic_update(update_data)
