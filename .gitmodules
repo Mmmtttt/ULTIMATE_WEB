@@ -10,3 +10,6 @@
 [submodule "comic_backend/third_party/Missav"]
 	path = comic_backend/third_party/Missav
 	url = https://github.com/Mmmtttt/Missav.git
+[submodule "comic_backend/third_party/nhentai_for_ultimate"]
+	path = comic_backend/third_party/nhentai_for_ultimate
+	url = https://github.com/niaonhu001/nhentai_for_ultimate.git
