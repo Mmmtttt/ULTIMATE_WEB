@@ -1,5 +1,5 @@
 <template>
-  <div class="library-page">
+  <div class="library-page" :class="{ 'is-manage-mode': isManageMode }">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
       <van-search
@@ -109,9 +109,9 @@
       <div v-if="isManageMode" class="manage-bar">
         <div class="selection-info">已选 {{ selectedIds.length }} 项</div>
         <div class="manage-btns">
-          <van-button size="small" @click="isManageMode = false">取消</van-button>
+          <van-button size="small" @click="exitManageMode">取消</van-button>
           <van-button size="small" plain @click="toggleSelectAllItems">
-            {{ isAllItemsSelected ? '取消全选' : '全选' }}
+            {{ isAllItemsSelected ? '取消全选' : '全选全部' }}
           </van-button>
           <van-button size="small" type="primary" plain :disabled="selectedIds.length === 0" @click="openBatchTaskSheet">
             批量处理
@@ -291,6 +291,7 @@ const showBatchListPopup = ref(false)
 const showCustomOrderEditor = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
+const selectedItemMap = ref({})
 const batchSelectedListIds = ref([])
 const searchKeyword = ref('')
 const includeTags = ref([])
@@ -538,6 +539,7 @@ async function applyFilters(options = {}) {
   const shouldClosePanel = options.closePanel !== false
   const shouldPersistState = options.persist !== false
   if (shouldResetPage) {
+    clearSelection()
     skipNextPageFetch.value = currentPage.value !== 1
     goFirst()
   }
@@ -574,8 +576,17 @@ const menuActions = [
 
 const selectedItems = computed(() => {
   const selectedIdSet = new Set(selectedIds.value)
-  const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
-  return scopeItems.filter((item) => selectedIdSet.has(item.id))
+  const byId = {}
+  const rememberItem = (item) => {
+    const id = String(item?.id || '').trim()
+    if (id && selectedIdSet.has(id) && !byId[id]) {
+      byId[id] = item
+    }
+  }
+  selectionScopeItems.value.forEach(rememberItem)
+  Object.values(selectedItemMap.value).forEach(rememberItem)
+  displayItems.value.forEach(rememberItem)
+  return selectedIds.value.map((id) => byId[id]).filter(Boolean)
 })
 
 const batchTaskActions = computed(() => {
@@ -600,6 +611,7 @@ async function onSortConfirm({ selectedOptions }) {
     currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
     currentSortOrder.value = nextSort.sortOrder
     currentStore.value.setSortState?.(currentSortField.value || null, currentSortOrder.value)
+    clearSelection()
     skipNextPageFetch.value = currentPage.value !== 1
     goFirst()
 
@@ -737,8 +749,10 @@ const activeFilters = computed(() => {
 })
 
 const isAllItemsSelected = computed(() => {
-  const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
-  return isAllSelected(selectedIds.value, scopeItems, (item) => item.id)
+  if (selectionScopeItems.value.length === 0) {
+    return false
+  }
+  return isAllSelected(selectedIds.value, selectionScopeItems.value, (item) => item.id)
 })
 
 // Methods
@@ -780,8 +794,12 @@ function toggleSelection(item) {
   const id = item.id
   if (selectedIds.value.includes(id)) {
     selectedIds.value = selectedIds.value.filter(i => i !== id)
+    const nextMap = { ...selectedItemMap.value }
+    delete nextMap[id]
+    selectedItemMap.value = nextMap
   } else {
     selectedIds.value.push(id)
+    selectedItemMap.value = { ...selectedItemMap.value, [id]: item }
   }
 }
 
@@ -793,10 +811,34 @@ async function toggleSelectAllItems() {
     }
     const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
     toggleSelectAll(selectedIds, scopeItems, (item) => item.id)
+    rememberSelectedItems(scopeItems)
   } catch (error) {
     console.error('加载全选范围失败:', error)
     showToast('加载列表失败，请稍后重试')
   }
+}
+
+function rememberSelectedItems(items = []) {
+  const selectedIdSet = new Set(selectedIds.value)
+  const nextMap = { ...selectedItemMap.value }
+  for (const item of Array.isArray(items) ? items : []) {
+    const id = String(item?.id || '').trim()
+    if (id && selectedIdSet.has(id)) {
+      nextMap[id] = item
+    }
+  }
+  selectedItemMap.value = nextMap
+}
+
+function clearSelection() {
+  selectedIds.value = []
+  selectedItemMap.value = {}
+  selectionScopeItems.value = []
+}
+
+function exitManageMode() {
+  clearSelection()
+  isManageMode.value = false
 }
 
 async function openBatchTaskSheet() {
@@ -836,7 +878,7 @@ async function handleBatchTaskAction(action) {
   })
   if (created) {
     showBatchTaskSheet.value = false
-    selectedIds.value = []
+    clearSelection()
     isManageMode.value = false
   }
 }
@@ -885,7 +927,7 @@ async function batchDelete() {
     }
     
     showToast('已移入回收站')
-    selectedIds.value = []
+    clearSelection()
     isManageMode.value = false
     await loadData(true)
   } catch (e) {
@@ -928,8 +970,7 @@ async function batchAddToLists() {
 
   showBatchListPopup.value = false
   batchSelectedListIds.value = []
-  selectedIds.value = []
-  selectionScopeItems.value = []
+  clearSelection()
   isManageMode.value = false
     const contentType = isVideoMode.value ? 'video' : 'comic'
     await listStore.fetchLists(contentType)
@@ -947,10 +988,10 @@ async function clearAllFilters() {
   selectedListIds.value = []
   minScore.value = 0
   unreadOnly.value = false
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   await loadData()
-  selectionScopeItems.value = []
   await persistViewState()
 }
 
@@ -959,6 +1000,7 @@ function clearSearchKeyword() {
 }
 
 async function removeFilter(filter) {
+  clearSelection()
   if (filter.type === 'includeTag') {
     includeTags.value = includeTags.value.filter(id => id !== filter.value)
   } else if (filter.type === 'excludeTag') {
@@ -1029,7 +1071,7 @@ async function initializePage(force = false) {
 
 // Lifecycle
 watch(() => modeStore.currentMode, async () => {
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
   await initializePage(false)
 })
@@ -1051,8 +1093,7 @@ watch(() => route.query.tagId, async (newTagId) => {
 watch(
   () => pagedItems.value.map((item) => item.id),
   () => {
-    selectedIds.value = []
-    selectionScopeItems.value = []
+    rememberSelectedItems(pagedItems.value)
   }
 )
 
@@ -1078,6 +1119,7 @@ watch(searchKeyword, () => {
   if (suppressSearchStateWatch.value) {
     return
   }
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   debouncedSearchRefresh()
@@ -1093,6 +1135,17 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  --manage-bar-reserved-space: 0px;
+  padding-bottom: var(--manage-bar-reserved-space);
+  transition: padding-bottom 180ms var(--ease-standard);
+}
+
+.library-page.is-manage-mode {
+  --manage-bar-reserved-space: 112px;
+}
+
+.library-page.is-manage-mode .content-pagination {
+  margin-bottom: 92px;
 }
 
 .toolbar {
@@ -1300,10 +1353,21 @@ onMounted(async () => {
   .manage-bar {
     bottom: 58px;
     padding: 10px 12px;
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .manage-btns :deep(.van-button) {
-    min-width: 64px;
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 74px;
+  }
+
+  .library-page.is-manage-mode {
+    --manage-bar-reserved-space: 156px;
+  }
+
+  .library-page.is-manage-mode .content-pagination {
+    margin-bottom: 136px;
   }
 }
 

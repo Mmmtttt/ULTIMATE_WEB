@@ -1,5 +1,5 @@
 <template>
-  <div class="preview-page">
+  <div class="preview-page" :class="{ 'is-manage-mode': isManageMode }">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
       <van-search
@@ -106,9 +106,9 @@
       <div v-if="isManageMode" class="manage-bar">
         <div class="selection-info">已选 {{ selectedIds.length }} 项</div>
         <div class="manage-btns">
-          <van-button size="small" @click="isManageMode = false">取消</van-button>
+          <van-button size="small" @click="exitManageMode">取消</van-button>
           <van-button size="small" plain @click="toggleSelectAllItems">
-            {{ isAllItemsSelected ? '取消全选' : '全选' }}
+            {{ isAllItemsSelected ? '取消全选' : '全选全部' }}
           </van-button>
           <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="showBatchListPopup = true">
             加入清单
@@ -277,6 +277,7 @@ const showBatchListPopup = ref(false)
 const showCustomOrderEditor = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
+const selectedItemMap = ref({})
 const batchSelectedListIds = ref([])
 const showFilterPanel = ref(false)
 const searchKeyword = ref('')
@@ -621,8 +622,10 @@ const menuActions = [
 const sortOptions = computed(() => buildSortOptions(isVideoMode.value))
 
 const isAllItemsSelected = computed(() => {
-  const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
-  return isAllSelected(selectedIds.value, scopeItems, (item) => item.id)
+  if (selectionScopeItems.value.length === 0) {
+    return false
+  }
+  return isAllSelected(selectedIds.value, selectionScopeItems.value, (item) => item.id)
 })
 
 // Methods
@@ -654,8 +657,12 @@ function toggleSelection(item) {
   const id = item.id
   if (selectedIds.value.includes(id)) {
     selectedIds.value = selectedIds.value.filter(i => i !== id)
+    const nextMap = { ...selectedItemMap.value }
+    delete nextMap[id]
+    selectedItemMap.value = nextMap
   } else {
     selectedIds.value.push(id)
+    selectedItemMap.value = { ...selectedItemMap.value, [id]: item }
   }
 }
 
@@ -667,10 +674,34 @@ async function toggleSelectAllItems() {
     }
     const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
     toggleSelectAll(selectedIds, scopeItems, (item) => item.id)
+    rememberSelectedItems(scopeItems)
   } catch (error) {
     console.error('加载全选范围失败:', error)
     showToast('加载列表失败，请稍后重试')
   }
+}
+
+function rememberSelectedItems(items = []) {
+  const selectedIdSet = new Set(selectedIds.value)
+  const nextMap = { ...selectedItemMap.value }
+  for (const item of Array.isArray(items) ? items : []) {
+    const id = String(item?.id || '').trim()
+    if (id && selectedIdSet.has(id)) {
+      nextMap[id] = item
+    }
+  }
+  selectedItemMap.value = nextMap
+}
+
+function clearSelection() {
+  selectedIds.value = []
+  selectedItemMap.value = {}
+  selectionScopeItems.value = []
+}
+
+function exitManageMode() {
+  clearSelection()
+  isManageMode.value = false
 }
 
 function setViewMode(mode) {
@@ -719,7 +750,7 @@ async function batchImportToLocal() {
   importTaskStore.startPolling()
   showToast('任务已创建，请到“我的-任务中心”查看进度')
 
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
 }
 
@@ -741,7 +772,7 @@ async function batchTrash() {
   }
   
   showToast('已移入回收站')
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
   await loadData(true)
 }
@@ -779,8 +810,7 @@ async function batchAddToLists() {
 
     showBatchListPopup.value = false
     batchSelectedListIds.value = []
-    selectedIds.value = []
-    selectionScopeItems.value = []
+    clearSelection()
     isManageMode.value = false
     const contentType = isVideoMode.value ? 'video' : 'comic'
     await listStore.fetchLists(contentType)
@@ -798,10 +828,10 @@ async function clearAllFilters() {
   tempSelectedListIds.value = []
   tempMinScore.value = 0
   tempUnreadOnly.value = false
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   await loadData()
-  selectionScopeItems.value = []
   await persistViewState()
 }
 
@@ -810,6 +840,7 @@ function clearSearchKeyword() {
 }
 
 async function removeFilter(filter) {
+  clearSelection()
   if (filter.type === 'includeTag') {
     tempIncludeTags.value = tempIncludeTags.value.filter(id => id !== filter.value)
   } else if (filter.type === 'excludeTag') {
@@ -832,6 +863,7 @@ async function onSortConfirm({ selectedOptions }) {
   currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
   currentSortOrder.value = nextSort.sortOrder
   currentStore.value.setSortType(currentSortField.value || null, currentSortOrder.value)
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   const customSortSelected = currentSortField.value === 'custom'
@@ -923,6 +955,7 @@ async function applyCurrentFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
   const shouldPersistState = options.persist !== false
   if (shouldResetPage) {
+    clearSelection()
     skipNextPageFetch.value = currentPage.value !== 1
     goFirst()
   }
@@ -953,7 +986,7 @@ async function initializePage(force = false) {
 
 // Lifecycle
 watch(() => modeStore.currentMode, async () => {
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
   await initializePage(false)
 })
@@ -975,8 +1008,7 @@ watch(() => route.query.tagId, async (newTagId) => {
 watch(
   () => pagedItems.value.map((item) => item.id),
   () => {
-    selectedIds.value = []
-    selectionScopeItems.value = []
+    rememberSelectedItems(pagedItems.value)
   }
 )
 
@@ -1002,6 +1034,7 @@ watch(searchKeyword, () => {
   if (suppressSearchStateWatch.value) {
     return
   }
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   debouncedSearchRefresh()
@@ -1017,6 +1050,17 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  --manage-bar-reserved-space: 0px;
+  padding-bottom: var(--manage-bar-reserved-space);
+  transition: padding-bottom 180ms var(--ease-standard);
+}
+
+.preview-page.is-manage-mode {
+  --manage-bar-reserved-space: 112px;
+}
+
+.preview-page.is-manage-mode .content-pagination {
+  margin-bottom: 92px;
 }
 
 .active-filters {
@@ -1224,6 +1268,21 @@ onMounted(async () => {
   .manage-bar {
     bottom: 58px;
     padding: 10px 12px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manage-btns :deep(.van-button) {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 74px;
+  }
+
+  .preview-page.is-manage-mode {
+    --manage-bar-reserved-space: 156px;
+  }
+
+  .preview-page.is-manage-mode .content-pagination {
+    margin-bottom: 136px;
   }
 }
 

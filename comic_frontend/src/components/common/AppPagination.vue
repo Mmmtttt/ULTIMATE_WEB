@@ -193,7 +193,7 @@ const pageItems = computed(() => {
     ]
   }
 
-  if (total <= 7) {
+  if (total <= 9) {
     return Array.from({ length: total }, (_, index) => ({
       key: `p-${index + 1}`,
       type: 'page',
@@ -201,12 +201,36 @@ const pageItems = computed(() => {
     }))
   }
 
-  const items = []
-  for (let page = 1; page <= 7; page += 1) {
-    items.push({ key: `p-${page}`, type: 'page', value: page })
+  const pages = new Set([1, total])
+  const sideSlots = 2
+  let start = Math.max(2, current - sideSlots)
+  let end = Math.min(total - 1, current + sideSlots)
+
+  if (current <= 4) {
+    start = 2
+    end = 7
+  } else if (current >= total - 3) {
+    start = total - 6
+    end = total - 1
   }
-  items.push({ key: 'ellipsis-right', type: 'ellipsis', value: 'right' })
-  items.push({ key: `p-${total}`, type: 'page', value: total })
+
+  for (let page = start; page <= end; page += 1) {
+    pages.add(page)
+  }
+
+  const sortedPages = [...pages].sort((first, second) => first - second)
+  const items = []
+  sortedPages.forEach((page, index) => {
+    const previous = sortedPages[index - 1]
+    if (previous && page - previous > 1) {
+      items.push({
+        key: `ellipsis-${previous}-${page}`,
+        type: 'ellipsis',
+        value: `${previous}-${page}`
+      })
+    }
+    items.push({ key: `p-${page}`, type: 'page', value: page })
+  })
   return items
 })
 
