@@ -2351,6 +2351,16 @@ class LocalComicImportService:
         softref_cover_candidates: set[str] = set()
         pending_comic_records: List[Dict[str, Any]] = []
         pending_record_keys_by_comic_id: Dict[str, str] = {}
+        state_save_counter = 0
+        state_save_interval = 25
+
+        def save_import_state(*, force: bool = False) -> None:
+            nonlocal state_save_counter
+            if effective_mode == IMPORT_MODE_SOFTLINK_REF and not force:
+                state_save_counter += 1
+                if state_save_counter % state_save_interval != 0:
+                    return
+            self._save_state(session_id, state)
 
         for entry in items:
             work_path = str(entry.get("作品文件地址") or "").strip()
@@ -2384,7 +2394,7 @@ class LocalComicImportService:
                 }
             )
             records[key] = record
-            self._save_state(session_id, state)
+            save_import_state()
 
             try:
                 if key in existing_source_map:
@@ -2396,7 +2406,7 @@ class LocalComicImportService:
                         self._ensure_comic_has_tags(record["comic_id"], target_tag_ids)
                     record["error"] = ""
                     record["updated_at"] = self._timestamp()
-                    self._save_state(session_id, state)
+                    save_import_state()
                     continue
 
                 comic_id = str(record.get("comic_id", "")).strip()
@@ -2417,7 +2427,7 @@ class LocalComicImportService:
                     # 软连接模式不拷贝数据，封面使用首图接口兜底，避免依赖缺失的默认封面文件。
                     cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
                     record["data_moved"] = False
-                    self._save_state(session_id, state)
+                    save_import_state()
                 else:
                     storage_dir_name = str(record.get("local_asset_dir_name", "")).strip()
                     if not storage_dir_name:
@@ -2428,7 +2438,7 @@ class LocalComicImportService:
                             Path(LOCAL_PICTURES_DIR),
                         )
                         record["local_asset_dir_name"] = storage_dir_name
-                        self._save_state(session_id, state)
+                        save_import_state()
                     target_dir = Path(LOCAL_PICTURES_DIR) / storage_dir_name
                     moved_flag = bool(record.get("data_moved", False))
                     work_dir = Path(work_path)
@@ -2439,7 +2449,7 @@ class LocalComicImportService:
                             self._move_work_to_target(work_dir, target_dir)
                             record["data_moved"] = True
                             moved_flag = True
-                            self._save_state(session_id, state)
+                            save_import_state()
                     else:
                         if not work_dir.exists() or not work_dir.is_dir():
                             raise RuntimeError("作品目录不存在，可能已被删除")
@@ -2453,7 +2463,7 @@ class LocalComicImportService:
                         shutil.move(str(staging_dir), str(target_dir))
                         moved_flag = True
                         record["data_moved"] = True
-                        self._save_state(session_id, state)
+                        save_import_state()
 
                     if not target_dir.exists() or not target_dir.is_dir():
                         raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
@@ -2514,12 +2524,12 @@ class LocalComicImportService:
                 record["error"] = ""
                 record["effective_mode"] = effective_mode
                 record["updated_at"] = self._timestamp()
-                self._save_state(session_id, state)
+                save_import_state()
             except Exception as exc:
                 record["status"] = "failed"
                 record["error"] = str(exc)
                 record["updated_at"] = self._timestamp()
-                self._save_state(session_id, state)
+                save_import_state(force=True)
 
         if pending_comic_records:
             db_write_started_at = time.perf_counter()
@@ -2545,12 +2555,12 @@ class LocalComicImportService:
                     record["error"] = "写入漫画数据库失败"
                     record["updated_at"] = self._timestamp()
                 softref_cover_candidates.difference_update(failed_ids)
-                self._save_state(session_id, state)
+                save_import_state(force=True)
 
         summary = self._summarize_state(state)
         has_failed = summary["failed_count"] > 0
         state["status"] = "failed" if has_failed else "completed"
-        self._save_state(session_id, state)
+        save_import_state(force=True)
         self._update_meta(
             session_id,
             {

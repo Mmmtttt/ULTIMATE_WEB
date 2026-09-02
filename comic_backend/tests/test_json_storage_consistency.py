@@ -7,9 +7,14 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from infrastructure.persistence.json_storage import JsonStorage
+import infrastructure.persistence.json_storage as json_storage_module
+import infrastructure.persistence.catalog_index.writer as catalog_index_writer
 
 
-def test_json_storage_singleton_uses_normalized_absolute_path(tmp_path):
+def test_json_storage_singleton_uses_normalized_absolute_path(tmp_path, monkeypatch):
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     json_path = tmp_path / "sample.json"
     relative_like = json_path.parent / "." / json_path.name
 
@@ -20,7 +25,10 @@ def test_json_storage_singleton_uses_normalized_absolute_path(tmp_path):
     assert first.json_file == str(json_path.resolve())
 
 
-def test_json_storage_creates_precise_default_video_recommendation_schema(tmp_path):
+def test_json_storage_creates_precise_default_video_recommendation_schema(tmp_path, monkeypatch):
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     json_path = tmp_path / "video_recommendations_database.json"
     storage = JsonStorage(str(json_path))
 
@@ -28,3 +36,40 @@ def test_json_storage_creates_precise_default_video_recommendation_schema(tmp_pa
 
     assert payload["total_video_recommendations"] == 0
     assert payload["video_recommendations"] == []
+
+
+def test_deferred_catalog_index_sync_coalesces_repeated_writes(tmp_path, monkeypatch):
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
+    calls = []
+
+    def fake_sync(file_name, old_data, new_data):
+        calls.append(
+            {
+                "file_name": file_name,
+                "old_data": old_data,
+                "new_data": new_data,
+            }
+        )
+
+    monkeypatch.setattr(catalog_index_writer, "sync_after_json_write", fake_sync)
+    storage = JsonStorage("comics_database.json")
+
+    with JsonStorage.defer_catalog_index_sync():
+        assert storage.write({"comics": [{"id": "LOCAL001"}], "total_comics": 1})
+        assert storage.atomic_update(
+            lambda data: {
+                **data,
+                "comics": [
+                    {"id": "LOCAL001"},
+                    {"id": "LOCAL002"},
+                ],
+                "total_comics": 2,
+            }
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["file_name"] == "comics_database.json"
+    assert calls[0]["old_data"] is None
+    assert [item["id"] for item in calls[0]["new_data"]["comics"]] == ["LOCAL001", "LOCAL002"]

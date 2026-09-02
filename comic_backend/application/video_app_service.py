@@ -47,6 +47,7 @@ from infrastructure.persistence.repositories.video_recommendation_repository_imp
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
 from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
@@ -2004,78 +2005,86 @@ class VideoAppService(BaseContentAppService):
             skipped_items: List[Dict[str, str]] = []
             skipped_items.extend(list(import_plan.get("skipped_items") or []))
             failed_items: List[Dict[str, str]] = []
-            for unit in list(import_plan.get("units") or []):
-                unit_root = str(unit.get("root") or source_dir).strip() or source_dir
-                unit_filenames = list(unit.get("filenames") or [])
-                try:
-                    group_result = self._import_local_video_group(
-                        unit_root,
-                        unit_filenames,
-                        normalized_mode=normalized_mode,
-                        title_hint=str(unit.get("title_hint") or "").strip(),
-                        code_hint=str(unit.get("code_hint") or "").strip(),
-                    )
-                    if group_result.get("status") == "imported":
-                        imported_count += 1
-                        imported_video_id = str(group_result.get("video_id") or "").strip()
-                        if imported_video_id and imported_video_id not in seen_imported_ids:
-                            imported_ids.append(imported_video_id)
-                            seen_imported_ids.add(imported_video_id)
-                        if group_result.get("attached"):
-                            attached_source_count += 1
-                        appended_episode_count += int(group_result.get("episode_count") or 0)
-                        duplicate_files = list(group_result.get("duplicate_files") or [])
-                        duplicate_episode_count += len(duplicate_files)
-                        for duplicate_file in duplicate_files:
-                            skipped_count += 1
-                            skipped_items.append(
-                                {
-                                    "file": str(duplicate_file or ""),
-                                    "reason": "duplicate_episode_exists",
-                                    "duplicate_id": str(group_result.get("video_id") or ""),
-                                    "code": str(group_result.get("code") or ""),
-                                }
-                            )
-                        continue
+            sync_started_at = time.perf_counter()
+            with JsonStorage.defer_catalog_index_sync():
+                for unit in list(import_plan.get("units") or []):
+                    unit_root = str(unit.get("root") or source_dir).strip() or source_dir
+                    unit_filenames = list(unit.get("filenames") or [])
+                    try:
+                        group_result = self._import_local_video_group(
+                            unit_root,
+                            unit_filenames,
+                            normalized_mode=normalized_mode,
+                            title_hint=str(unit.get("title_hint") or "").strip(),
+                            code_hint=str(unit.get("code_hint") or "").strip(),
+                        )
+                        if group_result.get("status") == "imported":
+                            imported_count += 1
+                            imported_video_id = str(group_result.get("video_id") or "").strip()
+                            if imported_video_id and imported_video_id not in seen_imported_ids:
+                                imported_ids.append(imported_video_id)
+                                seen_imported_ids.add(imported_video_id)
+                            if group_result.get("attached"):
+                                attached_source_count += 1
+                            appended_episode_count += int(group_result.get("episode_count") or 0)
+                            duplicate_files = list(group_result.get("duplicate_files") or [])
+                            duplicate_episode_count += len(duplicate_files)
+                            for duplicate_file in duplicate_files:
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": str(duplicate_file or ""),
+                                        "reason": "duplicate_episode_exists",
+                                        "duplicate_id": str(group_result.get("video_id") or ""),
+                                        "code": str(group_result.get("code") or ""),
+                                    }
+                                )
+                            continue
 
-                    duplicate_files = list(group_result.get("duplicate_files") or [])
-                    if duplicate_files:
-                        duplicate_episode_count += len(duplicate_files)
-                        for duplicate_file in duplicate_files:
+                        duplicate_files = list(group_result.get("duplicate_files") or [])
+                        if duplicate_files:
+                            duplicate_episode_count += len(duplicate_files)
+                            for duplicate_file in duplicate_files:
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": str(duplicate_file or ""),
+                                        "reason": str(group_result.get("reason") or "duplicate_episode_exists"),
+                                        "duplicate_id": str(group_result.get("duplicate_id") or ""),
+                                        "code": str(group_result.get("code") or ""),
+                                    }
+                                )
+                        else:
                             skipped_count += 1
                             skipped_items.append(
                                 {
-                                    "file": str(duplicate_file or ""),
-                                    "reason": str(group_result.get("reason") or "duplicate_episode_exists"),
+                                    "file": unit_root,
+                                    "reason": str(group_result.get("reason") or "group_skipped"),
                                     "duplicate_id": str(group_result.get("duplicate_id") or ""),
                                     "code": str(group_result.get("code") or ""),
                                 }
                             )
-                    else:
-                        skipped_count += 1
-                        skipped_items.append(
+                    except Exception as item_error:
+                        failed_count += 1
+                        failed_items.append(
                             {
                                 "file": unit_root,
-                                "reason": str(group_result.get("reason") or "group_skipped"),
-                                "duplicate_id": str(group_result.get("duplicate_id") or ""),
-                                "code": str(group_result.get("code") or ""),
+                                "reason": str(item_error),
                             }
                         )
-                except Exception as item_error:
-                    failed_count += 1
-                    failed_items.append(
-                        {
-                            "file": unit_root,
-                            "reason": str(item_error),
-                        }
-                    )
 
-            if imported_ids:
-                recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
-                if not recent_result.success:
-                    app_logger.warning(
-                        f"update recent import tags failed after local video import: {recent_result.message}"
-                    )
+                if imported_ids:
+                    recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
+                    if not recent_result.success:
+                        app_logger.warning(
+                            f"update recent import tags failed after local video import: {recent_result.message}"
+                        )
+            sync_elapsed_ms = (time.perf_counter() - sync_started_at) * 1000
+            app_logger.info(
+                "本地视频导入写入与索引同步完成: "
+                f"mode={normalized_mode}, grouping={normalized_grouping_mode}, imported={imported_count}, "
+                f"attached={attached_source_count}, elapsed_ms={sync_elapsed_ms:.2f}"
+            )
 
             mode_label = "软连接（保留源文件）" if normalized_mode == self.LOCAL_IMPORT_MODE_SOFTLINK_REF else "硬链接（移动源文件）"
             grouping_label = "逐文件导入" if normalized_grouping_mode == self.LOCAL_IMPORT_GROUPING_PER_FILE else "叶子目录合并"

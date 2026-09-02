@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+from contextlib import contextmanager
 import json
 import os
 import shutil
@@ -21,6 +23,7 @@ def _get_file_name_from_path(path: str) -> str:
 class JsonStorage:
     _instances: Dict[str, "JsonStorage"] = {}
     _locks: Dict[str, threading.RLock] = {}
+    _deferred_index_sync = threading.local()
 
     def __new__(cls, json_file: str = None, space_mode: str = None):
         if json_file is None:
@@ -68,6 +71,40 @@ class JsonStorage:
     @property
     def json_file(self) -> str:
         return self._get_json_file()
+
+    @classmethod
+    @contextmanager
+    def defer_catalog_index_sync(cls):
+        stack = getattr(cls._deferred_index_sync, "stack", None)
+        if stack is None:
+            stack = []
+            cls._deferred_index_sync.stack = stack
+
+        pending: Dict[str, Dict[str, object]] = {}
+        stack.append(pending)
+        try:
+            yield
+        finally:
+            stack.pop()
+            if stack:
+                parent = stack[-1]
+                for file_name, payload in pending.items():
+                    current = parent.setdefault(
+                        file_name,
+                        {
+                            "old": payload.get("old"),
+                            "old_set": payload.get("old_set", False),
+                            "new": payload.get("new"),
+                        },
+                    )
+                    if not current.get("old_set"):
+                        current["old"] = payload.get("old")
+                        current["old_set"] = payload.get("old_set", False)
+                    current["new"] = payload.get("new")
+                return
+
+            for file_name, payload in pending.items():
+                cls._sync_catalog_index_payload(file_name, payload.get("old"), payload.get("new"))
 
     def _cleanup_stale_temp_files(self, force: bool = False) -> int:
         try:
@@ -397,9 +434,35 @@ class JsonStorage:
         return {data_key: snapshot_items}
 
     def _sync_catalog_index_after_write(self, old_data: Optional[dict], new_data: dict) -> None:
+        if self._queue_deferred_catalog_index_sync(old_data, new_data):
+            return
+        self._sync_catalog_index_payload(self._file_name, old_data, new_data)
+
+    def _queue_deferred_catalog_index_sync(self, old_data: Optional[dict], new_data: dict) -> bool:
+        stack = getattr(self._deferred_index_sync, "stack", None)
+        if not stack:
+            return False
+
+        pending = stack[-1]
+        file_name = self._file_name
+        payload = pending.setdefault(
+            file_name,
+            {
+                "old": copy.deepcopy(old_data),
+                "old_set": True,
+                "new": None,
+            },
+        )
+        payload["new"] = copy.deepcopy(new_data)
+        return True
+
+    @staticmethod
+    def _sync_catalog_index_payload(file_name: str, old_data: Optional[dict], new_data: Optional[dict]) -> None:
+        if new_data is None:
+            return
         try:
             from infrastructure.persistence.catalog_index.writer import sync_after_json_write
 
-            sync_after_json_write(self._file_name, old_data, new_data)
+            sync_after_json_write(file_name, old_data, new_data)
         except Exception as e:
-            error_logger.warning(f"同步 catalog index 失败，不影响 JSON 写入: {self._file_name}, {e}")
+            error_logger.warning(f"同步 catalog index 失败，不影响 JSON 写入: {file_name}, {e}")
