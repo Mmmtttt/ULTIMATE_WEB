@@ -20,15 +20,21 @@ def test_author_service_search_works_forwards_platform_adapter_contract(third_pa
       2. 调用 author_service._search_works("Alice", page=1, max_pages=2)。
       3. 校验 adapter_name/max_pages/fast_mode 参数和返回平台字段。
     - 预期结果:
-      1. search_albums 分别以 jmcomic/picacomic 被调用。
+      1. search_albums 至少以 jmcomic/picacomic 被调用（平台列表来自协议注册表，随插件动态扩展，如 nhentai）。
       2. max_pages=2、fast_mode=True 被正确传递。
       3. 返回 works 同时包含 JM、PK 平台。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者第三方搜索契约。
+      - 2026-09-02: 适配 nhentai 插件接入，改为子集断言避免平台集合硬编码。
     """
     author_api = third_party_client["author_api"]
     service = author_api.author_service
     calls = []
+
+    albums_by_adapter = {
+        "jmcomic": [{"album_id": "1001", "title": "JM Work", "cover_url": "u1", "pages": 5}],
+        "picacomic": [{"album_id": "2001", "title": "PK Work", "cover_url": "u2", "pages": 6}],
+    }
 
     class FakeExternalApi:
         def search_albums(self, keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
@@ -41,17 +47,15 @@ def test_author_service_search_works_forwards_platform_adapter_contract(third_pa
                     "fast_mode": fast_mode,
                 }
             )
-            if adapter_name == "jmcomic":
-                return {"albums": [{"album_id": "1001", "title": "JM Work", "cover_url": "u1", "pages": 5}]}
-            return {"albums": [{"album_id": "2001", "title": "PK Work", "cover_url": "u2", "pages": 6}]}
+            return {"albums": albums_by_adapter.get(adapter_name, [])}
 
     monkeypatch.setattr(service, "_get_external_api", lambda: FakeExternalApi())
 
     result = service._search_works("Alice", page=1, max_pages=2)
     works = result.get("works", [])
 
-    assert len(calls) == 2
-    assert {item["adapter_name"] for item in calls} == {"jmcomic", "picacomic"}
+    # 平台列表来自协议注册表并随插件动态扩展（如 nhentai），这里只看护 jm/picacomic 的子集契约
+    assert {"jmcomic", "picacomic"}.issubset({item["adapter_name"] for item in calls})
     assert all(item["keyword"] == "Alice" for item in calls)
     assert all(int(item["page"]) == 1 for item in calls)
     assert all(int(item["max_pages"]) == 2 for item in calls)
@@ -120,6 +124,7 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
       3. search_albums 与 get_album_by_id 均被触发。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者新作详情补全契约。
+      - 2026-09-02: 适配 nhentai 插件接入，mock 对未知平台返回空结果。
     """
     client = third_party_client["client"]
     author_api = third_party_client["author_api"]
@@ -132,6 +137,11 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
     assert sub_payload["code"] == 200
     author_id = sub_payload["data"]["id"]
 
+    albums_by_adapter = {
+        "jmcomic": [{"album_id": "91001", "title": "JM Raw", "cover_url": "u1", "pages": 4}],
+        "picacomic": [{"album_id": "92001", "title": "PK Raw", "cover_url": "u2", "pages": 5}],
+    }
+
     class FakeExternalApi:
         def search_albums(self, keyword, max_pages=1, adapter_name=None, fast_mode=False):
             calls["search"].append(
@@ -142,9 +152,7 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
                     "fast_mode": fast_mode,
                 }
             )
-            if adapter_name == "jmcomic":
-                return {"albums": [{"album_id": "91001", "title": "JM Raw", "cover_url": "u1", "pages": 4}]}
-            return {"albums": [{"album_id": "92001", "title": "PK Raw", "cover_url": "u2", "pages": 5}]}
+            return {"albums": albums_by_adapter.get(adapter_name, [])}
 
         def get_album_by_id(self, work_id):
             calls["detail"].append(str(work_id))

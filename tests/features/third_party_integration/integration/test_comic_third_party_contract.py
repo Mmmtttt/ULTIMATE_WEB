@@ -96,8 +96,11 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
       3. 校验 JM/PK/JAVDB 插件元数据和 JAVDB 帮助链接均存在。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. plugins 中至少包含 comic.jmcomic、comic.picacomic、video.javdb。
-      3. adapter_order 与协议 manifest 一致，helper_urls 由协议自动生成。
+      2. plugins 中至少包含 comic.jmcomic、comic.picacomic、comic.nhentai、video.javdb。
+      3. adapter_order 覆盖上述漫画适配器且与协议 manifest 动态一致（随插件扩展），helper_urls 由协议自动生成。
+    - 历史变更:
+      - 2026-03-23: 初始创建。
+      - 2026-09-02: 接入 nhentai 插件，adapter_order 改为子集断言避免插件集合硬编码。
     """
     client = third_party_client["client"]
 
@@ -110,8 +113,9 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     data = payload["data"] or {}
     plugin_map = {item.get("plugin_id"): item for item in (data.get("plugins") or [])}
     plugin_ids = set(plugin_map.keys())
-    assert {"comic.jmcomic", "comic.picacomic", "video.javdb"}.issubset(plugin_ids)
-    assert data.get("adapter_order") == ["jmcomic", "picacomic", "javdb"]
+    assert {"comic.jmcomic", "comic.picacomic", "comic.nhentai", "video.javdb"}.issubset(plugin_ids)
+    adapter_order = set(data.get("adapter_order") or [])
+    assert {"jmcomic", "picacomic", "nhentai", "javdb"}.issubset(adapter_order)
     assert "teledrive" not in data.get("adapter_order", [])
     assert "teledrive" in data.get("config_order", [])
     helper_urls = data.get("helper_urls") or {}
@@ -138,14 +142,17 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
       3. 断言 JM/PK 两个平台都被调用，且参数正确映射。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. search_albums 被调用两次，adapter_name 分别为 jmcomic/picacomic。
+      2. search_albums 至少为 jmcomic/picacomic 各调用一次（平台集合随插件动态扩展，如 nhentai）。
       3. page=2、max_pages=1、fast_mode=True 被正确透传。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖第三方搜索参数映射契约。
+      - 2026-09-02: 适配 nhentai 插件接入，改为子集断言，未知平台 mock 返回空结果。
     """
     client = third_party_client["client"]
     external_api = importlib.import_module("third_party.external_api")
     calls = []
+
+    searchable_adapters = {"jmcomic", "picacomic"}
 
     def fake_search_albums(keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
         calls.append(
@@ -157,8 +164,11 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
                 "fast_mode": fast_mode,
             }
         )
+        albums = []
+        if adapter_name in searchable_adapters:
+            albums = [{"album_id": f"{adapter_name}-id", "title": f"title-{adapter_name}", "tags": []}]
         return {
-            "albums": [{"album_id": f"{adapter_name}-id", "title": f"title-{adapter_name}", "tags": []}],
+            "albums": albums,
             "page": page,
             "total_pages": 4,
             "has_next": adapter_name == "jmcomic",
@@ -179,7 +189,7 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     assert all((((item.get("display") or {}).get("cover") or {}).get("aspect_ratio") == "2 / 3") for item in data["results"])
 
     called_adapters = {item["adapter_name"] for item in calls}
-    assert called_adapters == {"jmcomic", "picacomic"}
+    assert {"jmcomic", "picacomic"}.issubset(called_adapters)
     assert all(item["keyword"] == "test-keyword" for item in calls)
     assert all(item["page"] == 2 for item in calls)
     assert all(item["max_pages"] == 1 for item in calls)
@@ -248,8 +258,10 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
         payload = response.get_json()
         assert response.status_code == 200
         assert payload["code"] == 200
-        assert calls == ["jmcomic"]
-        assert len((payload["data"] or {}).get("results") or []) == 1
+        # 未配置凭据的 picacomic 必须被跳过；nhentai 走匿名访问视为已配置，可一并参与 all 搜索
+        assert "jmcomic" in calls
+        assert "picacomic" not in calls
+        assert len((payload["data"] or {}).get("results") or []) == len(calls)
         platform_errors = (payload["data"] or {}).get("platform_errors") or {}
         assert "PK" in platform_errors
         assert "未配置账号或密码" in str(platform_errors.get("PK", ""))
