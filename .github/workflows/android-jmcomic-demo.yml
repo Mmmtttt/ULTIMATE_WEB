@@ -7,6 +7,12 @@ on:
     paths:
       - 'android_jmcomic_demo/**'
       - '.github/workflows/android-jmcomic-demo.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'android_jmcomic_demo/**'
+      - '.github/workflows/android-jmcomic-demo.yml'
   workflow_dispatch:
 
 jobs:
