@@ -1,0 +1,37 @@
+plugins {
+    id 'com.android.application'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.mmtttt.jmcomicdemo'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.mmtttt.jmcomicdemo'
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+
+        ndk {
+            // curl_cffi currently publishes an Android wheel for ARM64.
+            abiFilters 'arm64-v8a'
+        }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = '3.13'
+        pip {
+            // Pin the native packages to versions known to have Android/Chaquopy wheels.
+            install 'jmcomic'
+            install 'curl-cffi==0.16.3'
+            install 'cffi==1.17.1'
+            install 'Pillow==11.0.0'
+            install 'pycryptodome==3.21.0'
+            install 'PyYAML==6.0.2'
+        }
+    }
+}
