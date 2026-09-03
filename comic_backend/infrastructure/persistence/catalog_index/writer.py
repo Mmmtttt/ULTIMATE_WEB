@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from infrastructure.logger import app_logger, error_logger
 
@@ -17,7 +17,13 @@ from .connection import catalog_index_connection, get_catalog_index_path
 from .schema import catalog_search_available
 
 
-def sync_after_json_write(file_name: str, old_data: Dict[str, Any] | None, new_data: Dict[str, Any] | None) -> Dict[str, Any]:
+def sync_after_json_write(
+    file_name: str,
+    old_data: Dict[str, Any] | None,
+    new_data: Dict[str, Any] | None,
+    *,
+    changed_ids: Iterable[Any] | None = None,
+) -> Dict[str, Any]:
     if not _index_sync_enabled():
         return {"synced": False, "reason": "disabled"}
 
@@ -32,9 +38,10 @@ def sync_after_json_write(file_name: str, old_data: Dict[str, Any] | None, new_d
     if not os.path.exists(get_catalog_index_path()):
         return {"synced": False, "reason": "index_missing"}
 
-    old_items = _normalize_items((old_data or {}).get(spec["data_key"]))
-    new_items = _normalize_items((new_data or {}).get(spec["data_key"]))
-    return _sync_content_document(spec, old_items, new_items)
+    normalized_changed_ids = _normalize_changed_ids(changed_ids)
+    old_items = _normalize_items((old_data or {}).get(spec["data_key"]), normalized_changed_ids)
+    new_items = _normalize_items((new_data or {}).get(spec["data_key"]), normalized_changed_ids)
+    return _sync_content_document(spec, old_items, new_items, changed_ids=normalized_changed_ids)
 
 
 def _index_sync_enabled() -> bool:
@@ -42,8 +49,26 @@ def _index_sync_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
-def _normalize_items(value: Any) -> List[Dict[str, Any]]:
-    return [dict(item or {}) for item in (value or []) if isinstance(item, dict)]
+def _normalize_changed_ids(changed_ids: Iterable[Any] | None) -> Optional[Set[str]]:
+    if changed_ids is None:
+        return None
+    return {
+        str(item or "").strip()
+        for item in changed_ids
+        if str(item or "").strip()
+    }
+
+
+def _normalize_items(value: Any, changed_ids: Optional[Set[str]] = None) -> List[Tuple[int, Dict[str, Any]]]:
+    items: List[Tuple[int, Dict[str, Any]]] = []
+    for index, item in enumerate(value or []):
+        if not isinstance(item, dict):
+            continue
+        item_id = _item_id(item)
+        if changed_ids is not None and item_id not in changed_ids:
+            continue
+        items.append((index, dict(item or {})))
+    return items
 
 
 def _item_id(item: Dict[str, Any]) -> str:
@@ -62,9 +87,15 @@ def _rebuild_for_tag_change() -> Dict[str, Any]:
         return {"synced": False, "reason": "rebuild_failed", "error": str(exc)}
 
 
-def _sync_content_document(spec: Dict[str, str], old_items: List[Dict[str, Any]], new_items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    old_by_id = {_item_id(item): (index, item) for index, item in enumerate(old_items) if _item_id(item)}
-    new_by_id = {_item_id(item): (index, item) for index, item in enumerate(new_items) if _item_id(item)}
+def _sync_content_document(
+    spec: Dict[str, str],
+    old_items: List[Tuple[int, Dict[str, Any]]],
+    new_items: List[Tuple[int, Dict[str, Any]]],
+    *,
+    changed_ids: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    old_by_id = {_item_id(item): (index, item) for index, item in old_items if _item_id(item)}
+    new_by_id = {_item_id(item): (index, item) for index, item in new_items if _item_id(item)}
 
     removed_ids = sorted(set(old_by_id) - set(new_by_id))
     changed_items: List[tuple[int, Dict[str, Any]]] = []
@@ -142,10 +173,11 @@ def _sync_content_document(spec: Dict[str, str], old_items: List[Dict[str, Any]]
 
         result = {
             "synced": True,
-            "mode": "incremental",
+            "mode": "changed_ids" if changed_ids is not None else "incremental",
             "logical_name": spec["logical_name"],
             "changed_count": len(changed_items),
             "removed_count": len(removed_ids),
+            "requested_changed_count": len(changed_ids) if changed_ids is not None else None,
         }
         app_logger.info(f"Catalog index 增量同步完成: {result}")
         return result

@@ -83,7 +83,7 @@ class JsonRepositoryBatchMixin(Generic[T]):
                 self._touch_data(data, next_entities)
                 return data
 
-            return updated_count if self._storage.atomic_update(update_data) else 0
+            return updated_count if self._storage.atomic_update(update_data, catalog_index_changed_ids=wanted_ids) else 0
         except Exception as e:
             error_logger.error(f"批量更新实体失败: {e}")
             return 0
@@ -98,6 +98,10 @@ class JsonRepositoryBatchMixin(Generic[T]):
         if not valid_entities:
             return 0
 
+        valid_entity_ids = [
+            str(entity.id).strip()
+            for entity in valid_entities
+        ]
         saved_count = 0
 
         try:
@@ -132,7 +136,10 @@ class JsonRepositoryBatchMixin(Generic[T]):
                 self._touch_data(data, next_entities)
                 return data
 
-            return saved_count if self._storage.atomic_update(update_data) else 0
+            return saved_count if self._storage.atomic_update(
+                update_data,
+                catalog_index_changed_ids=valid_entity_ids,
+            ) else 0
         except Exception as e:
             error_logger.error(f"批量保存实体失败: {e}")
             return 0
@@ -160,7 +167,7 @@ class JsonRepositoryBatchMixin(Generic[T]):
                 self._touch_data(data, next_entities)
                 return data
 
-            return deleted_count if self._storage.atomic_update(update_data) else 0
+            return deleted_count if self._storage.atomic_update(update_data, catalog_index_changed_ids=wanted_ids) else 0
         except Exception as e:
             error_logger.error(f"批量删除实体失败: {e}")
             return 0
@@ -191,7 +198,7 @@ class BaseJsonRepository(JsonRepositoryBatchMixin[T], BaseRepository[T], Generic
                 self._touch_data(data, entities)
                 return data
             
-            return self._storage.atomic_update(update_data)
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[entity.id])
         except Exception as e:
             error_logger.error(f"保存实体失败: {e}")
             return False

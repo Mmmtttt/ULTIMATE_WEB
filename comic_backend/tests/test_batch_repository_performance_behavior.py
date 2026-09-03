@@ -27,7 +27,7 @@ def test_batch_update_many_by_ids_syncs_index_once(tmp_path, monkeypatch):
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -61,7 +61,7 @@ def test_batch_delete_many_by_ids_syncs_index_once(tmp_path, monkeypatch):
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -92,7 +92,7 @@ def test_batch_update_many_by_ids_skips_write_when_no_entity_matches(tmp_path, m
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -119,7 +119,7 @@ def test_batch_save_many_syncs_index_once(tmp_path, monkeypatch):
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -159,7 +159,7 @@ def test_batch_save_many_skips_write_when_entities_missing(tmp_path, monkeypatch
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write({"comics": [], "total_comics": 0})
@@ -177,7 +177,7 @@ def test_comic_batch_delete_permanently_uses_single_repository_write(tmp_path, m
     monkeypatch.setattr(
         catalog_index_writer,
         "sync_after_json_write",
-        lambda file_name, old_data, new_data: calls.append(file_name),
+        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
