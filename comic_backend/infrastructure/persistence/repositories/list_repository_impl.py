@@ -68,29 +68,50 @@ class ListJsonRepository(ListRepository):
     
     def delete(self, list_id: str) -> bool:
         try:
-            # 从清单数据库删除清单
-            data = self._storage.read()
-            lists = data.get("lists", [])
-            lists = [l for l in lists if l["id"] != list_id]
-            data["lists"] = lists
-            data["last_updated"] = get_current_time()
-            
-            # 保存清单数据库
-            if not self._storage.write(data):
+            def update_lists(data):
+                lists = data.get("lists", [])
+                data["lists"] = [l for l in lists if l["id"] != list_id]
+                data["last_updated"] = get_current_time()
+                return data
+
+            if not self._storage.atomic_update(update_lists):
                 return False
-            
+
             # 从所有内容数据库中移除对该清单的引用
             for db_file, content_key in self._get_content_databases():
                 content_storage = JsonStorage(db_file)
                 content_data = content_storage.read()
-                contents = content_data.get(content_key, [])
-                
-                for content in contents:
-                    if list_id in content.get("list_ids", []):
-                        content["list_ids"] = [lid for lid in content.get("list_ids", []) if lid != list_id]
-                
-                content_data[content_key] = contents
-                content_storage.write(content_data)
+                changed_ids = [
+                    str(content.get("id") or "").strip()
+                    for content in content_data.get(content_key, [])
+                    if isinstance(content, dict)
+                    and str(content.get("id") or "").strip()
+                    and list_id in (content.get("list_ids") or [])
+                ]
+                if not changed_ids:
+                    continue
+
+                def update_contents(data, key=content_key):
+                    contents = data.get(key, [])
+                    changed = False
+                    for content in contents:
+                        if not isinstance(content, dict):
+                            continue
+                        list_ids = content.get("list_ids") or []
+                        if list_id not in list_ids:
+                            continue
+                        content["list_ids"] = [lid for lid in list_ids if lid != list_id]
+                        changed = True
+                    if not changed:
+                        return None
+                    data[key] = contents
+                    data["last_updated"] = get_current_time()
+                    return data
+
+                content_storage.atomic_update(
+                    update_contents,
+                    catalog_index_changed_ids=changed_ids,
+                )
             
             return True
         except Exception as e:

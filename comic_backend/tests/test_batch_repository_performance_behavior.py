@@ -8,11 +8,14 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from domain.comic import Comic
+from domain.recommendation import Recommendation
 from application.comic_app_service import ComicAppService
 from infrastructure.persistence.json_storage import JsonStorage
 import infrastructure.persistence.catalog_index.writer as catalog_index_writer
 import infrastructure.persistence.json_storage as json_storage_module
 from infrastructure.persistence.repositories.comic_repository_impl import ComicJsonRepository
+from infrastructure.persistence.repositories.list_repository_impl import ListJsonRepository
+from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 
 
 def _reset_json_storage(tmp_path, monkeypatch):
@@ -169,6 +172,87 @@ def test_batch_save_many_skips_write_when_entities_missing(tmp_path, monkeypatch
     assert repo.save_many([]) == 0
     assert repo.save_many([None]) == 0
     assert calls == []
+
+
+def test_content_repository_save_and_delete_pass_changed_ids_to_index(tmp_path, monkeypatch):
+    _reset_json_storage(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        catalog_index_writer,
+        "sync_after_json_write",
+        lambda file_name, old_data, new_data, **kwargs: calls.append(
+            {"file_name": file_name, "changed_ids": kwargs.get("changed_ids")}
+        ),
+    )
+    comic_storage = JsonStorage("comics_database.json")
+    rec_storage = JsonStorage("recommendations_database.json")
+    assert comic_storage.write({"comics": [], "total_comics": 0})
+    assert rec_storage.write({"recommendations": [], "total_recommendations": 0})
+    calls.clear()
+
+    comic_repo = ComicJsonRepository(storage=comic_storage)
+    rec_repo = RecommendationJsonRepository(storage=rec_storage)
+
+    assert comic_repo.save(Comic(id="COMIC001", title="Comic 1"))
+    assert comic_repo.delete("COMIC001")
+    assert rec_repo.save(Recommendation(id="REC001", title="Rec 1"))
+    assert rec_repo.delete("REC001")
+
+    assert calls == [
+        {"file_name": "comics_database.json", "changed_ids": {"COMIC001"}},
+        {"file_name": "comics_database.json", "changed_ids": {"COMIC001"}},
+        {"file_name": "recommendations_database.json", "changed_ids": {"REC001"}},
+        {"file_name": "recommendations_database.json", "changed_ids": {"REC001"}},
+    ]
+
+
+def test_list_delete_only_syncs_content_files_with_affected_ids(tmp_path, monkeypatch):
+    _reset_json_storage(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        catalog_index_writer,
+        "sync_after_json_write",
+        lambda file_name, old_data, new_data, **kwargs: calls.append(
+            {"file_name": file_name, "changed_ids": kwargs.get("changed_ids")}
+        ),
+    )
+    list_storage = JsonStorage("lists_database.json")
+    comic_storage = JsonStorage("comics_database.json")
+    rec_storage = JsonStorage("recommendations_database.json")
+    video_storage = JsonStorage("videos_database.json")
+    vrec_storage = JsonStorage("video_recommendations_database.json")
+    assert list_storage.write(
+        {"lists": [{"id": "list_target", "name": "Target"}], "last_updated": "2026-01-01"}
+    )
+    assert comic_storage.write(
+        {
+            "comics": [
+                {**Comic(id="COMIC001", title="Comic 1").to_dict(), "list_ids": ["list_target"]},
+                {**Comic(id="COMIC002", title="Comic 2").to_dict(), "list_ids": []},
+            ],
+            "total_comics": 2,
+        }
+    )
+    assert rec_storage.write(
+        {
+            "recommendations": [
+                {**Recommendation(id="REC001", title="Rec 1").to_dict(), "list_ids": ["list_target"]},
+            ],
+            "total_recommendations": 1,
+        }
+    )
+    assert video_storage.write({"videos": [], "total_videos": 0})
+    assert vrec_storage.write({"video_recommendations": [], "total_video_recommendations": 0})
+    calls.clear()
+
+    repo = ListJsonRepository(storage=list_storage)
+    assert repo.delete("list_target")
+
+    assert calls == [
+        {"file_name": "lists_database.json", "changed_ids": None},
+        {"file_name": "comics_database.json", "changed_ids": {"COMIC001"}},
+        {"file_name": "recommendations_database.json", "changed_ids": {"REC001"}},
+    ]
 
 
 def test_comic_batch_delete_permanently_uses_single_repository_write(tmp_path, monkeypatch):

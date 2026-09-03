@@ -56,7 +56,7 @@ class ComicJsonRepository(JsonRepositoryBatchMixin[Comic], ComicRepository):
                 data["last_updated"] = get_current_date()
                 return data
             
-            result = self._storage.atomic_update(update_data)
+            result = self._storage.atomic_update(update_data, catalog_index_changed_ids=[comic.id])
             app_logger.info(f"[ComicRepo.save] 写入结果: {result}")
             return result
         except Exception as e:
@@ -73,7 +73,7 @@ class ComicJsonRepository(JsonRepositoryBatchMixin[Comic], ComicRepository):
                 data["last_updated"] = get_current_date()
                 return data
             
-            return self._storage.atomic_update(update_data)
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[comic_id])
         except Exception as e:
             error_logger.error(f"删除漫画失败: {e}")
             return False
@@ -171,7 +171,7 @@ class ComicJsonRepositoryV2(BaseContentJsonRepository):
                 data["last_updated"] = get_current_date()
                 return data
             
-            result = self._storage.atomic_update(update_data)
+            result = self._storage.atomic_update(update_data, catalog_index_changed_ids=[entity.id])
             app_logger.info(f"[ComicRepo.save] 写入结果: {result}")
             return result
         except Exception as e:

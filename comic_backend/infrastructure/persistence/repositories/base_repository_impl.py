@@ -212,7 +212,7 @@ class BaseJsonRepository(JsonRepositoryBatchMixin[T], BaseRepository[T], Generic
                 self._touch_data(data, entities)
                 return data
             
-            return self._storage.atomic_update(update_data)
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[entity_id])
         except Exception as e:
             error_logger.error(f"删除实体失败: {e}")
             return False

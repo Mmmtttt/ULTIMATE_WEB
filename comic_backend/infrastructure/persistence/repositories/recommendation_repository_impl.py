@@ -59,7 +59,7 @@ class RecommendationJsonRepository(JsonRepositoryBatchMixin[Recommendation], Rec
                 data["last_updated"] = get_current_date()
                 return data
             
-            result = self._storage.atomic_update(update_data)
+            result = self._storage.atomic_update(update_data, catalog_index_changed_ids=[recommendation.id])
             app_logger.info(f"[RecommendationRepo.save] 写入结果: {result}")
             return result
         except Exception as e:
@@ -77,7 +77,7 @@ class RecommendationJsonRepository(JsonRepositoryBatchMixin[Recommendation], Rec
                 data["last_updated"] = get_current_date()
                 return data
             
-            return self._storage.atomic_update(update_data)
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[recommendation_id])
         except Exception as e:
             error_logger.error(f"删除推荐漫画失败: {e}")
             return False
