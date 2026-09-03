@@ -41,7 +41,10 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView hint = new TextView(this);
-        hint.setText("输入 JM 本子 ID。下载目录使用 App 专属 Pictures/JMComic，不需要存储权限。\n建议先点击环境自检。\n");
+        hint.setText(
+                "输入 JM 本子 ID。下载目录使用 App 专属 Pictures/JMComic，不需要存储权限。\n" +
+                "当前启用 Android 安全模式：章节并发=1、图片并发=1、最终保存为 PNG。\n" +
+                "每个章节的图片目录中会生成 jmcomic_android.log，建议先点击环境自检。\n");
         root.addView(hint);
 
         idInput = new EditText(this);
@@ -83,7 +86,7 @@ public class MainActivity extends Activity {
 
     private void runDiagnostics() {
         setBusy(true);
-        output.setText("正在检查 Python / jmcomic / curl_cffi…");
+        output.setText("正在检查 Python / jmcomic / curl_cffi / Pillow / Android 资源状态…");
 
         executor.execute(() -> {
             String result;
@@ -117,7 +120,17 @@ public class MainActivity extends Activity {
         File targetDir = new File(pictures, "JMComic");
 
         setBusy(true);
-        output.setText("开始下载 JM" + jmId + "…\n目录: " + targetDir.getAbsolutePath());
+        output.setText(
+                "开始下载 JM" + jmId + "…\n" +
+                "根目录: " + targetDir.getAbsolutePath() + "\n\n" +
+                "Android 安全模式已启用：\n" +
+                "- 章节并发: 1\n" +
+                "- 图片并发: 1（jmcomic 桌面默认值为 30）\n" +
+                "- WebP: Android BitmapFactory 解码\n" +
+                "- 最终图片: PNG\n\n" +
+                "诊断日志会持续写入实际图片目录中的 jmcomic_android.log。\n" +
+                "在 Python 下载函数返回前，界面不会逐条刷新，请以日志文件和已落盘图片为准。"
+        );
 
         executor.execute(() -> {
             String result;
