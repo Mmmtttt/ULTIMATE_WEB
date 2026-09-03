@@ -25,10 +25,18 @@ chaquopy {
     defaultConfig {
         version = '3.13'
         pip {
-            // Pin the native packages to versions known to have Android/Chaquopy wheels.
-            install 'jmcomic'
+            // curl_cffi 0.16.3 declares cffi>=2.0.0, while Chaquopy's
+            // CPython 3.13 Android repository currently provides cffi 1.17.1.
+            // For this PoC we bypass dependency metadata and explicitly install
+            // the runtime set, then verify the combination on a real device.
+            options '--no-deps'
+
+            install 'jmcomic==2.7.5'
+            install 'commonx>=0.6.38'
             install 'curl-cffi==0.16.3'
             install 'cffi==1.17.1'
+            install 'pycparser'
+            install 'certifi'
             install 'Pillow==11.0.0'
             install 'pycryptodome==3.21.0'
             install 'PyYAML==6.0.3'
