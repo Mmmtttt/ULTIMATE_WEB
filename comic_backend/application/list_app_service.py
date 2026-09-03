@@ -81,6 +81,52 @@ class ListAppService:
             error_logger.warning(f"通过 catalog index 统计清单内容数量失败，将回退 JSON: {exc}")
             return None
 
+    def _get_list_detail_content_from_index(self, list_id: str) -> Optional[Dict[str, ListType[Dict[str, Any]]]]:
+        try:
+            indexed_members = CatalogIndex().load_list_members(list_id)
+        except Exception as exc:
+            error_logger.warning(f"通过 catalog index 获取清单详情失败，将回退 JSON: {exc}")
+            return None
+        if indexed_members is None:
+            return None
+
+        comic_list: ListType[Dict[str, Any]] = []
+        video_list: ListType[Dict[str, Any]] = []
+        for member in indexed_members:
+            item = dict(member.get("payload") or {})
+            media_type = str(member.get("media_type") or "").strip().lower()
+            source = str(member.get("source") or "local").strip().lower()
+            if media_type == "comic":
+                comic_list.append({
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "cover_path": item.get("cover_path", ""),
+                    "total_page": item.get("total_page", 0),
+                    "current_page": item.get("current_page", 1),
+                    "score": item.get("score"),
+                    "tag_ids": item.get("tag_ids", []),
+                    "last_read_time": item.get("last_read_time") or item.get("last_access_time", ""),
+                    "create_time": item.get("create_time", ""),
+                    "content_type": "comic",
+                    "source": "preview" if source == "preview" else "local",
+                })
+            elif media_type == "video":
+                video_list.append({
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "cover_path": item.get("cover_path", ""),
+                    "score": item.get("score"),
+                    "tag_ids": item.get("tag_ids", []),
+                    "last_read_time": item.get("last_access_time", ""),
+                    "create_time": item.get("create_time", ""),
+                    "content_type": "video",
+                    "source": "preview" if source == "preview" else "local",
+                    "code": item.get("code", ""),
+                    "actors": item.get("actors", []),
+                })
+
+        return {"comics": comic_list, "videos": video_list}
+
     def _get_platform_service(self):
         if not is_third_party_enabled():
             raise RuntimeError(
@@ -611,6 +657,29 @@ class ListAppService:
             lst = self._list_repo.get_by_id(list_id)
             if not lst:
                 return ServiceResult.error("清单不存在")
+
+            indexed_content = self._get_list_detail_content_from_index(list_id)
+            if indexed_content is not None:
+                comic_list = indexed_content["comics"]
+                video_list = indexed_content["videos"]
+                result = {
+                    "id": lst.id,
+                    "name": lst.name,
+                    "desc": lst.desc,
+                    "content_type": lst.content_type.value,
+                    "is_default": lst.is_default,
+                    "comic_count": len(comic_list),
+                    "video_count": len(video_list),
+                    "create_time": lst.create_time,
+                    "platform": lst.platform,
+                    "platform_list_id": lst.platform_list_id,
+                    "import_source": lst.import_source,
+                    "last_sync_time": lst.last_sync_time,
+                    "comics": comic_list,
+                    "videos": video_list
+                }
+                app_logger.info(f"通过 SQLite 索引获取清单详情成功: {list_id}")
+                return ServiceResult.ok(result)
             
             comics = self._comic_repo.get_all()
             list_comics = [c for c in comics if list_id in c.list_ids and not c.is_deleted]

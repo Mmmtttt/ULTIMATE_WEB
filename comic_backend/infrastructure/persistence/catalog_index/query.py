@@ -188,6 +188,52 @@ class CatalogIndex:
                 counts[list_id]["video_count"] = int(row["total"] or 0)
         return counts
 
+    def load_list_members(self, list_id: Any) -> List[Dict[str, Any]] | None:
+        """Load all visible members for one list from the catalog index."""
+        if not self.enabled():
+            return None
+
+        normalized_id = str(list_id or "").strip()
+        if not normalized_id:
+            return []
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                rows = conn.execute(
+                    """
+                    SELECT i.media_type, i.source, i.payload_json
+                    FROM catalog_list cl
+                    JOIN catalog_item i ON i.item_key = cl.item_key
+                    WHERE cl.list_id = ?
+                      AND i.is_deleted = 0
+                    ORDER BY
+                        CASE i.media_type WHEN 'comic' THEN 0 WHEN 'video' THEN 1 ELSE 2 END ASC,
+                        i.source_order ASC
+                    """,
+                    (normalized_id,),
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog list member detail query failed, fallback to JSON path: {exc}")
+            return None
+
+        members: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            members.append(
+                {
+                    "media_type": str(row["media_type"] or "").strip().lower(),
+                    "source": str(row["source"] or "").strip().lower(),
+                    "payload": payload,
+                }
+            )
+        return members
+
     def query_local_items(
         self,
         *,
