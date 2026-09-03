@@ -142,6 +142,52 @@ class CatalogIndex:
             )
         return candidates
 
+    def count_list_members(self, list_ids: Iterable[Any]) -> Dict[str, Dict[str, int]] | None:
+        """Return comic/video member counts for many lists in a single indexed query."""
+        if not self.enabled():
+            return None
+
+        normalized_ids = normalize_string_list(list_ids)
+        if not normalized_ids:
+            return {}
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                placeholders = ",".join("?" for _ in normalized_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        cl.list_id AS list_id,
+                        i.media_type AS media_type,
+                        COUNT(DISTINCT i.item_key) AS total
+                    FROM catalog_list cl
+                    JOIN catalog_item i ON i.item_key = cl.item_key
+                    WHERE cl.list_id IN ({placeholders})
+                      AND i.is_deleted = 0
+                    GROUP BY cl.list_id, i.media_type
+                    """,
+                    normalized_ids,
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog list member count query failed, fallback to JSON path: {exc}")
+            return None
+
+        counts = {
+            list_id: {"comic_count": 0, "video_count": 0}
+            for list_id in normalized_ids
+        }
+        for row in rows:
+            list_id = str(row["list_id"] or "").strip()
+            media_type = str(row["media_type"] or "").strip().lower()
+            if list_id not in counts:
+                continue
+            if media_type == "comic":
+                counts[list_id]["comic_count"] = int(row["total"] or 0)
+            elif media_type == "video":
+                counts[list_id]["video_count"] = int(row["total"] or 0)
+        return counts
+
     def query_local_items(
         self,
         *,

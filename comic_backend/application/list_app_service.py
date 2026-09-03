@@ -19,6 +19,7 @@ from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from core.constants import RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items
+from infrastructure.persistence.catalog_index import CatalogIndex
 
 
 class ListAppService:
@@ -69,6 +70,16 @@ class ListAppService:
                 if repo.save(entity):
                     updated_count += 1
         return updated_count
+
+    def _get_list_member_counts(self, lists: ListType[List]) -> Optional[Dict[str, Dict[str, int]]]:
+        list_ids = [lst.id for lst in lists if str(getattr(lst, "id", "") or "").strip()]
+        if not list_ids:
+            return {}
+        try:
+            return CatalogIndex().count_list_members(list_ids)
+        except Exception as exc:
+            error_logger.warning(f"通过 catalog index 统计清单内容数量失败，将回退 JSON: {exc}")
+            return None
 
     def _get_platform_service(self):
         if not is_third_party_enabled():
@@ -544,6 +555,7 @@ class ListAppService:
                     pass
             
             lists = self._list_repo.get_all(content_type)
+            indexed_counts = self._get_list_member_counts(lists)
             
             result = []
             for lst in lists:
@@ -562,8 +574,13 @@ class ListAppService:
                     self._list_repo.save(lst)
                     app_logger.info(f"已修正远程跟踪清单导入目标为预览库: {lst.id}")
                 
-                comic_count = self._list_repo.get_comic_count(lst.id)
-                video_count = self._list_repo.get_video_count(lst.id)
+                counts = indexed_counts.get(lst.id) if indexed_counts is not None else None
+                if counts is None:
+                    comic_count = self._list_repo.get_comic_count(lst.id)
+                    video_count = self._list_repo.get_video_count(lst.id)
+                else:
+                    comic_count = int(counts.get("comic_count", 0) or 0)
+                    video_count = int(counts.get("video_count", 0) or 0)
                 list_data = {
                     "id": lst.id,
                     "name": lst.name,
