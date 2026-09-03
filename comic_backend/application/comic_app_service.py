@@ -28,6 +28,7 @@ from domain.recommendation import Recommendation
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, RecommendationJsonRepository, TagJsonRepository
 from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE
@@ -2103,25 +2104,40 @@ class ComicAppService:
                 "skipped_deleted": 0,
             }
 
-            for comic in self._comic_repo.get_all():
-                if not isinstance(comic, Comic):
-                    continue
-                home_stats["total_records"] += 1
-                if bool(comic.is_deleted):
-                    home_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_comic_persisted_metadata(comic, source="local"):
-                    if self._comic_repo.save(comic):
-                        home_stats["updated_records"] += 1
+            updated_home = []
+            updated_recommendations = []
 
-            for recommendation in recommendation_repo.get_all():
-                recommendation_stats["total_records"] += 1
-                if bool(getattr(recommendation, "is_deleted", False)):
-                    recommendation_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_comic_persisted_metadata(recommendation, source="recommendation"):
-                    if recommendation_repo.save(recommendation):
-                        recommendation_stats["updated_records"] += 1
+            # 批量补全期间延迟并合并 catalog index 同步；落库合并为每库一次写
+            with JsonStorage.defer_catalog_index_sync():
+                for comic in self._comic_repo.get_all():
+                    if not isinstance(comic, Comic):
+                        continue
+                    home_stats["total_records"] += 1
+                    if bool(comic.is_deleted):
+                        home_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_comic_persisted_metadata(comic, source="local"):
+                        updated_home.append(comic)
+
+                for recommendation in recommendation_repo.get_all():
+                    recommendation_stats["total_records"] += 1
+                    if bool(getattr(recommendation, "is_deleted", False)):
+                        recommendation_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_comic_persisted_metadata(recommendation, source="recommendation"):
+                        updated_recommendations.append(recommendation)
+
+                if hasattr(self._comic_repo, "save_many"):
+                    home_stats["updated_records"] = self._comic_repo.save_many(updated_home)
+                else:
+                    home_stats["updated_records"] = sum(1 for c in updated_home if self._comic_repo.save(c))
+
+                if hasattr(recommendation_repo, "save_many"):
+                    recommendation_stats["updated_records"] = recommendation_repo.save_many(updated_recommendations)
+                else:
+                    recommendation_stats["updated_records"] = sum(
+                        1 for r in updated_recommendations if recommendation_repo.save(r)
+                    )
 
             summary = (
                 f"漫画新版元数据补全完成：本地库更新 {home_stats['updated_records']} 条，"

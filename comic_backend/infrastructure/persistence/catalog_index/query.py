@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence
@@ -30,6 +31,11 @@ SUPPORTED_SORT_TYPES = {
     "date",
     "custom",
 }
+
+# 查询路径触发的全量重建保护：singleflight 锁保证并发 stale 请求只会触发一次重建，
+# 其余请求等待锁释放后复用重建结果，避免并发重复 rebuild 造成写放大。
+# 批量写入期间的索引同步频率已由 JsonStorage.defer_catalog_index_sync 在写入侧合并。
+_REBUILD_SINGLEFLIGHT_LOCK = threading.Lock()
 
 
 @dataclass
@@ -93,8 +99,7 @@ class CatalogIndex:
 
         try:
             with catalog_index_connection() as conn:
-                if self._is_stale(conn):
-                    rebuild_index(conn)
+                self._ensure_index_fresh(conn)
 
                 rows = conn.execute(
                     """
@@ -166,9 +171,7 @@ class CatalogIndex:
         rebuilt = False
 
         with catalog_index_connection() as conn:
-            if self._is_stale(conn):
-                rebuild_index(conn)
-                rebuilt = True
+            rebuilt = self._ensure_index_fresh(conn)
 
             search_available = self.search_enabled() and catalog_search_available(conn)
             where, params, search_index = self._build_where(
@@ -218,6 +221,22 @@ class CatalogIndex:
             elapsed_ms=elapsed_ms,
             search_index=search_index,
         )
+
+    def _ensure_index_fresh(self, conn) -> bool:
+        """查询路径的 stale 处理：全量重建受 singleflight 锁保护。
+
+        并发发现 stale 的请求只会触发一次重建，其余线程等锁后复用结果。
+        返回是否执行了重建。
+        """
+        if not self._is_stale(conn):
+            return False
+
+        with _REBUILD_SINGLEFLIGHT_LOCK:
+            # 等锁期间其他线程可能已完成重建
+            if not self._is_stale(conn):
+                return False
+            rebuild_index(conn)
+            return True
 
     def _is_stale(self, conn) -> bool:
         try:

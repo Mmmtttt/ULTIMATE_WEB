@@ -1,13 +1,15 @@
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from domain.author import AuthorSubscription, AuthorRepository
 from infrastructure.persistence.json_storage import JsonStorage
-from infrastructure.persistence.repositories.base_repository_impl import BaseCreatorJsonRepository
+from infrastructure.persistence.repositories.base_repository_impl import BaseCreatorJsonRepository, JsonRepositoryBatchMixin
 from infrastructure.logger import error_logger
 from core.utils import get_current_time, generate_id
 
 
-class AuthorJsonRepository(AuthorRepository):
+class AuthorJsonRepository(JsonRepositoryBatchMixin[AuthorSubscription], AuthorRepository):
+    _data_key = "authors"
+
     def __init__(self, storage: JsonStorage = None):
         if storage is not None:
             self._storage = storage
@@ -18,6 +20,12 @@ class AuthorJsonRepository(AuthorRepository):
             self._file_path = ACTIVE_AUTHOR_JSON_FILE
             self._storage = JsonStorage(self._file_path)
         self._ensure_file_exists()
+
+    def _get_entity_class(self):
+        return AuthorSubscription
+
+    def _touch_data(self, data: Dict[str, Any], authors: List[Dict[str, Any]]) -> None:
+        data["last_updated"] = get_current_time()
     
     def _ensure_file_exists(self):
         if not os.path.exists(self._file_path):

@@ -11,10 +11,12 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 task_manager_module = importlib.import_module("infrastructure.task_manager")
+json_storage_module = importlib.import_module("infrastructure.persistence.json_storage")
 
 ImportTask = task_manager_module.ImportTask
 TaskManager = task_manager_module.TaskManager
 TaskStatus = task_manager_module.TaskStatus
+JsonStorage = json_storage_module.JsonStorage
 
 
 class _ServiceResult:
@@ -29,6 +31,9 @@ def _build_manager(tmp_path, monkeypatch):
     if existing is not None:
         existing._running = False
     TaskManager._instance = None
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     monkeypatch.setattr(TaskManager, "_start_worker", lambda self: None)
     manager = TaskManager(task_file=str(tmp_path / "tasks.json"))
     manager._running = False

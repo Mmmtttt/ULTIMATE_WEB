@@ -16,6 +16,7 @@ class _CountingVideoRepo:
         self._videos = list(videos)
         self.get_all_calls = 0
         self.get_by_id_calls = 0
+        self.save_many_calls = 0
 
     def get_all(self):
         self.get_all_calls += 1
@@ -24,6 +25,14 @@ class _CountingVideoRepo:
     def get_by_id(self, video_id):
         self.get_by_id_calls += 1
         return next((video for video in self._videos if video.id == video_id), None)
+
+    def save_many(self, videos):
+        self.save_many_calls += 1
+        by_id = {video.id: video for video in self._videos}
+        for video in videos:
+            by_id[video.id] = video
+        self._videos = list(by_id.values())
+        return len(videos)
 
 
 def test_local_video_duplicate_cache_avoids_repeated_full_repo_reads():
@@ -47,3 +56,23 @@ def test_local_video_duplicate_cache_avoids_repeated_full_repo_reads():
 
     assert repo.get_all_calls == 1
     assert repo.get_by_id_calls == 0
+
+
+def test_import_videos_rejects_duplicate_codes_inside_same_batch():
+    repo = _CountingVideoRepo([])
+    service = VideoAppService(video_repo=repo)
+    cache = service._build_local_video_duplicate_cache()
+
+    result = service.import_videos(
+        [
+            {"id": "VIDEO001", "title": "Video 1", "code": "ABC-123"},
+            {"id": "VIDEO002", "title": "Video 2", "code": "abc123"},
+        ],
+        local_video_cache=cache,
+    )
+
+    assert result.success is True
+    assert result.data["imported_count"] == 1
+    assert result.data["failed_items"] == [{"lookup": "ABC-123", "reason": "批次内番号重复"}]
+    assert [video.id for video in repo._videos] == ["VIDEO001"]
+    assert repo.save_many_calls == 1

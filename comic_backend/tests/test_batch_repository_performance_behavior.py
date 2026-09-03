@@ -113,6 +113,64 @@ def test_batch_update_many_by_ids_skips_write_when_no_entity_matches(tmp_path, m
     assert calls == []
 
 
+def test_batch_save_many_syncs_index_once(tmp_path, monkeypatch):
+    _reset_json_storage(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        catalog_index_writer,
+        "sync_after_json_write",
+        lambda file_name, old_data, new_data: calls.append(file_name),
+    )
+    storage = JsonStorage("comics_database.json")
+    assert storage.write(
+        {
+            "comics": [
+                Comic(id="COMIC001", title="Comic 1").to_dict(),
+                Comic(id="COMIC002", title="Comic 2").to_dict(),
+            ],
+            "total_comics": 2,
+        }
+    )
+    calls.clear()
+
+    repo = ComicJsonRepository(storage=storage)
+    saved_count = repo.save_many(
+        [
+            Comic(id="COMIC001", title="Comic 1 Updated"),
+            Comic(id="COMIC003", title="Comic 3"),
+        ]
+    )
+
+    data = storage.read()
+    titles = {item["id"]: item["title"] for item in data["comics"]}
+    assert saved_count == 2
+    assert titles == {
+        "COMIC001": "Comic 1 Updated",
+        "COMIC002": "Comic 2",
+        "COMIC003": "Comic 3",
+    }
+    assert data["total_comics"] == 3
+    assert calls == ["comics_database.json"]
+
+
+def test_batch_save_many_skips_write_when_entities_missing(tmp_path, monkeypatch):
+    _reset_json_storage(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        catalog_index_writer,
+        "sync_after_json_write",
+        lambda file_name, old_data, new_data: calls.append(file_name),
+    )
+    storage = JsonStorage("comics_database.json")
+    assert storage.write({"comics": [], "total_comics": 0})
+    calls.clear()
+
+    repo = ComicJsonRepository(storage=storage)
+    assert repo.save_many([]) == 0
+    assert repo.save_many([None]) == 0
+    assert calls == []
+
+
 def test_comic_batch_delete_permanently_uses_single_repository_write(tmp_path, monkeypatch):
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []

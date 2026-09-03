@@ -88,6 +88,55 @@ class JsonRepositoryBatchMixin(Generic[T]):
             error_logger.error(f"批量更新实体失败: {e}")
             return 0
 
+    def save_many(self, entities: List[T]) -> int:
+        """批量保存实体：一次读、一次改、一次写、一次索引同步。"""
+        valid_entities = [
+            entity
+            for entity in (entities or [])
+            if entity is not None and str(getattr(entity, "id", "") or "").strip()
+        ]
+        if not valid_entities:
+            return 0
+
+        saved_count = 0
+
+        try:
+            def update_data(data):
+                nonlocal saved_count
+                pending_by_id = {
+                    str(entity.id).strip(): entity
+                    for entity in valid_entities
+                }
+                existing = list(data.get(self._data_key, []))
+                next_entities: List[Dict[str, Any]] = []
+                saved_count = 0
+
+                for raw in existing:
+                    raw_id = str(raw.get("id") or "").strip()
+                    entity = pending_by_id.pop(raw_id, None)
+                    if entity is None:
+                        next_entities.append(raw)
+                    else:
+                        next_entities.append(entity.to_dict())
+                        saved_count += 1
+
+                # 剩余的是新增实体
+                for entity in pending_by_id.values():
+                    next_entities.append(entity.to_dict())
+                    saved_count += 1
+
+                if saved_count == 0:
+                    return None
+
+                data[self._data_key] = next_entities
+                self._touch_data(data, next_entities)
+                return data
+
+            return saved_count if self._storage.atomic_update(update_data) else 0
+        except Exception as e:
+            error_logger.error(f"批量保存实体失败: {e}")
+            return 0
+
     def delete_many_by_ids(self, entity_ids: List[str]) -> int:
         wanted_ids = self._normalize_entity_ids(entity_ids)
         if not wanted_ids:
