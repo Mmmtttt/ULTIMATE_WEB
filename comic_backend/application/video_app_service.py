@@ -5341,35 +5341,58 @@ class VideoAppService(BaseContentAppService):
     
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:
-            imported = []
-            imported_ids = []
+            items = [item for item in (videos_data or []) if isinstance(item, dict)]
+            if not items:
+                return ServiceResult.ok({
+                    "imported": [],
+                    "imported_ids": [],
+                    "skipped": [],
+                    "imported_count": 0,
+                    "skipped_count": 0,
+                    "failed_items": [],
+                    "failed_count": 0,
+                })
+
             skipped = []
+            import_candidates = []
 
             local_video_cache = self._build_local_video_duplicate_cache()
-            with JsonStorage.defer_catalog_index_sync():
-                for video_data in videos_data:
-                    code = video_data.get("code", "")
-                    normalized_code = self._normalize_code_for_storage(code)
-                    if self._find_local_video_duplicate_entity(
-                        str(video_data.get("id") or "").strip(),
-                        normalized_code,
-                        local_video_cache=local_video_cache,
-                    ):
-                        skipped.append(code)
-                        continue
+            for video_data in items:
+                code = video_data.get("code", "")
+                normalized_code = self._normalize_code_for_storage(code)
+                if self._find_local_video_duplicate_entity(
+                    str(video_data.get("id") or "").strip(),
+                    normalized_code,
+                    local_video_cache=local_video_cache,
+                ):
+                    skipped.append(code)
+                    continue
+                import_candidates.append(video_data)
 
-                    result = self.import_video(video_data, local_video_cache=local_video_cache)
-                    if result.success:
-                        imported.append(code)
-                        if result.data and result.data.get("id"):
-                            imported_ids.append(result.data["id"])
+            imported = []
+            imported_ids = []
+            failed_items = []
+            if import_candidates:
+                result = self.import_videos(import_candidates, local_video_cache=local_video_cache)
+                if not result.success:
+                    return result
+                saved_videos = (result.data or {}).get("videos") or []
+                failed_items = (result.data or {}).get("failed_items") or []
+                for video in saved_videos:
+                    if not isinstance(video, dict):
+                        continue
+                    imported.append(video.get("code", ""))
+                    if video.get("id"):
+                        imported_ids.append(video["id"])
             
             return ServiceResult.ok({
                 "imported": imported,
                 "imported_ids": imported_ids,
                 "skipped": skipped,
                 "imported_count": len(imported),
-                "skipped_count": len(skipped)
+                "skipped_count": len(skipped),
+                "failed_items": failed_items,
+                "failed_count": len(failed_items),
             })
         except Exception as e:
             error_logger.error(f"批量导入视频失败: {e}")

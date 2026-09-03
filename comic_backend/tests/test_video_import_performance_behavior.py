@@ -76,3 +76,28 @@ def test_import_videos_rejects_duplicate_codes_inside_same_batch():
     assert result.data["failed_items"] == [{"lookup": "ABC-123", "reason": "批次内番号重复"}]
     assert [video.id for video in repo._videos] == ["VIDEO001"]
     assert repo.save_many_calls == 1
+
+
+def test_batch_import_videos_uses_single_bulk_save_and_skips_existing():
+    repo = _CountingVideoRepo(
+        [
+            Video(id="EXISTING001", title="Existing", code="ABC-123"),
+        ]
+    )
+    service = VideoAppService(video_repo=repo)
+
+    result = service.batch_import_videos(
+        [
+            {"id": "EXISTING001", "title": "Duplicate", "code": "ABC-123"},
+            {"id": "VIDEO002", "title": "Video 2", "code": "DEF-456"},
+            {"id": "VIDEO003", "title": "Video 3", "code": "GHI-789"},
+        ]
+    )
+
+    assert result.success is True
+    assert result.data["imported_count"] == 2
+    assert result.data["skipped"] == ["ABC-123"]
+    assert result.data["imported_ids"] == ["VIDEO002", "VIDEO003"]
+    assert [video.id for video in repo._videos] == ["EXISTING001", "VIDEO002", "VIDEO003"]
+    assert repo.get_all_calls == 1
+    assert repo.save_many_calls == 1
