@@ -31,7 +31,7 @@ chaquopy {
             install 'cffi==1.17.1'
             install 'Pillow==11.0.0'
             install 'pycryptodome==3.21.0'
-            install 'PyYAML==6.0.2'
+            install 'PyYAML==6.0.3'
         }
     }
 }
