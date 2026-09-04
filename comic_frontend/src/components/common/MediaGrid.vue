@@ -1,7 +1,7 @@
 <template>
-  <div class="media-grid" :class="gridClassList">
+  <div ref="gridRef" class="media-grid" :class="gridClassList" :style="virtualGridStyle">
     <div 
-      v-for="(item, index) in items" 
+      v-for="(item, index) in renderItems"
       :key="item.id" 
       class="media-card"
       :class="{
@@ -27,7 +27,7 @@
             :src="getCoverUrl(item)" 
             :fit="resolveCoverFit(item)"
             class="cover-image"
-            :lazy-load="shouldLazyLoadCover(index)"
+            :lazy-load="shouldLazyLoadCover(renderStartIndex + index)"
           />
           <div v-if="shouldRenderPlatformBadge(item)" class="media-platform">{{ getPlatformBadgeLabel(item) }}</div>
           <div v-if="item.code" class="media-code">{{ item.code }}</div>
@@ -102,7 +102,7 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useDevice } from '@/composables/useDevice'
 import { useModeStore } from '@/stores'
 import {
@@ -146,6 +146,14 @@ const props = defineProps({
     type: String,
     default: '',
     validator: (value) => ['', 'comic', 'video'].includes(String(value || '').trim().toLowerCase())
+  },
+  virtual: {
+    type: Boolean,
+    default: false
+  },
+  virtualThreshold: {
+    type: Number,
+    default: 80
   }
 })
 
@@ -155,6 +163,13 @@ const { isMobile, isDesktop } = useDevice()
 const HOVER_DELAY = 600
 const hoverTimers = reactive({})
 const showReadButtonIds = reactive(new Set())
+const gridRef = ref(null)
+const viewportTop = ref(0)
+const viewportHeight = ref(0)
+const gridTop = ref(0)
+const gridWidth = ref(0)
+let resizeObserver = null
+let ticking = false
 
 function onCardEnter(item) {
   if (isVideoItem(item)) return
@@ -200,6 +215,75 @@ const gridClassList = computed(() => ({
   'mode-small': resolvedViewMode.value === 'small',
   'mode-list': resolvedViewMode.value === 'list'
 }))
+
+const virtualEnabled = computed(() => {
+  return props.virtual && props.items.length > Number(props.virtualThreshold || 0)
+})
+
+const columnCount = computed(() => {
+  if (isListMode.value) return 1
+  if (isMobile.value) {
+    if (resolvedViewMode.value === 'large') return 2
+    return 3
+  }
+
+  const width = Math.max(1, gridWidth.value)
+  const config = getDesktopGridConfig()
+  const usableWidth = Math.max(1, width - config.padding * 2)
+  return Math.max(1, Math.floor((usableWidth + config.gap) / (config.minWidth + config.gap)))
+})
+
+const estimatedRowHeight = computed(() => {
+  if (isListMode.value) {
+    return isMobile.value ? 76 : 84
+  }
+
+  const columns = columnCount.value
+  const config = isMobile.value ? getMobileGridConfig() : getDesktopGridConfig()
+  const usableWidth = Math.max(1, gridWidth.value - config.padding * 2 - config.gap * Math.max(0, columns - 1))
+  const cardWidth = Math.max(80, usableWidth / columns)
+  const coverHeight = cardWidth * 1.5
+  const infoHeight = resolvedViewMode.value === 'small' ? 58 : 68
+  return Math.ceil(coverHeight + infoHeight + config.gap)
+})
+
+const virtualWindow = computed(() => {
+  if (!virtualEnabled.value) {
+    return { start: 0, end: props.items.length, top: 0, bottom: 0 }
+  }
+
+  const rowHeight = estimatedRowHeight.value
+  const columns = columnCount.value
+  const totalRows = Math.ceil(props.items.length / columns)
+  const overscanRows = isMobile.value ? 4 : 3
+  const relativeTop = Math.max(0, viewportTop.value - gridTop.value)
+  const relativeBottom = Math.max(relativeTop, viewportTop.value + viewportHeight.value - gridTop.value)
+  const startRow = Math.max(0, Math.floor(relativeTop / rowHeight) - overscanRows)
+  const endRow = Math.min(totalRows, Math.ceil(relativeBottom / rowHeight) + overscanRows)
+  return {
+    start: startRow * columns,
+    end: Math.min(props.items.length, endRow * columns),
+    top: startRow * rowHeight,
+    bottom: Math.max(0, (totalRows - endRow) * rowHeight)
+  }
+})
+
+const renderItems = computed(() => {
+  const windowState = virtualWindow.value
+  return props.items.slice(windowState.start, windowState.end)
+})
+
+const renderStartIndex = computed(() => virtualWindow.value.start)
+
+const virtualGridStyle = computed(() => {
+  if (!virtualEnabled.value) {
+    return {}
+  }
+  return {
+    paddingTop: `${virtualWindow.value.top}px`,
+    paddingBottom: `${virtualWindow.value.bottom}px`
+  }
+})
 
 function getCoverUrl(item) {
   if (item?.cover_thumbnail_url) {
@@ -274,6 +358,67 @@ function displayMeta(item) {
   if (item.total_page) return `${item.total_page}P`
   return ''
 }
+
+function getDesktopGridConfig() {
+  if (resolvedViewMode.value === 'small') {
+    return { minWidth: 128, gap: 12, padding: 12 }
+  }
+  if (resolvedViewMode.value === 'medium') {
+    return { minWidth: 156, gap: 16, padding: 16 }
+  }
+  return { minWidth: 210, gap: 18, padding: 16 }
+}
+
+function getMobileGridConfig() {
+  return { minWidth: 0, gap: 10, padding: 10 }
+}
+
+function updateViewportState() {
+  const element = gridRef.value
+  if (!element) {
+    return
+  }
+  const rect = element.getBoundingClientRect()
+  gridTop.value = rect.top + window.scrollY
+  gridWidth.value = rect.width
+  viewportTop.value = window.scrollY
+  viewportHeight.value = window.innerHeight || document.documentElement.clientHeight || 0
+}
+
+function requestViewportUpdate() {
+  if (ticking) {
+    return
+  }
+  ticking = true
+  window.requestAnimationFrame(() => {
+    ticking = false
+    updateViewportState()
+  })
+}
+
+onMounted(() => {
+  nextTick(updateViewportState)
+  window.addEventListener('scroll', requestViewportUpdate, { passive: true })
+  window.addEventListener('resize', requestViewportUpdate, { passive: true })
+  if (window.ResizeObserver && gridRef.value) {
+    resizeObserver = new ResizeObserver(requestViewportUpdate)
+    resizeObserver.observe(gridRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', requestViewportUpdate)
+  window.removeEventListener('resize', requestViewportUpdate)
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+})
+
+watch(
+  () => [props.items.length, resolvedViewMode.value, isMobile.value],
+  () => nextTick(updateViewportState)
+)
 </script>
 
 <style scoped>

@@ -87,6 +87,7 @@
         :selectable="isManageMode"
         :selected-ids="selectedIds"
         :show-progress="!isVideoMode"
+        virtual
         @click="onItemClick"
         @play="onItemPlay"
         @toggle-favorite="toggleFavorite"
