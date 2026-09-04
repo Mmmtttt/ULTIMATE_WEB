@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify, Response, make_response, send_fil
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
 from application.catalog_query_service import CatalogQueryService
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
 from application.cover_versioning import annotate_cover_url
 from application.content_sorting import (
     normalize_custom_order_records,
@@ -3675,6 +3676,7 @@ def search_video_recommendations():
             app_logger.info(
                 f"通过 SQLite 索引搜索推荐视频成功: 关键词 {keyword}, 结果数量: {len(indexed_payload['items'])}"
             )
+            warm_cover_thumbnails_for_items(indexed_payload["items"])
             return success_response(indexed_payload["items"])
 
         document_repo = _get_video_recommendation_document_repository()
@@ -3693,6 +3695,7 @@ def search_video_recommendations():
                     _decorate_video_recommendation_item(video, tag_map=tag_map)
                 )
         
+        warm_cover_thumbnails_for_items(results)
         return success_response(results)
     except Exception as e:
         error_logger.error(f"搜索推荐视频失败: {e}")
@@ -3731,6 +3734,7 @@ def filter_video_recommendations():
                 f"通过 SQLite 索引筛选推荐视频成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, "
                 f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
             )
+            warm_cover_thumbnails_for_items(results)
             return success_response(results)
         
         if authors or list_ids:
@@ -3751,6 +3755,7 @@ def filter_video_recommendations():
 
         results = _decorate_video_recommendation_items(results, tag_map=tag_map)
 
+        warm_cover_thumbnails_for_items(results)
         app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
         return success_response(results)
     except Exception as e:

@@ -8,6 +8,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
 from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
@@ -255,6 +256,7 @@ class ComicAppService:
                         f"通过 SQLite 索引获取漫画分页列表成功，页 {indexed_payload['page']}/"
                         f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个漫画"
                     )
+                    warm_cover_thumbnails_for_items(indexed_payload.get("items", []))
                     return ServiceResult.ok(indexed_payload)
 
             comics = self._comic_repo.get_all()
@@ -312,9 +314,11 @@ class ComicAppService:
                 app_logger.info(
                     f"获取漫画分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个漫画"
                 )
+                warm_cover_thumbnails_for_items(payload.get("items", []))
                 return ServiceResult.ok(payload)
 
             comic_list = [serializer(c) for c in comics]
+            warm_cover_thumbnails_for_items(comic_list)
             app_logger.info(f"获取漫画列表成功，共 {len(comic_list)} 个漫画")
             return ServiceResult.ok(comic_list)
         except Exception as e:
@@ -482,6 +486,7 @@ class ComicAppService:
                 app_logger.info(
                     f"通过 SQLite 索引搜索漫画成功: 关键词 '{keyword}', 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             comics = self._comic_repo.search(keyword)
@@ -490,6 +495,7 @@ class ComicAppService:
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -516,6 +522,7 @@ class ComicAppService:
                 app_logger.info(
                     f"通过 SQLite 索引筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             comics = self._comic_repo.filter_by_tags(include_tags, exclude_tags)
@@ -524,6 +531,7 @@ class ComicAppService:
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -550,6 +558,7 @@ class ComicAppService:
                     f"通过 SQLite 索引多条件筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, "
                     f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
@@ -558,6 +567,7 @@ class ComicAppService:
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:

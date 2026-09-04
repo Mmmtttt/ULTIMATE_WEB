@@ -22,6 +22,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
 from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
@@ -587,6 +588,7 @@ class VideoAppService(BaseContentAppService):
                         f"通过 SQLite 索引获取视频分页列表成功，页 {indexed_payload['page']}/"
                         f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个视频"
                     )
+                    warm_cover_thumbnails_for_items(indexed_payload.get("items", []))
                     return ServiceResult.ok(indexed_payload)
 
             videos = self._video_repo.get_all()
@@ -652,6 +654,7 @@ class VideoAppService(BaseContentAppService):
                 app_logger.info(
                     f"获取视频分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个视频"
                 )
+                warm_cover_thumbnails_for_items(payload.get("items", []))
                 return ServiceResult.ok(payload)
 
             video_list = []
@@ -663,6 +666,7 @@ class VideoAppService(BaseContentAppService):
             if not summary_only:
                 video_list = self._annotate_video_records(video_list)
 
+            warm_cover_thumbnails_for_items(video_list)
             app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
             return ServiceResult.ok(video_list)
         except Exception as e:
@@ -963,6 +967,7 @@ class VideoAppService(BaseContentAppService):
                 app_logger.info(
                     f"通过 SQLite 索引搜索视频成功: 关键词'{keyword}', 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             videos = self._video_repo.search(keyword)
@@ -976,6 +981,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"搜索成功: 关键词'{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -3894,6 +3900,7 @@ class VideoAppService(BaseContentAppService):
                 app_logger.info(
                     f"通过 SQLite 索引筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
@@ -3905,6 +3912,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -3931,6 +3939,7 @@ class VideoAppService(BaseContentAppService):
                     f"通过 SQLite 索引多条件筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, "
                     f"作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}"
                 )
+                warm_cover_thumbnails_for_items(results)
                 return ServiceResult.ok(results)
 
             videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
@@ -3942,6 +3951,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
