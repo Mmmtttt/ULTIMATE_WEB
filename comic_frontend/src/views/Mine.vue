@@ -52,7 +52,7 @@
         <div class="about-meta">
           <p class="version">版本 {{ appVersionLabel }}</p>
           <p class="copyright">© 2026 Ultimate Web</p>
-          <p class="mmmtttt">github@Mmmtttt</p>
+          <p class="mmmtttt">个人漫画电影内容管理小工具，为避免隐私泄露，禁止部署在公网</p>
           <p class="mmmtttt link-wrap">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB</p>
         </div>
         <div class="update-card">
