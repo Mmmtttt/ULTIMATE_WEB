@@ -34,7 +34,7 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   // Actions
   async function fetchRecommendations(force = false, params = {}) {
     if (!force && recommendations.value.length > 0 && Object.keys(params).length === 0) {
-      return
+      return recommendations.value
     }
 
     const requestSeq = ++listFetchSeq
@@ -83,11 +83,13 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
         isFiltering.value = false
         filteredRecommendations.value = []
       }
+      return recommendations.value
     } catch (e) {
       if (requestSeq === listFetchSeq) {
         error.value = e.message
       }
       console.error('获取视频推荐列表失败:', e)
+      return []
     } finally {
       if (requestSeq === listFetchSeq) {
         loading.value = false
@@ -249,20 +251,22 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   }
 
   async function searchRecommendations(keyword) {
-    loading.value = true
     try {
-      const res = await videoApi.searchVideoRecommendations(keyword)
-      if (res.code === 200) {
-        filteredRecommendations.value = res.data || []
-        isFiltering.value = true
-        return filteredRecommendations.value
+      const normalizedKeyword = String(keyword || '').trim()
+      if (!normalizedKeyword) {
+        isFiltering.value = false
+        return recommendations.value
       }
-      return []
+      return await fetchRecommendations(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        keyword: normalizedKeyword
+      })
     } catch (e) {
       console.error('搜索视频推荐失败:', e)
       return []
-    } finally {
-      loading.value = false
     }
   }
 
@@ -339,26 +343,23 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
   async function filterByTags(includeTagIds = [], excludeTagIds = []) {
     console.log('[Video Recommendation] filterByTags called, include:', includeTagIds, 'exclude:', excludeTagIds)
     
-    loading.value = true
-    error.value = null
-    
     try {
-      const response = await videoApi.filterVideoRecommendations(includeTagIds, excludeTagIds)
-      
-      if (response.code === 200) {
-        filteredRecommendations.value = response.data || []
-        isFiltering.value = true
-        return response.data
-      } else {
-        error.value = response.msg || '筛选失败'
-        return []
+      if (includeTagIds.length === 0 && excludeTagIds.length === 0) {
+        isFiltering.value = false
+        return recommendations.value
       }
+      return await fetchRecommendations(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        include_tag_ids: [...includeTagIds],
+        exclude_tag_ids: [...excludeTagIds]
+      })
     } catch (err) {
       console.error('[Video Recommendation] 筛选失败:', err)
       error.value = '筛选失败'
       return []
-    } finally {
-      loading.value = false
     }
   }
 
@@ -374,36 +375,37 @@ export const useVideoRecommendationStore = defineStore('videoRecommendation', ()
       return recommendations.value
     }
     
-    loading.value = true
-    error.value = null
-    
     try {
-      let result = []
-
-      if (hasMultiFilter) {
-        const response = await videoApi.filterVideoRecommendations(includeTags, excludeTags, authors, listIds)
-        if (response.code !== 200) {
-          error.value = response.msg || '筛选失败'
-          return []
-        }
-        result = response.data || []
-      } else {
-        result = recommendations.value
+      const params = {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120
       }
-      
-      filteredRecommendations.value = sortContentItems(
-        filterItemsByMinScore(result, scoreThreshold),
-        sortType,
-        sortOrder
-      )
-      isFiltering.value = true
-      return filteredRecommendations.value
+      if (includeTags.length > 0) {
+        params.include_tag_ids = [...includeTags]
+      }
+      if (excludeTags.length > 0) {
+        params.exclude_tag_ids = [...excludeTags]
+      }
+      if (authors.length > 0) {
+        params.authors = [...authors]
+      }
+      if (listIds.length > 0) {
+        params.list_ids = [...listIds]
+      }
+      if (scoreThreshold > 0) {
+        params.min_score = scoreThreshold
+      }
+      if (sortType) {
+        params.sort_type = sortType
+        params.sort_order = sortOrder
+      }
+      return await fetchRecommendations(true, params)
     } catch (err) {
       console.error('[Video Recommendation] 综合筛选失败:', err)
       error.value = '筛选失败'
       return []
-    } finally {
-      loading.value = false
     }
   }
 

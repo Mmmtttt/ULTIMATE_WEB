@@ -70,10 +70,12 @@ export const useVideoStore = defineStore('video', () => {
         isFiltering.value = false
         filteredVideos.value = []
       }
+      return videos.value
     } catch (e) {
       if (requestSeq === listFetchSeq) {
         error.value = e.message
       }
+      return []
     } finally {
       if (requestSeq === listFetchSeq) {
         loading.value = false
@@ -98,19 +100,22 @@ export const useVideoStore = defineStore('video', () => {
   }
   
   async function search(keyword) {
-    loading.value = true
-    error.value = null
     try {
-      const res = await videoApi.search(keyword)
-      if (res.code === 200) {
-        return res.data || []
+      const normalizedKeyword = String(keyword || '').trim()
+      if (!normalizedKeyword) {
+        isFiltering.value = false
+        return videos.value
       }
-      return []
+      return await fetchList({
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        keyword: normalizedKeyword
+      })
     } catch (e) {
       error.value = e.message
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -326,21 +331,18 @@ export const useVideoStore = defineStore('video', () => {
       return videos.value
     }
     
-    loading.value = true
-    
     try {
-      const response = await videoApi.filter(includeTags, excludeTags)
-      if (response.code === 200) {
-        filteredVideos.value = response.data || []
-        isFiltering.value = true
-        return filteredVideos.value
-      }
-      return []
+      return await fetchList({
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        include_tag_ids: [...includeTags],
+        exclude_tag_ids: [...excludeTags]
+      })
     } catch (err) {
       console.error('[Video] 筛选视频失败:', err)
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -354,34 +356,38 @@ export const useVideoStore = defineStore('video', () => {
       return videos.value
     }
     
-    loading.value = true
-    
     try {
       console.log('[Video] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold })
-      let result = []
-
-      if (hasMultiFilter) {
-        const response = await videoApi.filter(includeTags, excludeTags, authors, listIds)
-        if (response.code !== 200) {
-          return []
-        }
-        result = response.data || []
-      } else {
-        result = videos.value
+      const params = {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120
+      }
+      if (includeTags.length > 0) {
+        params.include_tag_ids = [...includeTags]
+      }
+      if (excludeTags.length > 0) {
+        params.exclude_tag_ids = [...excludeTags]
+      }
+      if (authors.length > 0) {
+        params.authors = [...authors]
+      }
+      if (listIds.length > 0) {
+        params.list_ids = [...listIds]
+      }
+      if (scoreThreshold > 0) {
+        params.min_score = scoreThreshold
+      }
+      if (sortType) {
+        params.sort_type = sortType
+        params.sort_order = sortOrder
       }
 
-      filteredVideos.value = sortContentItems(
-        filterItemsByMinScore(result, scoreThreshold),
-        sortType,
-        sortOrder
-      )
-      isFiltering.value = true
-      return filteredVideos.value
+      return await fetchList(params)
     } catch (err) {
       console.error('[Video] 综合筛选视频失败:', err)
       return []
-    } finally {
-      loading.value = false
     }
   }
   
