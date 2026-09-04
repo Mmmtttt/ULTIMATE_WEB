@@ -142,6 +142,39 @@ class CatalogIndex:
             )
         return candidates
 
+    def count_tags(self, content_type: Any) -> Dict[str, int] | None:
+        """Return visible content counts per tag for one media type from the index."""
+        if not self.enabled():
+            return None
+
+        media_type = str(getattr(content_type, "value", content_type) or "").strip().lower()
+        if media_type not in {"comic", "video"}:
+            return {}
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                rows = conn.execute(
+                    """
+                    SELECT ct.tag_id, COUNT(DISTINCT i.item_key) AS total
+                    FROM catalog_tag ct
+                    JOIN catalog_item i ON i.item_key = ct.item_key
+                    WHERE i.media_type = ?
+                      AND i.is_deleted = 0
+                    GROUP BY ct.tag_id
+                    """,
+                    (media_type,),
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog tag count query failed, fallback to JSON path: {exc}")
+            return None
+
+        return {
+            str(row["tag_id"] or "").strip(): int(row["total"] or 0)
+            for row in rows
+            if str(row["tag_id"] or "").strip()
+        }
+
     def count_list_members(self, list_ids: Iterable[Any]) -> Dict[str, Dict[str, int]] | None:
         """Return comic/video member counts for many lists in a single indexed query."""
         if not self.enabled():

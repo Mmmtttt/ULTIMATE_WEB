@@ -5,6 +5,7 @@ from domain.recommendation import RecommendationRepository
 from domain.video import VideoRepository
 from infrastructure.persistence.repositories import TagJsonRepository, ComicJsonRepository, RecommendationJsonRepository, VideoJsonRepository, VideoRecommendationJsonRepository
 from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.catalog_index import CatalogIndex
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time
@@ -42,46 +43,54 @@ class TagAppService:
                 if repo.save(entity):
                     updated_count += 1
         return updated_count
+
+    @staticmethod
+    def _get_indexed_tag_counts(content_type: ContentType) -> dict | None:
+        try:
+            return CatalogIndex().count_tags(content_type)
+        except Exception as exc:
+            error_logger.warning(f"从 catalog index 获取标签计数失败，将回退 JSON: {exc}")
+            return None
     
     def get_tag_list(self, content_type: ContentType = ContentType.COMIC) -> ServiceResult:
         try:
             tags = self._tag_repo.get_all(content_type)
             
-            tag_count = {}
-            if content_type == ContentType.COMIC:
-                comics = self._comic_repo.get_all()
-                recommendations = self._recommendation_repo.get_all()
-                
-                for comic in comics:
-                    if comic.is_deleted:
-                        continue
-                    for tag_id in comic.tag_ids:
-                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
-                
-                for recommendation in recommendations:
-                    if recommendation.is_deleted:
-                        continue
-                    for tag_id in recommendation.tag_ids:
-                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
-                
-                count_key = "comic_count"
-            else:
-                videos = self._video_repo.get_all()
-                video_recommendations = self._video_recommendation_repo.get_all()
-                
-                for video in videos:
-                    if video.is_deleted:
-                        continue
-                    for tag_id in video.tag_ids:
-                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
-                
-                for video_rec in video_recommendations:
-                    if video_rec.is_deleted:
-                        continue
-                    for tag_id in video_rec.tag_ids:
-                        tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
-                
-                count_key = "video_count"
+            tag_count = self._get_indexed_tag_counts(content_type)
+            if tag_count is None:
+                tag_count = {}
+                if content_type == ContentType.COMIC:
+                    comics = self._comic_repo.get_all()
+                    recommendations = self._recommendation_repo.get_all()
+
+                    for comic in comics:
+                        if comic.is_deleted:
+                            continue
+                        for tag_id in comic.tag_ids:
+                            tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+
+                    for recommendation in recommendations:
+                        if recommendation.is_deleted:
+                            continue
+                        for tag_id in recommendation.tag_ids:
+                            tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+                else:
+                    videos = self._video_repo.get_all()
+                    video_recommendations = self._video_recommendation_repo.get_all()
+
+                    for video in videos:
+                        if video.is_deleted:
+                            continue
+                        for tag_id in video.tag_ids:
+                            tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+
+                    for video_rec in video_recommendations:
+                        if video_rec.is_deleted:
+                            continue
+                        for tag_id in video_rec.tag_ids:
+                            tag_count[tag_id] = tag_count.get(tag_id, 0) + 1
+
+            count_key = "comic_count" if content_type == ContentType.COMIC else "video_count"
             
             tag_list = []
             for t in tags:
