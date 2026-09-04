@@ -69,6 +69,54 @@ class CatalogQueryService:
             error_logger.warning(f"Catalog index query failed, fallback to JSON path: {exc}")
             return None
 
+    def query_local_all(
+        self,
+        *,
+        media_type: str,
+        source: str = "local",
+        serializer: Callable[[Dict[str, Any]], Dict[str, Any]],
+        sort_type: str | None = "",
+        sort_order: str = "desc",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        keyword: str = "",
+        include_tags: Iterable[Any] | None = None,
+        exclude_tags: Iterable[Any] | None = None,
+        authors: Iterable[Any] | None = None,
+        list_ids: Iterable[Any] | None = None,
+        unread_only: bool = False,
+    ) -> Dict[str, Any] | None:
+        try:
+            result = self._index.query_matching_items(
+                media_type=media_type,
+                source=source,
+                sort_type=sort_type,
+                sort_order=sort_order,
+                min_score=min_score,
+                max_score=max_score,
+                keyword=keyword,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+                unread_only=unread_only,
+            )
+            if result is None:
+                return None
+            return {
+                "items": [serializer(item) for item in result.items],
+                "total": result.total,
+                "performance": {
+                    "index": "sqlite",
+                    "index_rebuilt": result.rebuilt,
+                    "search_index": result.search_index,
+                    "elapsed_ms": round(result.elapsed_ms, 3),
+                },
+            }
+        except Exception as exc:
+            error_logger.warning(f"Catalog index all-items query failed, fallback to JSON path: {exc}")
+            return None
+
     @staticmethod
     def empty_page(page: int = 1, page_size: int = 24) -> Dict[str, Any]:
         normalized_page = normalize_page(page, 1)

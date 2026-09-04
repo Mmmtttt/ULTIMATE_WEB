@@ -465,9 +465,26 @@ class ComicAppService:
     
     def search(self, keyword: str) -> ServiceResult:
         try:
-            comics = self._comic_repo.search(keyword)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(
+                    Comic.from_dict(item),
+                    tag_map,
+                    include_progress=False,
+                ),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引搜索漫画成功: 关键词 '{keyword}', 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.search(keyword)
             
             results = []
             for c in comics:
@@ -481,9 +498,27 @@ class ComicAppService:
     
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
         try:
-            comics = self._comic_repo.filter_by_tags(include_tags, exclude_tags)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(
+                    Comic.from_dict(item),
+                    tag_map,
+                    include_progress=False,
+                ),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.filter_by_tags(include_tags, exclude_tags)
             
             results = []
             for c in comics:
@@ -498,9 +533,26 @@ class ComicAppService:
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         try:
-            comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(Comic.from_dict(item), tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             results = []
             for c in comics:

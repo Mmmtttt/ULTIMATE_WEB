@@ -929,10 +929,26 @@ class RecommendationAppService:
     def search(self, keyword: str) -> ServiceResult:
         """搜索"""
         try:
-            results = self._recommendation_repo.search(keyword)
-            
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引搜索推荐漫画成功: 关键词 '{keyword}', 结果数量: {len(recommendation_list)}"
+                )
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.search(keyword)
             
             recommendation_list = []
             for r in results:
@@ -958,10 +974,28 @@ class RecommendationAppService:
     def filter_by_tags(self, include_tag_ids: List[str], exclude_tag_ids: List[str]) -> ServiceResult:
         """根据标签筛选"""
         try:
-            results = self._recommendation_repo.filter_by_tags(include_tag_ids, exclude_tag_ids)
-            
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                include_tags=include_tag_ids,
+                exclude_tags=exclude_tag_ids,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引筛选推荐漫画成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, "
+                    f"结果数量: {len(recommendation_list)}"
+                )
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.filter_by_tags(include_tag_ids, exclude_tag_ids)
             
             recommendation_list = []
             for r in results:
@@ -988,9 +1022,30 @@ class RecommendationAppService:
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         """多条件筛选：标签、作者、清单"""
         try:
-            results = self._recommendation_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选推荐漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(recommendation_list)}"
+                )
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             recommendation_list = []
             for r in results:

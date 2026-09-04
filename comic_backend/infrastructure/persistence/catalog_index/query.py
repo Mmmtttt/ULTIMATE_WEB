@@ -287,12 +287,89 @@ class CatalogIndex:
         page_size: int = 24,
         include_available_authors: bool = False,
     ) -> CatalogQueryResult | None:
+        return self._query_items(
+            media_type=media_type,
+            source=source,
+            sort_type=sort_type,
+            sort_order=sort_order,
+            min_score=min_score,
+            max_score=max_score,
+            include_deleted=include_deleted,
+            keyword=keyword,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            authors=authors,
+            list_ids=list_ids,
+            unread_only=unread_only,
+            page=page,
+            page_size=page_size,
+            include_available_authors=include_available_authors,
+        )
+
+    def query_matching_items(
+        self,
+        *,
+        media_type: str,
+        source: str = "local",
+        sort_type: str | None = "",
+        sort_order: str = "desc",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        include_deleted: bool = False,
+        keyword: str = "",
+        include_tags: Iterable[Any] | None = None,
+        exclude_tags: Iterable[Any] | None = None,
+        authors: Iterable[Any] | None = None,
+        list_ids: Iterable[Any] | None = None,
+        unread_only: bool = False,
+    ) -> CatalogQueryResult | None:
+        """Return every matching row while still doing filtering/sorting in SQLite."""
+        return self._query_items(
+            media_type=media_type,
+            source=source,
+            sort_type=sort_type,
+            sort_order=sort_order,
+            min_score=min_score,
+            max_score=max_score,
+            include_deleted=include_deleted,
+            keyword=keyword,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            authors=authors,
+            list_ids=list_ids,
+            unread_only=unread_only,
+            page=None,
+            page_size=None,
+            include_available_authors=False,
+        )
+
+    def _query_items(
+        self,
+        *,
+        media_type: str,
+        source: str,
+        sort_type: str | None,
+        sort_order: str,
+        min_score: float | None,
+        max_score: float | None,
+        include_deleted: bool,
+        keyword: str,
+        include_tags: Iterable[Any] | None,
+        exclude_tags: Iterable[Any] | None,
+        authors: Iterable[Any] | None,
+        list_ids: Iterable[Any] | None,
+        unread_only: bool,
+        page: int | None,
+        page_size: int | None,
+        include_available_authors: bool,
+    ) -> CatalogQueryResult | None:
         if not self.enabled() or not self.can_query(sort_type):
             return None
 
         started = time.perf_counter()
-        normalized_page = normalize_page(page, 1)
-        normalized_page_size = normalize_page_size(page_size)
+        paginated = page is not None
+        normalized_page = normalize_page(page, 1) if paginated else 1
+        normalized_page_size = normalize_page_size(page_size) if paginated else 1
         rebuilt = False
 
         with catalog_index_connection() as conn:
@@ -314,21 +391,27 @@ class CatalogIndex:
                 search_available=search_available,
             )
             total = int(conn.execute(f"SELECT COUNT(*) FROM catalog_item i WHERE {where}", params).fetchone()[0])
-            total_pages = max(1, math.ceil(total / normalized_page_size))
-            current_page = min(normalized_page, total_pages)
-            offset = (current_page - 1) * normalized_page_size
+            if paginated:
+                total_pages = max(1, math.ceil(total / normalized_page_size))
+                current_page = min(normalized_page, total_pages)
+                offset = (current_page - 1) * normalized_page_size
+            else:
+                total_pages = 1
+                current_page = 1
+                normalized_page_size = max(1, total)
             order_by = self._build_order_by(sort_type, sort_order)
 
-            item_rows = conn.execute(
-                f"""
+            sql = f"""
                 SELECT payload_json
                 FROM catalog_item i
                 WHERE {where}
                 ORDER BY {order_by}
-                LIMIT ? OFFSET ?
-                """,
-                [*params, normalized_page_size, offset],
-            ).fetchall()
+                """
+            item_params = list(params)
+            if paginated:
+                sql += " LIMIT ? OFFSET ?"
+                item_params.extend([normalized_page_size, offset])
+            item_rows = conn.execute(sql, item_params).fetchall()
             items = [json.loads(row["payload_json"]) for row in item_rows]
             available_authors = self._load_available_authors(conn, where, params) if include_available_authors else []
 

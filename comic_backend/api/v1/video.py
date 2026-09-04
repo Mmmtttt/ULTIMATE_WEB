@@ -58,6 +58,7 @@ video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
 actor_service = ActorAppService()
 config_service = ConfigAppService()
+catalog_query_service = CatalogQueryService()
 LOCAL_VIDEO_STREAM_CHUNK_SIZE = 1024 * 256
 LOCAL_VIDEO_STREAM_OPEN_RANGE_SIZE = 1024 * 1024 * 8
 STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS = {
@@ -3188,7 +3189,7 @@ def get_video_recommendation_detail():
         video_id = request.args.get('video_id')
         if not video_id:
             return error_response(400, "缺少参数: video_id")
-        
+
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
@@ -3663,6 +3664,22 @@ def search_video_recommendations():
         tag_service = TagAppService()
         tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         tag_map = {t["id"]: t["name"] for t in tags}
+
+        indexed_payload = catalog_query_service.query_local_all(
+            media_type="video",
+            source="preview",
+            serializer=lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map),
+            keyword=keyword,
+        )
+        if indexed_payload is not None:
+            app_logger.info(
+                f"通过 SQLite 索引搜索推荐视频成功: 关键词 {keyword}, 结果数量: {len(indexed_payload['items'])}"
+            )
+            return success_response(indexed_payload["items"])
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
+        videos = db_data.get('video_recommendations', [])
         
         results = []
         for video in videos:
@@ -3698,6 +3715,23 @@ def filter_video_recommendations():
         tag_repo = TagJsonRepository()
         tags = tag_repo.get_all()
         tag_map = {t.id: t.name for t in tags}
+
+        indexed_payload = catalog_query_service.query_local_all(
+            media_type="video",
+            source="preview",
+            serializer=lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map),
+            include_tags=include_tag_ids,
+            exclude_tags=exclude_tag_ids,
+            authors=authors,
+            list_ids=list_ids,
+        )
+        if indexed_payload is not None:
+            results = indexed_payload["items"]
+            app_logger.info(
+                f"通过 SQLite 索引筛选推荐视频成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, "
+                f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+            )
+            return success_response(results)
         
         if authors or list_ids:
             videos = video_repo.filter_multi(

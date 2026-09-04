@@ -412,6 +412,17 @@ class VideoAppService(BaseContentAppService):
         annotate_cover_url(payload)
         return cls._annotate_video_record(payload)
 
+    @classmethod
+    def _serialize_video_summary_from_payload(cls, item: Dict[str, Any], tag_map: Dict[str, str]) -> Dict[str, Any]:
+        video = Video.from_dict(item)
+        payload = {
+            **video.to_dict(),
+            **cls._storage_fields_from_item(video),
+            "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+        }
+        annotate_cover_url(payload)
+        return payload
+
     @staticmethod
     def _storage_fields_from_item(item: Any) -> Dict[str, Any]:
         fields: Dict[str, Any] = {}
@@ -939,9 +950,22 @@ class VideoAppService(BaseContentAppService):
     
     def search_videos(self, keyword: str) -> ServiceResult:
         try:
-            videos = self._video_repo.search(keyword)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引搜索视频成功: 关键词'{keyword}', 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.search(keyword)
             
             videos = [v for v in videos if not v.is_deleted]
             
@@ -3856,9 +3880,23 @@ class VideoAppService(BaseContentAppService):
 
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
         try:
-            videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
             
             results = []
             for v in videos:
@@ -3876,9 +3914,26 @@ class VideoAppService(BaseContentAppService):
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         try:
-            videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             results = []
             for v in videos:
