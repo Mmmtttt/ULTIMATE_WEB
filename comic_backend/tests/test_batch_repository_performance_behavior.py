@@ -9,13 +9,15 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from domain.comic import Comic
 from domain.recommendation import Recommendation
+from domain.tag import Tag
 from application.comic_app_service import ComicAppService
+from core.enums import ContentType
 from infrastructure.persistence.json_storage import JsonStorage
-import infrastructure.persistence.catalog_index.writer as catalog_index_writer
 import infrastructure.persistence.json_storage as json_storage_module
 from infrastructure.persistence.repositories.comic_repository_impl import ComicJsonRepository
 from infrastructure.persistence.repositories.list_repository_impl import ListJsonRepository
 from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
+from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 
 
 def _reset_json_storage(tmp_path, monkeypatch):
@@ -28,9 +30,9 @@ def test_batch_update_many_by_ids_syncs_index_once(tmp_path, monkeypatch):
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -62,9 +64,9 @@ def test_batch_delete_many_by_ids_syncs_index_once(tmp_path, monkeypatch):
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -93,9 +95,9 @@ def test_batch_update_many_by_ids_skips_write_when_no_entity_matches(tmp_path, m
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -120,9 +122,9 @@ def test_batch_save_many_syncs_index_once(tmp_path, monkeypatch):
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(
@@ -160,9 +162,9 @@ def test_batch_save_many_skips_write_when_entities_missing(tmp_path, monkeypatch
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write({"comics": [], "total_comics": 0})
@@ -178,10 +180,12 @@ def test_content_repository_save_and_delete_pass_changed_ids_to_index(tmp_path, 
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(
-            {"file_name": file_name, "changed_ids": kwargs.get("changed_ids")}
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(
+            lambda file_name, old_data, new_data, changed_ids=None: calls.append(
+                {"file_name": file_name, "changed_ids": changed_ids}
+            )
         ),
     )
     comic_storage = JsonStorage("comics_database.json")
@@ -206,14 +210,49 @@ def test_content_repository_save_and_delete_pass_changed_ids_to_index(tmp_path, 
     ]
 
 
+def test_tag_repository_save_and_delete_pass_changed_tag_ids_to_index(tmp_path, monkeypatch):
+    _reset_json_storage(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(
+            lambda file_name, old_data, new_data, changed_ids=None: calls.append(
+                {"file_name": file_name, "changed_ids": changed_ids}
+            )
+        ),
+    )
+    storage = JsonStorage("tags_database.json")
+    assert storage.write({"tags": [], "last_updated": "2026-01-01"})
+    calls.clear()
+
+    repo = TagJsonRepository(storage=storage)
+    tag = Tag(
+        id="tag_writer",
+        name="Writer",
+        content_type=ContentType.COMIC,
+        create_time="2026-01-01",
+    )
+
+    assert repo.save(tag)
+    assert repo.delete(tag.id)
+
+    assert calls == [
+        {"file_name": "tags_database.json", "changed_ids": {"tag_writer"}},
+        {"file_name": "tags_database.json", "changed_ids": {"tag_writer"}},
+    ]
+
+
 def test_list_delete_only_syncs_content_files_with_affected_ids(tmp_path, monkeypatch):
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(
-            {"file_name": file_name, "changed_ids": kwargs.get("changed_ids")}
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(
+            lambda file_name, old_data, new_data, changed_ids=None: calls.append(
+                {"file_name": file_name, "changed_ids": changed_ids}
+            )
         ),
     )
     list_storage = JsonStorage("lists_database.json")
@@ -259,9 +298,9 @@ def test_comic_batch_delete_permanently_uses_single_repository_write(tmp_path, m
     _reset_json_storage(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(
-        catalog_index_writer,
-        "sync_after_json_write",
-        lambda file_name, old_data, new_data, **kwargs: calls.append(file_name),
+        JsonStorage,
+        "_sync_catalog_index_payload",
+        staticmethod(lambda file_name, old_data, new_data, changed_ids=None: calls.append(file_name)),
     )
     storage = JsonStorage("comics_database.json")
     assert storage.write(

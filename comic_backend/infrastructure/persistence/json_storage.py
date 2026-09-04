@@ -422,13 +422,14 @@ class JsonStorage:
         data_key = data_key_by_file.get(self._file_name.lower())
         if not data_key:
             return None
-        try:
-            from infrastructure.persistence.catalog_index.connection import get_catalog_index_path
+        if changed_ids is None:
+            try:
+                from infrastructure.persistence.catalog_index.connection import get_catalog_index_path
 
-            if not os.path.exists(get_catalog_index_path()):
+                if not os.path.exists(get_catalog_index_path()):
+                    return None
+            except Exception:
                 return None
-        except Exception:
-            return None
 
         items = data.get(data_key)
         if not isinstance(items, list):

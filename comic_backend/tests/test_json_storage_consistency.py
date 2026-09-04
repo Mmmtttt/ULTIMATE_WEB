@@ -9,7 +9,6 @@ if str(BACKEND_ROOT) not in sys.path:
 from infrastructure.persistence.json_storage import JsonStorage
 import infrastructure.persistence.json_storage as json_storage_module
 import infrastructure.persistence.catalog_index.connection as catalog_index_connection
-import infrastructure.persistence.catalog_index.writer as catalog_index_writer
 
 
 def test_json_storage_singleton_uses_normalized_absolute_path(tmp_path, monkeypatch):
@@ -45,17 +44,17 @@ def test_deferred_catalog_index_sync_coalesces_repeated_writes(tmp_path, monkeyp
     monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     calls = []
 
-    def fake_sync(file_name, old_data, new_data, **kwargs):
+    def fake_sync(file_name, old_data, new_data, changed_ids=None):
         calls.append(
             {
                 "file_name": file_name,
                 "old_data": old_data,
                 "new_data": new_data,
-                "changed_ids": kwargs.get("changed_ids"),
+                "changed_ids": changed_ids,
             }
         )
 
-    monkeypatch.setattr(catalog_index_writer, "sync_after_json_write", fake_sync)
+    monkeypatch.setattr(JsonStorage, "_sync_catalog_index_payload", staticmethod(fake_sync))
     index_path = tmp_path / "catalog_index.db"
     index_path.touch()
     monkeypatch.setattr(catalog_index_connection, "get_catalog_index_path", lambda: str(index_path))
@@ -86,17 +85,17 @@ def test_atomic_update_catalog_index_snapshot_can_be_limited_to_changed_ids(tmp_
     monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     calls = []
 
-    def fake_sync(file_name, old_data, new_data, **kwargs):
+    def fake_sync(file_name, old_data, new_data, changed_ids=None):
         calls.append(
             {
                 "file_name": file_name,
                 "old_data": old_data,
                 "new_data": new_data,
-                "changed_ids": kwargs.get("changed_ids"),
+                "changed_ids": changed_ids,
             }
         )
 
-    monkeypatch.setattr(catalog_index_writer, "sync_after_json_write", fake_sync)
+    monkeypatch.setattr(JsonStorage, "_sync_catalog_index_payload", staticmethod(fake_sync))
     index_path = tmp_path / "catalog_index.db"
     index_path.touch()
     monkeypatch.setattr(catalog_index_connection, "get_catalog_index_path", lambda: str(index_path))
@@ -137,10 +136,10 @@ def test_deferred_catalog_index_sync_uses_single_tag_rebuild_when_tags_changed(t
     monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(tmp_path))
     calls = []
 
-    def fake_sync(file_name, old_data, new_data, **kwargs):
+    def fake_sync(file_name, old_data, new_data, changed_ids=None):
         calls.append(file_name)
 
-    monkeypatch.setattr(catalog_index_writer, "sync_after_json_write", fake_sync)
+    monkeypatch.setattr(JsonStorage, "_sync_catalog_index_payload", staticmethod(fake_sync))
     comic_storage = JsonStorage("comics_database.json")
     tag_storage = JsonStorage("tags_database.json")
 

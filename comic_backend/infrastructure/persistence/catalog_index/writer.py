@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -29,6 +30,9 @@ def sync_after_json_write(
 
     normalized_file_name = os.path.basename(str(file_name or "")).lower()
     if normalized_file_name == "tags_database.json":
+        normalized_changed_ids = _normalize_changed_ids(changed_ids)
+        if normalized_changed_ids is not None:
+            return _sync_tag_document(normalized_changed_ids)
         return _rebuild_for_tag_change()
 
     spec = content_document_spec_for_file(normalized_file_name)
@@ -87,6 +91,72 @@ def _rebuild_for_tag_change() -> Dict[str, Any]:
         return {"synced": False, "reason": "rebuild_failed", "error": str(exc)}
 
 
+def _sync_tag_document(changed_tag_ids: Set[str]) -> Dict[str, Any]:
+    """Refresh only items whose indexed search text depends on changed tag names."""
+    if not os.path.exists(get_catalog_index_path()):
+        return {"synced": False, "reason": "index_missing"}
+
+    if not changed_tag_ids:
+        return _update_tag_document_meta()
+
+    placeholders = ",".join("?" for _ in changed_tag_ids)
+    tag_map = build_tag_map()
+
+    try:
+        with catalog_index_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT
+                    i.media_type,
+                    i.source,
+                    i.source_order,
+                    i.payload_json
+                FROM catalog_tag ct
+                JOIN catalog_item i ON i.item_key = ct.item_key
+                WHERE ct.tag_id IN ({placeholders})
+                """,
+                sorted(changed_tag_ids),
+            ).fetchall()
+
+            refreshed_count = 0
+            with conn:
+                search_available = catalog_search_available(conn)
+                for row in rows:
+                    try:
+                        payload = json.loads(row["payload_json"])
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+
+                    item = build_index_item(
+                        str(row["media_type"] or "").strip(),
+                        str(row["source"] or "").strip(),
+                        int(row["source_order"] or 0),
+                        payload,
+                        tag_map,
+                    )
+                    if not item["item_id"]:
+                        continue
+                    _replace_index_item(conn, item, search_available)
+                    refreshed_count += 1
+
+                _write_document_meta(conn, {"logical_name": "tags"})
+
+        result = {
+            "synced": True,
+            "mode": "tag_changed_ids",
+            "logical_name": "tags",
+            "changed_tag_count": len(changed_tag_ids),
+            "refreshed_item_count": refreshed_count,
+        }
+        app_logger.info(f"Catalog index 标签增量同步完成: {result}")
+        return result
+    except Exception as exc:
+        error_logger.warning(f"Catalog index 标签增量同步失败: {exc}")
+        return {"synced": False, "reason": "tag_sync_failed", "error": str(exc)}
+
+
 def _sync_content_document(
     spec: Dict[str, str],
     old_items: List[Tuple[int, Dict[str, Any]]],
@@ -129,45 +199,7 @@ def _sync_content_document(
                     item = build_index_item(media_type, source, index, raw, tag_map)
                     if not item["item_id"]:
                         continue
-                    conn.execute(
-                        """
-                        INSERT OR REPLACE INTO catalog_item (
-                            item_key, media_type, source, source_order, item_id,
-                            title, title_jp, title_sort_key, creator, actors_text, code, desc,
-                            search_text, score, current_unit, total_units,
-                            create_time, last_access_time, date, is_deleted,
-                            cover_path, cover_path_local, custom_order, payload_json
-                        ) VALUES (
-                            :item_key, :media_type, :source, :source_order, :item_id,
-                            :title, :title_jp, :title_sort_key, :creator, :actors_text, :code, :desc,
-                            :search_text, :score, :current_unit, :total_units,
-                            :create_time, :last_access_time, :date, :is_deleted,
-                            :cover_path, :cover_path_local, :custom_order, :payload_json
-                        )
-                        """,
-                        item,
-                    )
-                    conn.execute("DELETE FROM catalog_author WHERE item_key = ?", (item["item_key"],))
-                    conn.execute("DELETE FROM catalog_list WHERE item_key = ?", (item["item_key"],))
-                    conn.execute("DELETE FROM catalog_tag WHERE item_key = ?", (item["item_key"],))
-                    if search_available:
-                        conn.execute("DELETE FROM catalog_item_search WHERE item_key = ?", (item["item_key"],))
-                        conn.execute(
-                            "INSERT INTO catalog_item_search(item_key, search_text) VALUES (?, ?)",
-                            (item["item_key"], item["search_text"]),
-                        )
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO catalog_tag(item_key, tag_id) VALUES (?, ?)",
-                        [(item["item_key"], tag_id) for tag_id in item["tag_ids"]],
-                    )
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO catalog_list(item_key, list_id) VALUES (?, ?)",
-                        [(item["item_key"], list_id) for list_id in item["list_ids"]],
-                    )
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO catalog_author(item_key, name) VALUES (?, ?)",
-                        [(item["item_key"], name) for name in item["author_names"]],
-                    )
+                    _replace_index_item(conn, item, search_available)
 
                 _write_document_meta(conn, spec)
 
@@ -201,6 +233,52 @@ def _update_document_meta(spec: Dict[str, str]) -> Dict[str, Any]:
     except Exception as exc:
         error_logger.warning(f"Catalog index 元数据同步失败: {exc}")
         return {"synced": False, "reason": "meta_sync_failed", "error": str(exc)}
+
+
+def _update_tag_document_meta() -> Dict[str, Any]:
+    return _update_document_meta({"logical_name": "tags"})
+
+
+def _replace_index_item(conn, item: Dict[str, Any], search_available: bool) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO catalog_item (
+            item_key, media_type, source, source_order, item_id,
+            title, title_jp, title_sort_key, creator, actors_text, code, desc,
+            search_text, score, current_unit, total_units,
+            create_time, last_access_time, date, is_deleted,
+            cover_path, cover_path_local, custom_order, payload_json
+        ) VALUES (
+            :item_key, :media_type, :source, :source_order, :item_id,
+            :title, :title_jp, :title_sort_key, :creator, :actors_text, :code, :desc,
+            :search_text, :score, :current_unit, :total_units,
+            :create_time, :last_access_time, :date, :is_deleted,
+            :cover_path, :cover_path_local, :custom_order, :payload_json
+        )
+        """,
+        item,
+    )
+    conn.execute("DELETE FROM catalog_author WHERE item_key = ?", (item["item_key"],))
+    conn.execute("DELETE FROM catalog_list WHERE item_key = ?", (item["item_key"],))
+    conn.execute("DELETE FROM catalog_tag WHERE item_key = ?", (item["item_key"],))
+    if search_available:
+        conn.execute("DELETE FROM catalog_item_search WHERE item_key = ?", (item["item_key"],))
+        conn.execute(
+            "INSERT INTO catalog_item_search(item_key, search_text) VALUES (?, ?)",
+            (item["item_key"], item["search_text"]),
+        )
+    conn.executemany(
+        "INSERT OR IGNORE INTO catalog_tag(item_key, tag_id) VALUES (?, ?)",
+        [(item["item_key"], tag_id) for tag_id in item["tag_ids"]],
+    )
+    conn.executemany(
+        "INSERT OR IGNORE INTO catalog_list(item_key, list_id) VALUES (?, ?)",
+        [(item["item_key"], list_id) for list_id in item["list_ids"]],
+    )
+    conn.executemany(
+        "INSERT OR IGNORE INTO catalog_author(item_key, name) VALUES (?, ?)",
+        [(item["item_key"], name) for name in item["author_names"]],
+    )
 
 
 def _write_document_meta(conn, spec: Dict[str, str]) -> None:
