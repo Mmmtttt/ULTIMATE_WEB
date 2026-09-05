@@ -299,6 +299,14 @@ class JsonStorage:
                 },
             }
 
+        if file_name == "lan_transfer_database.json":
+            return {
+                "collection_name": "局域网传输",
+                "user": "用户名",
+                "last_updated": now,
+                "items": [],
+            }
+
         if file_name == "comics_database.json":
             return {
                 "collection_name": "我的收藏集",

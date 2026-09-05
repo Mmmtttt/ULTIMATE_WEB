@@ -93,6 +93,132 @@
       </div>
     </van-cell-group>
 
+    <van-cell-group inset class="sync-group transfer-group">
+      <van-cell
+        clickable
+        title="局域网传输"
+        :label="transferExpanded ? '临时传文字或文件，不参与数据同步' : '独立工具，默认收起，点击展开'"
+        :value="transferExpanded ? `${transferItems.length} 项` : '点击展开'"
+        @click="toggleTransferPanel"
+      >
+        <template #right-icon>
+          <van-icon :name="transferExpanded ? 'arrow-up' : 'arrow-down'" class="transfer-collapse-icon" />
+        </template>
+      </van-cell>
+
+      <div v-if="transferExpanded" class="transfer-board">
+        <div class="transfer-compose">
+          <div class="transfer-compose-card text-card">
+            <div class="transfer-card-head">
+              <span class="transfer-icon">TXT</span>
+              <div>
+                <div class="transfer-title">发布文字</div>
+                <div class="transfer-desc">适合链接、验证码、短笔记，手机打开即可复制。</div>
+              </div>
+            </div>
+            <van-field
+              v-model="transferText"
+              type="textarea"
+              rows="3"
+              autosize
+              maxlength="4000"
+              show-word-limit
+              placeholder="输入要在局域网里临时传递的文字"
+              class="transfer-textarea"
+            />
+            <van-field
+              v-model.trim="transferTextName"
+              placeholder="文件名，可选，例如 note.txt"
+              class="transfer-inline-field"
+            />
+            <van-button type="primary" round block :loading="publishingTransferText" @click="publishTransferText">
+              发布文字
+            </van-button>
+          </div>
+
+          <div class="transfer-compose-card file-card">
+            <div class="transfer-card-head">
+              <span class="transfer-icon">LAN</span>
+              <div>
+                <div class="transfer-title">传输文件</div>
+                <div class="transfer-desc">终端可上传文件；服务器也可登记本机文件路径供手机下载。</div>
+              </div>
+            </div>
+
+            <input
+              ref="transferFileInput"
+              type="file"
+              class="transfer-hidden-input"
+              @change="handleTransferFileSelected"
+            />
+            <van-button round block plain type="primary" :loading="uploadingTransferFile" @click="triggerTransferUpload">
+              上传当前设备文件
+            </van-button>
+
+            <div class="server-file-form">
+              <van-field
+                v-model.trim="serverFilePath"
+                placeholder="服务器文件路径，例如 D:\\share\\movie.zip"
+                class="transfer-inline-field"
+              />
+              <van-field
+                v-model.trim="serverFileName"
+                placeholder="下载文件名，可选"
+                class="transfer-inline-field"
+              />
+              <van-button type="success" round block :loading="registeringServerFile" @click="registerTransferServerFile">
+                登记服务器文件
+              </van-button>
+            </div>
+          </div>
+        </div>
+
+        <div class="transfer-list-head">
+          <span>当前可取件</span>
+          <div class="transfer-list-tools">
+            <span>{{ transferItems.length }} 项</span>
+            <van-button size="mini" plain type="primary" :loading="loadingTransferItems" @click.stop="loadTransferItems">
+              刷新
+            </van-button>
+          </div>
+        </div>
+        <div v-if="loadingTransferItems && transferItems.length === 0" class="transfer-loading">
+          <van-loading size="20px">加载传输列表...</van-loading>
+        </div>
+        <van-empty v-else-if="transferItems.length === 0" description="暂无可传输内容" />
+        <div v-else class="transfer-list">
+          <div v-for="item in transferItems" :key="item.id" class="transfer-item">
+            <div class="transfer-item-main">
+              <div class="transfer-item-title">
+                <span class="kind-pill" :class="item.kind">{{ formatTransferKind(item.kind) }}</span>
+                <span>{{ item.name || '未命名内容' }}</span>
+              </div>
+              <div class="transfer-item-meta">
+                {{ formatTransferSize(item.size) }} · {{ item.created_at || '-' }}
+              </div>
+              <div v-if="item.kind === 'server_file' && item.server_path" class="transfer-item-path">
+                {{ item.server_path }}
+              </div>
+              <div v-if="item.kind === 'text'" class="transfer-text-preview">
+                {{ item.text }}
+              </div>
+            </div>
+            <div class="transfer-item-actions">
+              <van-button v-if="item.kind === 'text'" size="small" round plain type="primary" @click="copyTransferText(item)">
+                复制
+              </van-button>
+              <van-button size="small" round type="primary" @click="downloadTransferItem(item)">
+                下载
+              </van-button>
+              <van-button size="small" round plain type="danger" @click="deleteTransferItem(item)">
+                删除
+              </van-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </van-cell-group>
+
     <van-popup
       v-model:show="showListScopePopup"
       round
@@ -171,8 +297,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
-import { syncApi } from '@/api'
+import { syncApi, transferApi } from '@/api'
 import { resolveBackendOrigin } from '@/runtime/endpoint'
+import { useAuthStore } from '@/stores/auth'
 import { useListStore } from '@/stores/list'
 
 const inviteTtlMinutes = ref(10)
@@ -188,6 +315,7 @@ const peerTaskMap = ref({})
 const taskPollingTokens = ref({})
 const pageAlive = ref(true)
 const isDesktopListScopePopup = ref(false)
+const authStore = useAuthStore()
 const listStore = useListStore()
 const showListScopePopup = ref(false)
 const listScopePeer = ref(null)
@@ -197,6 +325,17 @@ const selectedListScopeId = ref('')
 const listScopeKeyword = ref('')
 const listScopeDirection = ref('push')
 const listScopeOptions = ref([])
+const transferExpanded = ref(false)
+const transferItems = ref([])
+const loadingTransferItems = ref(false)
+const publishingTransferText = ref(false)
+const uploadingTransferFile = ref(false)
+const registeringServerFile = ref(false)
+const transferText = ref('')
+const transferTextName = ref('')
+const serverFilePath = ref('')
+const serverFileName = ref('')
+const transferFileInput = ref(null)
 
 const connectForm = reactive({
   remoteBaseUrl: '',
@@ -332,6 +471,158 @@ function formatTaskExtra(task) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function formatTransferKind(kind) {
+  const value = String(kind || '').trim()
+  if (value === 'text') return '文字'
+  if (value === 'server_file') return '服务器'
+  if (value === 'upload') return '上传'
+  return '文件'
+}
+
+function formatTransferSize(size) {
+  const bytes = Number(size || 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B'
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+async function loadTransferItems() {
+  loadingTransferItems.value = true
+  try {
+    const res = await transferApi.listItems()
+    transferItems.value = Array.isArray(res?.data?.items) ? res.data.items : []
+  } catch (error) {
+    showFailToast(error?.message || '加载传输列表失败')
+  } finally {
+    loadingTransferItems.value = false
+  }
+}
+
+async function toggleTransferPanel() {
+  transferExpanded.value = !transferExpanded.value
+  if (transferExpanded.value && transferItems.value.length === 0) {
+    await loadTransferItems()
+  }
+}
+
+async function publishTransferText() {
+  if (!String(transferText.value || '').trim()) {
+    showFailToast('请输入要发布的文字')
+    return
+  }
+  publishingTransferText.value = true
+  try {
+    const res = await transferApi.publishText(transferText.value, transferTextName.value)
+    appendLog(`局域网传输: 已发布文字 ${res?.data?.name || ''}`)
+    transferText.value = ''
+    transferTextName.value = ''
+    showSuccessToast('文字已发布')
+    await loadTransferItems()
+  } catch (error) {
+    showFailToast(error?.message || '发布文字失败')
+  } finally {
+    publishingTransferText.value = false
+  }
+}
+
+function triggerTransferUpload() {
+  transferFileInput.value?.click?.()
+}
+
+async function handleTransferFileSelected(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) {
+    return
+  }
+  uploadingTransferFile.value = true
+  try {
+    const res = await transferApi.uploadFile(file)
+    appendLog(`局域网传输: 已上传文件 ${res?.data?.name || file.name}`)
+    showSuccessToast('文件已上传')
+    await loadTransferItems()
+  } catch (error) {
+    showFailToast(error?.message || '上传文件失败')
+  } finally {
+    uploadingTransferFile.value = false
+    if (event?.target) {
+      event.target.value = ''
+    }
+  }
+}
+
+async function registerTransferServerFile() {
+  if (!String(serverFilePath.value || '').trim()) {
+    showFailToast('请输入服务器文件路径')
+    return
+  }
+  registeringServerFile.value = true
+  try {
+    const res = await transferApi.registerServerFile(serverFilePath.value, serverFileName.value)
+    appendLog(`局域网传输: 已登记服务器文件 ${res?.data?.name || serverFilePath.value}`)
+    serverFilePath.value = ''
+    serverFileName.value = ''
+    showSuccessToast('服务器文件已登记')
+    await loadTransferItems()
+  } catch (error) {
+    showFailToast(error?.message || '登记服务器文件失败')
+  } finally {
+    registeringServerFile.value = false
+  }
+}
+
+function downloadTransferItem(item) {
+  if (!item?.id) return
+  const url = transferApi.getDownloadUrl(item.id, authStore.mode)
+  window.open(url, '_blank')
+}
+
+async function copyTransferText(item) {
+  const text = String(item?.text || '')
+  if (!text) {
+    showFailToast('没有可复制的文字')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    showSuccessToast('已复制')
+  } catch (error) {
+    console.warn('复制失败:', error)
+    showFailToast('复制失败，请手动选择文字')
+  }
+}
+
+async function deleteTransferItem(item) {
+  if (!item?.id) return
+  try {
+    await showConfirmDialog({
+      title: '删除传输项',
+      message: item.kind === 'server_file'
+        ? '只删除传输入口，不会删除服务器原文件。'
+        : `确定删除 ${item.name || '该传输项'} 吗？`
+    })
+  } catch {
+    return
+  }
+  try {
+    await transferApi.deleteItem(item.id)
+    appendLog(`局域网传输: 已删除 ${item.name || item.id}`)
+    showSuccessToast('已删除')
+    await loadTransferItems()
+  } catch (error) {
+    showFailToast(error?.message || '删除失败')
+  }
 }
 
 async function createInvite() {
@@ -788,6 +1079,215 @@ onUnmounted(() => {
   padding: 10px 16px 16px;
 }
 
+.transfer-group {
+  position: relative;
+}
+
+.transfer-collapse-icon {
+  margin-left: 8px;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+
+.transfer-board {
+  padding: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.transfer-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.transfer-compose-card {
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(80, 134, 255, 0.14), transparent 34%),
+    var(--surface-1);
+  box-shadow: var(--shadow-xs);
+}
+
+.transfer-compose-card.file-card {
+  background:
+    radial-gradient(circle at 90% 0%, rgba(24, 184, 122, 0.14), transparent 34%),
+    var(--surface-1);
+}
+
+.transfer-card-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.transfer-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand-600), #76a7ff);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  box-shadow: 0 8px 18px rgba(80, 134, 255, 0.24);
+}
+
+.file-card .transfer-icon {
+  background: linear-gradient(135deg, #16a36f, #7bdc9b);
+  box-shadow: 0 8px 18px rgba(22, 163, 111, 0.22);
+}
+
+.transfer-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.transfer-desc {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.transfer-textarea,
+.transfer-inline-field {
+  margin-bottom: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.transfer-textarea :deep(.van-field__control) {
+  line-height: 1.55;
+}
+
+.server-file-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.transfer-hidden-input {
+  display: none;
+}
+
+.transfer-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 16px 2px 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.transfer-list-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.transfer-loading {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0;
+}
+
+.transfer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.transfer-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--surface-1);
+}
+
+.transfer-item-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.transfer-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 800;
+  word-break: break-word;
+}
+
+.kind-pill {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--brand-700);
+  background: rgba(80, 134, 255, 0.12);
+  font-size: 11px;
+}
+
+.kind-pill.server_file {
+  color: #128058;
+  background: rgba(22, 163, 111, 0.13);
+}
+
+.kind-pill.upload {
+  color: #a15c00;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.transfer-item-meta,
+.transfer-item-path {
+  margin-top: 5px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.transfer-text-preview {
+  margin-top: 8px;
+  max-height: 72px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.transfer-item-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .peer-card {
   margin: 12px;
   border: 1px solid var(--border-soft);
@@ -960,6 +1460,27 @@ onUnmounted(() => {
   .peer-card {
     margin-inline: 10px;
     padding: 12px;
+  }
+
+  .transfer-board {
+    padding: 10px;
+  }
+
+  .transfer-compose {
+    grid-template-columns: 1fr;
+  }
+
+  .transfer-item {
+    flex-direction: column;
+  }
+
+  .transfer-item-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .transfer-item-actions .van-button {
+    flex: 1 1 0;
   }
 
   .peer-actions .van-button {

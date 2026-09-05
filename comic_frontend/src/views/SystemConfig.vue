@@ -36,7 +36,7 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <div class="select-row" @click="openSelectPanel('pageSize')">
+      <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
         <span class="select-label">列表分页数量</span>
         <span class="select-value">{{ pageSizeLabel }} <van-icon name="arrow-down" size="12" /></span>
       </div>

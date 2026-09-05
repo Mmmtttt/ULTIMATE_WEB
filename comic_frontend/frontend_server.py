@@ -330,7 +330,9 @@ def _build_streaming_flask_response(proxy_resp) -> Response:
 
 
 def _read_requested_space_mode() -> str:
-    mode = request.cookies.get(SPACE_COOKIE_NAME, "").strip().lower()
+    mode = request.args.get("space_mode", "").strip().lower()
+    if not mode:
+        mode = request.cookies.get(SPACE_COOKIE_NAME, "").strip().lower()
     if mode == SPACE_MODE_NORMAL:
         return SPACE_MODE_NORMAL
     return SPACE_MODE_PRIVATE
@@ -383,9 +385,25 @@ def _proxy_to_backend(backend_base: str, path: str):
     if method in ("post", "put", "patch", "delete"):
         if request.is_json:
             kwargs["json"] = request.get_json(silent=True)
+        elif request.files:
+            files = []
+            for field_name, storage in request.files.items(multi=True):
+                storage.stream.seek(0)
+                files.append((
+                    field_name,
+                    (
+                        storage.filename,
+                        storage.stream,
+                        storage.mimetype or "application/octet-stream",
+                    ),
+                ))
+            kwargs["files"] = files
+            if request.form:
+                kwargs["data"] = request.form.to_dict(flat=False)
+        elif request.form:
+            kwargs["data"] = request.form.to_dict(flat=False)
         elif request.data:
             kwargs["data"] = request.data
-        kwargs["files"] = None
 
     try:
         resp = getattr(requests, method)(url, **kwargs)
