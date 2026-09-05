@@ -90,7 +90,7 @@ def test_aria2_plugin_discovered_and_loaded():
     manifest = registry.get_manifest(ARIA2_PLUGIN_ID)
     assert manifest is not None
     keys = set(manifest.capability_keys)
-    assert {"download.magnet.add", "download.task.status", "download.task.list", "download.task.pause", "download.task.resume", "download.task.remove", "health.query.status"} <= keys
+    assert {"download.magnet.add", "download.task.status", "download.task.list", "download.task.pause", "download.task.resume", "download.task.remove", "download.task.migrate", "health.query.status"} <= keys
 
     provider = _make_provider()
     assert provider is not None
@@ -334,3 +334,75 @@ def test_unsupported_capability_raises():
     provider = _make_provider()
     with pytest.raises(ValueError, match="不支持的能力"):
         provider.execute("catalog.search", {}, {}, _base_config())
+
+
+# ---------- download.task.migrate ----------
+
+
+def test_task_migrate_completed_task_rebuilds_in_new_dir(tmp_path, monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "complete", "infoHash": "ABCDEF1234567890"})
+    rpc.register("aria2.removeDownloadResult", result="OK")
+    rpc.register("aria2.addUri", result="new-gid-9")
+    monkeypatch.setattr(requests, "post", rpc)
+
+    target_dir = tmp_path / "movies" / "ABC-123"
+    provider = _make_provider()
+    result = provider.execute(
+        "download.task.migrate",
+        {"gid": "gid-001", "dir": str(target_dir)},
+        {},
+        _base_config(),
+    )
+    assert result["gid"] == "new-gid-9"
+    assert result["migrated"] is True
+    assert target_dir.is_dir()
+
+    methods = [call["method"] for call in rpc.calls]
+    assert methods == ["aria2.tellStatus", "aria2.removeDownloadResult", "aria2.addUri"]
+    add_call = rpc.calls[-1]
+    assert add_call["params"][0] == "token:s3cret"
+    assert add_call["params"][1] == ["magnet:?xt=urn:btih:abcdef1234567890"]
+    assert add_call["params"][2] == {"dir": str(target_dir)}
+
+
+def test_task_migrate_active_task_uses_force_remove(tmp_path, monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "active", "infoHash": "ABC"})
+    rpc.register("aria2.forceRemove", result="OK")
+    rpc.register("aria2.addUri", result="new-gid-9")
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    result = provider.execute(
+        "download.task.migrate",
+        {"gid": "gid-001", "dir": str(tmp_path / "newdir")},
+        {},
+        _base_config(),
+    )
+    assert result["migrated"] is True
+    methods = [call["method"] for call in rpc.calls]
+    assert methods == ["aria2.tellStatus", "aria2.forceRemove", "aria2.addUri"]
+
+
+def test_task_migrate_missing_info_hash_raises(monkeypatch):
+    rpc = FakeAria2Rpc()
+    rpc.register("aria2.tellStatus", result={"gid": "gid-001", "status": "complete"})
+    monkeypatch.setattr(requests, "post", rpc)
+
+    provider = _make_provider()
+    with pytest.raises(RuntimeError, match="infoHash"):
+        provider.execute(
+            "download.task.migrate",
+            {"gid": "gid-001", "dir": str(Path("x"))},
+            {},
+            _base_config(),
+        )
+
+
+def test_task_migrate_requires_gid_and_dir():
+    provider = _make_provider()
+    with pytest.raises(ValueError, match="gid"):
+        provider.execute("download.task.migrate", {"dir": "x"}, {}, _base_config())
+    with pytest.raises(ValueError, match="dir"):
+        provider.execute("download.task.migrate", {"gid": "gid-001"}, {}, _base_config())

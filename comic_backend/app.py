@@ -459,6 +459,22 @@ def init_temp_file_cleanup_for_mode(mode: str):
         app_logger.warning(f"Failed to clean .tmp files for {mode} mode: {e}")
 
 
+def init_download_auto_import_for_mode(mode: str):
+    """启动下载完成自动导入后台服务（仅当第三方插件启用时）"""
+    try:
+        from core.runtime_profile import is_third_party_enabled
+
+        if not is_third_party_enabled():
+            return
+        from application.download_auto_import_service import get_download_auto_import_service
+
+        service = get_download_auto_import_service(space_mode=mode)
+        service.start()
+        app_logger.info(f"Download auto-import service initialized for {mode} mode")
+    except Exception as e:
+        app_logger.error(f"Failed to initialize download auto-import for {mode} mode: {e}")
+
+
 def init_tag_schema_for_mode(mode: str):
     try:
         set_current_space_mode(mode)
@@ -497,6 +513,7 @@ def run_space_init(mode: str):
     init_tag_schema_for_mode(mode)
     init_default_data_for_mode(mode)
     init_backup_for_mode(mode)
+    init_download_auto_import_for_mode(mode)
 
 
 # ========== 启动函数 ==========

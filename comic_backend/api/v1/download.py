@@ -9,6 +9,9 @@
 - POST   /api/v1/download/task/resume    继续任务
 - POST   /api/v1/download/task/remove    删除任务
 """
+import os
+import re
+
 from flask import Blueprint, request, jsonify
 
 from infrastructure.logger import error_logger
@@ -16,6 +19,40 @@ from protocol.host_service import get_protocol_host_service
 from .runtime_guard import require_third_party
 
 download_bp = Blueprint('download', __name__)
+
+
+def _sanitize_subfolder(segment: str) -> str:
+    """净化用户输入的子文件夹名：仅保留单层目录名。
+
+    剔除路径分隔、..、Windows 非法字符，避免路径穿越。
+    """
+    seg = str(segment or "").strip().replace("\\", "/").split("/")[-1]
+    seg = re.sub(r'[<>:"/\\|?*]', " ", seg)
+    seg = re.sub(r"\.{2,}", "", seg)
+    seg = re.sub(r"\s{2,}", " ", seg).strip()
+    return seg
+
+
+def _resolve_target_dir(host_service, engine: str, body: dict) -> str:
+    """解析本次投递的目标下载目录。
+
+    优先级：body.dir（绝对路径）> body.dir_subfolder 拼接引擎根目录 > 空（沿用引擎默认）。
+    """
+    dir_value = str(body.get("dir") or "").strip()
+    if dir_value:
+        return dir_value
+    subfolder = _sanitize_subfolder(str(body.get("dir_subfolder") or "").strip())
+    if not subfolder:
+        return ""
+    base_dir = host_service.get_download_engine_base_dir(engine).rstrip("/\\")
+    if not base_dir:
+        raise ValueError("使用子文件夹下载需要先在插件配置中设置『下载目录』")
+    target = os.path.join(base_dir, subfolder)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as exc:
+        raise ValueError(f"创建下载目录失败（{target}）: {exc}") from exc
+    return target
 
 
 def success_response(data=None, msg="成功"):
@@ -55,7 +92,7 @@ def list_engines():
 def add_magnet():
     """投递磁力链接到下载引擎。
 
-    body: { engine?, magnet?, uris?, dir?, out? }
+    body: { engine?, magnet?, uris?, dir?, dir_subfolder?, out? }
     """
     body = request.get_json(silent=True) or {}
     engine = str(body.get("engine") or "").strip()
@@ -67,14 +104,20 @@ def add_magnet():
     if not magnet and not uris:
         return error_response(400, "缺少 magnet 或 uris 参数")
 
+    host_service = _host_service()
+    try:
+        target_dir = _resolve_target_dir(host_service, engine, body)
+    except ValueError as exc:
+        return error_response(400, str(exc))
+
     params = {
         "magnet": magnet,
         "uris": uris,
-        "dir": str(body.get("dir") or "").strip(),
+        "dir": target_dir,
         "out": str(body.get("out") or "").strip(),
     }
     try:
-        plugin_id, platform_label, payload = _host_service().execute_download_capability(
+        plugin_id, platform_label, payload = host_service.execute_download_capability(
             engine, "download.magnet.add", params
         )
     except Exception as exc:
@@ -86,6 +129,7 @@ def add_magnet():
         "platform": platform_label,
         "gid": (payload or {}).get("gid"),
         "added": bool((payload or {}).get("added")),
+        "dir": target_dir or None,
     }, "已投递到下载引擎")
 
 
@@ -194,3 +238,63 @@ def task_remove():
         error_logger.error(f"download task remove failed: {exc}")
         return error_response(500, f"删除任务失败: {exc}")
     return success_response(payload)
+
+
+@download_bp.route('/organize-pending', methods=['GET'])
+@require_third_party(error_response)
+def list_organize_pending():
+    """列出等待用户确认的番号文件夹创建请求。"""
+    try:
+        from application.download_auto_import_service import get_download_auto_import_service
+
+        pending = get_download_auto_import_service().get_pending_organizations()
+    except Exception as exc:
+        error_logger.error(f"download organize pending list failed: {exc}")
+        return error_response(500, f"获取待确认归集列表失败: {exc}")
+    return success_response({"pending": pending})
+
+
+@download_bp.route('/organize-confirm', methods=['POST'])
+@require_third_party(error_response)
+def confirm_organize():
+    """确认创建番号文件夹并把散文件移入。
+
+    body: { id }
+    """
+    body = request.get_json(silent=True) or {}
+    org_id = str(body.get("id") or "").strip()
+    if not org_id:
+        return error_response(400, "缺少 id 参数")
+    try:
+        from application.download_auto_import_service import get_download_auto_import_service
+
+        ok, msg = get_download_auto_import_service().confirm_organization(org_id)
+    except Exception as exc:
+        error_logger.error(f"download organize confirm failed: {exc}")
+        return error_response(500, f"确认归集失败: {exc}")
+    if not ok:
+        return error_response(400, msg or "确认失败")
+    return success_response({}, msg)
+
+
+@download_bp.route('/organize-dismiss', methods=['POST'])
+@require_third_party(error_response)
+def dismiss_organize():
+    """忽略本次归集询问（之后不再重复询问该任务）。
+
+    body: { id }
+    """
+    body = request.get_json(silent=True) or {}
+    org_id = str(body.get("id") or "").strip()
+    if not org_id:
+        return error_response(400, "缺少 id 参数")
+    try:
+        from application.download_auto_import_service import get_download_auto_import_service
+
+        ok, msg = get_download_auto_import_service().dismiss_organization(org_id)
+    except Exception as exc:
+        error_logger.error(f"download organize dismiss failed: {exc}")
+        return error_response(500, f"忽略归集失败: {exc}")
+    if not ok:
+        return error_response(400, msg or "忽略失败")
+    return success_response({}, msg)

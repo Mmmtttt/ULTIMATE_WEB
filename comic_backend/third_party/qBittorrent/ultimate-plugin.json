@@ -1,18 +1,18 @@
 {
   "protocol_version": "1.0",
   "plugin": {
-    "id": "download.aria2",
-    "name": "Aria2",
+    "id": "download.qbittorrent",
+    "name": "qBittorrent",
     "version": "0.1.0",
-    "entrypoint": "./ultimate_provider.py:Aria2Provider",
-    "config_key": "aria2"
+    "entrypoint": "./ultimate_provider.py:QbittorrentProvider",
+    "config_key": "qbittorrent"
   },
   "media_types": ["video", "comic"],
   "identity": {
     "content_type": "video",
-    "host_id_prefix": "ARIA2",
-    "platform_label": "Aria2",
-    "aliases": ["aria2", "aria"]
+    "host_id_prefix": "QBIT",
+    "platform_label": "qBittorrent",
+    "aliases": ["qbittorrent", "qbit"]
   },
   "capabilities": [
     { "key": "health.query.status" },
@@ -26,15 +26,16 @@
   ],
   "configuration": {
     "order": 80,
-    "label": "Aria2",
+    "label": "qBittorrent",
     "sections": [
       {
         "id": "basic",
         "label": "基础配置",
         "fields": [
           { "key": "enabled", "label": "启用", "type": "boolean", "default": true },
-          { "key": "rpc_url", "label": "RPC 地址", "type": "text", "placeholder": "http://127.0.0.1:6800/jsonrpc" },
-          { "key": "secret", "label": "RPC Secret（rpc-secret）", "type": "password", "secret": true },
+          { "key": "webui_url", "label": "WebUI 地址", "type": "text", "placeholder": "http://127.0.0.1:8080" },
+          { "key": "username", "label": "用户名", "type": "text", "placeholder": "qBittorrent WebUI 用户名" },
+          { "key": "password", "label": "密码", "type": "password", "secret": true },
           { "key": "dir", "label": "默认下载目录", "type": "text", "placeholder": "例如 D:\\downloads 或 /downloads" },
           { "key": "timeout_seconds", "label": "请求超时秒数", "type": "number", "placeholder": "30" },
           { "key": "auto_import_enabled", "label": "下载完成后自动导入本地库", "type": "boolean", "default": false },

@@ -39,6 +39,20 @@
           支持磁力链接、HTTP/FTP 直链、BT 种子文件链接，每行一个。
         </div>
         <van-field
+          :model-value="selectedEngine ? selectedEngine.name : '请选择下载引擎'"
+          readonly
+          is-link
+          label="下载平台"
+          placeholder="请选择下载引擎"
+          @click="openEnginePicker"
+        />
+        <van-field
+          v-model="manualSubfolder"
+          label="保存到子文件夹"
+          placeholder="可选，如 ABC-123 或剧名，留空用下载目录根路径"
+          clearable
+        />
+        <van-field
           v-model="manualLinks"
           type="textarea"
           rows="6"
@@ -58,6 +72,12 @@
           </van-button>
         </div>
       </div>
+      <van-action-sheet
+        v-model:show="showEnginePicker"
+        :actions="enginePickerActions"
+        cancel-text="取消"
+        @select="onEngineSelect"
+      />
     </van-popup>
 
     <div class="tasks-container">
@@ -249,9 +269,13 @@ const tasks = ref([])
 const loading = ref(false)
 const showAddPopup = ref(false)
 const manualLinks = ref('')
+const manualSubfolder = ref('')
 const addingLinks = ref(false)
 const taskActionGid = ref('')
 const showHistory = ref(false)
+const selectedEngineIndex = ref(0)
+const showEnginePicker = ref(false)
+const organizingPrompting = ref(false)
 
 const POLL_INTERVAL_MS = 3000
 let pollTimer = null
@@ -262,6 +286,17 @@ const engineSummary = computed(() => {
     .map(engine => engine.name)
   return names.length > 0 ? names.join('、') : ''
 })
+
+const selectedEngine = computed(() =>
+  engines.value[selectedEngineIndex.value] || engines.value[0] || null
+)
+
+const enginePickerActions = computed(() =>
+  engines.value.map(engine => ({
+    name: engine.name,
+    plugin_id: engine.plugin_id
+  }))
+)
 
 const ACTIVE_STATUSES = new Set(['active', 'waiting', 'paused'])
 const DONE_STATUSES = new Set(['complete', 'error', 'removed'])
@@ -347,6 +382,9 @@ async function loadEngines() {
     const res = await downloadApi.listEngines()
     const list = res?.data?.engines || []
     engines.value = list
+    if (selectedEngineIndex.value >= list.length) {
+      selectedEngineIndex.value = 0
+    }
     if (list.length === 0) {
       tasks.value = []
     }
@@ -458,6 +496,21 @@ function openAddPopup() {
   showAddPopup.value = true
 }
 
+function openEnginePicker() {
+  if (engines.value.length > 1) {
+    showEnginePicker.value = true
+  }
+}
+
+function onEngineSelect(action) {
+  const index = engines.value.findIndex(
+    engine => engine.plugin_id === action.plugin_id
+  )
+  if (index >= 0) {
+    selectedEngineIndex.value = index
+  }
+}
+
 function parseManualLinks() {
   return manualLinks.value
     .split(/\r?\n/)
@@ -466,7 +519,7 @@ function parseManualLinks() {
 }
 
 async function submitManualLinks() {
-  const engine = engines.value[0]
+  const engine = selectedEngine.value
   if (!engine) {
     return
   }
@@ -481,11 +534,13 @@ async function submitManualLinks() {
   try {
     // 逐条投递：aria2.addUri 的多 URI 会被视为同一任务的备用源，
     // 因此每条链接单独创建任务，确保互不干扰。
+    const subfolder = manualSubfolder.value.trim()
     for (const uri of uris) {
       try {
         const res = await downloadApi.addMagnet({
           magnet: uri,
-          engine: engine.plugin_id
+          engine: engine.plugin_id,
+          dir_subfolder: subfolder || undefined
         })
         if (res?.data?.added) {
           created += 1
@@ -505,6 +560,7 @@ async function submitManualLinks() {
     showSuccessToast(`已创建 ${created} 个任务${failed > 0 ? `，${failed} 个失败` : ''}`)
     showAddPopup.value = false
     manualLinks.value = ''
+    manualSubfolder.value = ''
     loadTasks()
   } else {
     showFailToast('创建任务失败，请检查链接格式')
@@ -515,6 +571,7 @@ function startPolling() {
   stopPolling()
   pollTimer = setInterval(() => {
     loadTasks()
+    checkOrganizePending()
   }, POLL_INTERVAL_MS)
 }
 
@@ -525,9 +582,54 @@ function stopPolling() {
   }
 }
 
+async function checkOrganizePending() {
+  if (organizingPrompting.value) {
+    return
+  }
+  let pending
+  try {
+    const res = await downloadApi.listOrganizePending()
+    pending = res?.data?.pending || []
+  } catch (error) {
+    console.error('获取待确认归集列表失败:', error)
+    return
+  }
+  const item = pending[0]
+  if (!item) {
+    return
+  }
+  organizingPrompting.value = true
+  try {
+    await showConfirmDialog({
+      title: '检测到相同内容',
+      message:
+        `下载目录中已存在内容 ${item.code}。\n` +
+        `是否创建文件夹 ${item.target_dir}，并将 ${item.files?.length || 0} 个新文件移入？`,
+      confirmButtonText: '创建并移入',
+      cancelButtonText: '忽略'
+    })
+    try {
+      const res = await downloadApi.confirmOrganize(item.id)
+      showSuccessToast(res?.msg || '已创建文件夹并移入文件')
+      loadTasks()
+    } catch (error) {
+      showFailToast(error?.message || '归集失败')
+    }
+  } catch (_) {
+    try {
+      await downloadApi.dismissOrganize(item.id)
+    } catch (error) {
+      console.error('忽略归集失败:', error)
+    }
+  } finally {
+    organizingPrompting.value = false
+  }
+}
+
 onMounted(async () => {
   await loadEngines()
   await loadTasks()
+  checkOrganizePending()
   startPolling()
 })
 

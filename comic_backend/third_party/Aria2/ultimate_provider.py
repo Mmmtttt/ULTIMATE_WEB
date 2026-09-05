@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -102,6 +103,9 @@ class Aria2Provider(ProtocolProvider):
         normalized["timeout_seconds"] = _as_int(
             raw.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS, 1, 600
         )
+        normalized["auto_import_enabled"] = _as_bool(raw.get("auto_import_enabled"), False)
+        normalized["auto_import_mode"] = str(raw.get("auto_import_mode") or "softlink_ref").strip() or "softlink_ref"
+        normalized["auto_organize_enabled"] = _as_bool(raw.get("auto_organize_enabled"), False)
         return normalized
 
     def serialize_public_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -149,6 +153,8 @@ class Aria2Provider(ProtocolProvider):
             return self._handle_task_resume(normalized, params)
         if capability == "download.task.remove":
             return self._handle_task_remove(normalized, params)
+        if capability == "download.task.migrate":
+            return self._handle_task_migrate(normalized, params)
 
         raise ValueError(f"不支持的能力: {capability}")
 
@@ -229,6 +235,11 @@ class Aria2Provider(ProtocolProvider):
         options: Dict[str, str] = {}
         target_dir = str(params.get("dir") or "").strip() or config.get("dir") or ""
         if target_dir:
+            # Aria2 不会自动创建不存在的目录；本机实例在此兜底创建（远程实例由远端负责）
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except OSError:
+                pass
             options["dir"] = target_dir
         out = str(params.get("out") or "").strip()
         if out:
@@ -362,6 +373,49 @@ class Aria2Provider(ProtocolProvider):
             method = "aria2.forceRemove" if force else "aria2.remove"
             result = self._rpc_call(config, method, [gid])
         return {"gid": gid, "removed": result == "OK"}
+
+    def _handle_task_migrate(
+        self,
+        config: Dict[str, Any],
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """处理 download.task.migrate — 迁移任务到新下载目录。
+
+        Aria2 不支持修改任务下载目录，因此流程为：
+        1. tellStatus 拿 infohash
+        2. 删除原任务（不删已下载文件）
+        3. 以新 dir 重新添加相同磁力（文件已在目标目录时仅校验）
+        """
+        gid = str(params.get("gid") or "").strip()
+        target_dir = str(params.get("dir") or "").strip()
+        if not gid:
+            raise ValueError("download.task.migrate 缺少 gid 参数。")
+        if not target_dir:
+            raise ValueError("download.task.migrate 缺少 dir 参数。")
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"创建目标目录失败（{target_dir}）: {exc}") from exc
+
+        raw = self._rpc_call(config, "aria2.tellStatus", [gid])
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"任务不存在: {gid}")
+        infohash = str(raw.get("infoHash") or "").strip().lower()
+        if not infohash:
+            raise RuntimeError(f"无法获取任务 {gid} 的 infoHash。")
+        status = str(raw.get("status") or "").strip()
+
+        # 1) 删除原任务（保留已下载文件）
+        if status in {"complete", "error", "removed"}:
+            self._rpc_call(config, "aria2.removeDownloadResult", [gid])
+        else:
+            self._rpc_call(config, "aria2.forceRemove", [gid])
+        # 2) 用相同 infohash 重建任务到目标目录
+        magnet = f"magnet:?xt=urn:btih:{infohash}"
+        new_gid = self._rpc_call(
+            config, "aria2.addUri", [[magnet], {"dir": target_dir}]
+        )
+        return {"gid": new_gid, "migrated": True, "dir": target_dir}
 
     # ---------- 数据转换 ----------
 

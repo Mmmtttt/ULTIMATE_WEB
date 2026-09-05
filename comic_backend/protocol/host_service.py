@@ -481,6 +481,10 @@ class ProtocolHostService:
                 status = self._gateway.get_query_status(manifest.plugin_id) or {}
             except Exception:
                 status = {}
+            try:
+                plugin_config = self._config_store.get_plugin_config(manifest.config_key) or {}
+            except Exception:
+                plugin_config = {}
             engines.append({
                 "plugin_id": manifest.plugin_id,
                 "name": manifest.name,
@@ -492,8 +496,15 @@ class ProtocolHostService:
                     if key.startswith("download.") or key == "health.query.status"
                 ],
                 "status": dict(status) if isinstance(status, dict) else {},
+                "base_dir": str(plugin_config.get("dir") or "").strip(),
             })
         return engines
+
+    def get_download_engine_base_dir(self, engine_name: str = "") -> str:
+        """获取指定下载引擎配置的下载根目录（dir 字段）。"""
+        client = self.get_download_client(engine_name)
+        config = self._config_store.get_plugin_config(client.manifest.config_key) or {}
+        return str(config.get("dir") or "").strip()
 
     def get_download_client(
         self,

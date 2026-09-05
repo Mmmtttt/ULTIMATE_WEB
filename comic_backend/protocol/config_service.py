@@ -145,7 +145,8 @@ class PluginConfigService:
         for plugin_id, adapter_payload in updates:
             manifest = self._gateway.registry.get_manifest(plugin_id)
             config_key = manifest.config_key
-            normalized_payload = self._gateway.provider_manager.normalize_config(plugin_id, adapter_payload)
+            protected_payload = self._protect_secret_fields(manifest, config_key, adapter_payload)
+            normalized_payload = self._gateway.provider_manager.normalize_config(plugin_id, protected_payload)
             self._config_store.set_plugin_config(config_key, normalized_payload)
             updated_keys.append(config_key)
 
@@ -155,6 +156,27 @@ class PluginConfigService:
             "updated_adapters": updated_keys,
             "message": "配置保存成功",
         }
+
+    def _protect_secret_fields(self, manifest, config_key: str, payload: dict) -> dict:
+        """前端回显时 secret 字段为空；旧值非空时，空提交不覆盖旧值。
+
+        防止打开/关闭任意开关保存配置时把已配置的密码/密钥清空。
+        """
+        protected = dict(payload or {})
+        secret_keys = {
+            str(field.get("key") or "").strip()
+            for field in manifest.list_configuration_fields()
+            if field.get("secret")
+        }
+        if not secret_keys:
+            return protected
+        old_config = self._config_store.get_plugin_config(config_key) or {}
+        for key in secret_keys:
+            if key in protected and not str(protected.get(key) or "").strip():
+                old_value = str(old_config.get(key) or "").strip()
+                if old_value:
+                    protected[key] = old_value
+        return protected
 
 
 _config_service_singleton: PluginConfigService | None = None

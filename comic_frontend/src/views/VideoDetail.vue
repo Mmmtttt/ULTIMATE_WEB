@@ -256,16 +256,19 @@
             <span>磁力链接（{{ video.magnets.length }}）</span>
           </template>
           <template #right-icon>
-            <span class="magnet-toggle-actions" @click.stop>
+            <span class="magnet-toggle-actions">
               <van-button
                 size="mini"
                 plain
                 type="default"
-                @click="goToDownloadTasks"
+                @click.stop="goToDownloadTasks"
               >
                 下载任务
               </van-button>
-              <van-icon :name="showMagnets ? 'arrow-up' : 'arrow-down'" />
+              <van-icon
+                :name="showMagnets ? 'arrow-up' : 'arrow-down'"
+                @click.stop="showMagnets = !showMagnets"
+              />
             </span>
           </template>
         </van-cell>
@@ -294,6 +297,13 @@
             </template>
           </van-cell>
         </van-cell-group>
+        <van-action-sheet
+          v-model:show="showEnginePicker"
+          :actions="enginePickerActions"
+          cancel-text="取消"
+          close-on-click-action
+          @select="onEngineSelect"
+        />
       </div>
 
       <div v-if="video" class="preview-video-section">
@@ -1560,6 +1570,13 @@ async function copyMagnet(magnet) {
 
 const magnetSendingIndex = ref(-1)
 const downloadEngines = ref([])
+const availableEngines = ref([])
+const showEnginePicker = ref(false)
+const pendingMagnet = ref(null)
+
+const enginePickerActions = computed(() =>
+  availableEngines.value.map(engine => ({ name: engine.name, plugin_id: engine.plugin_id }))
+)
 
 function goToDownloadTasks() {
   router.push({ name: 'DownloadTasks' })
@@ -1567,12 +1584,18 @@ function goToDownloadTasks() {
 
 async function ensureDownloadEngines() {
   if (downloadEngines.value.length > 0) {
+    availableEngines.value = downloadEngines.value.filter(
+      engine => engine.status?.configured !== false
+    )
     return downloadEngines.value
   }
   try {
     const res = await downloadApi.listEngines()
     const engines = res?.data?.engines || []
     downloadEngines.value = engines
+    availableEngines.value = engines.filter(
+      engine => engine.status?.configured !== false
+    )
     return engines
   } catch (error) {
     console.error('获取下载引擎失败:', error)
@@ -1587,19 +1610,42 @@ async function sendMagnetToDownloader(magnet, index) {
     return
   }
 
-  const engines = await ensureDownloadEngines()
-  const available = engines.filter(engine => engine.status?.configured !== false)
-  if (available.length === 0) {
-    showFailToast('未配置可用的下载引擎，请到系统设置启用 Aria2')
+  await ensureDownloadEngines()
+  if (availableEngines.value.length === 0) {
+    showFailToast('未配置可用的下载引擎，请到系统设置启用下载引擎')
     return
   }
 
+  // 多个可用引擎时弹出选择，单个引擎直接投递
+  if (availableEngines.value.length === 1) {
+    await dispatchMagnet(text, availableEngines.value[0], index)
+    return
+  }
+  pendingMagnet.value = { text, index }
+  showEnginePicker.value = true
+}
+
+async function onEngineSelect(action) {
+  const engine = availableEngines.value.find(
+    item => item.plugin_id === action.plugin_id
+  )
+  const pending = pendingMagnet.value
+  pendingMagnet.value = null
+  if (!engine || !pending) {
+    return
+  }
+  await dispatchMagnet(pending.text, engine, pending.index)
+}
+
+async function dispatchMagnet(text, engine, index) {
   magnetSendingIndex.value = index
   try {
-    const engine = available[0]
+    // 有番号时自动下载到 下载根目录\<番号> 子文件夹，无需下载完再归集
+    const code = (video.value?.code || '').trim()
     const res = await downloadApi.addMagnet({
       magnet: text,
-      engine: engine.plugin_id
+      engine: engine.plugin_id,
+      dir_subfolder: code || undefined
     })
     if (res?.data?.added) {
       showSuccessToast(`已投递到 ${engine.name}（gid: ${res.data.gid || '未知'}）`)
@@ -1608,7 +1654,7 @@ async function sendMagnetToDownloader(magnet, index) {
     }
   } catch (error) {
     console.error('投递磁力链接失败:', error)
-    showFailToast('投递失败，请检查下载引擎配置')
+    showFailToast(error?.response?.data?.msg || '投递失败，请检查下载引擎配置')
   } finally {
     magnetSendingIndex.value = -1
   }

@@ -35,5 +35,20 @@ export const downloadApi = {
   // 删除任务
   removeTask(gid, engine = '', force = true) {
     return request.post('/v1/download/task/remove', { gid, engine, force })
+  },
+
+  // 列出等待确认的番号文件夹归集请求
+  listOrganizePending() {
+    return request.get('/v1/download/organize-pending')
+  },
+
+  // 确认创建番号文件夹并把散文件移入
+  confirmOrganize(id) {
+    return request.post('/v1/download/organize-confirm', { id })
+  },
+
+  // 忽略本次归集询问
+  dismissOrganize(id) {
+    return request.post('/v1/download/organize-dismiss', { id })
   }
 }

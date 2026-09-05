@@ -72,6 +72,9 @@ def test_list_download_engines_discovers_aria2():
     assert "download.magnet.add" in aria2["capabilities"]
     assert "download.task.list" in aria2["capabilities"]
     assert aria2["status"].get("configured") is True
+    # 引擎根目录字段存在（从插件配置 dir 读取）
+    assert "base_dir" in aria2
+    assert isinstance(aria2["base_dir"], str)
 
 
 def test_get_download_client_by_name_and_default():
