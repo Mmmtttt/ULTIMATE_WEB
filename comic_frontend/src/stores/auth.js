@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { login as loginApi, getAuthStatus, logout as logoutApi } from '@/api/auth'
+import { login as loginApi, getAuthStatus, logout as logoutApi, updateProjectPassword } from '@/api/auth'
 
 function getPrivateApiBase() {
   const privatePort = import.meta.env.VITE_PRIVATE_PORT || 5000
@@ -122,6 +122,17 @@ export const useAuthStore = defineStore('auth', {
       if (import.meta.env.DEV) {
         setRuntimeApiBase('')
       }
+    },
+
+    async changePassword(password) {
+      const res = await updateProjectPassword(password)
+      if (res.code === 200) {
+        this.enabled = true
+        this.authenticated = true
+        this.mode = 'normal'
+        this.hasAttemptedLogin = true
+      }
+      return res
     }
   }
 })

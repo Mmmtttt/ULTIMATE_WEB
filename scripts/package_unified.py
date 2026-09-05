@@ -38,6 +38,7 @@ DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
 DEFAULT_APP_VERSION = "0.0.0"
 DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+PROJECT_PLUGINS_DIR = ROOT_DIR / "plugins"
 HOST_OVERLAY_FILENAME = "ultimate-host.json"
 MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
@@ -48,6 +49,11 @@ PLUGIN_PACKAGE_MODES = (
     PLUGIN_PACKAGE_MODE_BUNDLED,
 )
 DEFAULT_PLUGIN_PACKAGE_MODE = PLUGIN_PACKAGE_MODE_EXTERNAL
+PLUGIN_PACKAGE_EXCLUDES_ENV = "ULTIMATE_PACKAGE_THIRD_PARTY_EXCLUDES"
+PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
+    PLUGIN_PACKAGE_EXCLUDES_ENV,
+    "THIRD_PARTY_PACKAGE_EXCLUDES",
+)
 DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
     "email",
     "html",
@@ -158,6 +164,53 @@ def normalize_plugin_package_mode(raw: str, default: str = DEFAULT_PLUGIN_PACKAG
     if mode not in PLUGIN_PACKAGE_MODES:
         raise ValueError(f"unsupported plugin package mode: {raw}")
     return mode
+
+
+def normalize_third_party_exclude_names(raw: object) -> List[str]:
+    values: List[str] = []
+    if isinstance(raw, str):
+        values = re.split(r"[,;\n]+", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item or "") for item in raw]
+    normalized: List[str] = []
+    seen = set()
+    for item in values:
+        text = str(item or "").strip().strip("/\\").lower()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def get_third_party_exclude_names() -> List[str]:
+    for env_name in PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES:
+        raw = os.environ.get(env_name)
+        if raw is not None:
+            return normalize_third_party_exclude_names(raw)
+    return []
+
+
+def is_third_party_dir_excluded(path: Path, third_party_root: Path, excludes: Optional[List[str]] = None) -> bool:
+    exclude_names = excludes if excludes is not None else get_third_party_exclude_names()
+    if not exclude_names:
+        return False
+    try:
+        relative = path.resolve().relative_to(third_party_root.resolve())
+    except ValueError:
+        relative = path.relative_to(third_party_root)
+    parts = [part.strip().lower() for part in relative.parts if str(part).strip()]
+    return bool(parts and parts[0] in set(exclude_names))
+
+
+def backend_source_copy_ignore(src: str, names: List[str]) -> set[str]:
+    excludes = set(get_third_party_exclude_names())
+    if not excludes:
+        return set()
+    path = Path(src)
+    if path.name != "third_party":
+        return set()
+    return {name for name in names if name.strip().lower() in excludes}
 
 
 def normalize_app_version(raw: str) -> str:
@@ -2064,6 +2117,7 @@ def write_desktop_bundle_scripts(
 ) -> None:
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
+    third_party_excludes = ",".join(get_third_party_exclude_names())
     backend_host = str(runtime_env.get("BACKEND_HOST", "127.0.0.1")).strip() or "127.0.0.1"
     has_frontend = bool(frontend_binary_name)
     backend_host_bat = f"set BACKEND_HOST={backend_host}\n"
@@ -2078,6 +2132,7 @@ def write_desktop_bundle_scripts(
         "setlocal\n"
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        f"set {PLUGIN_PACKAGE_EXCLUDES_ENV}={third_party_excludes}\n"
         f"{backend_host_bat}"
         f"{backend_proxy_mode_bat}"
         "set SCRIPT_DIR=%~dp0\n"
@@ -2103,6 +2158,7 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{third_party_excludes}\"\n"
         f"{backend_host_ps1}"
         f"{backend_proxy_mode_ps1}"
         "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
@@ -2179,6 +2235,7 @@ def write_desktop_bundle_scripts(
         "set -e\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        f"export {PLUGIN_PACKAGE_EXCLUDES_ENV}=\"{third_party_excludes}\"\n"
         f"{backend_host_sh}"
         f"{backend_proxy_mode_sh}"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
@@ -2376,6 +2433,71 @@ def write_desktop_bundle_scripts(
     write_text(bundle_dir / "start_app.ps1", app_ps1)
 
 
+def tidy_desktop_bundle_launchers(bundle_dir: Path) -> None:
+    """Keep only the user-facing launchers in the bundle root."""
+    scripts_dir = bundle_dir / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    helper_names = {
+        "start_backend.bat",
+        "start_backend.ps1",
+        "start_backend.sh",
+        "start_frontend.bat",
+        "start_frontend.ps1",
+        "start_frontend.sh",
+        "start_app.bat",
+        "start_app.ps1",
+        "install_plugin_deps.ps1",
+        "install_plugin_deps.sh",
+    }
+
+    for name in helper_names:
+        source = bundle_dir / name
+        if not source.exists():
+            continue
+        target = scripts_dir / name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(source), str(target))
+
+        text = target.read_text(encoding="utf-8")
+        if target.suffix.lower() == ".bat":
+            text = text.replace(
+                "set SCRIPT_DIR=%~dp0\n",
+                "for %%I in (\"%~dp0..\") do set SCRIPT_DIR=%%~fI\\\n",
+            )
+            text = text.replace("%SCRIPT_DIR%start_backend.bat", "%SCRIPT_DIR%scripts\\start_backend.bat")
+            text = text.replace("%SCRIPT_DIR%start_frontend.bat", "%SCRIPT_DIR%scripts\\start_frontend.bat")
+        elif target.suffix.lower() == ".ps1":
+            text = text.replace(
+                "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n",
+                "$scriptDir = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..')).Path\n",
+            )
+            text = text.replace("Join-Path $scriptDir 'start_backend.ps1'", "Join-Path $scriptDir 'scripts/start_backend.ps1'")
+            text = text.replace("Join-Path $scriptDir 'start_frontend.ps1'", "Join-Path $scriptDir 'scripts/start_frontend.ps1'")
+        elif target.suffix.lower() == ".sh":
+            text = text.replace(
+                'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
+                'SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"',
+            )
+        target.write_text(text, encoding="utf-8")
+
+    write_text(
+        bundle_dir / "start_project.bat",
+        "@echo off\n"
+        "setlocal\n"
+        "set SCRIPT_DIR=%~dp0\n"
+        "call \"%SCRIPT_DIR%scripts\\start_app.bat\"\n",
+    )
+    write_text(
+        bundle_dir / "start_project.ps1",
+        "$ErrorActionPreference = 'Stop'\n"
+        "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+        "& (Join-Path $scriptDir 'scripts/start_app.ps1')\n"
+        "exit $LASTEXITCODE\n",
+    )
+
+
 def prepare_desktop_release_bundle(
     target: str,
     target_out_dir: Path,
@@ -2397,7 +2519,7 @@ def prepare_desktop_release_bundle(
     frontend_src = staged_target_dir / "comic_frontend" if frontend_entry else None
 
     if backend_src.exists():
-        shutil.copytree(backend_src, bundle_dir / "backend_source")
+        shutil.copytree(backend_src, bundle_dir / "backend_source", ignore=backend_source_copy_ignore)
     if frontend_dist.exists():
         frontend_target = bundle_dir / "frontend_dist"
         if frontend_target.exists():
@@ -2431,6 +2553,7 @@ def prepare_desktop_release_bundle(
             "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
         )
         external_plugin_roots = []
+    external_plugin_roots.extend(copy_project_plugins_to_bundle(bundle_dir))
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
@@ -2461,12 +2584,12 @@ def prepare_desktop_release_bundle(
         [
             "",
             "Start commands:",
-            "- Windows cmd: `start_app.bat` (starts both backend + frontend)",
-            "- Windows PowerShell: `start_app.ps1`",
-            "- Linux/macOS: `bash start_app.sh` (if frontend server available)",
-            "- Start backend only: `start_backend.bat` / `start_backend.ps1` / `start_backend.sh`",
-            "- Start frontend only: `start_frontend.bat` / `start_frontend.ps1` / `start_frontend.sh` (if available)",
-            "- Install external plugin deps manually if needed: `install_plugin_deps.ps1` / `install_plugin_deps.sh`",
+            "- Windows cmd: `start_project.bat` (starts both backend + frontend)",
+            "- Windows PowerShell: `start_project.ps1`",
+            "- Advanced helper scripts are stored under `scripts/` to keep the bundle root clean",
+            "- Start backend only: `scripts/start_backend.bat` / `scripts/start_backend.ps1` / `scripts/start_backend.sh`",
+            "- Start frontend only: `scripts/start_frontend.bat` / `scripts/start_frontend.ps1` / `scripts/start_frontend.sh` (if available)",
+            "- Install external plugin deps manually if needed: `scripts/install_plugin_deps.ps1` / `scripts/install_plugin_deps.sh`",
         ]
     )
     write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
@@ -2478,6 +2601,7 @@ def prepare_desktop_release_bundle(
         runtime_env=runtime_env,
         frontend_binary_name=frontend_binary_name,
     )
+    tidy_desktop_bundle_launchers(bundle_dir)
     return bundle_dir
 
 
@@ -2504,13 +2628,30 @@ def _deep_merge_dict(base: Any, override: Any) -> Any:
     return json.loads(json.dumps(override))
 
 
+def discover_project_plugin_roots(project_plugins_dir: Optional[Path] = None) -> List[Path]:
+    resolved_plugins_dir = project_plugins_dir or PROJECT_PLUGINS_DIR
+    if not resolved_plugins_dir.exists():
+        return []
+    roots: List[Path] = []
+    for child in sorted(resolved_plugins_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        if (child / HOST_OVERLAY_FILENAME).exists() or any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
+            roots.append(child)
+    return roots
+
+
 def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
     if not third_party_root.exists():
         return []
 
     roots: List[Path] = []
+    excluded_names = get_third_party_exclude_names()
     for child in sorted(third_party_root.iterdir(), key=lambda item: item.name.lower()):
         if not child.is_dir():
+            continue
+        if child.name.strip().lower() in set(excluded_names):
+            print(f"[package] skip third-party plugin by packaging switch: {child.name}")
             continue
         if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
             roots.append(child)
@@ -2589,6 +2730,24 @@ def copy_external_plugins_to_bundle(staged_backend: Path, bundle_dir: Path) -> L
         if backend_plugin_root.exists():
             shutil.rmtree(backend_plugin_root, ignore_errors=True)
 
+    return copied_roots
+
+
+def copy_project_plugins_to_bundle(bundle_dir: Path, project_plugins_dir: Optional[Path] = None) -> List[Path]:
+    plugin_roots = discover_project_plugin_roots(project_plugins_dir)
+    if not plugin_roots:
+        return []
+
+    plugins_dir = bundle_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_roots: List[Path] = []
+    for plugin_root in plugin_roots:
+        target_root = plugins_dir / plugin_root.name
+        if target_root.exists():
+            shutil.rmtree(target_root)
+        shutil.copytree(plugin_root, target_root)
+        copied_roots.append(target_root)
     return copied_roots
 
 
@@ -2769,12 +2928,15 @@ def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Pa
     return True, "\n".join(outputs)
 
 
-def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Dict[str, Any]]:
+def _scan_plugin_payloads(root_dir: Path, filename: str, *, apply_third_party_excludes: bool = True) -> Dict[str, Dict[str, Any]]:
     payloads: Dict[str, Dict[str, Any]] = {}
-    if not third_party_root.exists():
+    if not root_dir.exists():
         return payloads
 
-    for payload_path in sorted(third_party_root.rglob(filename)):
+    excluded_names = get_third_party_exclude_names() if apply_third_party_excludes else []
+    for payload_path in sorted(root_dir.rglob(filename)):
+        if apply_third_party_excludes and is_third_party_dir_excluded(payload_path, root_dir, excluded_names):
+            continue
         try:
             payload = load_json(payload_path)
         except Exception:
@@ -2793,19 +2955,46 @@ def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Di
     return payloads
 
 
+def _merge_plugin_payload_maps(*maps: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for payload_map in maps:
+        for plugin_id, item in (payload_map or {}).items():
+            if plugin_id not in merged:
+                merged[plugin_id] = dict(item or {})
+                continue
+            merged[plugin_id]["payload"] = _deep_merge_dict(
+                merged[plugin_id].get("payload") or {},
+                (item or {}).get("payload") or {},
+            )
+            merged[plugin_id]["path"] = str((item or {}).get("path") or merged[plugin_id].get("path") or "")
+    return merged
+
+
 def _derive_snapshot_plugin_defaults(plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     plugin = dict(payload.get("plugin") or {})
     inferred_name = str(plugin.get("name") or "").strip() or plugin_id
     inferred_config_key = str(plugin.get("config_key") or "").strip()
-    if not inferred_config_key and "." in plugin_id:
+    parent_config_key = str(
+        plugin.get("config_parent_key")
+        or plugin.get("parent_config_key")
+        or plugin.get("inherits_config_key")
+        or ""
+    ).strip()
+    if not inferred_config_key and not parent_config_key and "." in plugin_id:
         inferred_config_key = plugin_id.rsplit(".", 1)[-1]
-    return {
+    normalized = {
         "id": plugin_id,
         "name": inferred_name,
         "version": str(plugin.get("version") or "").strip() or "0.0.0-snapshot",
         "config_key": inferred_config_key,
         "entrypoint": SNAPSHOT_PROVIDER_ENTRYPOINT,
     }
+    if parent_config_key:
+        normalized["config_parent_key"] = parent_config_key
+    effective_config_key = str(plugin.get("effective_config_key") or "").strip()
+    if effective_config_key:
+        normalized["effective_config_key"] = effective_config_key
+    return normalized
 
 
 def _stringify_snapshot_template_list(raw_values: Any) -> List[str]:
@@ -2906,8 +3095,14 @@ def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
 
 
 def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
-    manifest_payloads = _scan_plugin_payloads(third_party_root, "ultimate-plugin.json")
-    overlay_payloads = _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME)
+    manifest_payloads = _merge_plugin_payload_maps(
+        _scan_plugin_payloads(third_party_root, "ultimate-plugin.json"),
+        _scan_plugin_payloads(PROJECT_PLUGINS_DIR, "ultimate-plugin.json", apply_third_party_excludes=False),
+    )
+    overlay_payloads = _merge_plugin_payload_maps(
+        _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME),
+        _scan_plugin_payloads(PROJECT_PLUGINS_DIR, HOST_OVERLAY_FILENAME, apply_third_party_excludes=False),
+    )
     plugin_ids = sorted(set(manifest_payloads.keys()) | set(overlay_payloads.keys()))
 
     manifests: List[Dict[str, Any]] = []
@@ -3034,6 +3229,13 @@ def write_pyinstaller_scripts(
                     f"{plugin_path}{sep}comic_backend/third_party/{plugin_path.name}",
                 ]
             )
+        for plugin_root in discover_project_plugin_roots():
+            cmd.extend(
+                [
+                    "--add-data",
+                    f"{plugin_root}{sep}plugins/{plugin_root.name}",
+                ]
+            )
     cmd.append(entry)
     
     if server_config_src.exists():
@@ -3048,6 +3250,7 @@ def write_pyinstaller_scripts(
         "Set-Location $StagedDir\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
+        f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{','.join(get_third_party_exclude_names())}\"\n"
         + " ".join([f"\"{part}\"" if " " in part else part for part in cmd])
         + "\n"
     )
@@ -3062,6 +3265,7 @@ def write_pyinstaller_scripts(
         "cd \"$STAGED_DIR\"\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
+        f"export {PLUGIN_PACKAGE_EXCLUDES_ENV}=\"{','.join(get_third_party_exclude_names())}\"\n"
         + " ".join(cmd)
         + "\n"
     )
@@ -3649,6 +3853,11 @@ def parse_args() -> argparse.Namespace:
         choices=PLUGIN_PACKAGE_MODES,
         help="Desktop plugin packaging mode: external keeps default plugins outside the executable; bundled compiles default plugins into the executable while keeping external plugin discovery enabled.",
     )
+    parser.add_argument(
+        "--third-party-excludes",
+        default=os.environ.get(PLUGIN_PACKAGE_EXCLUDES_ENV, os.environ.get("THIRD_PARTY_PACKAGE_EXCLUDES", "")),
+        help="Comma-separated third_party directory names excluded from packaged plugins and mobile protocol snapshots.",
+    )
     parser.add_argument("--execute", action="store_true", help="Execute packaging commands when possible.")
     return parser.parse_args()
 
@@ -3663,6 +3872,8 @@ def main() -> int:
     available_targets = [str(item.get("id", "")).strip().lower() for item in targets_cfg.get("targets", []) if str(item.get("id", "")).strip()]
     selected_targets = select_targets(available_targets, args.targets)
     plugin_package_mode = normalize_plugin_package_mode(args.plugin_package_mode)
+    third_party_excludes = ",".join(normalize_third_party_exclude_names(args.third_party_excludes))
+    os.environ[PLUGIN_PACKAGE_EXCLUDES_ENV] = third_party_excludes
 
     packagers = packagers_cfg.get("packagers", {})
     if not isinstance(packagers, dict):
@@ -3672,6 +3883,7 @@ def main() -> int:
     print(f"[package] staged root: {staged_root}")
     print(f"[package] output root: {output_root}")
     print(f"[package] plugin package mode: {plugin_package_mode}")
+    print(f"[package] third-party excludes: {third_party_excludes or '(none)'}")
 
     results: List[PackageResult] = []
     for target in selected_targets:

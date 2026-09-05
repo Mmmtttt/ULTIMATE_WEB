@@ -32,18 +32,9 @@
         <van-button size="small" plain class="toolbar-action-btn" @click="showViewModeSheet = true">
           <van-icon name="apps-o" />
         </van-button>
-        <van-popover
-          v-model:show="showMenu"
-          :actions="menuActions"
-          placement="bottom-end"
-          @select="onMenuSelect"
-        >
-          <template #reference>
-            <van-button size="small" plain class="toolbar-action-btn">
-              <van-icon name="ellipsis" />
-            </van-button>
-          </template>
-        </van-popover>
+        <van-button size="small" plain class="toolbar-action-btn" @click="showMenu = true">
+          <van-icon name="ellipsis" />
+        </van-button>
       </div>
     </div>
 
@@ -117,7 +108,7 @@
           <van-button size="small" type="primary" plain :disabled="selectedIds.length === 0" @click="openBatchTaskSheet">
             批量处理
           </van-button>
-          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="showBatchListPopup = true">
+          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="openBatchListPopup">
             加入清单
           </van-button>
           <van-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="batchDelete">
@@ -153,6 +144,34 @@
         </van-cell>
       </div>
     </van-action-sheet>
+
+    <van-popup
+      v-model:show="showMenu"
+      position="center"
+      round
+      :style="{ width: isDesktop ? '360px' : '86vw' }"
+    >
+      <div class="toolbar-menu-panel">
+        <div class="toolbar-menu-panel__header">
+          <div>
+            <div class="toolbar-menu-panel__title">更多操作</div>
+            <div class="toolbar-menu-panel__desc">选择当前库的常用操作</div>
+          </div>
+          <van-button size="small" plain icon="cross" @click="showMenu = false" />
+        </div>
+        <van-cell
+          v-for="action in menuActions"
+          :key="action.text"
+          :title="action.text"
+          clickable
+          @click="onMenuSelect(action)"
+        >
+          <template #icon>
+            <van-icon :name="action.icon" class="toolbar-menu-panel__icon" />
+          </template>
+        </van-cell>
+      </div>
+    </van-popup>
 
     <van-action-sheet
       v-model:show="showBatchTaskSheet"
@@ -533,7 +552,13 @@ const totalItems = computed(() => {
   const total = isVideoMode.value ? videoStore.queryTotalCount : comicStore.queryTotalCount
   return Number(total) || 0
 })
-const pagedItems = computed(() => items.value)
+const pagedItems = computed(() => {
+  if (items.value.length > pageSize.value && totalItems.value === items.value.length) {
+    const start = (currentPage.value - 1) * pageSize.value
+    return items.value.slice(start, start + pageSize.value)
+  }
+  return items.value
+})
 
 async function applyFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
@@ -680,10 +705,13 @@ const availableAuthors = computed(() => {
 })
 
 const availableLists = computed(() => {
-  return listStore.lists.map(list => ({
-    ...list,
-    item_count: list.item_ids?.length || 0
-  }))
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  return listStore.lists
+    .filter(list => list.content_type === contentType)
+    .map(list => ({
+      ...list,
+      item_count: list.item_ids?.length || 0
+    }))
 })
 
 const activeFilters = computed(() => {
@@ -762,6 +790,7 @@ function goToSearch() {
 }
 
 async function onMenuSelect(action) {
+  showMenu.value = false
   if (action.text === '全网搜索') {
     goToSearch()
     return
@@ -848,6 +877,18 @@ async function openBatchTaskSheet() {
   }
   await runtimeStore.fetchRuntime()
   showBatchTaskSheet.value = true
+}
+
+async function openBatchListPopup() {
+  if (selectedIds.value.length === 0) {
+    return
+  }
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  await listStore.fetchLists(contentType)
+  batchSelectedListIds.value = batchSelectedListIds.value.filter((listId) =>
+    availableLists.value.some((list) => list.id === listId)
+  )
+  showBatchListPopup.value = true
 }
 
 async function handleBatchTaskAction(action) {
@@ -1020,8 +1061,10 @@ async function removeFilter(filter) {
 }
 
 async function loadSupportData(force = false) {
-  if (force || listStore.lists.length === 0) {
-    await listStore.fetchLists()
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  const hasCurrentTypeLists = listStore.lists.some((list) => list.content_type === contentType)
+  if (force || !hasCurrentTypeLists) {
+    await listStore.fetchLists(contentType)
   }
   if (isVideoMode.value) {
     if (force || tagStore.videoTags.length === 0) {
@@ -1317,6 +1360,42 @@ onMounted(async () => {
 
 .view-mode-sheet {
   padding-bottom: 10px;
+}
+
+.toolbar-menu-panel {
+  padding: 16px;
+}
+
+.toolbar-menu-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 2px 2px 14px;
+}
+
+.toolbar-menu-panel__title {
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.toolbar-menu-panel__desc {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.toolbar-menu-panel__icon {
+  color: var(--accent-color);
+  font-size: 18px;
+  margin-right: 10px;
+}
+
+.toolbar-menu-panel :deep(.van-cell) {
+  border-radius: 12px;
+  margin-top: 6px;
+  background: rgba(88, 125, 255, 0.06);
 }
 
 .batch-list-popup {

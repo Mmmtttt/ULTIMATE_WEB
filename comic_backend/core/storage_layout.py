@@ -35,6 +35,9 @@ def _resolve_private_data_dir() -> str:
             if os.path.isabs(private_dir):
                 return os.path.abspath(private_dir)
             parent = os.path.dirname(_NORMAL_DATA_DIR)
+            normalized_private_dir = private_dir.replace("\\", "/").strip()
+            if normalized_private_dir in {"../UltimateData_private", "./../UltimateData_private"}:
+                return os.path.abspath(os.path.join(parent, "UltimateData_private"))
             return os.path.abspath(os.path.join(parent, private_dir))
     except Exception:
         pass

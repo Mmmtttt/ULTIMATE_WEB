@@ -3,7 +3,7 @@
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
     <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('pageMode', $event)">
+      <div class="select-row" @click="openSelectPanel('pageMode')">
         <span class="select-label">默认翻页模式</span>
         <span class="select-value">{{ pageModeLabel }} <van-icon name="arrow-down" size="12" /></span>
       </div>
@@ -36,14 +36,14 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
+      <div class="select-row" @click="openSelectPanel('pageSize')">
         <span class="select-label">列表分页数量</span>
         <span class="select-value">{{ pageSizeLabel }} <van-icon name="arrow-down" size="12" /></span>
       </div>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('background', $event)">
+      <div class="select-row" @click="openSelectPanel('background')">
         <span class="select-label">默认背景色</span>
         <span class="select-value">{{ backgroundLabel }} <van-icon name="arrow-down" size="12" /></span>
       </div>
@@ -62,6 +62,39 @@
 
     <van-cell-group inset class="config-group">
       <van-cell title="第三方平台配置" is-link to="/config/third-party" />
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
+      <div class="config-group-header compact">
+        <div class="config-group-title">项目密码</div>
+        <div class="config-group-desc">仅在正常空间可修改；保存后新密码立即用于后续登录。</div>
+      </div>
+      <van-field
+        v-model="projectPassword"
+        type="password"
+        label="新密码"
+        placeholder="请输入新的登录密码"
+        autocomplete="new-password"
+      />
+      <van-field
+        v-model="projectPasswordConfirm"
+        type="password"
+        label="确认密码"
+        placeholder="再次输入新密码"
+        autocomplete="new-password"
+      />
+      <div class="inline-actions single">
+        <van-button
+          type="primary"
+          block
+          round
+          :disabled="!canChangeProjectPassword"
+          :loading="savingProjectPassword"
+          @click="saveProjectPassword"
+        >
+          {{ canChangeProjectPassword ? '保存项目密码' : '仅正常空间可修改' }}
+        </van-button>
+      </div>
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
@@ -154,37 +187,48 @@
 
     <div class="mmmtttt-config">github@Mmmtttt</div>
 
-    <Teleport to="body">
-      <div
-        v-if="activeDropdown"
-        class="select-dropdown-overlay"
-        :style="dropdownStyle"
-        @click.stop
-      >
-        <div
-          v-for="opt in activeDropdownColumns"
+    <van-popup
+      v-model:show="showSelectPanel"
+      position="center"
+      round
+      :style="{ width: 'min(360px, calc(100vw - 32px))' }"
+    >
+      <div class="select-panel">
+        <div class="select-panel__header">
+          <div class="select-panel__title">{{ activeSelectTitle }}</div>
+          <button type="button" class="select-panel__close" @click="showSelectPanel = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
+        <button
+          v-for="opt in activeSelectColumns"
           :key="opt.value"
-          class="select-option"
-          :class="{ active: activeDropdownValue === opt.value }"
-          @click="onDropdownSelect(opt.value)"
-        >{{ opt.text }}</div>
+          type="button"
+          class="select-panel__option"
+          :class="{ active: activeSelectValue === opt.value }"
+          @click="onSelectPanelChoose(opt.value)"
+        >
+          <span>{{ opt.text }}</span>
+          <van-icon v-if="activeSelectValue === opt.value" name="success" />
+        </button>
       </div>
-    </Teleport>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
 import { reloadPage } from '@/runtime/browser'
-import { useConfigStore, useModeStore } from '@/stores'
+import { useAuthStore, useConfigStore, useModeStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const configStore = useConfigStore()
 const modeStore = useModeStore()
+const authStore = useAuthStore()
 
 const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
@@ -194,14 +238,8 @@ const pageSizeValue = ref(20)
 const leftRightReadingReversedValue = ref(false)
 const pageSizeOptions = [20, 40, 60]
 
-const activeDropdown = ref('')
-const dropdownPos = ref({ top: 0, left: 0, width: 0 })
-
-const dropdownStyle = computed(() => ({
-  top: `${dropdownPos.value.top}px`,
-  left: `${dropdownPos.value.left}px`,
-  minWidth: `${dropdownPos.value.width}px`,
-}))
+const activeSelectPanel = ref('')
+const showSelectPanel = ref(false)
 
 const pageModeColumns = [
   { text: '左右翻页', value: 'left_right' },
@@ -216,20 +254,27 @@ const backgroundColumns = [
   { text: '护眼色背景', value: 'sepia' },
 ]
 
-const dropdownColumnMap = {
+const selectColumnMap = {
   pageMode: pageModeColumns,
   pageSize: pageSizeColumns,
   background: backgroundColumns,
 }
 
-const dropdownValueMap = computed(() => ({
+const selectValueMap = computed(() => ({
   pageMode: pageModeValue.value,
   pageSize: pageSizeValue.value,
   background: backgroundValue.value,
 }))
 
-const activeDropdownColumns = computed(() => dropdownColumnMap[activeDropdown.value] || [])
-const activeDropdownValue = computed(() => dropdownValueMap.value[activeDropdown.value])
+const selectTitleMap = {
+  pageMode: '默认翻页模式',
+  pageSize: '列表分页数量',
+  background: '默认背景色',
+}
+
+const activeSelectColumns = computed(() => selectColumnMap[activeSelectPanel.value] || [])
+const activeSelectValue = computed(() => selectValueMap.value[activeSelectPanel.value])
+const activeSelectTitle = computed(() => selectTitleMap[activeSelectPanel.value] || '选择设置')
 
 const pageModeMap = { left_right: '左右翻页', up_down: '上下翻页' }
 const backgroundMap = { white: '白色背景', dark: '深色背景', sepia: '护眼色背景' }
@@ -248,7 +293,11 @@ const selectedConfigDir = ref('')
 const defaultConfigDir = ref('')
 const configDirSource = ref('')
 const savingConfigDir = ref(false)
+const projectPassword = ref('')
+const projectPasswordConfirm = ref('')
+const savingProjectPassword = ref(false)
 const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
+const canChangeProjectPassword = computed(() => authStore.mode === 'normal' && authStore.authenticated)
 
 const configDirSourceLabel = computed(() => {
   const source = String(configDirSource.value || '').toLowerCase()
@@ -267,27 +316,14 @@ function initValues() {
   leftRightReadingReversedValue.value = configStore.leftRightReadingReversed
 }
 
-function closeAllDropdowns() {
-  activeDropdown.value = ''
+function openSelectPanel(name) {
+  activeSelectPanel.value = name
+  showSelectPanel.value = true
 }
 
-function toggleDropdown(name, event) {
-  if (activeDropdown.value === name) {
-    activeDropdown.value = ''
-    return
-  }
-  const rect = event.currentTarget.getBoundingClientRect()
-  dropdownPos.value = {
-    top: rect.bottom + 4,
-    left: rect.right - 140,
-    width: rect.width,
-  }
-  activeDropdown.value = name
-}
-
-function onDropdownSelect(value) {
-  const name = activeDropdown.value
-  activeDropdown.value = ''
+function onSelectPanelChoose(value) {
+  const name = activeSelectPanel.value
+  showSelectPanel.value = false
   if (name === 'pageMode') {
     if (pageModeValue.value === value) return
     pageModeValue.value = value
@@ -301,10 +337,6 @@ function onDropdownSelect(value) {
     backgroundValue.value = value
     updateBackground()
   }
-}
-
-function onDocumentClick() {
-  activeDropdown.value = ''
 }
 
 async function loadSystemConfig() {
@@ -488,6 +520,39 @@ async function saveConfigDir() {
   }
 }
 
+async function saveProjectPassword() {
+  if (!canChangeProjectPassword.value) {
+    showFailToast('请先进入正常空间')
+    return
+  }
+  const password = String(projectPassword.value || '').trim()
+  const confirm = String(projectPasswordConfirm.value || '').trim()
+  if (!password) {
+    showFailToast('请输入新密码')
+    return
+  }
+  if (password !== confirm) {
+    showFailToast('两次输入的密码不一致')
+    return
+  }
+
+  savingProjectPassword.value = true
+  try {
+    const response = await authStore.changePassword(password)
+    if (response?.code !== 200) {
+      showFailToast(response?.msg || '密码保存失败')
+      return
+    }
+    projectPassword.value = ''
+    projectPasswordConfirm.value = ''
+    showSuccessToast('项目密码已更新')
+  } catch (error) {
+    showFailToast(error?.message || '密码保存失败')
+  } finally {
+    savingProjectPassword.value = false
+  }
+}
+
 async function confirmReset() {
   try {
     await showConfirmDialog({
@@ -527,11 +592,6 @@ onMounted(async () => {
   await configStore.loadConfigFromServer()
   initValues()
   await Promise.all([loadSystemConfig(), loadConfigDirInfo()])
-  document.addEventListener('click', onDocumentClick)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', onDocumentClick)
 })
 </script>
 
@@ -558,6 +618,10 @@ onUnmounted(() => {
 
 .config-group-header {
   padding: 16px 16px 10px;
+}
+
+.config-group-header.compact {
+  padding-bottom: 6px;
 }
 
 .config-group-title {
@@ -624,6 +688,10 @@ onUnmounted(() => {
   margin-top: 0;
 }
 
+.inline-actions.single {
+  grid-template-columns: 1fr;
+}
+
 .mmmtttt-config {
   text-align: center;
   font-size: 12px;
@@ -640,7 +708,6 @@ onUnmounted(() => {
   transform-origin: right center;
 }
 
-/* 内联下拉框 */
 .select-row {
   display: flex;
   align-items: center;
@@ -685,34 +752,61 @@ onUnmounted(() => {
 </style>
 
 <style>
-.select-dropdown-overlay {
-  position: fixed;
-  z-index: 3000;
-  background: var(--popup-bg, #fff);
-  border: 1px solid var(--border-soft, rgba(0, 0, 0, 0.08));
-  border-radius: 14px;
-  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.15));
-  overflow: hidden;
-  backdrop-filter: blur(12px);
+.select-panel {
+  padding: 14px;
+  background: var(--popup-bg, var(--surface-2));
 }
 
-.select-dropdown-overlay .select-option {
-  padding: 10px 16px;
-  font-size: 14px;
-  color: var(--text-primary, #333);
+.select-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 12px;
+}
+
+.select-panel__title {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.select-panel__close,
+.select-panel__option {
+  border: 0;
+  font: inherit;
   cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s;
 }
 
-.select-dropdown-overlay .select-option:hover {
-  background: rgba(47, 116, 255, 0.08);
+.select-panel__close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
 }
 
-.select-dropdown-overlay .select-option.active {
-  color: var(--brand-600, #1989fa);
-  font-weight: 600;
-  background: rgba(89, 160, 255, 0.12);
+.select-panel__option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  margin-top: 8px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.select-panel__option.active {
+  background: rgba(89, 160, 255, 0.14);
+  color: var(--brand-700, #1989fa);
+  font-weight: 700;
 }
 </style>
 

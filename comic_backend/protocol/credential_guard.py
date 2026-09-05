@@ -45,12 +45,14 @@ def _looks_unconfigured(value) -> bool:
 def _as_enabled(raw_value) -> bool:
     if isinstance(raw_value, bool):
         return raw_value
+    if raw_value is None:
+        return False
     text = _normalize_text(raw_value).lower()
     if text in {"0", "false", "off", "no"}:
         return False
     if text in {"1", "true", "on", "yes"}:
         return True
-    return True
+    return False
 
 
 def _get_nested_value(config: Dict, field_path: str):
@@ -83,20 +85,18 @@ def _get_credential_config(manifest) -> Dict:
     return cred if isinstance(cred, dict) else {}
 
 
-def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Dict[str, object]:
-    adapter_key = _normalize_text(adapter_name).lower()
+def get_manifest_credential_status(manifest, adapter_config: Dict, adapter_name: str = "") -> Dict[str, object]:
     config = dict(adapter_config or {})
-    manifest = _find_plugin_manifest(adapter_key)
     cred_cfg = _get_credential_config(manifest)
 
     enabled_field = str(cred_cfg.get("enabled_field") or "enabled").strip() or "enabled"
-    enabled = _as_enabled(config.get(enabled_field, True))
+    enabled = _as_enabled(config.get(enabled_field, False))
 
     plugin_label = ""
     if manifest is not None:
-        plugin_label = _normalize_text(getattr(manifest, "name", "") or "") or adapter_key
+        plugin_label = _normalize_text(getattr(manifest, "name", "") or "")
     if not plugin_label:
-        plugin_label = adapter_key
+        plugin_label = _normalize_text(adapter_name) or "平台"
 
     if not enabled:
         disabled_message = str(cred_cfg.get("disabled_message") or "").strip()
@@ -131,6 +131,12 @@ def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Di
         "message": "" if configured else unconfigured_message,
         "missing_fields": missing,
     }
+
+
+def get_adapter_credential_status(adapter_name: str, adapter_config: Dict) -> Dict[str, object]:
+    adapter_key = _normalize_text(adapter_name).lower()
+    manifest = _find_plugin_manifest(adapter_key)
+    return get_manifest_credential_status(manifest, adapter_config, adapter_name=adapter_key)
 
 
 def ensure_adapter_query_ready(adapter_name: str, adapter_config: Dict) -> None:

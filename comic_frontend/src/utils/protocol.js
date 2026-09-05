@@ -53,6 +53,10 @@ export function getProtocolPluginPlatform(plugin) {
   return ''
 }
 
+export function getProtocolPluginEffectiveConfigKey(plugin) {
+  return normalizeString(plugin?.effective_config_key) || normalizeString(plugin?.config_key)
+}
+
 export function getProtocolPluginLabel(plugin) {
   const identity = plugin?.identity || {}
   return (
@@ -76,6 +80,7 @@ export function toProtocolPlatformOption(plugin) {
     platform: getProtocolPluginPlatform(plugin),
     label: getProtocolPluginLabel(plugin),
     configKey: normalizeString(plugin?.config_key),
+    effectiveConfigKey: getProtocolPluginEffectiveConfigKey(plugin),
     capabilities: getProtocolPluginCapabilities(plugin),
     mediaTypes: getProtocolPluginMediaTypes(plugin),
     presentation: plugin?.presentation || {},
@@ -83,17 +88,26 @@ export function toProtocolPlatformOption(plugin) {
   }
 }
 
-export async function fetchThirdPartyPluginDescriptors() {
+export async function fetchThirdPartyPluginConfig() {
   const response = await comicApi.getThirdPartyConfig()
   if (response?.code !== 200) {
-    return []
+    return { plugins: [], adapters: {} }
   }
-  return Array.isArray(response?.data?.plugins) ? response.data.plugins : []
+  return {
+    plugins: Array.isArray(response?.data?.plugins) ? response.data.plugins : [],
+    adapters: response?.data?.adapters || {},
+  }
+}
+
+export async function fetchThirdPartyPluginDescriptors() {
+  const config = await fetchThirdPartyPluginConfig()
+  return config.plugins
 }
 
 export async function fetchProtocolPlatformOptions(filters = {}) {
-  const plugins = await fetchThirdPartyPluginDescriptors()
+  const { plugins, adapters } = await fetchThirdPartyPluginConfig()
   return filterProtocolPlugins(plugins, filters)
     .map(toProtocolPlatformOption)
+    .filter(item => adapters?.[item.effectiveConfigKey || item.configKey]?.enabled === true)
     .filter(item => item.platform)
 }

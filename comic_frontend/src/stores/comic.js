@@ -531,6 +531,9 @@ export const useComicStore = defineStore('comic', () => {
       ...options,
       summary: 1
     })
+    if (response.data && typeof response.data === 'object' && Array.isArray(response.data.items)) {
+      return response.data.items
+    }
     return Array.isArray(response.data) ? response.data : []
   }
 

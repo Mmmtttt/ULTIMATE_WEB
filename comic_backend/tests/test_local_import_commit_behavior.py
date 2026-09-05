@@ -59,7 +59,7 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(meta_dir))
-    monkeypatch.setattr(local_import_module, "LOCAL_IMPORT_WORKSPACE_DIR", workspace_dir)
+    monkeypatch.setattr(local_import_module, "_local_import_workspace_dir", lambda: workspace_dir)
     monkeypatch.setattr(local_import_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
@@ -115,14 +115,16 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
         assert r > g
 
     tag_ids = comic.get("tag_ids", [])
-    assert len(tag_ids) == 1
-    local_tag_id = tag_ids[0]
+    assert len(tag_ids) == 2
     assert comic.get("score") == 8.0
 
     tags_data = service._tag_storage.read_document()
     local_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "本地"), None)
     assert local_tag is not None
-    assert local_tag.get("id") == local_tag_id
+    recent_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "最近导入"), None)
+    assert recent_tag is not None
+    assert local_tag.get("id") in tag_ids
+    assert recent_tag.get("id") in tag_ids
 
 
 def test_local_import_reuses_existing_local_tag_without_rewriting_tags(tmp_path, monkeypatch):

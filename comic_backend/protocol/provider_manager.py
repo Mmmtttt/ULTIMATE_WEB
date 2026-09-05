@@ -8,6 +8,7 @@ import sys
 from typing import Any, Dict, Optional
 
 from .base import PluginManifest, ProtocolProvider
+from .credential_guard import get_manifest_credential_status
 from .registry import PluginRegistry, get_plugin_registry
 from .runtime_config import ProtocolConfigStore
 
@@ -154,17 +155,44 @@ class ProviderManager:
             self._drop_plugin_runtime_paths(plugin_id)
 
     def _get_runtime_config(self, manifest: PluginManifest) -> Dict[str, Any]:
-        config_key = str(manifest.config_key or "").strip()
+        config_key = str(getattr(manifest, "effective_config_key", "") or manifest.config_key or "").strip()
         if not config_key:
             return {}
         return self._config_store.get_plugin_config(config_key, reload=True)
+
+    @staticmethod
+    def _capability_requires_enabled(capability: str) -> bool:
+        normalized = str(capability or "").strip()
+        if not normalized or normalized == "health.query.status":
+            return False
+        return normalized.startswith((
+            "catalog.",
+            "collection.",
+            "person.",
+            "taxonomy.",
+            "asset.",
+        ))
+
+    def _ensure_plugin_enabled_for_capability(
+        self,
+        manifest: PluginManifest,
+        config: Dict[str, Any],
+        capability: str,
+    ) -> None:
+        if not self._capability_requires_enabled(capability):
+            return
+        status = get_manifest_credential_status(manifest, config)
+        if not bool(status.get("configured", False)):
+            raise RuntimeError(str(status.get("message") or "平台未启用或配置不完整，不能执行查询"))
 
     def execute(self, plugin_id: str, capability: str, params: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None):
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        normalized_capability = str(capability or "").strip()
+        self._ensure_plugin_enabled_for_capability(manifest, config, normalized_capability)
         return provider.execute(
-            str(capability or "").strip(),
+            normalized_capability,
             dict(params or {}),
             dict(context or {}),
             config,
@@ -174,6 +202,9 @@ class ProviderManager:
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        status = get_manifest_credential_status(manifest, config)
+        if not bool(status.get("configured", False)):
+            raise RuntimeError(str(status.get("message") or "平台未启用或配置不完整，不能创建客户端"))
         return provider.build_client(config, *args, **kwargs)
 
     def normalize_config(self, plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -188,6 +219,9 @@ class ProviderManager:
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        credential_status = get_manifest_credential_status(manifest, config)
+        if not bool(credential_status.get("configured", False)):
+            return credential_status
         return provider.get_query_status(config)
 
 

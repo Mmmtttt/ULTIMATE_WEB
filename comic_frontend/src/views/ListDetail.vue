@@ -118,7 +118,16 @@
             :loading="batchRemoveLoading"
             @click="handleBatchRemoveFromList"
           >
-            删除
+            移出清单
+          </van-button>
+          <van-button
+            size="small"
+            type="danger"
+            :disabled="selectedCount === 0"
+            :loading="batchTrashLoading"
+            @click="handleBatchMoveToTrashFromList"
+          >
+            移到回收站
           </van-button>
         </div>
       </div>
@@ -422,6 +431,7 @@ const downloadLoading = ref(false)
 const manageMode = ref(false)
 const selectedItemKeys = ref([])
 const batchRemoveLoading = ref(false)
+const batchTrashLoading = ref(false)
 const moveToLocalLoading = ref(false)
 
 function getFilterStorageKey() {
@@ -1077,6 +1087,65 @@ async function handleBatchRemoveFromList() {
     await loadDetail()
   } finally {
     batchRemoveLoading.value = false
+  }
+}
+
+async function handleBatchMoveToTrashFromList() {
+  if (selectedItems.value.length === 0) {
+    showFailToast('请先选择内容')
+    return
+  }
+
+  try {
+    await showConfirmDialog({
+      title: '移到回收站',
+      message: `确定要将已选 ${selectedItems.value.length} 项内容移到回收站吗？内容也会从当前清单中消失。`
+    })
+  } catch {
+    return
+  }
+
+  const groups = buildSourceIdGroups(selectedItems.value)
+  batchTrashLoading.value = true
+  try {
+    const operations = []
+    if (activeContentType.value === 'video') {
+      if (groups.local.length > 0) {
+        operations.push(videoApi.batchMoveToTrash(groups.local))
+      }
+      if (groups.preview.length > 0) {
+        operations.push(videoApi.batchMoveVideoRecommendationToTrash(groups.preview))
+      }
+    } else {
+      if (groups.local.length > 0) {
+        operations.push(comicApi.batchMoveToTrash(groups.local))
+      }
+      if (groups.preview.length > 0) {
+        operations.push(recommendationApi.batchMoveToTrash(groups.preview))
+      }
+    }
+
+    const results = await Promise.all(operations)
+    const failed = results.some((response) => {
+      if (typeof response === 'boolean') {
+        return !response
+      }
+      return response?.code !== 200
+    })
+    if (failed) {
+      showFailToast('移到回收站失败，请重试')
+      return
+    }
+
+    showSuccessToast('已移到回收站')
+    selectedItemKeys.value = []
+    manageMode.value = false
+    await loadDetail()
+  } catch (error) {
+    console.error('清单内容移到回收站失败:', error)
+    showFailToast('移到回收站失败')
+  } finally {
+    batchTrashLoading.value = false
   }
 }
 

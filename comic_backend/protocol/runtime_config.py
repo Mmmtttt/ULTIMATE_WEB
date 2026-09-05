@@ -44,6 +44,20 @@ class ProtocolConfigStore:
             or ""
         ).strip()
 
+    @staticmethod
+    def _resolve_enabled_field_name(manifest) -> str:
+        configuration = getattr(manifest, "configuration", {}) or {}
+        credential = configuration.get("credential") if isinstance(configuration, dict) else {}
+        candidate = str((credential or {}).get("enabled_field") or "enabled").strip() or "enabled"
+        try:
+            fields = manifest.list_configuration_fields()
+        except Exception:
+            fields = []
+        for field in fields or []:
+            if str((field or {}).get("key") or "").strip() == candidate and str((field or {}).get("type") or "").strip() == "boolean":
+                return candidate
+        return ""
+
     @classmethod
     def _resolve_binding_default_abs_path(cls, manifest, binding: Dict[str, object]) -> str:
         relative_dir = str(binding.get("relative_dir") or "").strip().replace("\\", "/").strip("/")
@@ -106,6 +120,9 @@ class ProtocolConfigStore:
             defaults = {}
 
         normalized_defaults = dict(defaults or {})
+        enabled_field = cls._resolve_enabled_field_name(manifest)
+        if enabled_field:
+            normalized_defaults[enabled_field] = False
         for binding in manifest.list_data_dir_bindings():
             field_name = cls._resolve_binding_field_name(binding)
             default_abs = cls._resolve_binding_default_abs_path(manifest, binding)
@@ -157,6 +174,7 @@ class ProtocolConfigStore:
                 existing_config = {}
                 adapters[config_key] = existing_config
                 changed = True
+            raw_existing_config = dict(existing_config)
 
             try:
                 gateway = self._get_protocol_gateway()
@@ -177,6 +195,9 @@ class ProtocolConfigStore:
             for field_name, field_value in defaults.items():
                 if field_name not in merged:
                     merged[field_name] = field_value
+            enabled_field = self._resolve_enabled_field_name(manifest)
+            if enabled_field and enabled_field not in raw_existing_config:
+                merged[enabled_field] = False
 
             if merged != existing_config:
                 adapters[config_key] = merged

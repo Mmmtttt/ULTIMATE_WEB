@@ -153,6 +153,92 @@ def test_build_mobile_protocol_snapshot_merges_manifest_and_overlay_and_keeps_ov
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_build_mobile_protocol_snapshot_respects_third_party_excludes(monkeypatch):
+    package_unified = _load_package_unified_module()
+    monkeypatch.setenv(package_unified.PLUGIN_PACKAGE_EXCLUDES_ENV, "excluded_plugin")
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"mobile_snapshot_excludes_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        third_party_root = temp_dir / "third_party"
+        _write_json(
+            third_party_root / "included_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {"id": "comic.included", "name": "Included"},
+                "media_types": ["comic"],
+            },
+        )
+        _write_json(
+            third_party_root / "excluded_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {"id": "comic.excluded", "name": "Excluded"},
+                "media_types": ["comic"],
+            },
+        )
+
+        snapshot = package_unified.build_mobile_protocol_snapshot(third_party_root)
+        plugin_ids = {item["plugin"]["id"] for item in snapshot.get("manifests", [])}
+
+        assert "comic.included" in plugin_ids
+        assert "comic.excluded" not in plugin_ids
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_build_mobile_protocol_snapshot_merges_project_plugin_host_overlays(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"mobile_snapshot_project_overlays_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        third_party_root = temp_dir / "third_party"
+        project_plugins_root = temp_dir / "project_plugins"
+        monkeypatch.setattr(package_unified, "PROJECT_PLUGINS_DIR", project_plugins_root)
+
+        _write_json(
+            third_party_root / "javdb-api-scraper" / "javbus_plugin" / "ultimate-plugin.json",
+            {
+                "protocol_version": "1.0",
+                "plugin": {
+                    "id": "video.javbus",
+                    "name": "JAVBUS",
+                    "entrypoint": "../ultimate_provider.py:JavbusProvider",
+                },
+                "media_types": ["video"],
+                "capabilities": [{"key": "catalog.search"}],
+                "identity": {"platform_label": "JAVBUS", "host_id_prefix": "JAVBUS"},
+            },
+        )
+        _write_json(
+            project_plugins_root / "javbus-parent-config" / "ultimate-host.json",
+            {
+                "plugin": {
+                    "id": "video.javbus",
+                    "config_parent_key": "javdb",
+                },
+                "configuration": {
+                    "credential": {
+                        "disabled_message": "JAVDB disabled",
+                    }
+                },
+            },
+        )
+
+        snapshot = package_unified.build_mobile_protocol_snapshot(third_party_root)
+        manifests = {item["plugin"]["id"]: item for item in snapshot.get("manifests", [])}
+        javbus = manifests["video.javbus"]
+
+        assert javbus["plugin"].get("config_key") == ""
+        assert javbus["plugin"].get("config_parent_key") == "javdb"
+        assert javbus["configuration"]["credential"]["disabled_message"] == "JAVDB disabled"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"

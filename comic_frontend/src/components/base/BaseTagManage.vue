@@ -192,49 +192,59 @@
       </van-tab>
     </van-tabs>
     
-    <van-popup 
-      v-model:show="showAddPopup" 
-      position="bottom" 
-      round 
-      :style="{ height: 'min(360px, 72vh)' }"
+    <van-popup
+      v-model:show="showAddPopup"
+      position="center"
+      round
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
-      <div class="popup-content">
-        <van-nav-bar title="添加标签">
-          <template #right>
-            <van-button type="primary" size="small" @click="addTag">确定</van-button>
-          </template>
-        </van-nav-bar>
-        
-        <van-cell-group inset>
-          <van-field 
-            v-model="newTagName" 
-            label="标签名称" 
-            placeholder="请输入标签名称"
-          />
-        </van-cell-group>
+      <div class="tag-dialog">
+        <div class="tag-dialog__header">
+          <div>
+            <div class="tag-dialog__title">添加标签</div>
+            <div class="tag-dialog__desc">新标签会创建到当前内容类型下。</div>
+          </div>
+          <button type="button" class="tag-dialog__close" @click="showAddPopup = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
+        <van-field
+          v-model="newTagName"
+          label="标签名称"
+          placeholder="请输入标签名称"
+        />
+        <div class="tag-dialog__actions">
+          <van-button round plain @click="showAddPopup = false">取消</van-button>
+          <van-button round type="primary" @click="addTag">确定</van-button>
+        </div>
       </div>
     </van-popup>
-    
-    <van-popup 
-      v-model:show="showEditPopup" 
-      position="bottom" 
-      round 
-      :style="{ height: 'min(360px, 72vh)' }"
+
+    <van-popup
+      v-model:show="showEditPopup"
+      position="center"
+      round
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
-      <div class="popup-content">
-        <van-nav-bar title="编辑标签">
-          <template #right>
-            <van-button type="primary" size="small" @click="editTag">保存</van-button>
-          </template>
-        </van-nav-bar>
-        
-        <van-cell-group inset>
-          <van-field 
-            v-model="editTagName" 
-            label="标签名称" 
-            placeholder="请输入标签名称"
-          />
-        </van-cell-group>
+      <div class="tag-dialog">
+        <div class="tag-dialog__header">
+          <div>
+            <div class="tag-dialog__title">编辑标签</div>
+            <div class="tag-dialog__desc">只会修改标签名称，不改变已绑定内容。</div>
+          </div>
+          <button type="button" class="tag-dialog__close" @click="showEditPopup = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
+        <van-field
+          v-model="editTagName"
+          label="标签名称"
+          placeholder="请输入标签名称"
+        />
+        <div class="tag-dialog__actions">
+          <van-button round plain @click="showEditPopup = false">取消</van-button>
+          <van-button round type="primary" @click="editTag">保存</van-button>
+        </div>
       </div>
     </van-popup>
     
@@ -842,13 +852,53 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   margin-top: 20px;
 }
 
-.popup-content {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+.tag-dialog {
+  padding: 16px;
+  background: var(--surface-2);
 }
 
-.popup-content .van-cell-group {
+.tag-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.tag-dialog__title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.tag-dialog__desc {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.tag-dialog__close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tag-dialog :deep(.van-cell) {
+  border-radius: 14px;
+  background: var(--surface-1);
+}
+
+.tag-dialog__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 16px;
 }
 

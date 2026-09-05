@@ -253,8 +253,103 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
         assert (bundle_dir / "plugins" / "JMComic-Crawler-Python" / "ultimate-plugin.json").exists()
         assert not (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
         assert (bundle_dir / "backend_source" / "third_party" / "__init__.py").exists()
-        assert (bundle_dir / "install_plugin_deps.ps1").exists()
-        assert (bundle_dir / "install_plugin_deps.sh").exists()
+        assert (bundle_dir / "start_project.bat").exists()
+        assert (bundle_dir / "start_project.ps1").exists()
+        assert (bundle_dir / "scripts" / "install_plugin_deps.ps1").exists()
+        assert (bundle_dir / "scripts" / "install_plugin_deps.sh").exists()
+        assert not (bundle_dir / "start_app.bat").exists()
+        assert not (bundle_dir / "start_backend.bat").exists()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_add_data(monkeypatch):
+    package_unified = _load_package_unified_module()
+    monkeypatch.setenv(package_unified.PLUGIN_PACKAGE_EXCLUDES_ENV, "Missav")
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_excluded_plugins_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        staged_target_dir = temp_dir / "staged"
+        backend_src = staged_target_dir / "comic_backend"
+        third_party_root = backend_src / "third_party"
+        (third_party_root / "__init__.py").parent.mkdir(parents=True, exist_ok=True)
+        (third_party_root / "__init__.py").write_text("", encoding="utf-8")
+        (staged_target_dir / "comic_frontend_dist" / "index.html").parent.mkdir(parents=True, exist_ok=True)
+        (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        _write_manifest(third_party_root / "JMComic-Crawler-Python", "comic.jmcomic")
+        _write_manifest(
+            third_party_root / "Missav",
+            "video.missav",
+            packaging={"pyinstaller": {"collect_all": ["curl_cffi"]}},
+        )
+
+        bundle_dir = package_unified.prepare_desktop_release_bundle(
+            target="windows" if os.name == "nt" else "linux",
+            target_out_dir=temp_dir / "out_external",
+            staged_target_dir=staged_target_dir,
+            binary_name="ultimate_backend_test",
+            runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
+        )
+        assert (bundle_dir / "plugins" / "JMComic-Crawler-Python" / "ultimate-plugin.json").exists()
+        assert not (bundle_dir / "plugins" / "Missav").exists()
+        assert not (bundle_dir / "backend_source" / "third_party" / "Missav").exists()
+
+        cmd = package_unified.write_pyinstaller_scripts(
+            out_dir=temp_dir / "pyinstaller",
+            staged_target_dir=staged_target_dir,
+            target="windows" if os.name == "nt" else "linux",
+            binary_name="ultimate_backend_test",
+            entry="comic_backend/app.py",
+            runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
+            plugin_package_mode="bundled",
+        )
+        collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
+        add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
+        assert "curl_cffi" not in collect_all_args
+        assert not any("comic_backend/third_party/Missav" in item for item in add_data_args)
+        assert any("comic_backend/third_party/JMComic-Crawler-Python" in item for item in add_data_args)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_bundled_pyinstaller_adds_project_plugin_host_overlays(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_project_plugins_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        project_plugins = temp_dir / "project_plugins"
+        _write_manifest(project_plugins / "normal_plugin", "comic.normal")
+        (project_plugins / "host_overlay_only").mkdir(parents=True, exist_ok=True)
+        (project_plugins / "host_overlay_only" / "ultimate-host.json").write_text(
+            json.dumps({"plugin": {"id": "video.child", "config_parent_key": "parent"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(package_unified, "PROJECT_PLUGINS_DIR", project_plugins)
+
+        staged_target_dir = temp_dir / "staged"
+        backend_third_party = staged_target_dir / "comic_backend" / "third_party"
+        _write_manifest(backend_third_party / "JMComic-Crawler-Python", "comic.jmcomic")
+
+        cmd = package_unified.write_pyinstaller_scripts(
+            out_dir=temp_dir / "pyinstaller",
+            staged_target_dir=staged_target_dir,
+            target="windows" if os.name == "nt" else "linux",
+            binary_name="ultimate_backend_test",
+            entry="comic_backend/app.py",
+            runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
+            plugin_package_mode="bundled",
+        )
+
+        add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
+        assert any("plugins/normal_plugin" in item for item in add_data_args)
+        assert any("plugins/host_overlay_only" in item for item in add_data_args)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -475,9 +570,9 @@ def test_prepare_desktop_release_bundle_copies_ffmpeg_runtime_tool_and_launchers
         copied_ffmpeg = bundle_dir / "tools" / "ffmpeg" / fake_binary_name
         assert copied_ffmpeg.exists()
 
-        bat_text = (bundle_dir / "start_backend.bat").read_text(encoding="utf-8")
-        ps1_text = (bundle_dir / "start_backend.ps1").read_text(encoding="utf-8")
-        sh_text = (bundle_dir / "start_backend.sh").read_text(encoding="utf-8")
+        bat_text = (bundle_dir / "scripts" / "start_backend.bat").read_text(encoding="utf-8")
+        ps1_text = (bundle_dir / "scripts" / "start_backend.ps1").read_text(encoding="utf-8")
+        sh_text = (bundle_dir / "scripts" / "start_backend.sh").read_text(encoding="utf-8")
         readme_text = (bundle_dir / "README.md").read_text(encoding="utf-8")
 
         assert "tools\\ffmpeg" in bat_text

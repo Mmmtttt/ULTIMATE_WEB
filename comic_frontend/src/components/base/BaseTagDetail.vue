@@ -36,10 +36,17 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="homeItems" 
+            :items="pagedHomeItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToHomeItem" 
+          />
+          <AppPagination
+            v-if="homeItems.length > 0"
+            v-model="homeCurrentPage"
+            class="tag-pagination"
+            :total-items="homeTotalItems"
+            :page-size="homePageSize"
           />
         </van-tab>
 
@@ -49,10 +56,17 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="recommendationItems" 
+            :items="pagedRecommendationItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToRecommendationItem" 
+          />
+          <AppPagination
+            v-if="recommendationItems.length > 0"
+            v-model="recommendationCurrentPage"
+            class="tag-pagination"
+            :total-items="recommendationTotalItems"
+            :page-size="recommendationPageSize"
           />
         </van-tab>
 
@@ -62,28 +76,48 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="allItems" 
+            :items="pagedAllItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToItem" 
+          />
+          <AppPagination
+            v-if="allItems.length > 0"
+            v-model="allCurrentPage"
+            class="tag-pagination"
+            :total-items="allTotalItems"
+            :page-size="allPageSize"
           />
         </van-tab>
       </van-tabs>
     </div>
 
-    <van-popup v-model:show="showEditPopup" round position="bottom" :style="{ height: '30%' }">
+    <van-popup
+      v-model:show="showEditPopup"
+      round
+      position="center"
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
+    >
       <div class="edit-popup">
-        <van-nav-bar title="编辑标签" left-text="取消" @click-left="showEditPopup = false">
-          <template #right>
-            <van-button type="primary" size="small" @click="saveEdit">保存</van-button>
-          </template>
-        </van-nav-bar>
+        <div class="edit-popup__header">
+          <div>
+            <div class="edit-popup__title">编辑标签</div>
+            <div class="edit-popup__desc">修改名称后会同步影响所有已绑定内容的显示。</div>
+          </div>
+          <button type="button" class="edit-popup__close" @click="showEditPopup = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
         <van-field
           v-model="editTagName"
           label="标签名称"
           placeholder="请输入标签名称"
           :rules="[{ required: true, message: '请输入标签名称' }]"
         />
+        <div class="edit-popup__actions">
+          <van-button round plain @click="showEditPopup = false">取消</van-button>
+          <van-button round type="primary" @click="saveEdit">保存</van-button>
+        </div>
       </div>
     </van-popup>
   </div>
@@ -94,6 +128,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast } from 'vant'
 import MediaGrid from '@/components/common/MediaGrid.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { clearBrowseState, loadBrowseState, saveBrowseState } from '@/utils'
 
 const props = defineProps({
@@ -147,6 +183,27 @@ const allItems = computed(() => {
   const recWithSource = recommendationItems.value.map(item => ({ ...item, source: 'recommendation' }))
   return [...homeWithSource, ...recWithSource]
 })
+
+const {
+  pageSize: homePageSize,
+  currentPage: homeCurrentPage,
+  totalItems: homeTotalItems,
+  pagedItems: pagedHomeItems,
+} = useClientPagination(homeItems, computed(() => `tag_detail_home_${props.contentType}_${route.params.id}`))
+
+const {
+  pageSize: recommendationPageSize,
+  currentPage: recommendationCurrentPage,
+  totalItems: recommendationTotalItems,
+  pagedItems: pagedRecommendationItems,
+} = useClientPagination(recommendationItems, computed(() => `tag_detail_recommendation_${props.contentType}_${route.params.id}`))
+
+const {
+  pageSize: allPageSize,
+  currentPage: allCurrentPage,
+  totalItems: allTotalItems,
+  pagedItems: pagedAllItems,
+} = useClientPagination(allItems, computed(() => `tag_detail_all_${props.contentType}_${route.params.id}`))
 
 function getBrowseStateKey() {
   return `tag_detail_state_${props.contentType}_${route.params.id}`
@@ -307,6 +364,56 @@ watch(activeTab, () => {
 }
 
 .edit-popup {
-  padding-bottom: 20px;
+  padding: 16px;
+  background: var(--surface-2);
+}
+
+.edit-popup__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.edit-popup__title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.edit-popup__desc {
+  margin-top: 5px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.edit-popup__close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.edit-popup :deep(.van-cell) {
+  border-radius: 14px;
+  background: var(--surface-1);
+}
+
+.edit-popup__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tag-pagination {
+  margin-top: 6px;
 }
 </style>

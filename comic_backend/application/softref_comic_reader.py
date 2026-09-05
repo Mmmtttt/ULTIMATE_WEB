@@ -32,9 +32,12 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
-SOFTREF_PASSWORDS_FILE = Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
 SOFTREF_NESTED_ARCHIVE_CACHE_MAX_BYTES = 256 * 1024 * 1024
 SOFTREF_NESTED_ARCHIVE_CACHE_SINGLE_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _softref_passwords_file() -> Path:
+    return Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
 
 
 class SoftRefError(Exception):
@@ -311,10 +314,11 @@ class SoftRefComicReader:
         return time.strftime("%Y-%m-%dT%H:%M:%S")
 
     def _load_password_store(self) -> Dict[str, Any]:
-        if not SOFTREF_PASSWORDS_FILE.exists():
+        password_file = _softref_passwords_file()
+        if not password_file.exists():
             return {"archives": {}}
         try:
-            payload = json.loads(SOFTREF_PASSWORDS_FILE.read_text(encoding="utf-8"))
+            payload = json.loads(password_file.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 return {"archives": {}}
             archives = payload.get("archives")
@@ -327,8 +331,9 @@ class SoftRefComicReader:
     def _save_password_store(self, payload: Dict[str, Any]) -> None:
         payload = payload if isinstance(payload, dict) else {"archives": {}}
         payload.setdefault("archives", {})
-        SOFTREF_PASSWORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SOFTREF_PASSWORDS_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        password_file = _softref_passwords_file()
+        password_file.parent.mkdir(parents=True, exist_ok=True)
+        password_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _get_password_for_archive(self, top_archive_path: str, archive_prefix_chain: List[str]) -> Optional[str]:
         store = self._load_password_store()

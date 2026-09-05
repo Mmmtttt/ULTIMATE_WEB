@@ -45,6 +45,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Set packaged app version (e.g. 2.0.0). If empty, build script auto-resolves from env/tag/package.json.",
     )
+    parser.add_argument(
+        "--third-party-excludes",
+        default="",
+        help="Comma-separated third_party directory names excluded from packaged plugins and mobile protocol snapshots.",
+    )
     return parser.parse_args()
 
 
@@ -87,6 +92,8 @@ def main() -> int:
         "--plugin-package-mode",
         args.plugin_package_mode,
     ]
+    if str(args.third_party_excludes or "").strip():
+        package_cmd.extend(["--third-party-excludes", str(args.third_party_excludes).strip()])
     if args.execute:
         package_cmd.append("--execute")
 

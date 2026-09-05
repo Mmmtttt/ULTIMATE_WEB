@@ -278,6 +278,17 @@
           <van-button size="small" type="primary" icon="records-o" @click="openListManager">
             加入清单
           </van-button>
+          <van-button
+            v-if="isLocalImportedComic"
+            size="small"
+            type="primary"
+            plain
+            icon="replay"
+            :loading="refreshingLocalMetadata"
+            @click="refreshLocalMetadata"
+          >
+            补全信息
+          </van-button>
           <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
             删除
           </van-button>
@@ -475,6 +486,10 @@ const refreshingLocalMetadata = ref(false)
 
 const isThirdPartyMode = computed(() => {
   return Boolean(route.query.platform)
+})
+const isLocalImportedComic = computed(() => {
+  const id = String(comic.value?.id || '').trim().toUpperCase()
+  return !isThirdPartyMode.value && id.startsWith('LOCAL') && comic.value?.source !== 'preview'
 })
 const importing = ref(false)
 const thirdPartyError = ref('')

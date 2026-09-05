@@ -1,0 +1,11 @@
+{
+  "plugin": {
+    "id": "video.javbus",
+    "config_parent_key": "javdb"
+  },
+  "configuration": {
+    "credential": {
+      "disabled_message": "JAVDB 平台未启用，不能使用 JAVBUS 子能力查询。"
+    }
+  }
+}

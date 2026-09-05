@@ -32,6 +32,41 @@ SCORE_PRECISION = 0.5
 CACHE_MAX_AGE = 300
 
 
+class _DynamicPathProxy(os.PathLike):
+    """Path-like proxy that resolves against the active data space at use time."""
+
+    def __init__(self, resolver):
+        self._resolver = resolver
+
+    def _path(self) -> str:
+        return os.path.abspath(str(self._resolver()))
+
+    def __fspath__(self) -> str:
+        return self._path()
+
+    def __str__(self) -> str:
+        return self._path()
+
+    def __repr__(self) -> str:
+        return repr(self._path())
+
+    def __eq__(self, other) -> bool:
+        try:
+            other_path = os.fspath(other)
+        except TypeError:
+            return False
+        return os.path.normcase(self._path()) == os.path.normcase(os.path.abspath(str(other_path)))
+
+    def __hash__(self) -> int:
+        return hash(os.path.normcase(self._path()))
+
+
+class _DynamicJsonPathProxy(_DynamicPathProxy):
+    def __init__(self, file_name: str):
+        self._file_name = file_name
+        super().__init__(lambda: _get_json_file(self._file_name))
+
+
 def _get_json_file(name):
     return os.path.join(get_meta_dir(), name)
 
@@ -62,11 +97,44 @@ _DYNAMIC_PROXY_NAMES = [
 ]
 
 
+JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["JSON_FILE"])
+RECOMMENDATION_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["RECOMMENDATION_JSON_FILE"])
+VIDEO_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["VIDEO_JSON_FILE"])
+VIDEO_RECOMMENDATION_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["VIDEO_RECOMMENDATION_JSON_FILE"])
+ACTOR_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["ACTOR_JSON_FILE"])
+AUTHOR_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["AUTHOR_JSON_FILE"])
+TAGS_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["TAGS_JSON_FILE"])
+LISTS_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["LISTS_JSON_FILE"])
+USER_CONFIG_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["USER_CONFIG_JSON_FILE"])
+IMPORT_TASKS_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["IMPORT_TASKS_JSON_FILE"])
+RECOMMENDATION_CACHE_INDEX_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["RECOMMENDATION_CACHE_INDEX_FILE"])
+UI_STATE_JSON_FILE = _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES["UI_STATE_JSON_FILE"])
+
+DATA_DIR = _DynamicPathProxy(get_data_dir)
+META_DIR = _DynamicPathProxy(get_meta_dir)
+STATIC_DIR = _DynamicPathProxy(get_static_dir)
+COVER_DIR = _DynamicPathProxy(get_cover_dir)
+LOGS_DIR = _DynamicPathProxy(get_logs_dir)
+CACHE_ROOT_DIR = _DynamicPathProxy(get_cache_root_dir)
+RECOMMENDATION_CACHE_DIR = _DynamicPathProxy(get_recommendation_cache_dir)
+COMIC_DIR = _DynamicPathProxy(get_comic_dir)
+VIDEO_DIR = _DynamicPathProxy(get_video_dir)
+PICTURES_DIR = _DynamicPathProxy(get_pictures_dir)
+COMIC_PICTURES_DIR = _DynamicPathProxy(get_comic_pictures_dir)
+COMIC_RECOMMENDATION_CACHE_DIR = _DynamicPathProxy(get_comic_recommendation_cache_dir)
+COMIC_CACHE_DIR = _DynamicPathProxy(get_comic_cache_dir)
+VIDEO_PICTURES_DIR = _DynamicPathProxy(get_video_pictures_dir)
+VIDEO_RECOMMENDATION_CACHE_DIR = _DynamicPathProxy(get_video_recommendation_cache_dir)
+VIDEO_CACHE_DIR = _DynamicPathProxy(get_video_cache_dir)
+LOCAL_PICTURES_DIR = _DynamicPathProxy(get_local_pictures_dir)
+LOCAL_VIDEO_PICTURES_DIR = _DynamicPathProxy(get_local_video_pictures_dir)
+LOCAL_VIDEO_COVER_DIR = _DynamicPathProxy(get_local_video_cover_dir)
+
+
 def __getattr__(name):
     """模块级动态属性访问 - JSON 文件路径和 storage 常量自动适配当前空间"""
     if name in _DYNAMIC_JSON_FILES:
-        return _get_json_file(_DYNAMIC_JSON_FILES[name])
+        return _DynamicJsonPathProxy(_DYNAMIC_JSON_FILES[name])
     if name in _DYNAMIC_PROXY_NAMES:
-        from core import storage_layout
-        return getattr(storage_layout, name)
+        return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
