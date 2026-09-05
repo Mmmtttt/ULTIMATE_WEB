@@ -83,7 +83,7 @@
       </van-swipe-cell>
     </van-cell-group>
     
-    <van-popup v-model:show="showCreateDialog" round position="center">
+    <van-popup v-model:show="showCreateDialog" round position="center" teleport="body">
       <div class="dialog-content">
         <h3>新建清单</h3>
         <van-field v-model="newListName" label="清单名称" placeholder="请输入清单名称" />
@@ -95,7 +95,7 @@
       </div>
     </van-popup>
     
-    <van-popup v-model:show="showEditDialog" round position="center">
+    <van-popup v-model:show="showEditDialog" round position="center" teleport="body">
       <div class="dialog-content">
         <h3>编辑清单</h3>
         <van-field v-model="editListName" label="清单名称" placeholder="请输入清单名称" />

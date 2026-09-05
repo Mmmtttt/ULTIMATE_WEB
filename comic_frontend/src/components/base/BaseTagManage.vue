@@ -196,6 +196,7 @@
       v-model:show="showAddPopup"
       position="center"
       round
+      teleport="body"
       :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
       <div class="tag-dialog">
@@ -224,6 +225,7 @@
       v-model:show="showEditPopup"
       position="center"
       round
+      teleport="body"
       :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
       <div class="tag-dialog">
@@ -262,7 +264,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { useImportTaskStore, useRuntimeStore } from '@/stores'
+import { useImportTaskStore, useModeStore, useRuntimeStore } from '@/stores'
 import {
   buildBatchTaskActions,
   clearBrowseState,
@@ -301,6 +303,7 @@ const emit = defineEmits(['tab-change'])
 
 const router = useRouter()
 const importTaskStore = useImportTaskStore()
+const modeStore = useModeStore()
 const runtimeStore = useRuntimeStore()
 const { isDesktop } = useDevice()
 
@@ -318,7 +321,8 @@ const selectedContentIds = ref([])
 const selectedTagIds = ref([])
 const showBatchTaskSheet = ref(false)
 
-const isVideo = computed(() => props.contentType === 'video')
+const currentContentType = computed(() => (modeStore.isVideoMode ? 'video' : 'comic'))
+const isVideo = computed(() => currentContentType.value === 'video')
 
 const pageTitle = computed(() => isVideo.value ? '视频标签管理' : '标签管理')
 
@@ -327,13 +331,9 @@ const contentLabel = computed(() => isVideo.value ? '选择视频' : '选择漫�
 const coverFit = computed(() => isVideo.value ? 'cover' : 'contain')
 
 const tabs = computed(() => {
-  if (isVideo.value) {
-    return [{ key: 'video', title: '标签列表' }]
-  }
-  return [
-    { key: 'comic', title: '漫画标签' },
-    { key: 'video', title: '视频标签' }
-  ]
+  return isVideo.value
+    ? [{ key: 'video', title: '视频标签' }]
+    : [{ key: 'comic', title: '漫画标签' }]
 })
 
 const allTags = computed(() => {
@@ -345,7 +345,7 @@ const allTags = computed(() => {
 
 const filteredBatchTags = computed(() => filterTagsByKeyword(allTags.value, batchTagKeyword.value))
 
-const paginationStorageKey = computed(() => `tag_manage_batch_${props.contentType}`)
+const paginationStorageKey = computed(() => `tag_manage_batch_${currentContentType.value}`)
 const {
   pageSize,
   currentPage,
@@ -355,7 +355,7 @@ const {
 const pagedContentList = computed(() => pagedItems.value)
 
 function getBrowseStateKey() {
-  return `tag_manage_state_${props.contentType}`
+  return `tag_manage_state_${currentContentType.value}`
 }
 
 function persistBrowseState() {
@@ -415,7 +415,7 @@ const isAllContentSelected = computed(() => {
 
 const batchTaskActions = computed(() => {
   return buildBatchTaskActions({
-    contentType: props.contentType,
+    contentType: currentContentType.value,
     selectedItems: selectedContentItems.value,
     thirdPartyEnabled: runtimeStore.thirdPartyEnabled,
     supportsVideoThumbnailBatch: runtimeStore.supportsLocalVideoThumbnailBatch,
@@ -508,8 +508,7 @@ async function addTag() {
     return
   }
   
-  const currentTab = tabs.value[activeTab.value]
-  const contentType = currentTab?.key || props.contentType
+  const contentType = currentContentType.value
   
   try {
     const response = await props.tagStore.addTag(newTagName.value.trim(), contentType)
@@ -714,6 +713,18 @@ watch(contentList, (nextItems) => {
     nextItems,
     (item) => item.id
   )
+})
+
+watch(() => modeStore.currentMode, async () => {
+  activeTab.value = 0
+  currentPage.value = 1
+  tagListKeyword.value = ''
+  batchTagKeyword.value = ''
+  selectedContentIds.value = []
+  selectedTagIds.value = []
+  contentList.value = []
+  await fetchTagList()
+  await fetchContentList()
 })
 
 watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
