@@ -14,6 +14,7 @@
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
       <van-cell title="标签管理" icon="tag-o" :to="tagManagePath" is-link />
+      <van-cell title="阅读记录" icon="clock-o" to="/history" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>

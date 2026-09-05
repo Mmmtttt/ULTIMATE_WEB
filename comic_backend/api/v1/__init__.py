@@ -14,3 +14,4 @@ from .ui_state import ui_state_bp
 from .teledrive import teledrive_bp
 from .auth import auth_bp
 from .performance import performance_bp
+from .history import history_bp

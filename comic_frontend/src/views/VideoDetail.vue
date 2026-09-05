@@ -607,6 +607,7 @@ import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImag
 import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
 import { tagApi } from '@/api/tag'
 import { videoApi } from '@/api/video'
+import { historyApi } from '@/api/history'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
@@ -1405,6 +1406,7 @@ async function loadVideo() {
     } else {
       const data = await videoStore.fetchDetail(videoId.value)
       video.value = data
+      recordReadingHistory(data)
       showMagnets.value = false
       if (data?.score) {
         scoreValue.value = data.score
@@ -1435,6 +1437,18 @@ async function loadVideo() {
   if (route.query.autoplay === '1') {
     loadPlayUrls()
   }
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || videoId.value
+  if (!contentId || isThirdParty.value) return
+  historyApi.recordVisit({
+    contentType: 'video',
+    contentId,
+    source: 'local'
+  }).catch((error) => {
+    console.warn('写入视频阅读记录失败:', error)
+  })
 }
 
 function isActorSubscribed(actorName) {

@@ -479,6 +479,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stores'
 import { tagApi } from '@/api/tag'
+import { historyApi } from '@/api/history'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
@@ -977,6 +978,7 @@ async function loadVideo() {
   try {
     const data = await videoRecommendationStore.fetchDetail(recommendationId.value)
     recommendation.value = data
+    recordReadingHistory(data)
     showMagnets.value = false
     syncPrimarySourceSelection(data)
     syncPreviewAssetSelection(data)
@@ -997,6 +999,18 @@ async function loadVideo() {
     actorStore.fetchList()
   ]).catch((error) => {
     console.warn('加载附加数据失败:', error)
+  })
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || recommendationId.value
+  if (!contentId) return
+  historyApi.recordVisit({
+    contentType: 'video',
+    contentId,
+    source: 'preview'
+  }).catch((error) => {
+    console.warn('写入预览视频阅读记录失败:', error)
   })
 }
 

@@ -84,6 +84,12 @@ const routes = [
         meta: { title: '清单管理' }
       },
       {
+        path: 'history',
+        name: 'ReadingHistory',
+        component: () => import('@/views/ReadingHistory.vue'),
+        meta: { title: '阅读记录' }
+      },
+      {
         path: 'list/:id',
         name: 'ListDetail',
         component: () => import('@/views/ListDetail.vue'),

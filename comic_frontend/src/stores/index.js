@@ -45,6 +45,9 @@ export { useVideoRecommendationStore } from './videoRecommendation'
 // 清单管理
 export { useListStore } from './list'
 
+// 阅读记录
+export { useHistoryStore } from './history'
+
 // 导入任务管理
 export { useImportTaskStore } from './importTask'
 

@@ -450,7 +450,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { authorApi, comicApi } from '@/api'
+import { authorApi, comicApi, historyApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
@@ -677,6 +677,7 @@ async function fetchComicDetail() {
     const detail = await comicStore.fetchComicDetail(comicId)
     if (detail) {
       comic.value = detail
+      recordReadingHistory(detail)
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
       editForm.value = {
@@ -691,6 +692,18 @@ async function fetchComicDetail() {
   } finally {
     isLoading.value = false
   }
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || route.params.id
+  if (!contentId || isThirdPartyMode.value) return
+  historyApi.recordVisit({
+    contentType: 'comic',
+    contentId,
+    source: 'local'
+  }).catch((error) => {
+    console.warn('写入漫画阅读记录失败:', error)
+  })
 }
 
 async function fetchThirdPartyDetail(comicId) {

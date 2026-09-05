@@ -334,7 +334,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { authorApi } from '@/api'
+import { authorApi, historyApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
@@ -483,6 +483,7 @@ async function fetchDetail() {
     const detail = await recommendationStore.fetchRecommendationDetail(id)
     if (detail) {
       recommendation.value = detail
+      recordReadingHistory(detail)
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
       await checkSubscriptionStatus()
@@ -492,6 +493,18 @@ async function fetchDetail() {
   } finally {
     isLoading.value = false
   }
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || recommendationId.value
+  if (!contentId) return
+  historyApi.recordVisit({
+    contentType: 'comic',
+    contentId,
+    source: 'preview'
+  }).catch((error) => {
+    console.warn('写入预览漫画阅读记录失败:', error)
+  })
 }
 
 /**

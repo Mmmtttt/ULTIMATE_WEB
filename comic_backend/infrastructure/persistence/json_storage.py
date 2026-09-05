@@ -288,6 +288,17 @@ class JsonStorage:
                 "lists": [],
             }
 
+        if file_name == "reading_history_database.json":
+            return {
+                "collection_name": "阅读记录",
+                "user": "用户名",
+                "last_updated": now,
+                "history": {
+                    "comic": [],
+                    "video": [],
+                },
+            }
+
         if file_name == "comics_database.json":
             return {
                 "collection_name": "我的收藏集",
