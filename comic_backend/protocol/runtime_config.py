@@ -121,7 +121,11 @@ class ProtocolConfigStore:
 
         normalized_defaults = dict(defaults or {})
         enabled_field = cls._resolve_enabled_field_name(manifest)
-        if enabled_field:
+        plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip().lower()
+        # 存储/备份类插件（storage.*）保持默认启用：它们是核心备份链路的一部分，
+        # 且服务层默认值（如 TeleDriveConfig.enabled=True）也是启用。
+        # 只有内容查询类平台才默认停用，需用户显式开启。
+        if enabled_field and not plugin_id.startswith("storage."):
             normalized_defaults[enabled_field] = False
         for binding in manifest.list_data_dir_bindings():
             field_name = cls._resolve_binding_field_name(binding)
@@ -195,8 +199,10 @@ class ProtocolConfigStore:
             for field_name, field_value in defaults.items():
                 if field_name not in merged:
                     merged[field_name] = field_value
+            # 与 _build_manifest_default_config 保持一致：存储类插件默认启用。
+            plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip().lower()
             enabled_field = self._resolve_enabled_field_name(manifest)
-            if enabled_field and enabled_field not in raw_existing_config:
+            if enabled_field and enabled_field not in raw_existing_config and not plugin_id.startswith("storage."):
                 merged[enabled_field] = False
 
             if merged != existing_config:

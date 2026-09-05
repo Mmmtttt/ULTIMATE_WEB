@@ -30,6 +30,9 @@ test("video tag search forwards third-party query and import contracts", async (
         data: {
           default_adapter: "javdb",
           adapter_order: ["javdb"],
+          adapters: {
+            javdb: { enabled: true },
+          },
           plugins: [
             {
               plugin_id: "video.javdb",

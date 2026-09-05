@@ -165,11 +165,12 @@ class ProviderManager:
         normalized = str(capability or "").strip()
         if not normalized or normalized == "health.query.status":
             return False
+        # taxonomy.*（标签元数据等）由各 provider 自行做凭据状态检查并优雅降级，
+        # 不能在这里前置拦截，否则破坏 tags 接口的契约（未配置时返回空列表而非报错）。
         return normalized.startswith((
             "catalog.",
             "collection.",
             "person.",
-            "taxonomy.",
             "asset.",
         ))
 

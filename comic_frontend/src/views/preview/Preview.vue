@@ -32,9 +32,18 @@
         <van-button size="small" plain class="toolbar-action-btn" @click="showViewModeSheet = true">
           <van-icon name="apps-o" />
         </van-button>
-        <van-button size="small" plain class="toolbar-action-btn" @click="showMenu = true">
-          <van-icon name="ellipsis" />
-        </van-button>
+        <van-popover
+          v-model:show="showMenu"
+          :actions="menuActions"
+          placement="bottom-end"
+          @select="onMenuSelect"
+        >
+          <template #reference>
+            <van-button size="small" plain class="toolbar-action-btn">
+              <van-icon name="ellipsis" />
+            </van-button>
+          </template>
+        </van-popover>
       </div>
     </div>
 
@@ -141,34 +150,6 @@
         </van-cell>
       </div>
     </van-action-sheet>
-
-    <van-popup
-      v-model:show="showMenu"
-      position="center"
-      round
-      :style="{ width: isDesktop ? '360px' : '86vw' }"
-    >
-      <div class="toolbar-menu-panel">
-        <div class="toolbar-menu-panel__header">
-          <div>
-            <div class="toolbar-menu-panel__title">更多操作</div>
-            <div class="toolbar-menu-panel__desc">选择当前库的常用操作</div>
-          </div>
-          <van-button size="small" plain icon="cross" @click="showMenu = false" />
-        </div>
-        <van-cell
-          v-for="action in menuActions"
-          :key="action.text"
-          :title="action.text"
-          clickable
-          @click="onMenuSelect(action)"
-        >
-          <template #icon>
-            <van-icon :name="action.icon" class="toolbar-menu-panel__icon" />
-          </template>
-        </van-cell>
-      </div>
-    </van-popup>
     
     <!-- 高级筛选面板 -->
     <van-popup 
@@ -663,7 +644,6 @@ function goToSearch() {
 }
 
 async function onMenuSelect(action) {
-  showMenu.value = false
   if (action.text === '全网搜索') {
     goToSearch()
     return
@@ -1275,42 +1255,6 @@ onMounted(async () => {
 
 .view-mode-sheet {
   padding-bottom: 10px;
-}
-
-.toolbar-menu-panel {
-  padding: 16px;
-}
-
-.toolbar-menu-panel__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 2px 2px 14px;
-}
-
-.toolbar-menu-panel__title {
-  color: var(--text-primary);
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.toolbar-menu-panel__desc {
-  color: var(--text-tertiary);
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.toolbar-menu-panel__icon {
-  color: var(--accent-color);
-  font-size: 18px;
-  margin-right: 10px;
-}
-
-.toolbar-menu-panel :deep(.van-cell) {
-  border-radius: 12px;
-  margin-top: 6px;
-  background: rgba(88, 125, 255, 0.06);
 }
 
 .batch-list-popup {

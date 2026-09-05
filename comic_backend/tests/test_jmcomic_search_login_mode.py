@@ -42,7 +42,7 @@ def test_get_search_client_requires_credentials(monkeypatch):
     provider = _build_provider(module)
 
     with pytest.raises(RuntimeError, match="未配置账号或密码"):
-        provider._get_search_client({"username": "", "password": ""})
+        provider._get_search_client({"enabled": True, "username": "", "password": ""})
 
 
 def test_get_search_client_uses_api_login_and_returns_username(monkeypatch):
@@ -60,7 +60,7 @@ def test_get_search_client_uses_api_login_and_returns_username(monkeypatch):
     monkeypatch.setattr(module, "build_jm_client", fake_build_client)
 
     client, username = provider._get_search_client(
-        {"username": "test_user", "password": "test_pass", "download_dir": "/tmp/jm"}
+        {"enabled": True, "username": "test_user", "password": "test_pass", "download_dir": "/tmp/jm"}
     )
 
     assert client is dummy_client
@@ -78,7 +78,7 @@ def test_get_search_client_raises_when_api_login_fails(monkeypatch):
     monkeypatch.setattr(module, "build_jm_client", fake_build_client)
 
     with pytest.raises(RuntimeError, match="登录失败"):
-        provider._get_search_client({"username": "test_user", "password": "test_pass"})
+        provider._get_search_client({"enabled": True, "username": "test_user", "password": "test_pass"})
 
 
 def test_asset_bundle_fetch_uses_explicit_runtime_client_and_download_dir(monkeypatch):
@@ -117,7 +117,7 @@ def test_asset_bundle_fetch_uses_explicit_runtime_client_and_download_dir(monkey
             "extra": {"decode_images": False},
         },
         {},
-        {"username": "runtime-user", "password": "runtime-pass", "download_dir": "D:/runtime/comic/JM"},
+        {"username": "runtime-user", "password": "runtime-pass", "download_dir": "D:/runtime/comic/JM", "enabled": True},
     )
 
     assert result["success"] is True

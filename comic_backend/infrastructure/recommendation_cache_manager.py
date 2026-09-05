@@ -468,7 +468,7 @@ class RecommendationCacheManager:
                 "total_size_mb": round(used_size_mb, 2),
                 "max_size_mb": max_size_mb,
                 "usage_percent": round((used_size_mb / max_size_mb) * 100, 2) if max_size_mb > 0 else 0,
-                "cache_dir": self.cache_dir
+                "cache_dir": str(self.cache_dir)
             }
     
     def clear_cache(self) -> Tuple[int, int]:

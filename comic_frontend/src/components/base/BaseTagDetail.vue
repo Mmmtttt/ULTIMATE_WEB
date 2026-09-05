@@ -92,32 +92,19 @@
       </van-tabs>
     </div>
 
-    <van-popup
-      v-model:show="showEditPopup"
-      round
-      position="center"
-      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
-    >
+    <van-popup v-model:show="showEditPopup" round position="bottom" :style="{ height: '30%' }">
       <div class="edit-popup">
-        <div class="edit-popup__header">
-          <div>
-            <div class="edit-popup__title">编辑标签</div>
-            <div class="edit-popup__desc">修改名称后会同步影响所有已绑定内容的显示。</div>
-          </div>
-          <button type="button" class="edit-popup__close" @click="showEditPopup = false">
-            <van-icon name="cross" />
-          </button>
-        </div>
+        <van-nav-bar title="编辑标签" left-text="取消" @click-left="showEditPopup = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="saveEdit">保存</van-button>
+          </template>
+        </van-nav-bar>
         <van-field
           v-model="editTagName"
           label="标签名称"
           placeholder="请输入标签名称"
           :rules="[{ required: true, message: '请输入标签名称' }]"
         />
-        <div class="edit-popup__actions">
-          <van-button round plain @click="showEditPopup = false">取消</van-button>
-          <van-button round type="primary" @click="saveEdit">保存</van-button>
-        </div>
       </div>
     </van-popup>
   </div>
@@ -364,53 +351,7 @@ watch(activeTab, () => {
 }
 
 .edit-popup {
-  padding: 16px;
-  background: var(--surface-2);
-}
-
-.edit-popup__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-
-.edit-popup__title {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--text-strong);
-}
-
-.edit-popup__desc {
-  margin-top: 5px;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.edit-popup__close {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--surface-1);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.edit-popup :deep(.van-cell) {
-  border-radius: 14px;
-  background: var(--surface-1);
-}
-
-.edit-popup__actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
+  padding-bottom: 20px;
 }
 
 .tag-pagination {

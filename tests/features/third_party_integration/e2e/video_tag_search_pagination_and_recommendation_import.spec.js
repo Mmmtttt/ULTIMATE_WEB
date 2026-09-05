@@ -31,6 +31,9 @@ test("video tag search load more forwards page and imports to recommendation", a
         data: {
           default_adapter: "javdb",
           adapter_order: ["javdb"],
+          adapters: {
+            javdb: { enabled: true },
+          },
           plugins: [
             {
               plugin_id: "video.javdb",
