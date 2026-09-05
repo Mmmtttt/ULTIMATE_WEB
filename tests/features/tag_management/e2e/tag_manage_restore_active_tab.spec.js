@@ -1,6 +1,15 @@
 const { test, expect } = require("../../../shared/e2e_helpers");
 
 test("tag manage restores the previously active tab after back navigation", async ({ page }) => {
+  // 标签管理页页签现在跟随全局模式：视频模式下仅显示「视频标签」页签
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("app_mode", JSON.stringify("video"));
+    } catch {
+      // about:blank 首文档无法访问 localStorage，忽略
+    }
+  });
+
   await page.route("https://api.github.com/repos/Mmmtttt/ULTIMATE_WEB/releases/latest", async (route) => {
     await route.fulfill({
       status: 200,

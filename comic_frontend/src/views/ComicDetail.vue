@@ -16,10 +16,10 @@
             :title="isFavorited ? '取消收藏' : '收藏'"
           />
           <van-icon
-            name="delete-o"
+            name="ellipsis"
             class="nav-icon"
-            @click="handleMoveToTrash"
-            title="移入回收站"
+            @click="showActionSheet = true"
+            title="更多操作"
           />
         </template>
       </template>
@@ -503,8 +503,7 @@ const editForm = ref({
 const actions = computed(() => {
   const menuActions = [
     { name: '下载漫画', value: 'download' },
-    { name: '检查更新并下载', value: 'check_update' },
-    { name: '绑定标签', value: 'tags' }
+    { name: '检查更新', value: 'check_update' }
   ]
   menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
   return menuActions

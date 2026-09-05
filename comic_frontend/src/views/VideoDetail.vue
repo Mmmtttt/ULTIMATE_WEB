@@ -14,10 +14,10 @@
           :title="isFavoritedVideo ? '取消收藏' : '收藏'"
         />
         <van-icon
-          name="delete-o"
+          name="ellipsis"
           class="nav-icon"
-          @click="handleMoveToTrash"
-          title="移入回收站"
+          @click="showActions = true"
+          title="更多操作"
         />
       </template>
     </van-nav-bar>
@@ -500,11 +500,6 @@
       :style="{ height: '60%' }"
     >
       <div class="tag-popup">
-        <van-nav-bar title="绑定标签">
-          <template #right>
-            <van-button type="primary" size="small" @click="saveTags">保存</van-button>
-          </template>
-        </van-nav-bar>
 
         <div class="tag-select-list">
           <van-checkbox-group v-model="selectedTagIds">
@@ -703,9 +698,6 @@ const actions = computed(() => {
     if (localThumbnailCapability.value.can_select_cover) {
       menuActions.push({ name: '选择封面', value: 'select_local_thumbnail_cover' })
     }
-    menuActions.push(
-      { name: '绑定标签', value: 'tags' }
-    )
   }
   menuActions.push(
     { name: '移入回收站', value: 'trash', color: '#ee0a24' }
