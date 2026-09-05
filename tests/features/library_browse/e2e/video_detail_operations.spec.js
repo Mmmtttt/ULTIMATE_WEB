@@ -96,7 +96,7 @@ test("video detail page moves to trash via API", async ({ page }) => {
     await page.goto(`/video/${PRIMARY_VIDEO_ID}`);
     await expect(page.locator(".video-title, .detail-title").first()).toContainText(VIDEO_TITLE);
 
-    const trashButton = page.locator('[title="移入回收站"]');
+    const trashButton = page.getByRole("button", { name: "删除" });
     await trashButton.click();
 
     await page.waitForTimeout(300);
