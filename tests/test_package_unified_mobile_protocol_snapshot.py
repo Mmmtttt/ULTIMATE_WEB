@@ -588,7 +588,9 @@ def test_ensure_android_project_chaquopy_app_packages_selected_android_plugin_on
             android_project_dir / "app" / "src" / "main" / "python" / "ultimate_android_backend.py"
         ).read_text(encoding="utf-8")
         assert "_configure_android_plugin_roots" in bootstrap_text
+        assert 'importlib.import_module("third_party")' in bootstrap_text
         assert 'os.path.join(module_dir, "third_party")' in bootstrap_text
+        assert "imported_root" in bootstrap_text
         assert 'os.environ["ULTIMATE_PLUGIN_ROOTS"]' in bootstrap_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

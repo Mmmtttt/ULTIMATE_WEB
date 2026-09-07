@@ -2148,10 +2148,20 @@ def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
 def _configure_android_plugin_roots(files_dir):
     try:
         module_dir = os.path.abspath(os.path.dirname(__file__))
+        imported_root = ""
+        import_error = ""
+        try:
+            third_party_module = importlib.import_module("third_party")
+            imported_root = os.path.abspath(os.path.dirname(str(getattr(third_party_module, "__file__", "") or "")))
+        except Exception as ex:
+            import_error = repr(ex)
         packaged_root = os.path.join(module_dir, "third_party")
         roots = []
+        if imported_root and os.path.isdir(imported_root):
+            roots.append(imported_root)
         if os.path.isdir(packaged_root):
-            roots.append(packaged_root)
+            if packaged_root not in roots:
+                roots.append(packaged_root)
 
         existing = str(os.environ.get("ULTIMATE_PLUGIN_ROOTS") or os.environ.get("BACKEND_PLUGIN_ROOTS") or "").strip()
         if existing:
@@ -2173,6 +2183,7 @@ def _configure_android_plugin_roots(files_dir):
             files_dir,
             "android plugin roots "
             f"module_dir={module_dir!r} packaged_root={packaged_root!r} "
+            f"imported_root={imported_root!r} import_error={import_error!r} "
             f"exists={os.path.exists(packaged_root)} is_dir={os.path.isdir(packaged_root)} "
             f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r}",
         )
