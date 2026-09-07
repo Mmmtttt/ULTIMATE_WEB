@@ -34,6 +34,8 @@ output/*
 tests/.runtime/
 tests/playwright-report/
 tests/test-results/
+.pytest_cache/
+comic_backend/.pytest_runtime_tmp/
 
 # runtime local config (sensitive / machine-specific)
 server_config.json
