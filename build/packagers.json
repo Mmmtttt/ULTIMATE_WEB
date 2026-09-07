@@ -36,6 +36,9 @@
       "android_backend_plugins": [
         "comic.jmcomic"
       ],
+      "android_extract_packages": [
+        "third_party"
+      ],
       "chaquopy_version": "17.0.0",
       "chaquopy_python_version": "3.13",
       "chaquopy_min_sdk": 24,

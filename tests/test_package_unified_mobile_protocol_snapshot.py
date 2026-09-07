@@ -578,11 +578,18 @@ def test_ensure_android_project_chaquopy_app_packages_selected_android_plugin_on
         assert "comic.selected.android" in snapshot_text
         assert "comic.other.android" not in snapshot_text
         assert "abiFilters 'arm64-v8a'" in gradle_text
+        assert 'extractPackages("third_party")' in gradle_text
         assert 'options("--no-deps")' in gradle_text
         assert 'install("demo-extra==1.0")' in gradle_text
         assert 'module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "true", internalFilesDir)' in (
             android_project_dir / "app" / "src" / "main" / "java" / "com" / "ultimate" / "web" / "MainActivity.java"
         ).read_text(encoding="utf-8")
+        bootstrap_text = (
+            android_project_dir / "app" / "src" / "main" / "python" / "ultimate_android_backend.py"
+        ).read_text(encoding="utf-8")
+        assert "_configure_android_plugin_roots" in bootstrap_text
+        assert 'os.path.join(module_dir, "third_party")' in bootstrap_text
+        assert 'os.environ["ULTIMATE_PLUGIN_ROOTS"]' in bootstrap_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

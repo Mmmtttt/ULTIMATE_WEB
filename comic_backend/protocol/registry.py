@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from infrastructure.logger import app_logger, error_logger
@@ -22,6 +23,7 @@ _PLUGIN_ROOT_ENV_KEYS = (
 )
 _SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 _METADATA_ONLY_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
+_DEBUG_LOG_ENV = "ULTIMATE_PROTOCOL_BOOT_LOG"
 
 
 def _deep_merge(base: Any, override: Any) -> Any:
@@ -33,6 +35,17 @@ def _deep_merge(base: Any, override: Any) -> Any:
     if override is None:
         return deepcopy(base)
     return deepcopy(override)
+
+
+def _write_protocol_debug(message: str) -> None:
+    log_path = str(os.environ.get(_DEBUG_LOG_ENV, "") or "").strip()
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fp:
+            fp.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+    except Exception:
+        pass
 
 
 class PluginRegistry:
@@ -216,6 +229,13 @@ class PluginRegistry:
         snapshot_payloads, snapshot_path = self._load_snapshot_payloads()
         file_payloads = self._scan_manifest_payloads("ultimate-plugin.json")
         overlay_payloads = self._scan_manifest_payloads(_HOST_OVERLAY_FILENAME)
+        _write_protocol_debug(
+            "protocol registry scan "
+            f"search_roots={search_roots!r} snapshot_path={snapshot_path!r} "
+            f"snapshot_ids={sorted(snapshot_payloads.keys())!r} "
+            f"file_ids={sorted(file_payloads.keys())!r} "
+            f"overlay_ids={sorted(overlay_payloads.keys())!r}"
+        )
 
         merged_payloads: Dict[str, dict] = {plugin_id: dict(raw) for plugin_id, raw in snapshot_payloads.items()}
         merged_paths: Dict[str, str] = {
@@ -244,6 +264,11 @@ class PluginRegistry:
             try:
                 manifest = self._validate_manifest(payload, manifest_path)
                 manifests.setdefault(manifest.plugin_id, manifest)
+                _write_protocol_debug(
+                    "protocol manifest loaded "
+                    f"plugin_id={manifest.plugin_id!r} "
+                    f"entrypoint={manifest.entrypoint!r} path={manifest.path!r}"
+                )
             except Exception as exc:
                 error_logger.error(
                     f"load protocol manifest failed: plugin_id={plugin_id}, path={manifest_path}, error={exc}"

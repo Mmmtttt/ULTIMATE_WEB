@@ -471,6 +471,13 @@ def format_gradle_install_args(args: List[str]) -> str:
     return ", ".join([f'"{_groovy_escape(item)}"' for item in args])
 
 
+def collect_android_extract_packages(packager_cfg: Dict) -> List[str]:
+    raw_values = packager_cfg.get("android_extract_packages")
+    if raw_values is None and normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        raw_values = ["third_party"]
+    return _normalize_string_list(raw_values or [])
+
+
 def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
     mode = normalize_android_third_party_mode(packager_cfg)
     target_root = py_dir / "third_party"
@@ -1128,17 +1135,27 @@ def ensure_android_project_chaquopy_app(
     source_backend_dir = workspace_dir / get_android_workspace_backend_dir(packager_cfg)
     pip_options = collect_android_pip_options(packager_cfg, source_backend_dir)
     pip_installs = collect_android_pip_install_entries(packager_cfg, source_backend_dir)
+    extract_packages = collect_android_extract_packages(packager_cfg)
     option_lines = "\n".join([f"                options({format_gradle_options_args(item)})" for item in pip_options])
     req_lines = "\n".join([f"                install({format_gradle_install_args(item)})" for item in pip_installs])
     pip_lines = "\n".join([line for line in [option_lines, req_lines] if line])
+    extract_package_lines = "\n".join(
+        [f'        extractPackages("{_groovy_escape(item)}")' for item in extract_packages]
+    )
+    default_config_lines = "\n".join(
+        [
+            f'        version = "{chaquopy_python}"',
+            f'        buildPython("{py_exe}")',
+            extract_package_lines,
+            "        pip {",
+            f"{pip_lines}",
+            "        }",
+        ]
+    )
     chaquopy_block = (
         "\nchaquopy {\n"
         "    defaultConfig {\n"
-        f'        version = "{chaquopy_python}"\n'
-        f'        buildPython("{py_exe}")\n'
-        "        pip {\n"
-        f"{pip_lines}\n"
-        "        }\n"
+        f"{default_config_lines}\n"
         "    }\n"
         "    sourceSets {\n"
         "        main {\n"
@@ -2128,6 +2145,41 @@ def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
         return ""
 
 
+def _configure_android_plugin_roots(files_dir):
+    try:
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+        packaged_root = os.path.join(module_dir, "third_party")
+        roots = []
+        if os.path.isdir(packaged_root):
+            roots.append(packaged_root)
+
+        existing = str(os.environ.get("ULTIMATE_PLUGIN_ROOTS") or os.environ.get("BACKEND_PLUGIN_ROOTS") or "").strip()
+        if existing:
+            for item in existing.split(os.pathsep):
+                item = str(item or "").strip()
+                if item and item not in roots:
+                    roots.append(item)
+
+        if roots:
+            joined = os.pathsep.join(roots)
+            os.environ["ULTIMATE_PLUGIN_ROOTS"] = joined
+            os.environ["BACKEND_PLUGIN_ROOTS"] = joined
+
+        try:
+            entries = sorted(os.listdir(packaged_root))[:20] if os.path.isdir(packaged_root) else []
+        except Exception as list_ex:
+            entries = [f"<list failed: {list_ex!r}>"]
+        _write_boot_log(
+            files_dir,
+            "android plugin roots "
+            f"module_dir={module_dir!r} packaged_root={packaged_root!r} "
+            f"exists={os.path.exists(packaged_root)} is_dir={os.path.isdir(packaged_root)} "
+            f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r}",
+        )
+    except Exception as ex:
+        _write_boot_log(files_dir, f"android plugin root config failed: {ex!r}")
+
+
 def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="false", internal_exec_dir=""):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
@@ -2143,6 +2195,8 @@ def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="f
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
+    os.environ["ULTIMATE_PROTOCOL_BOOT_LOG"] = os.path.join(str(files_dir or "").strip() or ".", "ultimate_backend_boot.log")
+    _configure_android_plugin_roots(files_dir)
     snapshot_path = _materialize_protocol_snapshot(files_dir, internal_exec_dir=internal_exec_dir)
     if os.path.isfile(snapshot_path):
         os.environ["BACKEND_PROTOCOL_SNAPSHOT_PATH"] = snapshot_path

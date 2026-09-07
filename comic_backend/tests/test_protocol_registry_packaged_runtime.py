@@ -182,6 +182,73 @@ def test_plugin_registry_loads_mobile_protocol_snapshot_without_third_party_dirs
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_plugin_registry_prefers_packaged_manifest_over_snapshot_entrypoint(monkeypatch, tmp_path):
+    snapshot_path = tmp_path / "mobile_protocol_snapshot.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "manifests": [
+                    {
+                        "protocol_version": "2.0",
+                        "plugin": {
+                            "id": "comic.demo.android",
+                            "name": "Android Demo",
+                            "version": "0.0.0-snapshot",
+                            "config_key": "demo_android",
+                            "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
+                        },
+                        "media_types": ["comic"],
+                        "capabilities": [{"key": "catalog.search"}],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    plugin_root = tmp_path / "third_party" / "demo_android"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    (plugin_root / "ultimate-plugin.json").write_text(
+        json.dumps(
+            {
+                "protocol_version": "2.0",
+                "plugin": {
+                    "id": "comic.demo.android",
+                    "name": "Android Demo",
+                    "version": "1.0.0",
+                    "config_key": "demo_android",
+                    "entrypoint": "./ultimate_provider.py:AndroidDemoProvider",
+                },
+                "media_types": ["comic"],
+                "capabilities": [{"key": "catalog.search"}],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (plugin_root / "ultimate_provider.py").write_text("class AndroidDemoProvider: pass\n", encoding="utf-8")
+
+    debug_log = tmp_path / "boot.log"
+    monkeypatch.setenv("BACKEND_PROTOCOL_SNAPSHOT_PATH", str(snapshot_path))
+    monkeypatch.setenv("ULTIMATE_PLUGIN_ROOTS", str(tmp_path / "third_party"))
+    monkeypatch.setenv("ULTIMATE_PROTOCOL_BOOT_LOG", str(debug_log))
+
+    registry = registry_module.PluginRegistry()
+    manifest = next(item for item in registry.list_manifests() if item.plugin_id == "comic.demo.android")
+
+    assert manifest.entrypoint == "./ultimate_provider.py:AndroidDemoProvider"
+    assert manifest.path == str(plugin_root / "ultimate-plugin.json")
+    debug_text = debug_log.read_text(encoding="utf-8")
+    assert "snapshot_ids=['comic.demo.android']" in debug_text
+    assert "file_ids=" in debug_text
+    assert "comic.demo.android" in debug_text
+    assert "AndroidDemoProvider" in debug_text
+
+
 def test_plugin_registry_scans_external_plugin_roots_from_env(monkeypatch):
     workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
