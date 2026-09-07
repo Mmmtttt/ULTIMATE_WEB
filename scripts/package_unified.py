@@ -54,6 +54,14 @@ PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
     PLUGIN_PACKAGE_EXCLUDES_ENV,
     "THIRD_PARTY_PACKAGE_EXCLUDES",
 )
+ANDROID_THIRD_PARTY_MODE_DISABLED = "disabled"
+ANDROID_THIRD_PARTY_MODE_SELECTED = "selected"
+ANDROID_THIRD_PARTY_MODE_ALL = "all"
+ANDROID_THIRD_PARTY_MODES = (
+    ANDROID_THIRD_PARTY_MODE_DISABLED,
+    ANDROID_THIRD_PARTY_MODE_SELECTED,
+    ANDROID_THIRD_PARTY_MODE_ALL,
+)
 DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
     "email",
     "html",
@@ -211,6 +219,291 @@ def backend_source_copy_ignore(src: str, names: List[str]) -> set[str]:
     if path.name != "third_party":
         return set()
     return {name for name in names if name.strip().lower() in excludes}
+
+
+def parse_config_bool(raw: object, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disable", "disabled"}:
+        return False
+    return default
+
+
+def normalize_android_third_party_mode(packager_cfg: Dict) -> str:
+    if not parse_config_bool(packager_cfg.get("android_backend_enable_third_party"), default=False):
+        return ANDROID_THIRD_PARTY_MODE_DISABLED
+    mode = str(packager_cfg.get("android_backend_third_party_mode") or "").strip().lower()
+    if not mode:
+        mode = ANDROID_THIRD_PARTY_MODE_SELECTED if normalize_android_plugin_selectors(packager_cfg) else ANDROID_THIRD_PARTY_MODE_ALL
+    aliases = {
+        "none": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "off": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "false": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "include": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "include_only": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "allowlist": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "whitelist": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "full": ANDROID_THIRD_PARTY_MODE_ALL,
+        "enabled": ANDROID_THIRD_PARTY_MODE_ALL,
+        "true": ANDROID_THIRD_PARTY_MODE_ALL,
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ANDROID_THIRD_PARTY_MODES:
+        raise ValueError(f"unsupported android third-party mode: {mode}")
+    return mode
+
+
+def normalize_android_plugin_selectors(packager_cfg: Dict) -> List[str]:
+    values: List[str] = []
+    for key in (
+        "android_backend_plugins",
+        "android_backend_included_plugins",
+        "android_backend_plugin_dirs",
+    ):
+        raw = packager_cfg.get(key)
+        if isinstance(raw, str):
+            values.extend(re.split(r"[,;\n]+", raw))
+        elif isinstance(raw, (list, tuple, set)):
+            values.extend([str(item or "") for item in raw])
+
+    normalized: List[str] = []
+    seen = set()
+    for item in values:
+        text = str(item or "").strip().strip("/\\")
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(text)
+    return normalized
+
+
+def _read_plugin_id_from_manifest(manifest_path: Path) -> str:
+    try:
+        payload = load_json(manifest_path)
+        plugin = dict(payload.get("plugin") or {})
+        return str(plugin.get("id") or "").strip()
+    except Exception:
+        return ""
+
+
+def _discover_third_party_plugin_dirs(third_party_root: Path) -> List[Path]:
+    if not third_party_root.exists():
+        return []
+    excluded = set(get_third_party_exclude_names())
+    roots: List[Path] = []
+    for child in sorted(third_party_root.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        if child.name.strip().lower() in excluded:
+            continue
+        if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
+            roots.append(child)
+    return roots
+
+
+def resolve_android_plugin_roots(third_party_root: Path, packager_cfg: Dict) -> List[Path]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    if mode == ANDROID_THIRD_PARTY_MODE_DISABLED or not third_party_root.exists():
+        return []
+
+    all_roots = _discover_third_party_plugin_dirs(third_party_root)
+    if mode == ANDROID_THIRD_PARTY_MODE_ALL:
+        return all_roots
+
+    selectors = normalize_android_plugin_selectors(packager_cfg)
+    selector_keys = {item.lower() for item in selectors}
+    matched_selectors: set[str] = set()
+    selected_roots: List[Path] = []
+    selected_seen: set[Path] = set()
+
+    for root in all_roots:
+        root_keys = {root.name.lower(), root.relative_to(third_party_root).as_posix().lower()}
+        manifest_ids: set[str] = set()
+        for manifest_path in sorted(root.rglob("ultimate-plugin.json")):
+            plugin_id = _read_plugin_id_from_manifest(manifest_path)
+            if plugin_id:
+                manifest_ids.add(plugin_id.lower())
+        keys = root_keys | manifest_ids
+        if not selector_keys.intersection(keys):
+            continue
+        matched_selectors.update(selector_keys.intersection(keys))
+        if root not in selected_seen:
+            selected_seen.add(root)
+            selected_roots.append(root)
+
+    missing = [item for item in selectors if item.lower() not in matched_selectors]
+    if missing:
+        raise ValueError(
+            "android selected third-party plugin(s) not found: "
+            + ", ".join(missing)
+            + f" under {third_party_root}"
+        )
+    return selected_roots
+
+
+def collect_plugin_manifest_payloads(plugin_roots: List[Path]) -> List[Dict[str, Any]]:
+    payloads: List[Dict[str, Any]] = []
+    for plugin_root in plugin_roots:
+        for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+            try:
+                payloads.append(load_json(manifest_path))
+            except Exception:
+                continue
+    return payloads
+
+
+def collect_android_packaged_plugin_ids(third_party_root: Path, packager_cfg: Dict) -> List[str]:
+    plugin_ids: List[str] = []
+    seen = set()
+    for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
+        plugin = dict(payload.get("plugin") or {})
+        plugin_id = str(plugin.get("id") or "").strip()
+        key = plugin_id.lower()
+        if plugin_id and key not in seen:
+            seen.add(key)
+            plugin_ids.append(plugin_id)
+    return plugin_ids
+
+
+def normalize_pip_install_entry(raw: object) -> Optional[List[str]]:
+    if isinstance(raw, str):
+        text = raw.strip()
+        return [text] if text else None
+    if isinstance(raw, dict):
+        raw = raw.get("args") or raw.get("install") or raw.get("requirement")
+    if isinstance(raw, (list, tuple)):
+        args = [str(item or "").strip() for item in raw if str(item or "").strip()]
+        return args or None
+    return None
+
+
+def merge_pip_install_entries(*entry_groups: object) -> List[List[str]]:
+    merged: List[List[str]] = []
+    seen = set()
+    for entries in entry_groups:
+        if isinstance(entries, (str, dict)):
+            iterable = [entries]
+        else:
+            iterable = list(entries or [])
+        for entry in iterable:
+            normalized = normalize_pip_install_entry(entry)
+            if not normalized:
+                continue
+            key = tuple(normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+def collect_android_pip_options(packager_cfg: Dict, source_backend_dir: Path) -> List[List[str]]:
+    entries = merge_pip_install_entries(
+        packager_cfg.get("embed_backend_pip_options") or [],
+        packager_cfg.get("android_backend_pip_options") or [],
+    )
+
+    third_party_root = source_backend_dir / "third_party"
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
+            android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
+            entries = merge_pip_install_entries(entries, android_packaging.get("pip_options") or [])
+    return entries
+
+
+def collect_android_pip_install_entries(packager_cfg: Dict, source_backend_dir: Path) -> List[List[str]]:
+    default_reqs = [
+        "flask==2.3.0",
+        "flask-cors==4.0.0",
+        "Werkzeug>=2.3.0",
+        "Jinja2>=3.1.2",
+        "MarkupSafe==3.0.3",
+        "itsdangerous>=2.1.2",
+        "click>=8.1.3",
+        "blinker>=1.6.2",
+        "requests>=2.31.0",
+        "certifi>=2025.8.3",
+        "charset-normalizer>=3.4.0",
+        "idna>=3.10",
+        "urllib3>=2.0.0",
+        "PyYAML==6.0.3",
+        "Pillow==11.0.0",
+        "beautifulsoup4>=4.13.4",
+        "soupsieve>=2.5",
+        "typing-extensions>=4.12.0",
+        "rarfile>=4.2",
+    ]
+    reqs = packager_cfg.get("embed_backend_requirements")
+    if not isinstance(reqs, list) or not reqs:
+        reqs = default_reqs
+
+    entries = merge_pip_install_entries(
+        reqs,
+        packager_cfg.get("embed_backend_pip_install_args") or [],
+        packager_cfg.get("android_backend_pip_install_args") or [],
+    )
+
+    third_party_root = source_backend_dir / "third_party"
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
+            android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
+            entries = merge_pip_install_entries(
+                entries,
+                android_packaging.get("pip_requirements") or [],
+                android_packaging.get("pip_install_args") or [],
+            )
+
+    return entries
+
+
+def format_gradle_options_args(args: List[str]) -> str:
+    return ", ".join([f'"{_groovy_escape(item)}"' for item in args])
+
+
+def format_gradle_install_args(args: List[str]) -> str:
+    return ", ".join([f'"{_groovy_escape(item)}"' for item in args])
+
+
+def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    target_root = py_dir / "third_party"
+    if target_root.exists():
+        shutil.rmtree(target_root)
+
+    if mode == ANDROID_THIRD_PARTY_MODE_DISABLED:
+        return {"mode": mode, "copied": [], "plugin_ids": []}
+
+    source_root = source_backend_dir / "third_party"
+    if not source_root.exists():
+        return {"mode": mode, "copied": [], "plugin_ids": []}
+    selected_roots = resolve_android_plugin_roots(source_root, packager_cfg)
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    for item in sorted(source_root.iterdir(), key=lambda value: value.name.lower()):
+        if item.is_file():
+            shutil.copy2(item, target_root / item.name)
+
+    copied: List[str] = []
+    for plugin_root in selected_roots:
+        rel = plugin_root.relative_to(source_root)
+        target = target_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(plugin_root, target, ignore=backend_source_copy_ignore)
+        copied.append(rel.as_posix())
+
+    return {
+        "mode": mode,
+        "copied": copied,
+        "plugin_ids": collect_android_packaged_plugin_ids(source_root, packager_cfg),
+    }
 
 
 def normalize_app_version(raw: str) -> str:
@@ -768,12 +1061,14 @@ def ensure_android_project_chaquopy_app(
             1,
         )
 
+    abi_filters = _normalize_string_list(packager_cfg.get("android_abi_filters") or ["arm64-v8a", "x86_64"])
+    abi_filter_args = ", ".join([f"'{_groovy_escape(item)}'" for item in abi_filters])
     if "abiFilters" not in patched:
         patched = patched.replace(
             "        minSdkVersion rootProject.ext.minSdkVersion\n",
             "        minSdkVersion rootProject.ext.minSdkVersion\n"
             "        ndk {\n"
-            "            abiFilters 'arm64-v8a', 'x86_64'\n"
+            f"            abiFilters {abi_filter_args}\n"
             "        }\n",
             1,
         )
@@ -784,25 +1079,19 @@ def ensure_android_project_chaquopy_app(
         py_exe = sys.executable
     py_exe = py_exe.replace("\\", "/")
 
-    reqs = packager_cfg.get("embed_backend_requirements")
-    if not isinstance(reqs, list) or not reqs:
-        reqs = [
-            "flask==2.3.0",
-            "flask-cors==4.0.0",
-            "requests>=2.31.0",
-            "PyYAML",
-            "Pillow",
-            "beautifulsoup4",
-            "rarfile>=4.2",
-        ]
-    req_lines = "\n".join([f'                install("{item}")' for item in reqs if str(item).strip()])
+    source_backend_dir = workspace_dir / get_android_workspace_backend_dir(packager_cfg)
+    pip_options = collect_android_pip_options(packager_cfg, source_backend_dir)
+    pip_installs = collect_android_pip_install_entries(packager_cfg, source_backend_dir)
+    option_lines = "\n".join([f"                options({format_gradle_options_args(item)})" for item in pip_options])
+    req_lines = "\n".join([f"                install({format_gradle_install_args(item)})" for item in pip_installs])
+    pip_lines = "\n".join([line for line in [option_lines, req_lines] if line])
     chaquopy_block = (
         "\nchaquopy {\n"
         "    defaultConfig {\n"
         f'        version = "{chaquopy_python}"\n'
         f'        buildPython("{py_exe}")\n'
         "        pip {\n"
-        f"{req_lines}\n"
+        f"{pip_lines}\n"
         "        }\n"
         "    }\n"
         "    sourceSets {\n"
@@ -1507,7 +1796,6 @@ public class MainActivity extends BridgeActivity {{
 
     py_dir = android_project_dir / "app" / "src" / "main" / "python"
     py_dir.mkdir(parents=True, exist_ok=True)
-    source_backend_dir = workspace_dir / workspace_backend_dir
     if source_backend_dir.exists():
         excluded_names = {
             "__pycache__",
@@ -1530,11 +1818,23 @@ public class MainActivity extends BridgeActivity {{
                 shutil.copytree(item, target)
             else:
                 shutil.copy2(item, target)
+        third_party_copy_status = copy_android_third_party_sources(source_backend_dir, py_dir, packager_cfg)
+        copied_plugins = list(third_party_copy_status.get("copied") or [])
+        if copied_plugins:
+            print(
+                "[android-third-party] "
+                f"mode={third_party_copy_status.get('mode')} "
+                f"copied={copied_plugins} "
+                f"plugin_ids={third_party_copy_status.get('plugin_ids')}"
+            )
 
     protocol_dir = py_dir / "protocol"
     protocol_dir.mkdir(parents=True, exist_ok=True)
     third_party_root = source_backend_dir / "third_party"
-    snapshot_payload = build_mobile_protocol_snapshot(third_party_root)
+    snapshot_plugin_ids = None
+    if normalize_android_third_party_mode(packager_cfg) == ANDROID_THIRD_PARTY_MODE_SELECTED:
+        snapshot_plugin_ids = collect_android_packaged_plugin_ids(third_party_root, packager_cfg)
+    snapshot_payload = build_mobile_protocol_snapshot(third_party_root, include_plugin_ids=snapshot_plugin_ids)
     snapshot_path = protocol_dir / MOBILE_PROTOCOL_SNAPSHOT_FILENAME
     write_text(snapshot_path, json.dumps(snapshot_payload, ensure_ascii=False, indent=2) + "\n")
     embedded_snapshot_json = json.dumps(
@@ -3094,7 +3394,7 @@ def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
         return f"apk_inspect_failed path={apk_path} error={exc!r}"
 
 
-def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
+def build_mobile_protocol_snapshot(third_party_root: Path, include_plugin_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     manifest_payloads = _merge_plugin_payload_maps(
         _scan_plugin_payloads(third_party_root, "ultimate-plugin.json"),
         _scan_plugin_payloads(PROJECT_PLUGINS_DIR, "ultimate-plugin.json", apply_third_party_excludes=False),
@@ -3104,6 +3404,9 @@ def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
         _scan_plugin_payloads(PROJECT_PLUGINS_DIR, HOST_OVERLAY_FILENAME, apply_third_party_excludes=False),
     )
     plugin_ids = sorted(set(manifest_payloads.keys()) | set(overlay_payloads.keys()))
+    if include_plugin_ids is not None:
+        include_set = {str(item or "").strip().lower() for item in include_plugin_ids if str(item or "").strip()}
+        plugin_ids = [plugin_id for plugin_id in plugin_ids if plugin_id.lower() in include_set]
 
     manifests: List[Dict[str, Any]] = []
     for plugin_id in plugin_ids:

@@ -31,10 +31,20 @@
       "api_base_url": "",
       "embed_backend": true,
       "backend_port": 5035,
-      "android_backend_enable_third_party": false,
+      "android_backend_enable_third_party": true,
+      "android_backend_third_party_mode": "selected",
+      "android_backend_plugins": [
+        "comic.jmcomic"
+      ],
       "chaquopy_version": "17.0.0",
       "chaquopy_python_version": "3.13",
       "chaquopy_min_sdk": 24,
+      "android_abi_filters": [
+        "arm64-v8a"
+      ],
+      "embed_backend_pip_options": [
+        "--no-deps"
+      ],
       "android_signing_enabled": true,
       "android_signing_keystore": "build/android_signing/ultimate-release.keystore",
       "android_signing_module_keystore_name": "ultimate-release.keystore",
@@ -52,10 +62,22 @@
       "embed_backend_requirements": [
         "flask==2.3.0",
         "flask-cors==4.0.0",
+        "Werkzeug>=2.3.0",
+        "Jinja2>=3.1.2",
+        "MarkupSafe==3.0.3",
+        "itsdangerous>=2.1.2",
+        "click>=8.1.3",
+        "blinker>=1.6.2",
         "requests>=2.31.0",
-        "PyYAML",
-        "Pillow",
-        "beautifulsoup4",
+        "certifi>=2025.8.3",
+        "charset-normalizer>=3.4.0",
+        "idna>=3.10",
+        "urllib3>=2.0.0",
+        "PyYAML==6.0.3",
+        "Pillow==11.0.0",
+        "beautifulsoup4>=4.13.4",
+        "soupsieve>=2.5",
+        "typing-extensions>=4.12.0",
         "rarfile>=4.2"
       ],
       "capacitor_core_version": "7",
