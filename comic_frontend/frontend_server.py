@@ -230,6 +230,7 @@ _PROXY_HEADERS_PASS = (
     "if-modified-since",
     "if-none-match",
     "range",
+    "x-sync-token",
 )
 
 _RESPONSE_HEADERS_PASS = (

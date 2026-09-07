@@ -124,6 +124,30 @@ def _resolve_secret_key() -> str:
     return "ultimate-web-default-secret-key-change-me"
 
 
+def _is_sync_request_allowed_without_session(path: str) -> bool:
+    """Server-to-server sync requests authenticate with pairing tokens, not browser sessions."""
+    normalized_path = str(path or "").strip()
+    if normalized_path == "/api/v1/sync/pairing/claim":
+        return True
+
+    token = str(request.headers.get("X-Sync-Token", "") or "").strip()
+    if not token:
+        return False
+
+    token_authenticated_paths = {
+        "/api/v1/sync/directional/inventory",
+        "/api/v1/sync/directional/assets/inventory",
+        "/api/v1/sync/directional/assets/apply",
+        "/api/v1/sync/directional/assets/delta/download",
+        "/api/v1/sync/directional/estimate",
+        "/api/v1/sync/directional/delta",
+        "/api/v1/sync/directional/apply",
+        "/api/v1/sync/list-scope/options",
+        "/api/v1/sync/list-scope/delta",
+    }
+    return normalized_path in token_authenticated_paths
+
+
 # ========== 后端 host/ssl 配置 ==========
 
 def _resolve_backend_host():
@@ -320,6 +344,8 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
                 '/health',
             )
             if path in public_paths:
+                return
+            if _is_sync_request_allowed_without_session(path):
                 return
             if not session.get('authenticated', False):
                 return jsonify({

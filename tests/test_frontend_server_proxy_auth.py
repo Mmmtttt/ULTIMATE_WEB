@@ -192,6 +192,32 @@ def test_frontend_proxy_routes_download_by_space_mode_query(monkeypatch, tmp_pat
     assert calls[-1]["kwargs"]["params"] == {"space_mode": ["normal"]}
 
 
+def test_frontend_proxy_forwards_sync_token_and_routes_by_space_mode_query(monkeypatch, tmp_path):
+    frontend_server = _load_frontend_server()
+    _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=True))
+
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return FakeResponse({"code": 200, "msg": "success", "data": {}})
+
+    monkeypatch.setattr(frontend_server.requests, "post", fake_post)
+
+    app = frontend_server.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/sync/directional/delta?space_mode=normal",
+        json={"known_inventory": {}},
+        headers={"X-Sync-Token": "paired-token"},
+    )
+
+    assert response.status_code == 200
+    assert calls[-1]["url"] == "http://127.0.0.1:6101/api/v1/sync/directional/delta"
+    assert calls[-1]["kwargs"]["params"] == {"space_mode": ["normal"]}
+    assert calls[-1]["kwargs"]["headers"]["x-sync-token"] == "paired-token"
+
+
 def test_frontend_proxy_forwards_multipart_upload(monkeypatch, tmp_path):
     frontend_server = _load_frontend_server()
     _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=False))

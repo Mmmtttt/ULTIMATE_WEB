@@ -15,10 +15,10 @@
     </van-cell-group>
 
     <van-cell-group inset class="sync-group">
-      <van-cell title="连接设备" label="输入远程后端地址和配对码" />
-      <van-field v-model.trim="connectForm.remoteBaseUrl" label="远程地址" placeholder="http://192.168.1.88:5000" />
+      <van-cell title="连接设备" label="输入远程前端入口地址和配对码" />
+      <van-field v-model.trim="connectForm.remoteBaseUrl" label="远程入口" placeholder="https://192.168.1.88:5173" />
       <van-field v-model.trim="connectForm.pairingCode" label="配对码" placeholder="6位配对码" />
-      <van-cell title="本机地址" :value="autoRequesterBaseUrl || '自动检测失败'" label="从当前后端自动检测" />
+      <van-cell title="本机入口" :value="autoRequesterBaseUrl || '自动检测失败'" label="从当前页面地址自动检测" />
       <div class="group-actions">
         <van-button type="primary" block round :loading="connectingPeer" @click="connectPeer">
           连接
@@ -376,14 +376,18 @@ const filteredListScopeOptions = computed(() => {
 })
 
 function resolveAutoRequesterBaseUrl() {
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return String(window.location.origin || '').trim()
+  }
   const backendOrigin = String(resolveBackendOrigin() || '').trim()
   if (backendOrigin) {
     return backendOrigin
   }
-  if (typeof window !== 'undefined' && window.location && window.location.origin) {
-    return String(window.location.origin || '').trim()
-  }
   return ''
+}
+
+function currentSyncSpaceMode() {
+  return authStore.mode === 'normal' ? 'normal' : 'private'
 }
 
 function updateListScopePopupLayout() {
@@ -632,7 +636,8 @@ async function createInvite() {
     console.log('[SyncCenter] createInvite: requesterBaseUrl =', requesterBaseUrl)
     const res = await syncApi.createPairingInvite({
       ttl_minutes: Number(inviteTtlMinutes.value || 10),
-      requester_base_url: requesterBaseUrl
+      requester_base_url: requesterBaseUrl,
+      requester_space_mode: currentSyncSpaceMode()
     })
     inviteInfo.value = res.data
     console.log('[SyncCenter] createInvite success:', res.data)
@@ -669,7 +674,9 @@ async function connectPeer() {
     const res = await syncApi.connectPairing({
       remote_base_url: connectForm.remoteBaseUrl,
       pairing_code: connectForm.pairingCode,
-      requester_base_url: requesterBaseUrl
+      requester_base_url: requesterBaseUrl,
+      remote_space_mode: currentSyncSpaceMode(),
+      requester_space_mode: currentSyncSpaceMode()
     })
     console.log('[SyncCenter] connectPeer success:', res.data)
     appendLog(`已连接设备: ${res?.data?.peer_id || '-'}, 本机=${requesterBaseUrl}`)
