@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -506,6 +507,25 @@ def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, pac
     }
 
 
+def optimize_android_gradle_wrapper(android_project_dir: Path, packager_cfg: Dict) -> str:
+    distribution_type = str(packager_cfg.get("android_gradle_distribution_type", "bin")).strip().lower()
+    if distribution_type not in {"bin", "all"}:
+        distribution_type = "bin"
+    if distribution_type == "all":
+        return "gradle wrapper distribution left unchanged by config"
+
+    properties_path = android_project_dir / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if not properties_path.exists():
+        return f"gradle wrapper properties not found: {properties_path}"
+
+    raw = properties_path.read_text(encoding="utf-8")
+    updated = re.sub(r"-(?:all|bin)\.zip", f"-{distribution_type}.zip", raw)
+    if updated == raw:
+        return "gradle wrapper distribution already optimized or not recognized"
+    write_text(properties_path, updated)
+    return f"gradle wrapper distribution set to {distribution_type}.zip"
+
+
 def normalize_app_version(raw: str) -> str:
     text = str(raw or "").strip()
     if not text:
@@ -574,6 +594,32 @@ def run_cmd(cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> 
     )
     output = (process.stdout or "") + (process.stderr or "")
     return process.returncode, output
+
+
+def run_cmd_with_retries(
+    cmd: List[str],
+    cwd: Path,
+    env: Optional[Dict[str, str]] = None,
+    *,
+    attempts: int = 1,
+    delay_seconds: int = 10,
+) -> Tuple[int, str]:
+    attempts = max(1, attempts)
+    collected: List[str] = []
+    last_code = 1
+    for attempt in range(1, attempts + 1):
+        if attempts > 1:
+            collected.append(f"[attempt {attempt}/{attempts}]\n")
+        last_code, output = run_cmd(cmd, cwd=cwd, env=env)
+        collected.append(output)
+        if last_code == 0 or attempt == attempts:
+            return last_code, "".join(collected)
+        collected.append(
+            f"\n[retry] command failed with code {last_code}; "
+            f"retrying in {delay_seconds} seconds\n"
+        )
+        time.sleep(delay_seconds)
+    return last_code, "".join(collected)
 
 
 def is_pyinstaller_available() -> bool:
@@ -4000,9 +4046,11 @@ def package_android(
             command=[item for cmd in commands for item in cmd],
         )
 
+    gradle_attempts = int(packager_cfg.get("android_gradle_max_attempts", 3) or 3)
     logs: List[str] = []
     for idx, cmd in enumerate(commands, start=1):
         cwd = workspace_dir
+        is_gradle_step = idx == len(commands)
         if idx == len(commands):
             cwd = workspace_dir / "android"
             if not cwd.exists():
@@ -4015,7 +4063,13 @@ def package_android(
                 )
             write_android_local_properties(cwd, sdk_dir)
         try:
-            code, output = run_cmd(cmd, cwd=cwd, env=android_env)
+            code, output = run_cmd_with_retries(
+                cmd,
+                cwd=cwd,
+                env=android_env,
+                attempts=gradle_attempts if is_gradle_step else 1,
+                delay_seconds=15,
+            )
         except FileNotFoundError:
             log_path = target_out_dir / "android_build.log"
             logs.append(f"$ {' '.join(cmd)}\n[launcher-error] executable not found in PATH or cwd\n")
@@ -4053,6 +4107,20 @@ def package_android(
                     message=f"android launcher icon apply failed after step {idx}; see {log_path}",
                     output_dir=str(target_out_dir),
                     command=["apply_android_launcher_icon"],
+                )
+            try:
+                message = optimize_android_gradle_wrapper(workspace_dir / "android", packager_cfg)
+                logs.append(f"$ [internal] optimize android gradle wrapper\n[ok] {message}\n")
+            except Exception as ex:
+                log_path = target_out_dir / "android_build.log"
+                logs.append(f"$ [internal] optimize android gradle wrapper\n[error] {ex}\n")
+                write_text(log_path, "\n".join(logs))
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android gradle wrapper optimization failed after step {idx}; see {log_path}",
+                    output_dir=str(target_out_dir),
+                    command=["optimize_android_gradle_wrapper"],
                 )
         if embed_backend and idx == 4:
             try:

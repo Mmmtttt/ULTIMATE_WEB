@@ -404,6 +404,32 @@ def test_package_android_injects_embedded_backend_after_cap_sync(monkeypatch):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_optimize_android_gradle_wrapper_switches_all_distribution_to_bin():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_gradle_wrapper_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        properties_path = temp_dir / "gradle" / "wrapper" / "gradle-wrapper.properties"
+        properties_path.parent.mkdir(parents=True, exist_ok=True)
+        properties_path.write_text(
+            "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11.1-all.zip\n",
+            encoding="utf-8",
+        )
+
+        message = package_unified.optimize_android_gradle_wrapper(
+            temp_dir,
+            {"android_gradle_distribution_type": "bin"},
+        )
+
+        assert "bin.zip" in message
+        assert "gradle-8.11.1-bin.zip" in properties_path.read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_ensure_android_project_chaquopy_app_embeds_snapshot_into_bootstrap():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"

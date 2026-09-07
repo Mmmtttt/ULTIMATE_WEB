@@ -83,6 +83,8 @@
       "capacitor_core_version": "7",
       "capacitor_cli_version": "7",
       "capacitor_android_version": "7",
+      "android_gradle_distribution_type": "bin",
+      "android_gradle_max_attempts": 3,
       "gradle_task": "assembleDebug",
       "apk_relative_path": "android/app/build/outputs/apk/debug/app-debug.apk"
     }
