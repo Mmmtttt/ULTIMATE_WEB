@@ -2087,9 +2087,13 @@ def import_async():
             content_type = raw_content_type
         else:
             content_type = _resolve_manifest_content_type(manifest)
-        comic_id = data.get('comic_id')
+        if content_type == 'video':
+            comic_id = data.get('video_id') or data.get('comic_id')
+            comic_ids = data.get('video_ids') or data.get('comic_ids')
+        else:
+            comic_id = data.get('comic_id')
+            comic_ids = data.get('comic_ids')
         keyword = data.get('keyword')
-        comic_ids = data.get('comic_ids')
         platform_list_id = data.get('platform_list_id')
         platform_list_name = data.get('platform_list_name', '')
         source = data.get('source', 'local')

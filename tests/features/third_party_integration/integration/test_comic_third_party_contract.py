@@ -775,6 +775,26 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
         ),
         (
             {
+                "import_type": "by_list",
+                "target": "recommendation",
+                "platform": "JAVDB",
+                "content_type": "video",
+                "video_ids": ["stars_256"],
+            },
+            {"platform": "JAVDB", "content_type": "video", "comic_id": None, "keyword": None, "comic_ids": ["stars_256"], "extra_data": {}},
+        ),
+        (
+            {
+                "import_type": "by_id",
+                "target": "recommendation",
+                "platform": "JAVDB",
+                "content_type": "video",
+                "video_id": "JVID-3",
+            },
+            {"platform": "JAVDB", "content_type": "video", "comic_id": "JVID-3", "keyword": None, "comic_ids": None, "extra_data": {}},
+        ),
+        (
+            {
                 "import_type": "by_platform_list",
                 "target": "recommendation",
                 "platform": "JM",
