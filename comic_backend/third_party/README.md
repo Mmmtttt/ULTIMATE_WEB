@@ -5,6 +5,7 @@
 如果你要了解当前实现、协议格式、配置方式、调用原理、以及如何新增平台，请优先阅读：
 
 - [开发者文档/第三方插件框架与协议开发指南.md](../../开发者文档/第三方插件框架与协议开发指南.md)
+- [API 集成标准](./API_INTEGRATION_STANDARD.md)：新增插件必须遵循的 manifest、Provider、capability、配置和 Android 打包规范。
 
 补充参考：
 
