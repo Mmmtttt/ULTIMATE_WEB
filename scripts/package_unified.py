@@ -298,14 +298,27 @@ def _read_plugin_id_from_manifest(manifest_path: Path) -> str:
         return ""
 
 
+def _manifest_android_packaging(payload: Dict[str, Any]) -> Dict[str, Any]:
+    packaging = payload.get("packaging")
+    if not isinstance(packaging, dict):
+        return {}
+    android_packaging = packaging.get("android")
+    if not isinstance(android_packaging, dict):
+        return {}
+    return android_packaging
+
+
+def _manifest_android_enabled(payload: Dict[str, Any]) -> bool:
+    return parse_config_bool(_manifest_android_packaging(payload).get("enabled"), default=False)
+
+
 def _is_android_supported_plugin_root(plugin_root: Path) -> bool:
     for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
         try:
             payload = load_json(manifest_path)
         except Exception:
             continue
-        android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
-        if parse_config_bool(android_packaging.get("enabled"), default=False):
+        if _manifest_android_enabled(payload):
             return True
     return False
 
@@ -378,10 +391,18 @@ def collect_plugin_manifest_payloads(plugin_roots: List[Path]) -> List[Dict[str,
     return payloads
 
 
+def collect_android_manifest_payloads(third_party_root: Path, packager_cfg: Dict) -> List[Dict[str, Any]]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    payloads = collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg))
+    if mode == ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+        return [payload for payload in payloads if _manifest_android_enabled(payload)]
+    return payloads
+
+
 def collect_android_packaged_plugin_ids(third_party_root: Path, packager_cfg: Dict) -> List[str]:
     plugin_ids: List[str] = []
     seen = set()
-    for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
+    for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
         plugin = dict(payload.get("plugin") or {})
         plugin_id = str(plugin.get("id") or "").strip()
         key = plugin_id.lower()
@@ -431,8 +452,8 @@ def collect_android_pip_options(packager_cfg: Dict, source_backend_dir: Path) ->
 
     third_party_root = source_backend_dir / "third_party"
     if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
-        for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
-            android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
+        for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+            android_packaging = _manifest_android_packaging(payload)
             entries = merge_pip_install_entries(entries, android_packaging.get("pip_options") or [])
     return entries
 
@@ -471,8 +492,8 @@ def collect_android_pip_install_entries(packager_cfg: Dict, source_backend_dir: 
 
     third_party_root = source_backend_dir / "third_party"
     if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
-        for payload in collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg)):
-            android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
+        for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+            android_packaging = _manifest_android_packaging(payload)
             entries = merge_pip_install_entries(
                 entries,
                 android_packaging.get("pip_requirements") or [],
@@ -497,6 +518,22 @@ def collect_android_extract_packages(packager_cfg: Dict) -> List[str]:
     return _normalize_string_list(raw_values or [])
 
 
+def prune_android_runtime_manifest_files(plugin_root: Path, mode: str) -> List[Path]:
+    if mode != ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+        return []
+    pruned: List[Path] = []
+    for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+        try:
+            payload = load_json(manifest_path)
+        except Exception:
+            continue
+        if _manifest_android_enabled(payload):
+            continue
+        manifest_path.unlink()
+        pruned.append(manifest_path.relative_to(plugin_root))
+    return pruned
+
+
 def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
     mode = normalize_android_third_party_mode(packager_cfg)
     target_root = py_dir / "third_party"
@@ -517,6 +554,7 @@ def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, pac
             shutil.copy2(item, target_root / item.name)
 
     copied: List[str] = []
+    pruned_manifests: List[str] = []
     for plugin_root in selected_roots:
         rel = plugin_root.relative_to(source_root)
         target = target_root / rel
@@ -524,11 +562,14 @@ def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, pac
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(plugin_root, target, ignore=backend_source_copy_ignore)
+        for manifest_rel in prune_android_runtime_manifest_files(target, mode):
+            pruned_manifests.append((rel / manifest_rel).as_posix())
         copied.append(rel.as_posix())
 
     return {
         "mode": mode,
         "copied": copied,
+        "pruned_manifests": pruned_manifests,
         "plugin_ids": collect_android_packaged_plugin_ids(source_root, packager_cfg),
     }
 

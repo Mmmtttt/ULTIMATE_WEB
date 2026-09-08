@@ -401,6 +401,8 @@ result = gateway.execute_plugin(
 
 未声明 Android 支持的插件不会被当前 Android supported 模式打包；桌面端仍按桌面运行时加载。Android 支持声明代表插件已提供适配和依赖声明，不代表桌面二进制可以直接放入 APK。
 
+如果一个被打包的插件目录内还包含其他 `ultimate-plugin.json`，Android supported 模式仍以每个插件自己的 `packaging.android.enabled` 为准。未声明支持 Android 的嵌套 manifest 会在 APK 运行时副本中被移除，避免宿主扫描时注册桌面专用插件；源码文件可以随目录存在，但不会作为 Android 插件启用。
+
 ### 8.2 依赖和运行时适配
 
 - `pip_requirements` 只声明插件自己需要的依赖。
@@ -408,6 +410,7 @@ result = gateway.execute_plugin(
 - 使用 `--no-deps` 前必须确认传递依赖已由插件清单或宿主提供。
 - 必须优先使用 Chaquopy/Android 可用的 wheel 或纯 Python 包。
 - Windows/Linux 专用二进制必须替换为 Android 实现，或由插件声明该能力不可用。
+- 不要把需要外置浏览器二进制、系统服务或桌面进程模型的依赖直接声明进 Android，例如 Playwright。确需支持时，应在插件内部提供 Android 等价实现或降级能力。
 - Android 适配代码放在插件目录内，主项目不能出现平台专用分支。
 
 推荐结构：

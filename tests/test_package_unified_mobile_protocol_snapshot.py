@@ -644,6 +644,33 @@ def test_ensure_android_project_chaquopy_app_packages_android_supported_plugins_
             encoding="utf-8",
         )
         _write_json(
+            source_backend_dir / "third_party" / "supported_plugin" / "nested_desktop" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.nested.desktop",
+                    "name": "NestedDesktop",
+                    "entrypoint": "./ultimate_provider.py:NestedDesktopProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "enabled": False,
+                        "pip_requirements": ["nested-desktop-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (
+            source_backend_dir
+            / "third_party"
+            / "supported_plugin"
+            / "nested_desktop"
+            / "ultimate_provider.py"
+        ).write_text(
+            "class NestedDesktopProvider: pass\n",
+            encoding="utf-8",
+        )
+        _write_json(
             source_backend_dir / "third_party" / "desktop_only_plugin" / "ultimate-plugin.json",
             {
                 "plugin": {
@@ -685,10 +712,13 @@ def test_ensure_android_project_chaquopy_app_packages_android_supported_plugins_
         snapshot_text = snapshot_path.read_text(encoding="utf-8")
 
         assert (py_dir / "third_party" / "supported_plugin" / "ultimate_provider.py").exists()
+        assert not (py_dir / "third_party" / "supported_plugin" / "nested_desktop" / "ultimate-plugin.json").exists()
         assert not (py_dir / "third_party" / "desktop_only_plugin").exists()
         assert "comic.supported.android" in snapshot_text
+        assert "comic.nested.desktop" not in snapshot_text
         assert "comic.desktop.only" not in snapshot_text
         assert 'install("supported-extra==1.0")' in gradle_text
+        assert "nested-desktop-extra" not in gradle_text
         assert "desktop-only-extra" not in gradle_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
