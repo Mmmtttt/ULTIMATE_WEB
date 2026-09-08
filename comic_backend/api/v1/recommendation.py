@@ -454,6 +454,43 @@ def migrate_recommendations_to_local():
         return error_response(500, "internal server error")
 
 
+@recommendation_bp.route('/update/check', methods=['POST'])
+def check_recommendation_update():
+    """检查推荐漫画是否有在线更新"""
+    try:
+        data = request.json or {}
+        recommendation_id = data.get('recommendation_id')
+        if not recommendation_id:
+            return error_response(400, "missing parameter: recommendation_id")
+
+        result = recommendation_service.check_recommendation_update(recommendation_id)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"Check recommendation update api failed: {e}")
+        return error_response(500, "internal server error")
+
+
+@recommendation_bp.route('/update/download', methods=['POST'])
+def download_recommendation_update():
+    """下载推荐漫画更新并刷新预览缓存"""
+    try:
+        data = request.json or {}
+        recommendation_id = data.get('recommendation_id')
+        force = bool(data.get('force', False))
+        if not recommendation_id:
+            return error_response(400, "missing parameter: recommendation_id")
+
+        result = recommendation_service.download_recommendation_update(recommendation_id, force=force)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"Download recommendation update api failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @recommendation_bp.route('/cache/download', methods=['POST'])
 def download_to_cache():
     """下载推荐漫画到缓存"""

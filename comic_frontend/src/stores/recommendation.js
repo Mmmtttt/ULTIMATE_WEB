@@ -523,6 +523,14 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     return recommendationApi.downloadToCache(recommendationId)
   }
 
+  async function checkUpdate(recommendationId) {
+    return recommendationApi.checkUpdate(recommendationId)
+  }
+
+  async function downloadUpdate(recommendationId, force = false) {
+    return recommendationApi.downloadUpdate(recommendationId, force)
+  }
+
   /**
    * 清除排序
    */
@@ -640,6 +648,8 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     batchMoveToTrash,
     migrateToLocal,
     downloadToCache,
+    checkUpdate,
+    downloadUpdate,
     searchRecommendations,
     filterByTags,
     filterMulti,

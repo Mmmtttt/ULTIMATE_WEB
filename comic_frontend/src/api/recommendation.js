@@ -274,6 +274,30 @@ export const recommendationApi = {
   downloadToCache: (recommendationId) => {
     return request.post('/v1/recommendation/cache/download', { recommendation_id: recommendationId })
   },
+
+  /**
+   * 检查推荐漫画是否有可下载更新
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  checkUpdate: (recommendationId) => {
+    return request.post('/v1/recommendation/update/check', {
+      recommendation_id: recommendationId
+    })
+  },
+
+  /**
+   * 下载推荐漫画更新并刷新预览缓存
+   * @param {string} recommendationId - 漫画ID
+   * @param {boolean} force - 是否强制下载
+   * @returns {Promise}
+   */
+  downloadUpdate: (recommendationId, force = false) => {
+    return request.post('/v1/recommendation/update/download', {
+      recommendation_id: recommendationId,
+      force
+    })
+  },
   
   /**
    * 获取缓存图片

@@ -337,7 +337,7 @@ import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
 import { authorApi, historyApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -364,7 +364,7 @@ const showAddTag = ref(false)
 const showTagRemove = ref(false)
 const newTagName = ref('')
 const tagAdding = ref(false)
-const cacheDownloading = ref(false)
+const updateLoading = ref(false)
 const migratingToLocal = ref(false)
 
 const showEditPopup = ref(false)
@@ -376,10 +376,8 @@ const editForm = ref({
 })
 
 const actions = computed(() => [
-  { name: '下载/更新预览缓存', value: 'download_cache', loading: cacheDownloading.value },
+  { name: '检查更新', value: 'check_update', loading: updateLoading.value },
   { name: '导入本地库', value: 'migrate_to_local', loading: migratingToLocal.value },
-  { name: isRead.value ? '标记为未读' : '标记为已读', value: 'toggle_read' },
-  { name: '绑定标签', value: 'tags' },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ])
 
@@ -433,11 +431,6 @@ const exactExistingAddTag = computed(() => {
       !currentTagIdSet.value.has(String(tag.id)) &&
       String(tag.name || '').trim().toLowerCase() === keyword
   }) || null
-})
-
-const isRead = computed(() => {
-  if (!recommendation.value) return false
-  return isReadByProgress(recommendation.value.current_page)
 })
 
 // ============ Methods ============
@@ -595,14 +588,10 @@ function openEdit() {
 
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'download_cache') {
-    handleDownloadToCache()
+  if (action.value === 'check_update') {
+    handleCheckAndDownloadUpdate()
   } else if (action.value === 'migrate_to_local') {
     handleMigrateToLocal()
-  } else if (action.value === 'toggle_read') {
-    markAsRead()
-  } else if (action.value === 'tags') {
-    showTagPopup.value = true
   } else if (action.value === 'trash') {
     handleMoveToTrash()
   }
@@ -662,24 +651,49 @@ async function handleMoveToTrash() {
   }
 }
 
-async function handleDownloadToCache() {
-  if (!recommendation.value || cacheDownloading.value) return
+async function handleCheckAndDownloadUpdate() {
+  if (!recommendation.value || updateLoading.value) return
 
-  cacheDownloading.value = true
+  updateLoading.value = true
   try {
-    const res = await recommendationStore.downloadToCache(recommendation.value.id)
-    if (res.code === 200) {
-      recommendationStore.clearCache('detail', recommendation.value.id)
-      await fetchDetail()
-      showSuccessToast(res.data?.message || res.msg || '预览缓存已更新')
-    } else {
-      showFailToast(res.msg || '更新预览缓存失败')
+    const checkResponse = await recommendationStore.checkUpdate(recommendation.value.id)
+    const checkData = checkResponse?.data || {}
+
+    if (!checkData.can_update) {
+      showFailToast(checkData.reason || '当前平台暂不支持在线更新')
+      return
     }
+
+    const localPages = checkData.cached_page_count || checkData.db_total_page || 0
+    const remotePages = checkData.remote_total_page || localPages
+    if (!checkData.has_update) {
+      showSuccessToast(`暂无更新（当前 ${localPages} 页 / 远程 ${remotePages} 页）`)
+      return
+    }
+
+    await showConfirmDialog({
+      title: '发现更新',
+      message: `检测到远程页数 ${remotePages} 大于当前 ${localPages}，是否立即下载更新到预览缓存？`
+    })
+
+    const downloadResponse = await recommendationStore.downloadUpdate(recommendation.value.id)
+    if (downloadResponse.code !== 200) {
+      showFailToast(downloadResponse.msg || '下载更新失败')
+      return
+    }
+
+    recommendationStore.clearCache('detail', recommendation.value.id)
+    recommendationStore.clearCache('list')
+    await fetchDetail()
+
+    const latestPages = downloadResponse?.data?.cached_page_count ?? recommendation.value?.total_page ?? 0
+    showSuccessToast(`更新完成，当前缓存 ${latestPages} 页`)
   } catch (error) {
-    console.error('更新预览缓存失败:', error)
-    showFailToast(error?.message || '更新预览缓存失败')
+    if (error === 'cancel') return
+    console.error('检查更新失败:', error)
+    showFailToast(error?.message || '检查更新失败')
   } finally {
-    cacheDownloading.value = false
+    updateLoading.value = false
   }
 }
 
@@ -808,25 +822,6 @@ async function addToLists() {
   } catch (error) {
     console.error('addToLists error:', error)
     showFailToast('操作失败')
-  }
-}
-
-/**
- * 标记已读
- */
-async function markAsRead() {
-  try {
-    if (isRead.value) {
-      await recommendationStore.saveProgress(recommendation.value.id, 1)
-      recommendation.value.current_page = 1
-      showSuccessToast('已标记为未读')
-    } else {
-      await recommendationStore.saveProgress(recommendation.value.id, recommendation.value.total_page)
-      recommendation.value.current_page = recommendation.value.total_page
-      showSuccessToast('已标记为已读')
-    }
-  } catch (error) {
-    showFailToast('标记失败')
   }
 }
 

@@ -471,6 +471,202 @@ class RecommendationAppService:
             error_logger.error(f"更新推荐总页数失败: {e}")
             return ServiceResult.error("更新推荐总页数失败")
 
+    @staticmethod
+    def _extract_remote_total_page(meta_data: dict) -> int:
+        if not isinstance(meta_data, dict):
+            return 0
+
+        albums = meta_data.get("albums") or []
+        if not albums:
+            return 0
+
+        first_album = albums[0] if isinstance(albums[0], dict) else {}
+        for value in (
+            first_album.get("pages"),
+            first_album.get("pages_count"),
+            first_album.get("page_count"),
+            first_album.get("total_page"),
+        ):
+            pages = normalize_total_page(value, default=0)
+            if pages > 0:
+                return pages
+        return 0
+
+    @staticmethod
+    def _first_remote_album(meta_data: dict) -> Dict[str, Any]:
+        if not isinstance(meta_data, dict):
+            return {}
+        albums = meta_data.get("albums") or []
+        if not albums or not isinstance(albums[0], dict):
+            return {}
+        return dict(albums[0])
+
+    def _apply_remote_meta(self, recommendation: Recommendation, remote_meta: dict) -> List[str]:
+        album = self._first_remote_album(remote_meta)
+        if not album:
+            return []
+
+        changed_fields: List[str] = []
+        field_map = {
+            "title": album.get("title"),
+            "title_jp": album.get("title_jp"),
+            "author": album.get("author"),
+            "desc": album.get("desc") or album.get("description"),
+            "cover_path": album.get("cover_url") or album.get("cover_path"),
+        }
+        for field_name, raw_value in field_map.items():
+            value = str(raw_value or "").strip()
+            if value and getattr(recommendation, field_name, "") != value:
+                setattr(recommendation, field_name, value)
+                changed_fields.append(field_name)
+
+        remote_total_page = self._extract_remote_total_page(remote_meta)
+        if remote_total_page > 0 and normalize_total_page(recommendation.total_page) != remote_total_page:
+            recommendation.total_page = remote_total_page
+            recommendation.current_page = min(max(1, recommendation.current_page), remote_total_page)
+            changed_fields.append("total_page")
+
+        if remote_total_page > 0:
+            next_preview_pages = get_preview_pages(remote_total_page)
+            if recommendation.preview_pages != next_preview_pages:
+                recommendation.preview_pages = next_preview_pages
+                changed_fields.append("preview_pages")
+
+        return changed_fields
+
+    def check_recommendation_update(self, recommendation_id: str) -> ServiceResult:
+        """Check whether a preview-library comic has remote updates."""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation or recommendation.is_deleted:
+                return ServiceResult.error("推荐漫画不存在")
+
+            if self._is_teledrive_recommendation(recommendation):
+                total_page = normalize_total_page(recommendation.total_page, default=0)
+                cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+                return ServiceResult.ok({
+                    "recommendation_id": recommendation_id,
+                    "db_total_page": total_page,
+                    "cached_page_count": len(cached_pages),
+                    "remote_total_page": total_page,
+                    "has_update": False,
+                    "can_update": False,
+                    "reason": "teledrive_remote_stream"
+                }, "TeleDrive 推荐漫画无需在线更新")
+
+            platform_key, original_id, _manifest = split_prefixed_id(recommendation_id, media_type="comic")
+            if not platform_key or not original_id:
+                return ServiceResult.error("当前平台暂不支持在线更新")
+
+            platform_service = self._get_platform_service()
+            remote_meta = platform_service.get_album_by_id(platform_key, original_id)
+            remote_total_page = self._extract_remote_total_page(remote_meta)
+            if remote_total_page <= 0:
+                return ServiceResult.error("获取远程页数失败")
+
+            db_total_page = normalize_total_page(recommendation.total_page, default=0)
+            cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            cached_page_count = len(cached_pages)
+            known_page_count = max(db_total_page, cached_page_count)
+
+            return ServiceResult.ok({
+                "recommendation_id": recommendation_id,
+                "db_total_page": db_total_page,
+                "cached_page_count": cached_page_count,
+                "remote_total_page": remote_total_page,
+                "has_update": remote_total_page > known_page_count,
+                "can_update": True,
+            }, "推荐漫画更新检查完成")
+        except RuntimeError as e:
+            error_logger.error(f"检查推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("当前运行环境未启用第三方库")
+        except Exception as e:
+            error_logger.error(f"检查推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("检查推荐漫画更新失败")
+
+    def download_recommendation_update(self, recommendation_id: str, force: bool = False) -> ServiceResult:
+        """Download remote update into preview cache and refresh preview metadata."""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation or recommendation.is_deleted:
+                return ServiceResult.error("推荐漫画不存在")
+
+            check_result = self.check_recommendation_update(recommendation_id)
+            if not check_result.success:
+                return check_result
+
+            check_data = check_result.data or {}
+            if not bool(check_data.get("can_update")):
+                return ServiceResult.error(check_data.get("reason") or "当前平台暂不支持在线更新")
+            if not bool(check_data.get("has_update")) and not force:
+                return ServiceResult.error("没有可下载的更新")
+
+            platform_key, original_id, manifest = split_prefixed_id(recommendation_id, media_type="comic")
+            if not platform_key or not original_id:
+                return ServiceResult.error("当前平台暂不支持在线更新")
+
+            platform_service = self._get_platform_service()
+            download_dir = build_platform_root_dir(
+                COMIC_RECOMMENDATION_CACHE_DIR,
+                manifest=manifest,
+                platform_name=platform_key,
+            )
+            download_kwargs = get_capability_default_params(manifest, "asset.bundle.fetch")
+            album_detail, success = platform_service.download_album(
+                platform_key,
+                original_id,
+                download_dir=download_dir,
+                show_progress=False,
+                **download_kwargs,
+            )
+            if not success:
+                return ServiceResult.error("下载更新失败")
+
+            local_pages = normalize_total_page(
+                album_detail.get("local_pages", album_detail.get("pages_count", 0)),
+                default=0,
+            )
+            if local_pages <= 0:
+                local_pages = len(recommendation_cache_manager.get_cached_pages(recommendation_id))
+
+            added = recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+            cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            if not cached_pages:
+                if not added:
+                    error_logger.error(f"推荐漫画更新下载成功但缓存索引失败: {recommendation_id}")
+                return ServiceResult.error("下载成功但缓存目录识别失败，请重试")
+
+            remote_meta = platform_service.get_album_by_id(platform_key, original_id)
+            old_total_page = normalize_total_page(recommendation.total_page, default=0)
+            changed_fields = self._apply_remote_meta(recommendation, remote_meta)
+            local_page_count = len(cached_pages)
+            if local_page_count > 0 and normalize_total_page(recommendation.total_page) != local_page_count:
+                recommendation.total_page = local_page_count
+                recommendation.current_page = min(max(1, recommendation.current_page), local_page_count)
+                if "total_page" not in changed_fields:
+                    changed_fields.append("total_page")
+
+            if self._refresh_recommendation_persisted_metadata(recommendation):
+                changed_fields.append("storage_path")
+
+            if not self._recommendation_repo.save(recommendation):
+                return ServiceResult.error("保存推荐漫画更新失败")
+
+            return ServiceResult.ok({
+                "recommendation_id": recommendation_id,
+                "had_update": bool(check_data.get("has_update")),
+                "old_total_page": old_total_page,
+                "cached_page_count": local_page_count,
+                "remote_total_page": self._extract_remote_total_page(remote_meta),
+                "changed_fields": changed_fields,
+            }, "推荐漫画更新完成")
+        except RuntimeError as e:
+            error_logger.error(f"下载推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("当前运行环境未启用第三方库")
+        except Exception as e:
+            error_logger.error(f"下载推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("下载推荐漫画更新失败")
+
     def _get_local_comic_dir(self, recommendation: Recommendation) -> Optional[str]:
         platform_key, original_id, manifest = split_prefixed_id(recommendation.id, media_type="comic")
         if not platform_key or not original_id:
