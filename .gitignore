@@ -43,3 +43,4 @@ comic_backend/third_party_config.json
 tools/ffmpeg/
 runtime_tools/ffmpeg/
 build/runtime_tools/ffmpeg/
+comic_backend/.pytest_runtime*
