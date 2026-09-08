@@ -172,6 +172,8 @@ class ProviderManager:
             "collection.",
             "person.",
             "asset.",
+            "playback.",
+            "transport.http.",
         ))
 
     def _ensure_plugin_enabled_for_capability(

@@ -122,6 +122,20 @@ def test_provider_manager_blocks_query_capabilities_when_plugin_disabled():
         manager.execute("comic.demo", "catalog.search", {"keyword": "x"})
 
 
+def test_provider_manager_blocks_playback_capabilities_when_plugin_disabled():
+    manager = _make_manager({"enabled": False})
+
+    with pytest.raises(RuntimeError, match="未启用"):
+        manager.execute("comic.demo", "playback.sources.build", {"code": "ABC-001"})
+
+
+def test_provider_manager_blocks_transport_capabilities_when_plugin_disabled():
+    manager = _make_manager({"enabled": False})
+
+    with pytest.raises(RuntimeError, match="未启用"):
+        manager.execute("comic.demo", "transport.http.request", {"url": "https://example.test"})
+
+
 def test_provider_manager_allows_health_status_even_when_plugin_disabled():
     manager = _make_manager({"enabled": False})
 

@@ -25,6 +25,25 @@ def _load_javdb_api_class():
     return module.JavdbAPI
 
 
+def _load_fresh_javdb_api_class(module_name: str):
+    backend_root = Path(__file__).resolve().parents[1]
+    plugin_root = backend_root / "third_party" / "javdb-api-scraper"
+    plugin_path = str(plugin_root)
+    if plugin_path not in sys.path:
+        sys.path.insert(0, plugin_path)
+
+    for cached_name in ("config", "utils", module_name):
+        sys.modules.pop(cached_name, None)
+
+    api_path = plugin_root / "javdb_api.py"
+    spec = importlib.util.spec_from_file_location(module_name, api_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module.JavdbAPI
+
+
 def _load_javdb_provider_class():
     provider_path = (
         Path(__file__).resolve().parents[1]
@@ -82,6 +101,20 @@ def test_javdb_provider_normalizes_raw_session_cookie_and_applies_to_api():
     assert config["cookies"]["locale"] == "zh"
     assert cookies["_jdb_session"] == "session-token-only"
     assert cookies["over18"] == "1"
+
+
+def test_javdb_android_runtime_uses_writable_app_files_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("BACKEND_RUNTIME_PROFILE", "android")
+    monkeypatch.setenv("ANDROID_APP_FILES_DIR", str(tmp_path))
+    JavdbAPI = _load_fresh_javdb_api_class("test_javdb_api_android_runtime")
+
+    api = JavdbAPI()
+
+    expected_output_root = tmp_path / "third_party_runtime" / "javdb" / "output"
+    assert api.json_exporter.output_dir == expected_output_root / "json"
+    assert api.magnet_exporter.output_dir == expected_output_root / "magnets"
+    assert api.json_exporter.output_dir.exists()
+    assert api.magnet_exporter.output_dir.exists()
 
 
 def test_javdb_api_clamps_out_of_range_domain_index():
