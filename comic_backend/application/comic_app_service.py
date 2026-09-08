@@ -8,6 +8,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.comic_online_update import build_update_check_payload, extract_remote_total_page
 from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
 from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
@@ -1129,24 +1130,7 @@ class ComicAppService:
 
     def _extract_remote_total_page(self, meta_data: dict) -> int:
         """Extract remote total pages from adapter meta response."""
-        if not isinstance(meta_data, dict):
-            return 0
-
-        albums = meta_data.get("albums") or []
-        if not albums:
-            return 0
-
-        first_album = albums[0] if isinstance(albums[0], dict) else {}
-        for value in (
-            first_album.get("pages"),
-            first_album.get("pages_count"),
-            first_album.get("page_count"),
-            first_album.get("total_page"),
-        ):
-            pages = normalize_total_page(value, default=0)
-            if pages > 0:
-                return pages
-        return 0
+        return extract_remote_total_page(meta_data)
 
     @staticmethod
     def _resolve_comic_platform_context(comic_id: str):
@@ -1964,15 +1948,15 @@ class ComicAppService:
             if remote_total_page <= 0:
                 return ServiceResult.error("Failed to get remote page count")
 
-            has_update = remote_total_page > local_page_count
-            return ServiceResult.ok({
-                "comic_id": comic_id,
-                "db_total_page": db_total_page,
-                "local_page_count": local_page_count,
-                "remote_total_page": remote_total_page,
-                "has_update": has_update,
-                "can_update": True
-            }, "Update check completed")
+            payload = build_update_check_payload(
+                content_id=comic_id,
+                id_key="comic_id",
+                db_total_page=db_total_page,
+                known_page_count=local_page_count,
+                remote_total_page=remote_total_page,
+                known_page_key="local_page_count",
+            )
+            return ServiceResult.ok(payload, "Update check completed")
         except Exception as e:
             error_logger.error(f"Check comic update failed: {comic_id}, {e}")
             return ServiceResult.error("Update check failed")

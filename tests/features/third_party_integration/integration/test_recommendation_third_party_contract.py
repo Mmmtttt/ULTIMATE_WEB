@@ -129,3 +129,42 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     # First add uses third-party reported local page count, second add uses actual cached page count.
     assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 4)]
     assert captured["update_total_page"] == [(recommendation_id, 4)]
+
+
+@pytest.mark.integration
+def test_unified_comic_update_endpoint_dispatches_preview_source(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard the single comic update API pair for preview-library comics.
+    - Steps:
+      1. Mock recommendation update service.
+      2. Call `/api/v1/comic/update/check` with `source=preview`.
+    - Expected:
+      1. The unified comic endpoint dispatches to recommendation update logic.
+      2. No separate recommendation update endpoint is needed by the frontend.
+    """
+    client = third_party_client["client"]
+    comic_api = importlib.import_module("api.v1.comic")
+    captured = []
+
+    monkeypatch.setattr(
+        comic_api.recommendation_service,
+        "check_recommendation_update",
+        lambda rid: captured.append(rid) or _ok_result({
+            "recommendation_id": rid,
+            "can_update": True,
+            "has_update": False,
+        }, "preview checked"),
+    )
+
+    response = client.post(
+        "/api/v1/comic/update/check",
+        json={"comic_id": "JM777001", "source": "preview"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["msg"] == "preview checked"
+    assert payload["data"]["recommendation_id"] == "JM777001"
+    assert captured == ["JM777001"]

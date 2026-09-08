@@ -3,6 +3,7 @@ from application.comic_app_service import ComicAppService
 from application.database_organize_service import DatabaseOrganizeService
 from application.local_comic_import_service import local_comic_import_service
 from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
+from application.recommendation_app_service import RecommendationAppService
 from application.softref_comic_reader import (
     SoftRefPasswordRequiredError,
     SoftRefSourceMissingError,
@@ -38,6 +39,7 @@ import time
 
 comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
+recommendation_service = RecommendationAppService()
 database_organize_service = DatabaseOrganizeService(comic_service)
 softref_comic_reader = require_softref_reader("comic")
 
@@ -1926,11 +1928,15 @@ def check_comic_update():
     """Check whether a comic has online updates."""
     try:
         data = request.json or {}
-        comic_id = data.get('comic_id')
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
         if not comic_id:
             return error_response(400, "missing parameter: comic_id")
 
-        result = comic_service.check_comic_update(comic_id)
+        source = str(data.get('source') or '').strip().lower()
+        if source in {"preview", "recommendation", "recommendation_library"}:
+            result = recommendation_service.check_recommendation_update(comic_id)
+        else:
+            result = comic_service.check_comic_update(comic_id)
         if result.success:
             return success_response(result.data, result.message)
         else:
@@ -1945,12 +1951,16 @@ def download_comic_update():
     """Download online updates for a comic and sync local page count."""
     try:
         data = request.json or {}
-        comic_id = data.get('comic_id')
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
         force = bool(data.get('force', False))
         if not comic_id:
             return error_response(400, "missing parameter: comic_id")
 
-        result = comic_service.download_comic_update(comic_id, force=force)
+        source = str(data.get('source') or '').strip().lower()
+        if source in {"preview", "recommendation", "recommendation_library"}:
+            result = recommendation_service.download_recommendation_update(comic_id, force=force)
+        else:
+            result = comic_service.download_comic_update(comic_id, force=force)
         if result.success:
             return success_response(result.data, result.message)
         else:

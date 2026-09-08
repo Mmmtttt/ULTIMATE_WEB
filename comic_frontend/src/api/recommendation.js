@@ -281,8 +281,9 @@ export const recommendationApi = {
    * @returns {Promise}
    */
   checkUpdate: (recommendationId) => {
-    return request.post('/v1/recommendation/update/check', {
-      recommendation_id: recommendationId
+    return request.post('/v1/comic/update/check', {
+      comic_id: recommendationId,
+      source: 'preview'
     })
   },
 
@@ -293,9 +294,10 @@ export const recommendationApi = {
    * @returns {Promise}
    */
   downloadUpdate: (recommendationId, force = false) => {
-    return request.post('/v1/recommendation/update/download', {
-      recommendation_id: recommendationId,
-      force
+    return request.post('/v1/comic/update/download', {
+      comic_id: recommendationId,
+      force,
+      source: 'preview'
     })
   },
   

@@ -51,9 +51,11 @@ own directory.
 }
 ```
 
-If Android needs safer defaults, add a small plugin-local adapter such as
-`android_runtime.py`, then call it from the plugin provider when building its
-runtime option. Avoid scattering Android checks through business logic.
+If Android needs safer defaults, add a small plugin-local adapter with a
+plugin-specific module name such as `picacomic_android_runtime.py`, then call it
+from the plugin provider when building its runtime option. Avoid generic names
+like `android_runtime.py`: plugin roots are added to Python's import path, so
+generic module names can collide across different third-party libraries.
 
 ## Rollback
 

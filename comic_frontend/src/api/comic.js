@@ -286,9 +286,10 @@ export const comicApi = {
    * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
-  checkUpdate: (comicId) => {
+  checkUpdate: (comicId, source = 'local') => {
     return request.post('/v1/comic/update/check', {
-      comic_id: comicId
+      comic_id: comicId,
+      source
     })
   },
 
@@ -298,10 +299,11 @@ export const comicApi = {
    * @param {boolean} force - 是否强制下载
    * @returns {Promise}
    */
-  downloadUpdate: (comicId, force = false) => {
+  downloadUpdate: (comicId, force = false, source = 'local') => {
     return request.post('/v1/comic/update/download', {
       comic_id: comicId,
-      force
+      force,
+      source
     })
   },
   
