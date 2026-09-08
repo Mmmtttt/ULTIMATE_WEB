@@ -57,10 +57,12 @@ PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
 )
 ANDROID_THIRD_PARTY_MODE_DISABLED = "disabled"
 ANDROID_THIRD_PARTY_MODE_SELECTED = "selected"
+ANDROID_THIRD_PARTY_MODE_SUPPORTED = "supported"
 ANDROID_THIRD_PARTY_MODE_ALL = "all"
 ANDROID_THIRD_PARTY_MODES = (
     ANDROID_THIRD_PARTY_MODE_DISABLED,
     ANDROID_THIRD_PARTY_MODE_SELECTED,
+    ANDROID_THIRD_PARTY_MODE_SUPPORTED,
     ANDROID_THIRD_PARTY_MODE_ALL,
 )
 DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
@@ -249,6 +251,9 @@ def normalize_android_third_party_mode(packager_cfg: Dict) -> str:
         "include_only": ANDROID_THIRD_PARTY_MODE_SELECTED,
         "allowlist": ANDROID_THIRD_PARTY_MODE_SELECTED,
         "whitelist": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "manifest": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+        "supported_only": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+        "auto": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
         "full": ANDROID_THIRD_PARTY_MODE_ALL,
         "enabled": ANDROID_THIRD_PARTY_MODE_ALL,
         "true": ANDROID_THIRD_PARTY_MODE_ALL,
@@ -293,6 +298,18 @@ def _read_plugin_id_from_manifest(manifest_path: Path) -> str:
         return ""
 
 
+def _is_android_supported_plugin_root(plugin_root: Path) -> bool:
+    for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+        try:
+            payload = load_json(manifest_path)
+        except Exception:
+            continue
+        android_packaging = dict(((payload.get("packaging") or {}).get("android")) or {})
+        if parse_config_bool(android_packaging.get("enabled"), default=False):
+            return True
+    return False
+
+
 def _discover_third_party_plugin_dirs(third_party_root: Path) -> List[Path]:
     if not third_party_root.exists():
         return []
@@ -316,6 +333,8 @@ def resolve_android_plugin_roots(third_party_root: Path, packager_cfg: Dict) -> 
     all_roots = _discover_third_party_plugin_dirs(third_party_root)
     if mode == ANDROID_THIRD_PARTY_MODE_ALL:
         return all_roots
+    if mode == ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+        return [root for root in all_roots if _is_android_supported_plugin_root(root)]
 
     selectors = normalize_android_plugin_selectors(packager_cfg)
     selector_keys = {item.lower() for item in selectors}
@@ -1895,7 +1914,10 @@ public class MainActivity extends BridgeActivity {{
     protocol_dir.mkdir(parents=True, exist_ok=True)
     third_party_root = source_backend_dir / "third_party"
     snapshot_plugin_ids = None
-    if normalize_android_third_party_mode(packager_cfg) == ANDROID_THIRD_PARTY_MODE_SELECTED:
+    if normalize_android_third_party_mode(packager_cfg) in {
+        ANDROID_THIRD_PARTY_MODE_SELECTED,
+        ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+    }:
         snapshot_plugin_ids = collect_android_packaged_plugin_ids(third_party_root, packager_cfg)
     snapshot_payload = build_mobile_protocol_snapshot(third_party_root, include_plugin_ids=snapshot_plugin_ids)
     snapshot_path = protocol_dir / MOBILE_PROTOCOL_SNAPSHOT_FILENAME

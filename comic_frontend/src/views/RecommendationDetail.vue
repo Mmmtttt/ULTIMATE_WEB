@@ -10,10 +10,10 @@
           :title="isFavorited ? '取消收藏' : '收藏'"
         />
         <van-icon
-          name="delete-o"
+          name="ellipsis"
           class="nav-icon"
-          @click="handleMoveToTrash"
-          title="移入回收站"
+          @click="showActionSheet = true"
+          title="更多操作"
         />
       </template>
     </van-nav-bar>
@@ -364,6 +364,8 @@ const showAddTag = ref(false)
 const showTagRemove = ref(false)
 const newTagName = ref('')
 const tagAdding = ref(false)
+const cacheDownloading = ref(false)
+const migratingToLocal = ref(false)
 
 const showEditPopup = ref(false)
 
@@ -373,10 +375,13 @@ const editForm = ref({
   desc: ''
 })
 
-const actions = [
+const actions = computed(() => [
+  { name: '下载/更新预览缓存', value: 'download_cache', loading: cacheDownloading.value },
+  { name: '导入本地库', value: 'migrate_to_local', loading: migratingToLocal.value },
+  { name: isRead.value ? '标记为未读' : '标记为已读', value: 'toggle_read' },
   { name: '绑定标签', value: 'tags' },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
-]
+])
 
 // ============ Computed ============
 const recommendationId = computed(() => route.params.id)
@@ -590,7 +595,13 @@ function openEdit() {
 
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'tags') {
+  if (action.value === 'download_cache') {
+    handleDownloadToCache()
+  } else if (action.value === 'migrate_to_local') {
+    handleMigrateToLocal()
+  } else if (action.value === 'toggle_read') {
+    markAsRead()
+  } else if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {
     handleMoveToTrash()
@@ -648,6 +659,46 @@ async function handleMoveToTrash() {
     if (e !== 'cancel') {
       showFailToast('操作失败')
     }
+  }
+}
+
+async function handleDownloadToCache() {
+  if (!recommendation.value || cacheDownloading.value) return
+
+  cacheDownloading.value = true
+  try {
+    const res = await recommendationStore.downloadToCache(recommendation.value.id)
+    if (res.code === 200) {
+      recommendationStore.clearCache('detail', recommendation.value.id)
+      await fetchDetail()
+      showSuccessToast(res.data?.message || res.msg || '预览缓存已更新')
+    } else {
+      showFailToast(res.msg || '更新预览缓存失败')
+    }
+  } catch (error) {
+    console.error('更新预览缓存失败:', error)
+    showFailToast(error?.message || '更新预览缓存失败')
+  } finally {
+    cacheDownloading.value = false
+  }
+}
+
+async function handleMigrateToLocal() {
+  if (!recommendation.value || migratingToLocal.value) return
+
+  migratingToLocal.value = true
+  try {
+    const res = await recommendationStore.migrateToLocal([recommendation.value.id])
+    if (res.code === 200) {
+      showSuccessToast(res.msg || res.data?.message || '导入任务已创建')
+    } else {
+      showFailToast(res.msg || '创建导入任务失败')
+    }
+  } catch (error) {
+    console.error('导入本地库失败:', error)
+    showFailToast(error?.message || '创建导入任务失败')
+  } finally {
+    migratingToLocal.value = false
   }
 }
 

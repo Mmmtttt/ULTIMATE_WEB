@@ -519,6 +519,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     return recommendationApi.migrateToLocal(recommendationIds)
   }
 
+  async function downloadToCache(recommendationId) {
+    return recommendationApi.downloadToCache(recommendationId)
+  }
+
   /**
    * 清除排序
    */
@@ -635,6 +639,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     moveToTrash,
     batchMoveToTrash,
     migrateToLocal,
+    downloadToCache,
     searchRecommendations,
     filterByTags,
     filterMulti,

@@ -32,10 +32,7 @@
       "embed_backend": true,
       "backend_port": 5035,
       "android_backend_enable_third_party": true,
-      "android_backend_third_party_mode": "selected",
-      "android_backend_plugins": [
-        "comic.jmcomic"
-      ],
+      "android_backend_third_party_mode": "supported",
       "android_extract_packages": [
         "third_party"
       ],
