@@ -2107,8 +2107,8 @@ def import_async():
         else:
             content_type = _resolve_manifest_content_type(manifest)
         if content_type == 'video':
-            comic_id = data.get('video_id')
-            comic_ids = data.get('video_ids')
+            comic_id = data.get('video_id') or data.get('comic_id')
+            comic_ids = data.get('video_ids') or data.get('comic_ids')
         else:
             comic_id = data.get('comic_id')
             comic_ids = data.get('comic_ids')

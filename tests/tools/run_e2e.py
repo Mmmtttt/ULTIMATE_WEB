@@ -215,6 +215,7 @@ def main() -> int:
     frontend_env = os.environ.copy()
     frontend_env.update(
         {
+            "SERVER_CONFIG_PATH": prepared["server_config_path"],
             "VITE_API_BASE_URL": f"http://127.0.0.1:{E2E_BACKEND_PORT}/api",
             "VITE_BACKEND_PORT": str(E2E_BACKEND_PORT),
         }
