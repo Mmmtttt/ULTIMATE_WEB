@@ -1871,6 +1871,25 @@ def organize_database():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/cover/repair', methods=['POST'])
+def repair_comic_cover():
+    """Repair cover for one local or preview-library comic."""
+    try:
+        data = request.json or {}
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
+        source = str(data.get('source') or 'local').strip().lower()
+        if not comic_id:
+            return error_response(400, "missing parameter: comic_id")
+
+        result = comic_service.repair_single_cover(comic_id, source=source)
+        if result.success:
+            return success_response(result.data, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.error(f"repair comic cover api failed: {e}")
+        return error_response(500, "internal server error")
+
+
 @comic_bp.route('/local-metadata/refresh', methods=['POST'])
 @require_third_party(error_response)
 def refresh_local_comic_metadata():

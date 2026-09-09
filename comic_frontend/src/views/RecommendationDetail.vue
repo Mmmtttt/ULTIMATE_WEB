@@ -366,6 +366,7 @@ const newTagName = ref('')
 const tagAdding = ref(false)
 const updateLoading = ref(false)
 const migratingToLocal = ref(false)
+const repairCoverLoading = ref(false)
 
 const showEditPopup = ref(false)
 
@@ -377,6 +378,7 @@ const editForm = ref({
 
 const actions = computed(() => [
   { name: '检查更新', value: 'check_update', loading: updateLoading.value },
+  { name: '修复封面', value: 'repair_cover', loading: repairCoverLoading.value },
   { name: '导入本地库', value: 'migrate_to_local', loading: migratingToLocal.value },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
 ])
@@ -396,7 +398,7 @@ const previewImages = computed(() => {
 
 const recommendationCoverUrl = computed(() => {
   if (!recommendation.value) return ''
-  return getCoverUrl(recommendation.value.cover_path)
+  return getCoverUrl(recommendation.value.cover_url || recommendation.value.cover_path)
 })
 
 const isFavorited = computed(() => {
@@ -590,10 +592,43 @@ function onActionSelect(action) {
   showActionSheet.value = false
   if (action.value === 'check_update') {
     handleCheckAndDownloadUpdate()
+  } else if (action.value === 'repair_cover') {
+    handleRepairCover()
   } else if (action.value === 'migrate_to_local') {
     handleMigrateToLocal()
   } else if (action.value === 'trash') {
     handleMoveToTrash()
+  }
+}
+
+async function handleRepairCover() {
+  if (!recommendation.value?.id || repairCoverLoading.value) return
+
+  try {
+    await showConfirmDialog({
+      title: '修复封面',
+      message: '将只修复当前预览漫画的封面，可能会联网重新下载封面，是否继续？'
+    })
+  } catch (error) {
+    if (error === 'cancel') return
+    showFailToast(error?.message || '修复封面失败')
+    return
+  }
+
+  repairCoverLoading.value = true
+  try {
+    const response = await recommendationStore.repairCover(recommendation.value.id)
+    if (response.code !== 200) {
+      showFailToast(response.msg || '修复封面失败')
+      return
+    }
+    await fetchDetail()
+    showSuccessToast(response.msg || '封面修复完成')
+  } catch (error) {
+    console.error('修复封面失败:', error)
+    showFailToast(error?.message || '修复封面失败')
+  } finally {
+    repairCoverLoading.value = false
   }
 }
 

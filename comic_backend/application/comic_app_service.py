@@ -1241,6 +1241,67 @@ class ComicAppService:
 
         return downloaded, updated
 
+    def repair_single_cover(self, comic_id: str, *, source: str = "local") -> ServiceResult:
+        """Repair cover for one local or preview-library comic record."""
+        normalized_id = str(comic_id or "").strip()
+        source_key = str(source or "local").strip().lower()
+        is_recommendation = source_key in {"preview", "recommendation", "recommendation_library"}
+        if not normalized_id:
+            return ServiceResult.error("missing parameter: comic_id")
+
+        try:
+            repo = self._recommendation_repo if is_recommendation else self._comic_repo
+            record = repo.get_by_id(normalized_id)
+            if not record or getattr(record, "is_deleted", False):
+                return ServiceResult.error("漫画不存在")
+
+            before_cover_path = str(getattr(record, "cover_path", "") or "").strip()
+            payload = record.to_dict()
+            soft_ref_updated = False
+            soft_ref_generated = False
+            soft_ref_fallback = False
+
+            if not is_recommendation:
+                soft_ref_updated, soft_ref_generated, soft_ref_fallback = self._repair_soft_ref_cover_for_record(payload)
+
+            if not soft_ref_updated:
+                if not is_recommendation and self._is_local_import_comic_id(normalized_id):
+                    cover_updated, _ = self._repair_local_import_cover_for_record(payload)
+                    downloaded = False
+                else:
+                    from protocol.platform_service import get_platform_service
+
+                    platform_service = get_platform_service()
+                    downloaded, cover_updated = self._sync_cover_for_record(payload, platform_service)
+            else:
+                downloaded = soft_ref_generated
+                cover_updated = True
+
+            after_cover_path = str(payload.get("cover_path") or "").strip()
+            changed = after_cover_path != before_cover_path
+            if changed:
+                record.cover_path = after_cover_path
+                if not repo.save(record):
+                    return ServiceResult.error("封面修复结果保存失败")
+
+            return ServiceResult.ok(
+                {
+                    "comic_id": normalized_id,
+                    "source": "preview" if is_recommendation else "local",
+                    "cover_path": after_cover_path,
+                    "previous_cover_path": before_cover_path,
+                    "downloaded_cover": bool(downloaded),
+                    "updated_cover_path": bool(changed or cover_updated),
+                    "changed": bool(changed),
+                    "soft_ref_generated_cover": bool(soft_ref_generated),
+                    "soft_ref_fallback_cover": bool(soft_ref_fallback),
+                },
+                "封面修复完成" if changed or cover_updated else "封面无需修复",
+            )
+        except Exception as e:
+            error_logger.error(f"Repair single comic cover failed: {normalized_id}, source={source_key}, {e}")
+            return ServiceResult.error("封面修复失败")
+
     @staticmethod
     def _strip_bracket_segments(raw_title: str) -> str:
         text = str(raw_title or "")

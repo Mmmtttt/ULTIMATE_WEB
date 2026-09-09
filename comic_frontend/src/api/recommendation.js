@@ -308,6 +308,13 @@ export const recommendationApi = {
       source: 'preview'
     }, longRunningRequestOptions)
   },
+
+  repairCover: (recommendationId) => {
+    return request.post('/v1/comic/cover/repair', {
+      comic_id: recommendationId,
+      source: 'preview'
+    }, longRunningRequestOptions)
+  },
   
   /**
    * 获取缓存图片

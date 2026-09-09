@@ -553,6 +553,15 @@ export const useComicStore = defineStore('comic', () => {
     }
   }
 
+  async function repairCover(id, source = 'local') {
+    const response = await comicApi.repairCover(id, source)
+    if (response.code === 200) {
+      cacheStore.clearCache('detail', id)
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
   async function download(id, title = '') {
     return comicApi.download(id, title)
   }
@@ -713,6 +722,7 @@ export const useComicStore = defineStore('comic', () => {
     editComic,
     refreshLocalMetadata,
     download,
+    repairCover,
     checkUpdate,
     downloadUpdate,
     moveToTrash,

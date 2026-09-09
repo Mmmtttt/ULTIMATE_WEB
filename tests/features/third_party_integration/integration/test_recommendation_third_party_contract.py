@@ -237,3 +237,51 @@ def test_unified_comic_update_endpoint_dispatches_preview_source(third_party_cli
     assert payload["msg"] == "preview checked"
     assert payload["data"]["recommendation_id"] == "JM777001"
     assert captured == ["JM777001"]
+
+
+@pytest.mark.integration
+def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard the single-comic cover repair API source dispatch for local and preview libraries.
+    - Steps:
+      1. Mock `comic_service.repair_single_cover`.
+      2. Call `/api/v1/comic/cover/repair` once without source and once with `source=preview`.
+    - Expected:
+      1. Local call defaults to `source=local`.
+      2. Preview call preserves `source=preview`.
+    """
+    client = third_party_client["client"]
+    comic_api = importlib.import_module("api.v1.comic")
+    captured = []
+
+    def fake_repair_single_cover(comic_id, *, source="local"):
+        captured.append((comic_id, source))
+        return _ok_result({
+            "comic_id": comic_id,
+            "source": source,
+            "cover_path": f"/static/cover/JM/{comic_id}.jpg",
+            "changed": True,
+        }, "cover repaired")
+
+    monkeypatch.setattr(comic_api.comic_service, "repair_single_cover", fake_repair_single_cover)
+
+    local_response = client.post(
+        "/api/v1/comic/cover/repair",
+        json={"comic_id": "JM777003"},
+    )
+    preview_response = client.post(
+        "/api/v1/comic/cover/repair",
+        json={"comic_id": "JM777004", "source": "preview"},
+    )
+
+    local_payload = local_response.get_json()
+    preview_payload = preview_response.get_json()
+
+    assert local_response.status_code == 200
+    assert preview_response.status_code == 200
+    assert local_payload["code"] == 200
+    assert preview_payload["code"] == 200
+    assert local_payload["data"]["source"] == "local"
+    assert preview_payload["data"]["source"] == "preview"
+    assert captured == [("JM777003", "local"), ("JM777004", "preview")]

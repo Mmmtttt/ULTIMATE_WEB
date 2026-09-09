@@ -483,6 +483,7 @@ const downloadLoading = ref(false)
 const subscribing = ref(false)
 const isSubscribed = ref(false)
 const refreshingLocalMetadata = ref(false)
+const repairCoverLoading = ref(false)
 
 const isThirdPartyMode = computed(() => {
   return Boolean(route.query.platform)
@@ -503,13 +504,14 @@ const editForm = ref({
 const actions = computed(() => {
   const menuActions = [
     { name: '下载漫画', value: 'download' },
-    { name: '检查更新', value: 'check_update' }
+    { name: '检查更新', value: 'check_update' },
+    { name: '修复封面', value: 'repair_cover', loading: repairCoverLoading.value }
   ]
   menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
   return menuActions
 })
 const coverUrl = computed(() => {
-  return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
+  return comic.value ? buildCoverUrl(comic.value.cover_url || comic.value.cover_path) : ''
 })
 
 const progressPercent = computed(() => {
@@ -893,6 +895,8 @@ function onActionSelect(action) {
     handleDownload()
   } else if (action.value === 'check_update') {
     handleCheckAndDownloadUpdate()
+  } else if (action.value === 'repair_cover') {
+    handleRepairCover()
   } else if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {
@@ -903,6 +907,37 @@ function onActionSelect(action) {
 function openListManager() {
   selectedListIds.value = [...(comic.value?.list_ids || [])]
   showListPopup.value = true
+}
+
+async function handleRepairCover() {
+  if (!comic.value?.id || repairCoverLoading.value) return
+
+  try {
+    await showConfirmDialog({
+      title: '修复封面',
+      message: '将只修复当前漫画的封面，可能会联网重新下载封面或从本地第一页生成封面，是否继续？'
+    })
+  } catch (error) {
+    if (error === 'cancel') return
+    showFailToast(error?.message || '修复封面失败')
+    return
+  }
+
+  repairCoverLoading.value = true
+  try {
+    const response = await comicStore.repairCover(comic.value.id)
+    if (response.code !== 200) {
+      showFailToast(response.msg || '修复封面失败')
+      return
+    }
+    await fetchComicDetail()
+    showSuccessToast(response.msg || '封面修复完成')
+  } catch (error) {
+    console.error('修复封面失败:', error)
+    showFailToast(error?.message || '修复封面失败')
+  } finally {
+    repairCoverLoading.value = false
+  }
 }
 
 async function openAddTagPopup() {

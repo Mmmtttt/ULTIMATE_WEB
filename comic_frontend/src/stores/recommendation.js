@@ -531,6 +531,15 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     return recommendationApi.downloadUpdate(recommendationId, force)
   }
 
+  async function repairCover(recommendationId) {
+    const response = await recommendationApi.repairCover(recommendationId)
+    if (response.code === 200) {
+      cacheStore.clearRecommendationDetailCache(recommendationId)
+      cacheStore.clearCache('list')
+    }
+    return response
+  }
+
   /**
    * 清除排序
    */
@@ -650,6 +659,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     downloadToCache,
     checkUpdate,
     downloadUpdate,
+    repairCover,
     searchRecommendations,
     filterByTags,
     filterMulti,

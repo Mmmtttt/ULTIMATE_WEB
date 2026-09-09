@@ -285,6 +285,13 @@ export const comicApi = {
     })
   },
 
+  repairCover: (comicId, source = 'local') => {
+    return request.post('/v1/comic/cover/repair', {
+      comic_id: comicId,
+      source
+    }, updateDownloadRequestOptions)
+  },
+
   /**
    * 检查漫画是否有可下载更新
    * @param {string} comicId - 漫画ID
