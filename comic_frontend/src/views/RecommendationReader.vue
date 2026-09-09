@@ -1371,11 +1371,8 @@ const loadImages = async () => {
     isCached.value = initialStatus.isCached
 
     if (initialStatus.cachedPages.length > 0) {
-      const shouldResumePartialCache =
+      const hasPartialCache =
         declaredTotalPage.value > 0 && initialStatus.cachedPages.length < declaredTotalPage.value
-      if (shouldResumePartialCache) {
-        startCacheDownloadToCompletion()
-      }
       let initialPage = clampPage(desiredPage, totalPage.value)
       if (desiredPage > totalPage.value) {
         deferredRestorePage.value = desiredPage
@@ -1383,9 +1380,9 @@ const loadImages = async () => {
       }
       await bootstrapReaderAtPage(initialPage, restoreSession)
       loading.value = false
-      if (!shouldResumePartialCache) {
-        downloadProgress.value = ''
-      }
+      downloadProgress.value = hasPartialCache
+        ? `缓存不完整：已缓存 ${initialStatus.cachedPages.length}/${declaredTotalPage.value} 页，可在详情页点击检查更新补齐`
+        : ''
       void tryApplyDeferredRestorePage()
       return
     }

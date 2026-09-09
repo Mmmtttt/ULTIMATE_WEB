@@ -4,6 +4,10 @@
 import request from './request'
 import { triggerBlobDownload } from '@/runtime/browser'
 
+const updateDownloadRequestOptions = {
+  timeout: 0
+}
+
 /**
  * 列出服务端目录下的文件夹/文件
  * @param {string} path - 目录路径（空字符串则返回驱动器列表）
@@ -304,7 +308,7 @@ export const comicApi = {
       comic_id: comicId,
       force,
       source
-    })
+    }, updateDownloadRequestOptions)
   },
   
   batchDownload: async (comicIds) => {

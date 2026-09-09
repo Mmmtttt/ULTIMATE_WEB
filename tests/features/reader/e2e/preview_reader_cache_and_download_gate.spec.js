@@ -11,6 +11,7 @@ const {
 const BACKEND_BASE_URL = process.env.E2E_BACKEND_BASE_URL || "http://127.0.0.1:5010";
 const CACHED_RECOMMENDATION_ID = "JM910001";
 const UNCACHED_RECOMMENDATION_ID = "JM910002";
+const PARTIAL_CACHE_RECOMMENDATION_ID = "JM910006";
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgN6QHdwAAAAASUVORK5CYII=",
   "base64",
@@ -224,6 +225,49 @@ test("preview reader uses cached pages and skips full download call", async ({
         item.url.includes(`recommendation_id=${CACHED_RECOMMENDATION_ID}`),
     ),
   ).toBeTruthy();
+  expect(
+    hasApiCall(
+      apiRequests,
+      (item) =>
+        item.method === "POST" &&
+        item.url.includes("/api/v1/recommendation/cache/download"),
+    ),
+  ).toBeFalsy();
+});
+
+/**
+ * 用例描述:
+ * - 用例目的: 看护“预览阅读页命中部分缓存”分支，确保缺页续下必须由详情页检查更新手动触发。
+ * - 测试步骤:
+ *   1. 新增 total_page=5 的预览漫画，并只写入 3 页缓存图片。
+ *   2. 打开 /recommendation-reader/{id}?page=2。
+ *   3. 校验阅读页可直接显示已缓存页，并提示缓存不完整。
+ *   4. 校验请求链路不触发 /api/v1/recommendation/cache/download。
+ * - 预期结果:
+ *   1. 阅读页直接可读，当前可读页码为 2/3。
+ *   2. 页面提示缓存不完整。
+ *   3. 不自动续下、不触发整本下载。
+ * - 历史变更:
+ *   - 2026-09-09: 将部分缓存续下调整为详情页检查更新手动触发。
+ */
+test("preview reader shows partial cache without auto resume download", async ({
+  page,
+  request,
+}) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
+  const runtimeDataDir = await getRuntimeDataDir(request);
+  await addRecommendation(request, PARTIAL_CACHE_RECOMMENDATION_ID, "Reader Gate Partial Cache", 5);
+  await seedRecommendationCache(runtimeDataDir, PARTIAL_CACHE_RECOMMENDATION_ID, 3);
+
+  const apiRequests = startApiRequestRecorder(page);
+  await openReaderAndShowMenu(
+    page,
+    `/recommendation-reader/${PARTIAL_CACHE_RECOMMENDATION_ID}?page=2`,
+  );
+  await waitPageIndicator(page, "2/3");
+
+  await expect(page.locator(".download-progress-inline")).toContainText("缓存不完整");
+
   expect(
     hasApiCall(
       apiRequests,
