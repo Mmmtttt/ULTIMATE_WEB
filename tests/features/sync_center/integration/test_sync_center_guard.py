@@ -846,6 +846,37 @@ def test_sync_api_guards_return_expected_codes(single_sync_runtime):
 
 
 @pytest.mark.integration
+def test_android_pairing_uses_observed_ip_and_reported_backend_port(single_sync_runtime):
+    base_url = single_sync_runtime["base_url"]
+    invite_data = _request_ok(
+        "POST",
+        f"{base_url}/api/v1/sync/pairing/invite",
+        json_body={"ttl_minutes": 10},
+        timeout=10,
+    )
+
+    claim_data = _request_ok(
+        "POST",
+        f"{base_url}/api/v1/sync/pairing/claim",
+        json_body={
+            "pairing_code": invite_data["pairing_code"],
+            "requester_device_id": "android_phone",
+            "requester_device_name": "Android Phone",
+            "requester_base_url": "https://localhost",
+            "requester_runtime": "android",
+            "requester_backend_port": 6123,
+        },
+        timeout=10,
+    )
+    assert claim_data.get("peer_id")
+
+    peers = _request_ok("GET", f"{base_url}/api/v1/sync/peers", timeout=10)
+    android_peer = next((peer for peer in peers if peer.get("peer_id") == "android_phone"), None)
+    assert android_peer is not None
+    assert android_peer.get("remote_base_url") == "http://127.0.0.1:6123"
+
+
+@pytest.mark.integration
 def test_directional_push_task_flow_syncs_data_and_assets(dual_sync_runtime):
     """
     用例描述:

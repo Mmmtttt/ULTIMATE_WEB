@@ -78,6 +78,11 @@ export function resolveBackendOrigin() {
   return ''
 }
 
+export function resolveBackendPort() {
+  const port = Number.parseInt(import.meta.env.VITE_BACKEND_PORT || 5000, 10)
+  return Number.isFinite(port) ? port : 5000
+}
+
 export function resolveBackendUrl(path) {
   if (!path) return path
 

@@ -18,7 +18,7 @@
       <van-cell title="连接设备" label="输入远程前端入口地址和配对码" />
       <van-field v-model.trim="connectForm.remoteBaseUrl" label="远程入口" placeholder="https://192.168.1.88:5173" />
       <van-field v-model.trim="connectForm.pairingCode" label="配对码" placeholder="6位配对码" />
-      <van-cell title="本机入口" :value="autoRequesterBaseUrl || '自动检测失败'" label="从当前页面地址自动检测" />
+      <van-cell title="本机入口" :value="requesterEndpointLabel" :label="requesterEndpointHint" />
       <div class="group-actions">
         <van-button type="primary" block round :loading="connectingPeer" @click="connectPeer">
           连接
@@ -298,7 +298,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { syncApi, transferApi } from '@/api'
-import { resolveBackendOrigin } from '@/runtime/endpoint'
+import { resolveBackendOrigin, resolveBackendPort } from '@/runtime/endpoint'
 import { useAuthStore } from '@/stores/auth'
 import { useListStore } from '@/stores/list'
 
@@ -343,6 +343,8 @@ const connectForm = reactive({
 })
 
 const autoRequesterBaseUrl = ref('')
+const requesterRuntime = detectRequesterRuntime()
+const requesterBackendPort = resolveBackendPort()
 
 const listScopePopupStyle = computed(() => {
   if (!isDesktopListScopePopup.value) {
@@ -374,6 +376,26 @@ const filteredListScopeOptions = computed(() => {
     return bTotal - aTotal
   })
 })
+
+const requesterEndpointLabel = computed(() => {
+  if (requesterRuntime === 'android') {
+    return `接收端自动识别:${requesterBackendPort}`
+  }
+  return autoRequesterBaseUrl.value || '自动检测失败'
+})
+
+const requesterEndpointHint = computed(() => (
+  requesterRuntime === 'android'
+    ? '安卓使用真实连接地址'
+    : '从当前页面地址自动检测'
+))
+
+function detectRequesterRuntime() {
+  if (typeof window !== 'undefined' && window.Capacitor?.getPlatform?.() === 'android') {
+    return 'android'
+  }
+  return 'web'
+}
 
 function resolveAutoRequesterBaseUrl() {
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
@@ -637,6 +659,8 @@ async function createInvite() {
     const res = await syncApi.createPairingInvite({
       ttl_minutes: Number(inviteTtlMinutes.value || 10),
       requester_base_url: requesterBaseUrl,
+      requester_runtime: requesterRuntime,
+      requester_backend_port: requesterBackendPort,
       requester_space_mode: currentSyncSpaceMode()
     })
     inviteInfo.value = res.data
@@ -664,7 +688,7 @@ async function connectPeer() {
     'pairingCode =', connectForm.pairingCode,
     'requesterBaseUrl =', requesterBaseUrl
   )
-  if (!requesterBaseUrl) {
+  if (requesterRuntime !== 'android' && !requesterBaseUrl) {
     showFailToast('无法自动检测本机地址')
     return
   }
@@ -674,12 +698,14 @@ async function connectPeer() {
     const res = await syncApi.connectPairing({
       remote_base_url: connectForm.remoteBaseUrl,
       pairing_code: connectForm.pairingCode,
-      requester_base_url: requesterBaseUrl,
+      requester_base_url: requesterRuntime === 'android' ? '' : requesterBaseUrl,
+      requester_runtime: requesterRuntime,
+      requester_backend_port: requesterBackendPort,
       remote_space_mode: currentSyncSpaceMode(),
       requester_space_mode: currentSyncSpaceMode()
     })
     console.log('[SyncCenter] connectPeer success:', res.data)
-    appendLog(`已连接设备: ${res?.data?.peer_id || '-'}, 本机=${requesterBaseUrl}`)
+    appendLog(`已连接设备: ${res?.data?.peer_id || '-'}, 本机=${requesterEndpointLabel.value}`)
     showSuccessToast('设备已连接')
     connectForm.pairingCode = ''
     await loadPeers()
