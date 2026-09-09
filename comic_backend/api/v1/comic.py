@@ -2106,12 +2106,8 @@ def import_async():
             content_type = raw_content_type
         else:
             content_type = _resolve_manifest_content_type(manifest)
-        if content_type == 'video':
-            comic_id = data.get('video_id') or data.get('comic_id')
-            comic_ids = data.get('video_ids') or data.get('comic_ids')
-        else:
-            comic_id = data.get('comic_id')
-            comic_ids = data.get('comic_ids')
+        item_id = data.get('item_id')
+        item_ids = data.get('item_ids')
         keyword = data.get('keyword')
         platform_list_id = data.get('platform_list_id')
         platform_list_name = data.get('platform_list_name', '')
@@ -2122,9 +2118,15 @@ def import_async():
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
+
+        if import_type == 'by_id' and not str(item_id or '').strip():
+            return error_response(400, "缺少内容ID: item_id")
+
+        if import_type == 'by_list' and not item_ids:
+            return error_response(400, "缺少内容ID列表: item_ids")
         
-        if content_type == 'comic' and import_type == 'by_id' and comic_id:
-            full_comic_id = _build_prefixed_id(host_prefix, comic_id)
+        if content_type == 'comic' and import_type == 'by_id' and item_id:
+            full_comic_id = _build_prefixed_id(host_prefix, item_id)
             
             db_data = _get_comic_document_repository(target != 'home').read_document()
             comics_key = 'comics' if target == 'home' else 'recommendations'
@@ -2137,11 +2139,11 @@ def import_async():
         if import_type == 'by_platform_list':
             if not platform_list_id:
                 return error_response(400, "缺少平台清单ID: platform_list_id")
-            comic_id = str(platform_list_id).strip()
+            item_id = str(platform_list_id).strip()
             keyword = str(platform_list_name or '').strip()
-            comic_ids = None
+            item_ids = None
             extra_data = {
-                "platform_list_id": comic_id,
+                "platform_list_id": item_id,
                 "platform_list_name": keyword,
                 "source": str(source or 'local').strip().lower() or 'local',
             }
@@ -2152,9 +2154,9 @@ def import_async():
             platform=platform_name,
             import_type=import_type,
             target=target,
-            comic_id=comic_id,
+            comic_id=item_id,
             keyword=keyword,
-            comic_ids=comic_ids,
+            comic_ids=item_ids,
             content_type=content_type,
             extra_data=extra_data
         )

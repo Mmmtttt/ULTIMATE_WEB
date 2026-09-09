@@ -326,12 +326,12 @@ async function confirmImport(target) {
     })
 
     let taskCount = 0
-    for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+    for (const [platform, itemIds] of Object.entries(itemsByPlatform)) {
       const params = {
         import_type: 'by_list',
         target,
         platform: isVideoMode.value ? String(platform).toUpperCase() : platform,
-        comic_ids: comicIds,
+        item_ids: itemIds,
         content_type: isVideoMode.value ? 'video' : 'comic'
       }
       const created = await importTaskStore.createImportTask(params)

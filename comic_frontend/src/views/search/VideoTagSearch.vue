@@ -660,7 +660,6 @@ async function confirmImport(target) {
   }
 
   const itemsByPlatform = {}
-  const idFieldName = isVideoMode.value ? 'video_ids' : 'comic_ids'
   const contentType = isVideoMode.value ? 'video' : 'comic'
   selectedItems.forEach(item => {
     const platform = String(resolveImportPlatform(item) || selectedPlatform.value || '').trim().toUpperCase()
@@ -678,7 +677,7 @@ async function confirmImport(target) {
       import_type: 'by_list',
       target,
       platform,
-      [idFieldName]: itemIds,
+      item_ids: itemIds,
       content_type: contentType
     })
     if (created) {

@@ -12,7 +12,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  * - 预期结果:
  *   1. 至少发生两次 search-by-tags 请求，页码分别为 1 和 2。
  *   2. 结果卡片从 1 条追加为 2 条。
- *   3. import 请求包含 video_id=JVID-2、target=recommendation、platform=javdb。
+ *   3. import 请求包含 item_ids=[JVID-2]、target=recommendation、platform=javdb。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，覆盖标签搜索分页与推荐库导入前端契约。
  */
@@ -182,7 +182,7 @@ test("video tag search load more forwards page and imports to recommendation", a
     platform: "JAVDB",
     content_type: "video",
   });
-  expect(importTaskBodies[0].video_ids).toEqual(["JVID-2"]);
+  expect(importTaskBodies[0].item_ids).toEqual(["JVID-2"]);
 
   expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();

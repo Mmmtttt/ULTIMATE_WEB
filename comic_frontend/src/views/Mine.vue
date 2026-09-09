@@ -397,14 +397,14 @@ async function handleComicImport() {
     target: importTarget.value,
     platform: String(importPlatform.value || '').trim().toUpperCase(),
     content_type: 'comic',
-    comic_id: normalizeImportId(importId.value, importPlatform.value)
+    item_id: normalizeImportId(importId.value, importPlatform.value)
   }
 
   if (!params.platform) {
     throw new Error('当前模式暂无可用平台')
   }
 
-  if (importType.value === 'by_id' && !params.comic_id) {
+  if (importType.value === 'by_id' && !params.item_id) {
     throw new Error('请输入漫画ID')
   }
 
@@ -413,8 +413,8 @@ async function handleComicImport() {
     if (comicIds.length === 0) {
       throw new Error('文件中没有可导入的ID')
     }
-    params.comic_ids = comicIds
-    params.comic_id = ''
+    params.item_ids = comicIds
+    params.item_id = ''
   } else if (importType.value !== 'by_id') {
     throw new Error('当前模式不支持该导入方式')
   }
@@ -440,7 +440,7 @@ async function handleVideoImport() {
       import_type: 'by_id',
       target,
       platform: defaultPlatform,
-      comic_id: videoCode,
+      item_id: videoCode,
       content_type: 'video'
     })
     if (!created) {
@@ -459,7 +459,7 @@ async function handleVideoImport() {
       import_type: 'by_list',
       target,
       platform: defaultPlatform,
-      comic_ids: videoCodes,
+      item_ids: videoCodes,
       content_type: 'video'
     })
     if (!created) {

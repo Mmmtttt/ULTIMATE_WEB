@@ -10,7 +10,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  *   4. 断言 search-by-tags 与 import 请求参数，以及前端结果渲染。
  * - 预期结果:
  *   1. search-by-tags 请求携带重复 tag_ids 和 page=1。
- *   2. import 请求 body 正确包含 video_id/target/platform。
+ *   2. import 请求 body 正确包含 item_ids/target/platform。
  *   3. 页面显示搜索结果卡片并可完成导入动作。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，覆盖前端到第三方后端接口关键契约。
@@ -176,7 +176,7 @@ test("video tag search forwards third-party query and import contracts", async (
     platform: "JAVDB",
     content_type: "video",
   });
-  expect(importTaskBodies[0].video_ids).toEqual(["JVID-1"]);
+  expect(importTaskBodies[0].item_ids).toEqual(["JVID-1"]);
 
   expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();

@@ -685,7 +685,7 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     - 测试步骤:
       1. mock task_manager.create_task 记录参数并返回固定 task_id。
       2. 调用 POST /api/v1/comic/import/async(import_type=by_list)。
-      3. 校验 create_task 收到 comic_ids/target/platform 等参数。
+      3. 校验 create_task 收到统一 item_ids 对应的任务参数。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
       2. 返回 task_id 与 mock 一致。
@@ -729,7 +729,7 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
             "import_type": "by_list",
             "target": "recommendation",
             "platform": "PK",
-            "comic_ids": ["5566", "7788", "9911"],
+            "item_ids": ["5566", "7788", "9911"],
         },
     )
     payload = response.get_json()
@@ -750,28 +750,28 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     ("payload", "expected"),
     [
         (
-            {"import_type": "by_id", "target": "home", "platform": "JM", "comic_id": "M900101"},
-            {"platform": "JM", "content_type": "comic", "comic_id": "M900101", "keyword": None, "comic_ids": None, "extra_data": {}},
+            {"import_type": "by_id", "target": "home", "platform": "JM", "item_id": "M900101"},
+            {"platform": "JM", "content_type": "comic", "task_item_id": "M900101", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {"import_type": "by_search", "target": "home", "platform": "PK", "keyword": "idol"},
-            {"platform": "PK", "content_type": "comic", "comic_id": None, "keyword": "idol", "comic_ids": None, "extra_data": {}},
+            {"platform": "PK", "content_type": "comic", "task_item_id": None, "keyword": "idol", "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_list", "target": "recommendation", "platform": "PK", "comic_ids": ["5566", "7788"]},
-            {"platform": "PK", "content_type": "comic", "comic_id": None, "keyword": None, "comic_ids": ["5566", "7788"], "extra_data": {}},
+            {"import_type": "by_list", "target": "recommendation", "platform": "PK", "item_ids": ["5566", "7788"]},
+            {"platform": "PK", "content_type": "comic", "task_item_id": None, "keyword": None, "task_item_ids": ["5566", "7788"], "extra_data": {}},
         ),
         (
-            {"import_type": "by_id", "target": "home", "platform": "JAVDB", "comic_id": "JVID-101"},
-            {"platform": "JAVDB", "content_type": "video", "comic_id": "JVID-101", "keyword": None, "comic_ids": None, "extra_data": {}},
+            {"import_type": "by_id", "target": "home", "platform": "JAVDB", "item_id": "JVID-101"},
+            {"platform": "JAVDB", "content_type": "video", "task_item_id": "JVID-101", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {"import_type": "by_search", "target": "recommendation", "platform": "JAVBUS", "keyword": "mina"},
-            {"platform": "JAVBUS", "content_type": "video", "comic_id": None, "keyword": "mina", "comic_ids": None, "extra_data": {}},
+            {"platform": "JAVBUS", "content_type": "video", "task_item_id": None, "keyword": "mina", "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_list", "target": "home", "platform": "JAVDB", "comic_ids": ["JVID-1", "JVID-2"]},
-            {"platform": "JAVDB", "content_type": "video", "comic_id": None, "keyword": None, "comic_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
+            {"import_type": "by_list", "target": "home", "platform": "JAVDB", "item_ids": ["JVID-1", "JVID-2"]},
+            {"platform": "JAVDB", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
         ),
         (
             {
@@ -779,9 +779,9 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
                 "target": "recommendation",
                 "platform": "JAVDB",
                 "content_type": "video",
-                "video_ids": ["stars_256"],
+                "item_ids": ["stars_256"],
             },
-            {"platform": "JAVDB", "content_type": "video", "comic_id": None, "keyword": None, "comic_ids": ["stars_256"], "extra_data": {}},
+            {"platform": "JAVDB", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["stars_256"], "extra_data": {}},
         ),
         (
             {
@@ -789,9 +789,9 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
                 "target": "recommendation",
                 "platform": "JAVDB",
                 "content_type": "video",
-                "video_id": "JVID-3",
+                "item_id": "JVID-3",
             },
-            {"platform": "JAVDB", "content_type": "video", "comic_id": "JVID-3", "keyword": None, "comic_ids": None, "extra_data": {}},
+            {"platform": "JAVDB", "content_type": "video", "task_item_id": "JVID-3", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {
@@ -805,9 +805,9 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
             {
                 "platform": "JM",
                 "content_type": "comic",
-                "comic_id": "favorites",
+                "task_item_id": "favorites",
                 "keyword": "MyFav",
-                "comic_ids": None,
+                "task_item_ids": None,
                 "extra_data": {"platform_list_id": "favorites", "platform_list_name": "MyFav", "source": "preview"},
             },
         ),
@@ -823,9 +823,9 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
             {
                 "platform": "JAVDB",
                 "content_type": "video",
-                "comic_id": "remote-list-88",
+                "task_item_id": "remote-list-88",
                 "keyword": "Remote 88",
-                "comic_ids": None,
+                "task_item_ids": None,
                 "extra_data": {"platform_list_id": "remote-list-88", "platform_list_name": "Remote 88", "source": "local"},
             },
         ),
@@ -841,8 +841,8 @@ def test_comic_import_async_matrix_covers_video_and_comic_flows(third_party_clie
       3. Assert every flow creates task and forwards normalized payload contract.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. `create_task` receives normalized `platform/content_type` and corresponding params.
-      3. `by_platform_list` maps list fields to `comic_id/keyword/extra_data`.
+      2. The external contract uses `item_id/item_ids` for item imports.
+      3. `by_platform_list` maps list fields to task item id/keyword/extra_data.
     """
     client = third_party_client["client"]
     task_manager_module = importlib.import_module("infrastructure.task_manager")
@@ -885,10 +885,41 @@ def test_comic_import_async_matrix_covers_video_and_comic_flows(third_party_clie
     assert captured["import_type"] == payload["import_type"]
     assert captured["target"] == payload["target"]
     assert captured["content_type"] == expected["content_type"]
-    assert captured["comic_id"] == expected["comic_id"]
+    assert captured["comic_id"] == expected["task_item_id"]
     assert captured["keyword"] == expected["keyword"]
-    assert captured["comic_ids"] == expected["comic_ids"]
+    assert captured["comic_ids"] == expected["task_item_ids"]
     assert captured["extra_data"] == expected["extra_data"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"import_type": "by_id", "target": "home", "platform": "JM", "comic_id": "M900101"},
+        {"import_type": "by_id", "target": "home", "platform": "JAVDB", "video_id": "JVID-101"},
+        {"import_type": "by_list", "target": "home", "platform": "JAVDB", "video_ids": ["JVID-1"]},
+        {"import_type": "by_list", "target": "home", "platform": "PK", "comic_ids": ["5566"]},
+    ],
+)
+def test_comic_import_async_rejects_content_specific_id_fields(third_party_client, payload):
+    """
+    Case Description:
+    - Purpose: Guard the async-import API boundary from regressing to content-specific id fields.
+    - Steps:
+      1. Call `POST /api/v1/comic/import/async` with legacy `comic_*` or `video_*` item fields.
+      2. Assert the route rejects the payload instead of silently normalizing it.
+    - Expected:
+      1. Business `code=400` under the current JSON response envelope.
+      2. The error asks callers to use `item_id/item_ids`.
+    """
+    client = third_party_client["client"]
+
+    response = client.post("/api/v1/comic/import/async", json=payload)
+    result = response.get_json()
+
+    assert response.status_code == 200
+    assert result["code"] == 400
+    assert "item_" in result["msg"]
 
 
 @pytest.mark.integration
