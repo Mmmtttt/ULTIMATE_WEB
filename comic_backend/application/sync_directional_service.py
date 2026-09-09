@@ -570,7 +570,7 @@ class DirectionalSyncService:
             "space_mode": self._current_space_mode(),
         }
 
-    def claim_invite(self, payload: Dict[str, Any], requester_ip: str = "") -> Optional[Dict[str, Any]]:
+    def claim_invite(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         code = str(payload.get("pairing_code", "")).strip()
         if not code:
             return None
@@ -582,11 +582,7 @@ class DirectionalSyncService:
 
         requester_id = str(payload.get("requester_device_id", "")).strip() or f"peer_{uuid.uuid4().hex[:12]}"
         requester_name = str(payload.get("requester_device_name", "")).strip() or "Unknown Device"
-        requester_runtime = str(payload.get("requester_runtime", "")).strip().lower()
-        if requester_runtime == "android":
-            requester_url = self._android_requester_url(requester_ip, payload.get("requester_backend_port"))
-        else:
-            requester_url = self._normalize_url(str(payload.get("requester_base_url", "")).strip())
+        requester_url = self._normalize_url(str(payload.get("requester_base_url", "")).strip())
         requester_space_mode = self._normalize_space_mode(payload.get("requester_space_mode"), self._current_space_mode())
         now_iso = _iso(_utc_now())
         token = secrets.token_urlsafe(32)
@@ -638,8 +634,6 @@ class DirectionalSyncService:
             "requester_device_id": store["device"]["device_id"],
             "requester_device_name": store["device"]["device_name"],
             "requester_base_url": requester_url,
-            "requester_runtime": str(payload.get("requester_runtime", "")).strip().lower(),
-            "requester_backend_port": payload.get("requester_backend_port"),
             "requester_space_mode": local_space_mode,
         }
         result = self._request_json(
@@ -2987,21 +2981,6 @@ class DirectionalSyncService:
         if not value.startswith("http://") and not value.startswith("https://"):
             value = f"http://{value}"
         return value.rstrip("/")
-
-    @staticmethod
-    def _android_requester_url(requester_ip: str, requester_backend_port: Any) -> str:
-        host = str(requester_ip or "").strip()
-        if not host:
-            return ""
-        try:
-            port = int(requester_backend_port or 5035)
-        except Exception:
-            port = 5035
-        if port <= 0 or port > 65535:
-            port = 5035
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        return f"http://{host}:{port}"
 
     @staticmethod
     def _normalize_space_mode(value: Any, default: str = SPACE_MODE_PRIVATE) -> str:

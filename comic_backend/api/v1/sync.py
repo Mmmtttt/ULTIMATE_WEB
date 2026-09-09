@@ -155,7 +155,7 @@ def claim_pairing_invite():
             f"[sync] claim_pairing_invite requested: code={code!r} "
             f"remote_base_url={remote_base_url!r}"
         )
-        result = directional_service.claim_invite(payload, requester_ip=request.remote_addr)
+        result = directional_service.claim_invite(payload)
         if not result:
             logger.warning(f"[sync] claim_pairing_invite failed: code {code!r} invalid or expired")
             return error_response(404, "pairing code invalid or expired")
