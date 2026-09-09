@@ -673,7 +673,9 @@ async function handleCheckAndDownloadUpdate() {
 
     await showConfirmDialog({
       title: '发现更新',
-      message: `检测到远程页数 ${remotePages} 大于当前 ${localPages}，是否立即下载更新到预览缓存？`
+      message: checkData.update_reason === 'missing_cached_pages'
+        ? `当前预览缓存不完整，已缓存 ${localPages}/${checkData.expected_cached_page_count || remotePages} 页，是否立即继续补齐？`
+        : `检测到远程页数 ${remotePages} 大于当前 ${localPages}，是否立即下载更新到预览缓存？`
     })
 
     const downloadResponse = await recommendationStore.downloadUpdate(recommendation.value.id)

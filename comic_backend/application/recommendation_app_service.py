@@ -508,15 +508,29 @@ class RecommendationAppService:
 
             db_total_page = normalize_total_page(recommendation.total_page, default=0)
             cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            cached_page_count = len(cached_pages)
+            expected_cached_pages = max(db_total_page, remote_total_page)
+            missing_cached_pages = (
+                expected_cached_pages > 0
+                and cached_page_count > 0
+                and cached_page_count < expected_cached_pages
+            )
+            payload = build_update_check_payload(
+                content_id=recommendation_id,
+                id_key="recommendation_id",
+                db_total_page=db_total_page,
+                known_page_count=cached_page_count,
+                remote_total_page=remote_total_page,
+                known_page_key="cached_page_count",
+            )
+            if missing_cached_pages:
+                payload["has_update"] = True
+                payload["update_reason"] = "missing_cached_pages"
+                payload["expected_cached_page_count"] = expected_cached_pages
+                payload["missing_cached_page_count"] = expected_cached_pages - cached_page_count
+
             return ServiceResult.ok(
-                build_update_check_payload(
-                    content_id=recommendation_id,
-                    id_key="recommendation_id",
-                    db_total_page=db_total_page,
-                    known_page_count=len(cached_pages),
-                    remote_total_page=remote_total_page,
-                    known_page_key="cached_page_count",
-                ),
+                payload,
                 "推荐漫画更新检查完成",
             )
         except RuntimeError as e:
@@ -579,6 +593,7 @@ class RecommendationAppService:
                 return ServiceResult.error("下载成功但缓存目录识别失败，请重试")
 
             remote_meta = platform_service.get_album_by_id(platform_key, original_id)
+            remote_total_page = extract_remote_total_page(remote_meta)
             old_total_page = normalize_total_page(recommendation.total_page, default=0)
             changed_fields = apply_remote_album_metadata(
                 recommendation,
@@ -586,8 +601,19 @@ class RecommendationAppService:
                 include_preview_pages=True,
             )
             local_page_count = len(cached_pages)
-            if local_page_count > 0 and normalize_total_page(recommendation.total_page) != local_page_count:
-                recommendation.total_page = local_page_count
+            expected_page_count = max(
+                normalize_total_page(check_data.get("remote_total_page"), default=0),
+                remote_total_page,
+                old_total_page,
+            )
+            if expected_page_count > 0 and local_page_count < expected_page_count:
+                return ServiceResult.error(
+                    f"缓存仍不完整，当前 {local_page_count}/{expected_page_count} 页，请重试"
+                )
+
+            next_total_page = max(local_page_count, remote_total_page, old_total_page)
+            if next_total_page > 0 and normalize_total_page(recommendation.total_page) != next_total_page:
+                recommendation.total_page = next_total_page
                 recommendation.current_page = min(max(1, recommendation.current_page), local_page_count)
                 if "total_page" not in changed_fields:
                     changed_fields.append("total_page")
@@ -603,7 +629,7 @@ class RecommendationAppService:
                 "had_update": bool(check_data.get("has_update")),
                 "old_total_page": old_total_page,
                 "cached_page_count": local_page_count,
-                "remote_total_page": extract_remote_total_page(remote_meta),
+                "remote_total_page": remote_total_page,
                 "changed_fields": changed_fields,
             }, "推荐漫画更新完成")
         except RuntimeError as e:

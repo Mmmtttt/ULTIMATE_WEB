@@ -5,6 +5,10 @@
 import request from './request'
 import { toBackendApiUrl } from '@/utils/url'
 
+const longRunningRequestOptions = {
+  timeout: 0
+}
+
 export const recommendationApi = {
   /**
    * 获取推荐漫画列表
@@ -272,7 +276,11 @@ export const recommendationApi = {
    * @returns {Promise}
    */
   downloadToCache: (recommendationId) => {
-    return request.post('/v1/recommendation/cache/download', { recommendation_id: recommendationId })
+    return request.post(
+      '/v1/recommendation/cache/download',
+      { recommendation_id: recommendationId },
+      longRunningRequestOptions
+    )
   },
 
   /**
@@ -298,7 +306,7 @@ export const recommendationApi = {
       comic_id: recommendationId,
       force,
       source: 'preview'
-    })
+    }, longRunningRequestOptions)
   },
   
   /**

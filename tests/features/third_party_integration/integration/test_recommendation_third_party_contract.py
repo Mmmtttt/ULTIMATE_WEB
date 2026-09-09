@@ -31,6 +31,11 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
     monkeypatch.setattr(
         recommendation_api.recommendation_service,
+        "get_recommendation_detail",
+        lambda rid: _ok_result({"id": rid, "total_page": 6, "title": "Rec-000001"}),
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
         "_get_platform_service",
         lambda: (_ for _ in ()).throw(RuntimeError("third-party integration is disabled in current runtime profile: full")),
     )
@@ -91,7 +96,7 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     monkeypatch.setattr(
         recommendation_api.recommendation_cache_manager,
         "get_cached_pages",
-        lambda _rid: [1, 2, 3, 4],
+        lambda _rid: [1, 2, 3, 4, 5, 6],
     )
 
     class FakePlatformService:
@@ -117,8 +122,8 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["status"] == "downloaded"
-    assert payload["data"]["total_pages"] == 4
-    assert payload["data"]["cached_pages"] == [1, 2, 3, 4]
+    assert payload["data"]["total_pages"] == 6
+    assert payload["data"]["cached_pages"] == [1, 2, 3, 4, 5, 6]
 
     assert len(captured["download"]) == 1
     assert captured["download"][0]["platform"] == "JM"
@@ -127,8 +132,72 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     assert "/recommendation_cache/comic/JM" in captured["download"][0]["download_dir"].replace("\\", "/")
 
     # First add uses third-party reported local page count, second add uses actual cached page count.
+    assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 6)]
+    assert captured["update_total_page"] == [(recommendation_id, 6)]
+
+
+@pytest.mark.integration
+def test_recommendation_cache_download_rejects_partial_cache_success(third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard partial preview cache recovery. If the backend knows the album has more
+      pages than the cache currently exposes, the download API must not report success or shrink metadata.
+    - Steps:
+      1. Mock recommendation detail with total_page=6.
+      2. Mock platform download as successful but cache manager only exposes 4 pages.
+      3. Call recommendation cache download API.
+    - Expected:
+      1. HTTP 200 with business `code=500`.
+      2. `update_total_page` is not called with the incomplete page count.
+      3. The partial cache index can still be refreshed for a later retry.
+    """
+    client = third_party_client["client"]
+    recommendation_api = importlib.import_module("api.v1.recommendation")
+    platform_service_module = importlib.import_module("third_party.platform_service")
+    captured = {"add_to_cache": [], "update_total_page": []}
+    recommendation_id = "JM777002"
+
+    monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
+    monkeypatch.setattr(recommendation_api.recommendation_service, "_get_platform_service", lambda: object())
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
+        "get_recommendation_detail",
+        lambda rid: _ok_result({"id": rid, "total_page": 6, "title": "Rec-777002"}),
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
+        "update_total_page",
+        lambda rid, total_page: captured["update_total_page"].append((rid, total_page))
+        or _ok_result({"id": rid, "total_page": total_page}),
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_cache_manager,
+        "add_to_cache",
+        lambda rid, page_count: captured["add_to_cache"].append((rid, page_count)) or True,
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_cache_manager,
+        "get_cached_pages",
+        lambda _rid: [1, 2, 3, 4],
+    )
+
+    class FakePlatformService:
+        def download_album(self, platform, original_id, download_dir=None, show_progress=True):
+            return {"local_pages": 6, "pages_count": 6}, True
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    response = client.post(
+        "/api/v1/recommendation/cache/download",
+        json={"recommendation_id": recommendation_id},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 500
+    assert "缓存仍不完整" in payload["msg"]
     assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 4)]
-    assert captured["update_total_page"] == [(recommendation_id, 4)]
+    assert captured["update_total_page"] == []
 
 
 @pytest.mark.integration

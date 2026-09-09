@@ -5,6 +5,7 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 import copy
@@ -104,6 +105,7 @@ class DirectionalSyncService:
     TASK_MAX_KEEP = 50
     _TASK_LOCK = threading.Lock()
     _TASKS: Dict[str, Dict[str, Any]] = {}
+    _TASK_TIMINGS: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self) -> None:
         os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
@@ -153,6 +155,87 @@ class DirectionalSyncService:
         )
         thread.start()
         return self.get_directional_task(task_id) or task
+
+    def _start_task_timing(self, task_id: str, label: str) -> None:
+        now = time.perf_counter()
+        with self._TASK_LOCK:
+            self._TASK_TIMINGS[task_id] = {
+                "label": str(label or "sync"),
+                "started_at": now,
+                "stage": "starting",
+                "stage_started_at": now,
+            }
+        app_logger.info(f"[sync][timing] task={task_id} label={label} started")
+
+    def _record_task_stage_timing(
+        self,
+        task_id: str,
+        stage: str,
+        progress: int,
+        message: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        next_stage = str(stage or "").strip() or "unknown"
+        now = time.perf_counter()
+        log_payload: Optional[Dict[str, Any]] = None
+        with self._TASK_LOCK:
+            timing = self._TASK_TIMINGS.get(task_id)
+            if not isinstance(timing, dict):
+                return
+            current_stage = str(timing.get("stage") or "")
+            if current_stage == next_stage:
+                return
+            stage_started = float(timing.get("stage_started_at") or now)
+            timing["stage"] = next_stage
+            timing["stage_started_at"] = now
+            log_payload = {
+                "label": timing.get("label") or "sync",
+                "stage": current_stage or "starting",
+                "duration_ms": (now - stage_started) * 1000.0,
+            }
+
+        details = ""
+        if isinstance(extra, dict) and extra:
+            compact = {
+                key: extra.get(key)
+                for key in (
+                    "record_count",
+                    "dataset_count",
+                    "file_count",
+                    "total_bytes",
+                    "downloaded_bytes",
+                    "known_file_count",
+                    "remote_file_count",
+                    "applied_files",
+                    "total_files",
+                    "pending_content_count",
+                )
+                if key in extra
+            }
+            if compact:
+                details = f" extra={compact}"
+        app_logger.info(
+            "[sync][timing] "
+            f"task={task_id} label={log_payload['label']} stage={log_payload['stage']} "
+            f"duration_ms={log_payload['duration_ms']:.1f} "
+            f"next_stage={next_stage} progress={int(progress or 0)} "
+            f"message={str(message or '').strip()!r}{details}"
+        )
+
+    def _finish_task_timing(self, task_id: str, status: str) -> None:
+        now = time.perf_counter()
+        with self._TASK_LOCK:
+            timing = self._TASK_TIMINGS.pop(task_id, None)
+        if not isinstance(timing, dict):
+            return
+        stage_started = float(timing.get("stage_started_at") or now)
+        started = float(timing.get("started_at") or now)
+        app_logger.info(
+            "[sync][timing] "
+            f"task={task_id} label={timing.get('label') or 'sync'} "
+            f"stage={timing.get('stage') or 'unknown'} duration_ms={(now - stage_started) * 1000.0:.1f} "
+            f"total_ms={(now - started) * 1000.0:.1f} status={status}"
+        )
 
     def start_directional_task(self, peer_id: str, direction: str) -> Dict[str, Any]:
         direction_key = str(direction or "").strip().lower()
@@ -220,8 +303,10 @@ class DirectionalSyncService:
             message=f"{direction} started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, f"directional:{direction}")
 
         def _progress_cb(progress: int, stage: str, message: str = "", extra: Optional[Dict[str, Any]] = None) -> None:
+            self._record_task_stage_timing(task_id, stage, progress, message, extra)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -246,6 +331,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] directional task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -260,6 +346,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _execute_list_scope_push_task(self, task_id: str) -> None:
         task = self.get_directional_task(task_id)
@@ -279,11 +366,13 @@ class DirectionalSyncService:
             message="list scope push started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, "list_scope:push")
 
         def _progress_cb(progress: int, stage: str, message: str = "", payload_extra: Optional[Dict[str, Any]] = None) -> None:
             merged_extra = dict(extra or {})
             if isinstance(payload_extra, dict):
                 merged_extra.update(payload_extra)
+            self._record_task_stage_timing(task_id, stage, progress, message, merged_extra)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -304,6 +393,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] list scope push task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -318,6 +408,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _execute_list_scope_pull_task(self, task_id: str) -> None:
         task = self.get_directional_task(task_id)
@@ -337,8 +428,10 @@ class DirectionalSyncService:
             message="list scope pull started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, "list_scope:pull")
 
         def _progress_cb(progress: int, stage: str, message: str = "", extra_payload: Optional[Dict[str, Any]] = None) -> None:
+            self._record_task_stage_timing(task_id, stage, progress, message, extra_payload)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -359,6 +452,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] list scope pull task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -373,6 +467,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _update_directional_task(
         self,

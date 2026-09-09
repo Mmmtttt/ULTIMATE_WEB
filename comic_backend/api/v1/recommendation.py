@@ -477,30 +477,35 @@ def download_to_cache():
                 "cached_pages": page_numbers
             })
         
+        result = recommendation_service.get_recommendation_detail(recommendation_id)
+        if not result.success:
+            return error_response(404, result.message)
+
+        detail = result.data
+        total_page = normalize_total_page(detail.get('total_page', 0))
+
         if recommendation_cache_manager.is_cached(recommendation_id):
             cache_info = recommendation_cache_manager.get_cache_info(recommendation_id)
             cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
-            if cached_pages:
-                recommendation_service.update_total_page(recommendation_id, len(cached_pages))
-            app_logger.info(f"漫画已在缓存中: {recommendation_id}")
-            return success_response({
-                "status": "cached",
-                "message": "漫画已在缓存中",
-                "cache_info": cache_info,
-                "cached_pages": cached_pages
-            })
+            cached_count = len(cached_pages)
+            if total_page <= 0 or cached_count >= total_page:
+                if cached_pages:
+                    recommendation_service.update_total_page(recommendation_id, cached_count)
+                app_logger.info(f"漫画已在缓存中: {recommendation_id}")
+                return success_response({
+                    "status": "cached",
+                    "message": "漫画已在缓存中",
+                    "cache_info": cache_info,
+                    "cached_pages": cached_pages
+                })
+            app_logger.warning(
+                f"推荐漫画缓存不完整，继续补齐: {recommendation_id}, cached={cached_count}, expected={total_page}"
+            )
 
         try:
             recommendation_service._get_platform_service()
         except RuntimeError:
             return third_party_unavailable_response(error_response)
-        
-        result = recommendation_service.get_recommendation_detail(recommendation_id)
-        if not result.success:
-            return error_response(404, result.message)
-        
-        detail = result.data
-        total_page = normalize_total_page(detail.get('total_page', 0))
         
         platform_key, original_id, manifest = split_prefixed_id(recommendation_id, media_type="comic")
         if not original_id:
@@ -543,6 +548,14 @@ def download_to_cache():
                     return error_response(500, "下载成功但缓存目录识别失败，请重试")
 
                 local_pages = len(actual_cached_pages)
+                if total_page > 0 and local_pages < total_page:
+                    recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+                    error_logger.error(
+                        f"下载成功但推荐漫画缓存仍不完整: {recommendation_id}, "
+                        f"cached={local_pages}, expected={total_page}"
+                    )
+                    return error_response(500, f"缓存仍不完整，当前 {local_pages}/{total_page} 页，请重试")
+
                 recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
                 recommendation_service.update_total_page(recommendation_id, local_pages)
                 total_page = local_pages

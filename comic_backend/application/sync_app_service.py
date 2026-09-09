@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import threading
+import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ from core.constants import (
     VIDEO_JSON_FILE,
     VIDEO_RECOMMENDATION_JSON_FILE,
 )
+from infrastructure.logger import app_logger
 
 
 def _utc_now() -> datetime:
@@ -60,6 +62,7 @@ class SyncAppService:
         os.makedirs(self.EXPORT_ROOT_DIR, exist_ok=True)
 
     def create_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        started_at = time.perf_counter()
         with self._STORE_LOCK:
             state = self._load_store()
             self._cleanup_expired(state)
@@ -82,6 +85,11 @@ class SyncAppService:
                 export_dir=export_dir,
                 client_media_dirs=client_media_dirs,
                 options=package_options,
+            )
+            app_logger.info(
+                "[sync][timing] "
+                f"session={session_id} stage=build_packages duration_ms={(time.perf_counter() - started_at) * 1000.0:.1f} "
+                f"package_count={len(packages)}"
             )
 
             session = {
@@ -108,6 +116,10 @@ class SyncAppService:
 
             state["sessions"][session_id] = session
             self._save_store(state)
+            app_logger.info(
+                "[sync][timing] "
+                f"session={session_id} stage=create_session total_ms={(time.perf_counter() - started_at) * 1000.0:.1f}"
+            )
             return session
 
     def get_manifest(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -459,6 +471,7 @@ class SyncAppService:
         source_dirs: int = 0,
         allow_empty: bool = False,
     ) -> Dict[str, Any]:
+        started_at = time.perf_counter()
         package_path = os.path.join(export_dir, package_file)
         unique_paths = self._dedup_paths(source_paths)
         if unique_paths or allow_empty:
@@ -467,6 +480,12 @@ class SyncAppService:
         size_bytes = os.path.getsize(package_path) if os.path.isfile(package_path) else 0
         checksum = self._sha256_file(package_path) if os.path.isfile(package_path) else ""
         source_count = len(unique_paths)
+        app_logger.info(
+            "[sync][timing] "
+            f"session={session_id} package={package_file} kind={package_type} "
+            f"source_count={source_count} source_dirs={int(source_dirs)} size_bytes={size_bytes} "
+            f"duration_ms={(time.perf_counter() - started_at) * 1000.0:.1f}"
+        )
         return {
             "id": package_id,
             "name": package_file,

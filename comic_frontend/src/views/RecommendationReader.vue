@@ -590,6 +590,75 @@ const waitForFirstCachedPage = async (timeoutMs = 30000) => {
   return []
 }
 
+const startCacheDownloadToCompletion = () => {
+  activeDownloadInProgress.value = true
+  updateDownloadProgressText(
+    cachedPageSet.value.size,
+    declaredTotalPage.value || cachedPageSet.value.size,
+    true
+  )
+  clearCacheStatusPolling()
+  cacheStatusPollTimer = setInterval(() => {
+    void refreshCacheStatus().then((status) => {
+      isCached.value = status.isCached
+      updateDownloadProgressText(
+        status.cachedPages.length,
+        declaredTotalPage.value || status.cachedPages.length,
+        activeDownloadInProgress.value
+      )
+      if (!loading.value && totalPage.value > 0) {
+        preloadImages(clampPage(currentPage.value, totalPage.value))
+        void tryApplyDeferredRestorePage()
+      }
+    })
+  }, 650)
+
+  const downloadPromise = recommendationApi.downloadToCache(recommendationId.value)
+  void downloadPromise
+    .then(async (result) => {
+      if (result.code !== 200) {
+        throw new Error(result.msg || 'download to cache failed')
+      }
+      const fallbackTotal = normalizePageCount(result.data?.total_pages || declaredTotalPage.value)
+      declaredTotalPage.value = Math.max(declaredTotalPage.value, fallbackTotal)
+      activeDownloadInProgress.value = false
+      const latestStatus = await refreshCacheStatus()
+      isCached.value = latestStatus.isCached
+      updateDownloadProgressText(
+        latestStatus.cachedPages.length,
+        declaredTotalPage.value || latestStatus.cachedPages.length,
+        false
+      )
+      clearCacheStatusPolling()
+      if (!loading.value && totalPage.value > 0) {
+        preloadImages(clampPage(currentPage.value, totalPage.value))
+        await tryApplyDeferredRestorePage()
+      }
+    })
+    .catch(async (downloadError) => {
+      activeDownloadInProgress.value = false
+      clearCacheStatusPolling()
+      const latestStatus = await refreshCacheStatus()
+      isCached.value = latestStatus.isCached
+
+      if (latestStatus.cachedPages.length === 0 && loading.value) {
+        error.value = true
+        loading.value = false
+        downloadProgress.value = ''
+      } else if (!loading.value && latestStatus.cachedPages.length > 0) {
+        downloadProgress.value = '下载失败，已显示已缓存页面'
+        setTimeout(() => {
+          if (!activeDownloadInProgress.value) {
+            downloadProgress.value = ''
+          }
+        }, 2400)
+      }
+      console.error('下载漫画到缓存失败:', downloadError)
+    })
+
+  return downloadPromise
+}
+
 const resetZoomState = () => {
   clearPanInertia()
   syncScrollFromZoomState()
@@ -1302,6 +1371,11 @@ const loadImages = async () => {
     isCached.value = initialStatus.isCached
 
     if (initialStatus.cachedPages.length > 0) {
+      const shouldResumePartialCache =
+        declaredTotalPage.value > 0 && initialStatus.cachedPages.length < declaredTotalPage.value
+      if (shouldResumePartialCache) {
+        startCacheDownloadToCompletion()
+      }
       let initialPage = clampPage(desiredPage, totalPage.value)
       if (desiredPage > totalPage.value) {
         deferredRestorePage.value = desiredPage
@@ -1309,71 +1383,14 @@ const loadImages = async () => {
       }
       await bootstrapReaderAtPage(initialPage, restoreSession)
       loading.value = false
-      downloadProgress.value = ''
+      if (!shouldResumePartialCache) {
+        downloadProgress.value = ''
+      }
       void tryApplyDeferredRestorePage()
       return
     }
 
-    activeDownloadInProgress.value = true
-    updateDownloadProgressText(0, declaredTotalPage.value, true)
-    clearCacheStatusPolling()
-    cacheStatusPollTimer = setInterval(() => {
-      void refreshCacheStatus().then((status) => {
-        isCached.value = status.isCached
-        updateDownloadProgressText(
-          status.cachedPages.length,
-          declaredTotalPage.value || status.cachedPages.length,
-          activeDownloadInProgress.value
-        )
-        if (!loading.value && totalPage.value > 0) {
-          preloadImages(clampPage(currentPage.value, totalPage.value))
-          void tryApplyDeferredRestorePage()
-        }
-      })
-    }, 650)
-
-    const downloadPromise = recommendationApi.downloadToCache(recommendationId.value)
-    void downloadPromise
-      .then(async (result) => {
-        if (result.code !== 200) {
-          throw new Error(result.msg || 'download to cache failed')
-        }
-        const fallbackTotal = normalizePageCount(result.data?.total_pages || declaredTotalPage.value)
-        declaredTotalPage.value = Math.max(declaredTotalPage.value, fallbackTotal)
-        activeDownloadInProgress.value = false
-        const latestStatus = await refreshCacheStatus()
-        isCached.value = latestStatus.isCached
-        updateDownloadProgressText(
-          latestStatus.cachedPages.length,
-          declaredTotalPage.value || latestStatus.cachedPages.length,
-          false
-        )
-        clearCacheStatusPolling()
-        if (!loading.value && totalPage.value > 0) {
-          preloadImages(clampPage(currentPage.value, totalPage.value))
-          await tryApplyDeferredRestorePage()
-        }
-      })
-      .catch(async (downloadError) => {
-        activeDownloadInProgress.value = false
-        clearCacheStatusPolling()
-        const latestStatus = await refreshCacheStatus()
-        isCached.value = latestStatus.isCached
-
-        if (latestStatus.cachedPages.length === 0 && loading.value) {
-          error.value = true
-          loading.value = false
-          downloadProgress.value = ''
-        } else if (!loading.value && latestStatus.cachedPages.length > 0) {
-          downloadProgress.value = '下载失败，已显示已缓存页面'
-          setTimeout(() => {
-            if (!activeDownloadInProgress.value) {
-              downloadProgress.value = ''
-            }
-          }, 2400)
-        }
-        console.error('下载漫画到缓存失败:', downloadError)
-      })
+    startCacheDownloadToCompletion()
 
     const firstCachedPages = await waitForFirstCachedPage(45000)
     if (firstCachedPages.length === 0) {
