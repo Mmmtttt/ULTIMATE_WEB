@@ -47,7 +47,7 @@
 
       <div v-else class="subscription-grid" :class="{ 'video-mode': isVideoMode }">
         <article
-          v-for="item in filteredItems"
+          v-for="item in pagedItems"
           :key="item.id"
           class="subscription-card"
           :data-testid="isVideoMode ? 'subscription-actor-card' : 'subscription-author-card'"
@@ -95,6 +95,14 @@
           </div>
         </article>
       </div>
+
+      <AppPagination
+        v-if="filteredItems.length > pageSize"
+        v-model="currentPage"
+        class="subscription-pagination"
+        :total-items="filteredItems.length"
+        :page-size="pageSize"
+      />
     </div>
 
     <!-- Add Subscription Popup -->
@@ -149,8 +157,10 @@ import { ref, computed, onMounted, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useModeStore, useActorStore, useAuthorStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import { showToast, showConfirmDialog } from 'vant'
 import { buildCoverUrl } from '@/api/image'
+import { useClientPagination } from '@/composables/useClientPagination'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -179,6 +189,14 @@ const filteredItems = computed(() => {
     item.name?.toLowerCase().includes(searchKeyword.value.toLowerCase())
   )
 })
+
+const paginationStorageKey = computed(() => `subscription_list_${isVideoMode.value ? 'video' : 'comic'}`)
+const {
+  pageSize,
+  currentPage,
+  pagedItems,
+  goFirst
+} = useClientPagination(filteredItems, paginationStorageKey)
 
 function getCoverCandidate(item) {
   const latestWork = item?.latest_work && typeof item.latest_work === 'object' ? item.latest_work : {}
@@ -419,7 +437,12 @@ async function unsubscribe(item) {
 }
 
 watch(() => modeStore.currentMode, () => {
+  goFirst()
   loadData()
+})
+
+watch(searchKeyword, () => {
+  goFirst()
 })
 
 onMounted(() => {
@@ -540,6 +563,10 @@ onMounted(() => {
 
 .subscription-grid.video-mode {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.subscription-pagination {
+  margin: 18px auto 0;
 }
 
 .subscription-card {
