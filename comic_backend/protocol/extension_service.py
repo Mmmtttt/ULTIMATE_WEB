@@ -5,9 +5,12 @@ import os
 import re
 import shutil
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 def _runtime_profile() -> str:
@@ -110,6 +113,58 @@ def _safe_extract(zip_path: Path, target_dir: Path) -> None:
         archive.extractall(target_dir)
 
 
+def _parse_github_repo_url(url: str) -> Tuple[str, str, str]:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != "github.com":
+        raise ValueError("只支持 GitHub 仓库链接")
+    parts = [urllib.parse.unquote(item) for item in parsed.path.strip("/").split("/") if item]
+    if len(parts) < 2:
+        raise ValueError("GitHub 链接缺少 owner/repo")
+    owner = parts[0]
+    repo = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
+    ref = ""
+    if len(parts) >= 4 and parts[2] == "tree":
+        ref = "/".join(parts[3:])
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner) or not re.fullmatch(r"[A-Za-z0-9_.-]+", repo):
+        raise ValueError("GitHub 仓库名称不合法")
+    return owner, repo, ref
+
+
+def _download_url_to_file(url: str, target_path: Path) -> None:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "ULTIMATE_WEB-PluginInstaller/1.0",
+            "Accept": "application/zip,application/octet-stream,*/*",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            target_path.write_bytes(response.read())
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"GitHub 下载失败: HTTP {exc.code}") from exc
+    except Exception as exc:
+        raise ValueError(f"GitHub 下载失败: {exc}") from exc
+
+
+def _resolve_github_default_branch(owner: str, repo: str) -> str:
+    api_url = f"https://api.github.com/repos/{owner}/{repo}"
+    request = urllib.request.Request(
+        api_url,
+        headers={
+            "User-Agent": "ULTIMATE_WEB-PluginInstaller/1.0",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        branch = str(payload.get("default_branch") or "").strip()
+        return branch or "main"
+    except Exception:
+        return "main"
+
+
 def _plugin_id(payload: Dict[str, Any]) -> str:
     return str((dict(payload.get("plugin") or {})).get("id") or "").strip()
 
@@ -154,16 +209,10 @@ def list_extensions() -> Dict[str, Any]:
     }
 
 
-def install_extension_zip(file_storage) -> Dict[str, Any]:
-    filename = str(getattr(file_storage, "filename", "") or "").strip()
-    if not filename.lower().endswith(".zip"):
-        raise ValueError("只支持安装 .zip 扩展包")
-
+def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
     root = _install_root(create=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=".install-", dir=str(root))).resolve()
-    zip_path = temp_dir / "package.zip"
     try:
-        file_storage.save(str(zip_path))
         extract_dir = temp_dir / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
         _safe_extract(zip_path, extract_dir)
@@ -192,5 +241,41 @@ def install_extension_zip(file_storage) -> Dict[str, Any]:
             "requires_restart": True,
             "message": "扩展安装成功，重启后生效",
         }
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def install_extension_zip(file_storage) -> Dict[str, Any]:
+    filename = str(getattr(file_storage, "filename", "") or "").strip()
+    if not filename.lower().endswith(".zip"):
+        raise ValueError("只支持安装 .zip 扩展包")
+
+    root = _install_root(create=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=".upload-", dir=str(root))).resolve()
+    try:
+        zip_path = temp_dir / "package.zip"
+        file_storage.save(str(zip_path))
+        return _install_extension_zip_path(zip_path)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def install_extension_from_github(url: str) -> Dict[str, Any]:
+    owner, repo, ref = _parse_github_repo_url(url)
+    resolved_ref = ref or _resolve_github_default_branch(owner, repo)
+    archive_url = f"https://codeload.github.com/{owner}/{repo}/zip/{urllib.parse.quote(resolved_ref, safe='/')}"
+    root = _install_root(create=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=".github-", dir=str(root))).resolve()
+    try:
+        zip_path = temp_dir / "repo.zip"
+        _download_url_to_file(archive_url, zip_path)
+        result = _install_extension_zip_path(zip_path)
+        result["source"] = {
+            "type": "github",
+            "owner": owner,
+            "repo": repo,
+            "ref": resolved_ref,
+        }
+        return result
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

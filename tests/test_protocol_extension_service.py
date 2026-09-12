@@ -105,3 +105,30 @@ def test_install_extension_zip_rejects_path_traversal(monkeypatch, tmp_path):
         assert "不安全路径" in str(exc)
     else:
         raise AssertionError("unsafe zip member should be rejected")
+
+
+def test_install_extension_from_github_downloads_repo_zip(monkeypatch, tmp_path):
+    service = _load_extension_service()
+    install_root = tmp_path / "plugins"
+    dep_manifest = tmp_path / "dependency_pool_manifest.json"
+    dep_manifest.write_text(json.dumps({"requirement_names": []}), encoding="utf-8")
+    monkeypatch.setenv("ULTIMATE_USER_PLUGIN_ROOT", str(install_root))
+    monkeypatch.setenv("ULTIMATE_PLUGIN_DEP_MANIFEST", str(dep_manifest))
+    monkeypatch.setenv("BACKEND_RUNTIME_PROFILE", "full")
+    monkeypatch.setattr(service, "_resolve_github_default_branch", lambda owner, repo: "main")
+
+    downloaded_urls = []
+
+    def fake_download(url: str, target_path: Path) -> None:
+        downloaded_urls.append(url)
+        target_path.write_bytes(_plugin_zip("comic.github"))
+
+    monkeypatch.setattr(service, "_download_url_to_file", fake_download)
+
+    result = service.install_extension_from_github("https://github.com/example/demo-plugin")
+
+    assert result["plugin_id"] == "comic.github"
+    assert result["source"]["owner"] == "example"
+    assert result["source"]["repo"] == "demo-plugin"
+    assert downloaded_urls == ["https://codeload.github.com/example/demo-plugin/zip/main"]
+    assert (install_root / "comic.github" / "ultimate-plugin.json").exists()

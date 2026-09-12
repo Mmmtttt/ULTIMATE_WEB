@@ -457,6 +457,15 @@ comic-example.zip
 
 如果扩展包声明了当前安装包没有预置的依赖，安装会被拒绝。需要新增依赖时，应先更新插件 manifest，再重新打包主程序依赖池。
 
+也可以在第三方配置页输入公开 GitHub 仓库链接安装扩展。仓库内容要求与 zip 扩展包完全一致：仓库内必须且只能包含一个 `ultimate-plugin.json`。支持普通仓库链接和指定分支链接，例如：
+
+```text
+https://github.com/owner/repo
+https://github.com/owner/repo/tree/main
+```
+
+当前实现不处理私有仓库授权，也不会在安装扩展时动态安装新 pip 依赖；依赖仍必须由主程序包的通用依赖池预置。
+
 ## 9. 新增插件流程
 
 1. 创建独立插件目录和 `ultimate-plugin.json`。

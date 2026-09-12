@@ -465,6 +465,12 @@ export const comicApi = {
       timeout: 0
     })
   },
+
+  installThirdPartyExtensionFromGithub: (url) => {
+    return request.post('/v1/comic/third-party/extensions/install-github', { url }, {
+      timeout: 0
+    })
+  },
   
   // ==================== 回收站相关 ====================
   

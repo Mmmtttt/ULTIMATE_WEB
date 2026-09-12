@@ -3156,7 +3156,9 @@ def prepare_desktop_release_bundle(
             plugins_dir / "README.md",
             "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
         )
-        external_plugin_roots = copy_project_plugins_to_bundle(bundle_dir)
+        dependency_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
+        project_plugin_roots = copy_project_plugins_to_bundle(bundle_dir)
+        external_plugin_roots = dependency_plugin_roots + project_plugin_roots
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)

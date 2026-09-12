@@ -323,6 +323,27 @@ def install_third_party_extension():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/third-party/extensions/install-github', methods=['POST'])
+@require_third_party(error_response)
+def install_third_party_extension_from_github():
+    try:
+        data = request.json or {}
+        github_url = str(data.get('url') or '').strip()
+        if not github_url:
+            return error_response(400, "缺少 GitHub 仓库链接")
+
+        from protocol.extension_service import install_extension_from_github
+
+        result = install_extension_from_github(github_url)
+        app_logger.info(f"GitHub 第三方扩展安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"从 GitHub 安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
     try:

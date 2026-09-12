@@ -11,6 +11,18 @@
             </van-button>
           </template>
         </van-cell>
+        <van-field
+          v-model="githubExtensionUrl"
+          label="GitHub"
+          placeholder="https://github.com/owner/repo"
+          clearable
+        >
+          <template #button>
+            <van-button size="small" type="primary" :loading="installingGithubExtension" @click="installGithubExtension">
+              安装
+            </van-button>
+          </template>
+        </van-field>
         <van-cell
           v-for="item in installedExtensions"
           :key="item.plugin_id || item.directory"
@@ -114,6 +126,8 @@ const thirdPartyAdapterOrder = ref([])
 const adapterForms = ref({})
 const extensionFileInput = ref(null)
 const installingExtension = ref(false)
+const installingGithubExtension = ref(false)
+const githubExtensionUrl = ref('')
 const extensionState = ref({ installed: [] })
 
 const installedExtensions = computed(() => {
@@ -210,6 +224,29 @@ async function installSelectedExtension(event) {
     if (event?.target) {
       event.target.value = ''
     }
+  }
+}
+
+async function installGithubExtension() {
+  const url = githubExtensionUrl.value.trim()
+  if (!url) {
+    showFailToast('请输入 GitHub 仓库链接')
+    return
+  }
+  installingGithubExtension.value = true
+  try {
+    const response = await comicApi.installThirdPartyExtensionFromGithub(url)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      githubExtensionUrl.value = ''
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    installingGithubExtension.value = false
   }
 }
 

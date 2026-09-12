@@ -394,6 +394,9 @@ def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_s
         assert (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
         assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
         assert (bundle_dir / "plugins" / "README.md").exists()
+        dep_manifest = bundle_dir / "runtime_deps" / "dependency_pool_manifest.json"
+        assert dep_manifest.exists()
+        assert "commonx>=0.6.38" in dep_manifest.read_text(encoding="utf-8")
         readme_text = (bundle_dir / "README.md").read_text(encoding="utf-8")
         assert "plugin package mode: `bundled`" in readme_text
         assert "additional protocol plugin directories" in (bundle_dir / "plugins" / "README.md").read_text(encoding="utf-8")
