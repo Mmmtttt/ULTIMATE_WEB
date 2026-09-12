@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         "--plugin-package-mode",
         choices=("external", "bundled"),
         default="external",
-        help="Desktop plugin packaging mode passed to package_unified.py.",
+        help="Plugin packaging mode. external keeps plugins as installable extensions; bundled integrates supported plugins.",
     )
     parser.add_argument(
         "--app-version",
@@ -91,6 +91,8 @@ def main() -> int:
         args.packagers_config,
         "--plugin-package-mode",
         args.plugin_package_mode,
+        "--android-third-party-mode",
+        "external" if args.plugin_package_mode == "external" else "supported",
     ]
     if str(args.third_party_excludes or "").strip():
         package_cmd.extend(["--third-party-excludes", str(args.third_party_excludes).strip()])

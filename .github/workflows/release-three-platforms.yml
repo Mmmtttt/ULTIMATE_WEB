@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       plugin_package_mode:
-        description: "Desktop plugin packaging mode. bundled is easier for users; external keeps default plugins outside the executable."
+        description: "Third-party packaging mode. bundled integrates supported plugins; external keeps plugins as installable extensions."
         required: false
         type: choice
         default: bundled

@@ -4497,6 +4497,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get(PLUGIN_PACKAGE_EXCLUDES_ENV, os.environ.get("THIRD_PARTY_PACKAGE_EXCLUDES", "")),
         help="Comma-separated third_party directory names excluded from packaged plugins and mobile protocol snapshots.",
     )
+    parser.add_argument(
+        "--android-third-party-mode",
+        default=os.environ.get("ULTIMATE_ANDROID_THIRD_PARTY_MODE", ""),
+        choices=("",) + ANDROID_THIRD_PARTY_MODES,
+        help="Override Android third-party packaging mode. Empty keeps build/packagers.json.",
+    )
     parser.add_argument("--execute", action="store_true", help="Execute packaging commands when possible.")
     return parser.parse_args()
 
@@ -4512,6 +4518,7 @@ def main() -> int:
     selected_targets = select_targets(available_targets, args.targets)
     plugin_package_mode = normalize_plugin_package_mode(args.plugin_package_mode)
     third_party_excludes = ",".join(normalize_third_party_exclude_names(args.third_party_excludes))
+    android_third_party_mode_override = str(args.android_third_party_mode or "").strip().lower()
     os.environ[PLUGIN_PACKAGE_EXCLUDES_ENV] = third_party_excludes
 
     packagers = packagers_cfg.get("packagers", {})
@@ -4522,6 +4529,8 @@ def main() -> int:
     print(f"[package] staged root: {staged_root}")
     print(f"[package] output root: {output_root}")
     print(f"[package] plugin package mode: {plugin_package_mode}")
+    if android_third_party_mode_override:
+        print(f"[package] android third-party mode override: {android_third_party_mode_override}")
     print(f"[package] third-party excludes: {third_party_excludes or '(none)'}")
 
     results: List[PackageResult] = []
@@ -4542,6 +4551,9 @@ def main() -> int:
             continue
 
         packager_cfg = packagers.get(target, {})
+        if target == "android" and android_third_party_mode_override:
+            packager_cfg = dict(packager_cfg or {})
+            packager_cfg["android_backend_third_party_mode"] = android_third_party_mode_override
         packager_type = str(packager_cfg.get("type", "")).strip().lower()
         if packager_type == "pyinstaller":
             result = package_pyinstaller(
