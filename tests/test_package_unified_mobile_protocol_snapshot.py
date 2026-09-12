@@ -795,6 +795,12 @@ def test_ensure_android_project_chaquopy_app_external_mode_keeps_plugins_out_of_
         assert "comic.external.android" not in snapshot_text
         assert 'install("external-extra==1.0")' in gradle_text
         assert "external-extra==1.0" in dep_manifest_text
+        assert "flask==2.3.0" in dep_manifest_text
+        dep_manifest = json.loads(dep_manifest_text)
+        assert "flask" in dep_manifest["requirement_names"]
+        assert "external-extra" in dep_manifest["requirement_names"]
+        assert "EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON" in bootstrap_text
+        assert "_materialize_dependency_pool_manifest" in bootstrap_text
         assert "user_root" in bootstrap_text
         assert "ULTIMATE_USER_PLUGIN_ROOT" in bootstrap_text
         assert "ULTIMATE_PLUGIN_DEP_MANIFEST" in bootstrap_text

@@ -55,14 +55,14 @@ def _manifest_requirements(payload: Dict[str, Any]) -> List[str]:
     return []
 
 
-def _load_dependency_pool_names() -> set[str]:
+def _load_dependency_pool_names() -> set[str] | None:
     manifest_path = _dependency_manifest_path()
     if manifest_path is None:
-        return set()
+        return None
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:
-        return set()
+        return None
     names = payload.get("requirement_names")
     if isinstance(names, list):
         return {str(item or "").strip().lower().replace("_", "-") for item in names if str(item or "").strip()}
@@ -75,6 +75,8 @@ def _validate_dependency_pool(payload: Dict[str, Any]) -> None:
     if not required:
         return
     available = _load_dependency_pool_names()
+    if available is None:
+        raise ValueError("扩展依赖池清单不可用，请确认安装包为最新 external 构建并重启应用")
     missing = sorted(required - available)
     if missing:
         raise ValueError("扩展依赖未被当前安装包预置: " + ", ".join(missing))

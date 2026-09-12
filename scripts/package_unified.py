@@ -1973,6 +1973,7 @@ public class MainActivity extends BridgeActivity {{
         platform_key="android",
         dependency_root="chaquopy",
     )
+    dependency_pool_payload = load_json(protocol_dir / "plugin_dependency_pool_manifest.json")
     third_party_root = source_backend_dir / "third_party"
     snapshot_plugin_ids = None
     android_third_party_mode = normalize_android_third_party_mode(packager_cfg)
@@ -1988,6 +1989,12 @@ public class MainActivity extends BridgeActivity {{
     write_text(snapshot_path, json.dumps(snapshot_payload, ensure_ascii=False, indent=2) + "\n")
     embedded_snapshot_json = json.dumps(
         snapshot_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    embedded_dependency_pool_json = json.dumps(
+        dependency_pool_payload,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -2020,6 +2027,7 @@ _started = False
 _lock = threading.Lock()
 BOOTSTRAP_BUILD_ID = "__BOOTSTRAP_BUILD_ID__"
 EMBEDDED_PROTOCOL_SNAPSHOT_JSON = __EMBEDDED_SNAPSHOT_JSON__
+EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON = __EMBEDDED_DEPENDENCY_POOL_JSON__
 
 
 def _write_boot_log(files_dir, message):
@@ -2069,6 +2077,54 @@ def _load_embedded_protocol_snapshot_payload():
     except Exception:
         pass
     return {}
+
+
+def _load_embedded_dependency_pool_payload():
+    try:
+        raw = str(EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON or "").strip()
+        if not raw:
+            return {}
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _materialize_dependency_pool_manifest(files_dir, internal_exec_dir=""):
+    try:
+        payload = _load_embedded_dependency_pool_payload()
+        requirements = payload.get("requirements") or []
+        target_root = (
+            str(internal_exec_dir or "").strip()
+            or str(files_dir or "").strip()
+            or os.path.abspath(os.path.dirname(__file__))
+        )
+        protocol_dir = os.path.join(target_root, "protocol_runtime")
+        os.makedirs(protocol_dir, exist_ok=True)
+        manifest_path = os.path.join(protocol_dir, "plugin_dependency_pool_manifest.json")
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\\n"
+        should_write = True
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as existing_fp:
+                    should_write = existing_fp.read() != serialized
+            except Exception:
+                should_write = True
+        if should_write:
+            with open(manifest_path, "w", encoding="utf-8") as fp:
+                fp.write(serialized)
+        os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = manifest_path
+        _write_boot_log(
+            files_dir,
+            f"plugin dependency pool materialized path={manifest_path!r} requirement_count={len(requirements)} "
+            f"target_root={target_root!r}",
+        )
+        return manifest_path
+    except Exception as ex:
+        _write_boot_log(files_dir, f"plugin dependency pool materialize failed: {ex!r}")
+        return ""
 
 
 def _materialize_protocol_snapshot(files_dir, internal_exec_dir=""):
@@ -2269,9 +2325,12 @@ def _configure_android_plugin_roots(files_dir):
             os.environ["BACKEND_PLUGIN_ROOTS"] = joined
         if os.path.isdir(user_root):
             os.environ["ULTIMATE_USER_PLUGIN_ROOT"] = user_root
-        dep_manifest = os.path.join(module_dir, "protocol", "plugin_dependency_pool_manifest.json")
-        if os.path.isfile(dep_manifest):
-            os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = dep_manifest
+        dep_manifest = str(os.environ.get("ULTIMATE_PLUGIN_DEP_MANIFEST") or "").strip()
+        if not dep_manifest:
+            candidate_dep_manifest = os.path.join(module_dir, "protocol", "plugin_dependency_pool_manifest.json")
+            if os.path.isfile(candidate_dep_manifest):
+                os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = candidate_dep_manifest
+                dep_manifest = candidate_dep_manifest
 
         try:
             entries = sorted(os.listdir(packaged_root))[:20] if os.path.isdir(packaged_root) else []
@@ -2285,7 +2344,7 @@ def _configure_android_plugin_roots(files_dir):
             f"imported_root={imported_root!r} import_error={import_error!r} "
             f"exists={os.path.exists(packaged_root)} is_dir={os.path.isdir(packaged_root)} "
             f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r} "
-            f"dep_manifest={os.environ.get('ULTIMATE_PLUGIN_DEP_MANIFEST', '')!r}",
+            f"dep_manifest={dep_manifest!r}",
         )
     except Exception as ex:
         _write_boot_log(files_dir, f"android plugin root config failed: {ex!r}")
@@ -2307,6 +2366,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="f
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
     os.environ["ULTIMATE_PROTOCOL_BOOT_LOG"] = os.path.join(str(files_dir or "").strip() or ".", "ultimate_backend_boot.log")
+    _materialize_dependency_pool_manifest(files_dir, internal_exec_dir=internal_exec_dir)
     _configure_android_plugin_roots(files_dir)
     snapshot_path = _materialize_protocol_snapshot(files_dir, internal_exec_dir=internal_exec_dir)
     if os.path.isfile(snapshot_path):
@@ -2356,6 +2416,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="f
     py_source = py_source.replace("__APP_VERSION__", normalize_app_version(app_version) or DEFAULT_APP_VERSION)
     py_source = py_source.replace("__SNAPSHOT_FILENAME__", MOBILE_PROTOCOL_SNAPSHOT_FILENAME)
     py_source = py_source.replace("__EMBEDDED_SNAPSHOT_JSON__", repr(embedded_snapshot_json))
+    py_source = py_source.replace("__EMBEDDED_DEPENDENCY_POOL_JSON__", repr(embedded_dependency_pool_json))
     write_text(py_bootstrap, py_source)
 
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
