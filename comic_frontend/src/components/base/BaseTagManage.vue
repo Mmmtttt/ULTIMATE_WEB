@@ -1,5 +1,5 @@
 <template>
-  <div class="base-tag-manage">
+  <div class="base-tag-manage manage-page-shell">
     <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
         <button type="button" class="nav-add-button" @click="showAddPopup = true">

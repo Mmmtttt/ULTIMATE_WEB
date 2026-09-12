@@ -107,7 +107,7 @@
 
 <script setup>
 import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { showFailToast } from 'vant'
 import { imageApi } from '@/api'
 import { useModeStore, useRandomFeedStore } from '@/stores'
@@ -120,6 +120,10 @@ const modeStore = useModeStore()
 const randomFeedStore = useRandomFeedStore()
 const VIEW_STATE_KEY = 'random_feed_view_state_v1'
 
+defineOptions({
+  name: 'RandomFeed'
+})
+
 const feedScroller = ref(null)
 const activeIndex = ref(0)
 const refreshing = ref(false)
@@ -129,6 +133,7 @@ const controlIndex = ref(0)
 const scrollerHeight = ref(0)
 const restoringViewState = ref(false)
 const suppressScrollSync = ref(false)
+const navigatingAway = ref(false)
 const layoutAnchorIndex = ref(null)
 const preloadCache = new Set()
 let releaseScrollSyncRaf = 0
@@ -298,6 +303,7 @@ function saveViewState() {
       activeIndex: activeIndex.value,
       controlIndex: controlIndex.value,
       controlsVisible: controlsVisible.value,
+      scrollTop: Number(scroller.scrollTop) || 0,
       updatedAt: Date.now()
     }
     window.sessionStorage.setItem(VIEW_STATE_KEY, JSON.stringify(payload))
@@ -328,7 +334,10 @@ async function applyStoredViewState() {
 
   const scroller = feedScroller.value
   if (!scroller) return true
-  const targetTop = nextActive * getCardHeight()
+  const storedScrollTop = Number(state.scrollTop)
+  const targetTop = Number.isFinite(storedScrollTop) && storedScrollTop >= 0
+    ? storedScrollTop
+    : nextActive * getCardHeight()
   const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
   scroller.scrollTop = Math.min(maxTop, Math.max(0, targetTop))
   updateActiveIndexByScroll()
@@ -475,6 +484,7 @@ function goToDetail(item = currentItem.value) {
     return
   }
   saveViewState()
+  navigatingAway.value = true
   router.push({
     name: target.detail_route_name,
     params: { id: target.detail_id }
@@ -482,6 +492,7 @@ function goToDetail(item = currentItem.value) {
 }
 
 function handleScroll() {
+  if (navigatingAway.value) return
   if (suppressScrollSync.value) return
   updateActiveIndexByScroll()
   saveViewState()
@@ -673,7 +684,9 @@ watch(
     if (index >= items.value.length - 4) {
       await loadMore()
     }
-    saveViewState()
+    if (!navigatingAway.value) {
+      saveViewState()
+    }
   }
 )
 
@@ -703,8 +716,12 @@ onMounted(async () => {
   restoringViewState.value = false
 })
 
-onUnmounted(() => {
+onBeforeRouteLeave(() => {
   saveViewState()
+  navigatingAway.value = true
+})
+
+onUnmounted(() => {
   if (releaseScrollSyncRaf && typeof window !== 'undefined') {
     window.cancelAnimationFrame(releaseScrollSyncRaf)
     releaseScrollSyncRaf = 0
@@ -715,6 +732,7 @@ onUnmounted(() => {
 })
 
 onActivated(async () => {
+  navigatingAway.value = false
   await nextTick()
   updateScrollerHeight()
   if (hasStoredViewStateForMode(modeKey.value)) {

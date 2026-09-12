@@ -1,19 +1,20 @@
 <template>
   <div class="mine-page">
     <div class="stats-overview">
-      <van-grid :column-num="statsColumnNum" :border="false">
-        <van-grid-item icon="photo-o" :text="stats.count + ' 内容'" />
-        <van-grid-item icon="bookmark-o" :text="stats.read + ' 已读'" />
-        <van-grid-item icon="label-o" :text="stats.tags + ' 标签'" />
-        <van-grid-item icon="bars" :text="stats.lists + ' 清单'" />
-      </van-grid>
+      <div class="stats-grid">
+        <div v-for="item in statCards" :key="item.key" class="stat-card">
+          <span class="stat-icon"><van-icon :name="item.icon" /></span>
+          <span class="stat-value">{{ item.value }}</span>
+          <span class="stat-label">{{ item.label }}</span>
+        </div>
+      </div>
     </div>
     
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="我的清单" icon="list-switch-o" to="/lists" is-link />
+      <van-cell title="我的清单" icon="orders-o" to="/lists" is-link />
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
-      <van-cell title="标签管理" icon="tag-o" :to="tagManagePath" is-link />
+      <van-cell title="标签管理" icon="label-o" :to="tagManagePath" is-link />
       <van-cell title="阅读记录" icon="clock-o" to="/history" is-link />
     </van-cell-group>
 
@@ -212,7 +213,6 @@ const appUpdateStore = useAppUpdateStore()
 const { isMobile } = useDevice()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
-const statsColumnNum = computed(() => 4)
 const authEnabled = computed(() => authStore.enabled)
 const currentModeText = computed(() => authStore.mode === 'normal' ? '正常模式' : '隐私模式')
 
@@ -245,6 +245,13 @@ const stats = computed(() => {
     }
   }
 })
+
+const statCards = computed(() => [
+  { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容' },
+  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读' },
+  { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签' },
+  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单' }
+])
 
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 const tagManagePath = '/tags'
@@ -514,37 +521,61 @@ watch(() => modeStore.currentMode, async () => {
 
 .stats-overview {
   background: var(--surface-2);
-  padding: 10px;
+  padding: 12px;
   margin: 12px 16px;
   border: 1px solid var(--border-soft);
   border-radius: 18px;
   box-shadow: var(--shadow-sm);
 }
 
-.stats-overview :deep(.van-grid-item__content) {
-  min-height: 68px;
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-card {
+  min-width: 0;
+  min-height: 66px;
   border: 1px solid var(--border-soft);
   border-radius: 16px;
   background: var(--surface-1);
-  color: var(--text-primary);
-  padding: clamp(4px, 1vw, 10px) clamp(2px, 0.5vw, 4px);
+  display: grid;
+  grid-template-areas:
+    "icon value"
+    "icon label";
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  padding: 10px;
 }
 
-.stats-overview :deep(.van-grid-item__text) {
+.stat-icon {
+  grid-area: icon;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: rgba(89, 160, 255, 0.12);
+  color: var(--brand-600);
+  font-size: 17px;
+}
+
+.stat-value {
+  grid-area: value;
+  color: var(--text-strong);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.stat-label {
+  grid-area: label;
   color: var(--text-secondary);
-  font-size: clamp(10px, 1.1vw, 13px);
-  margin-top: clamp(4px, 0.6vw, 8px);
+  font-size: 12px;
   white-space: nowrap;
-}
-
-.stats-overview :deep(.van-icon) {
-  color: var(--brand-600);
-  font-size: clamp(16px, 2vw, 22px);
-}
-
-.stats-overview :deep(.van-grid-item__icon) {
-  color: var(--brand-600);
-  font-size: clamp(16px, 2vw, 22px);
 }
 
 .mine-menu {
@@ -559,6 +590,19 @@ watch(() => modeStore.currentMode, async () => {
 .mine-menu :deep(.van-cell) {
   background: transparent;
   min-height: 52px;
+}
+
+.mine-menu :deep(.van-cell__left-icon) {
+  width: 30px;
+  height: 30px;
+  margin-right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: rgba(89, 160, 255, 0.12);
+  color: var(--brand-600);
+  font-size: 16px;
 }
 
 .about {
@@ -754,20 +798,35 @@ watch(() => modeStore.currentMode, async () => {
     border-radius: 16px;
   }
 
-  .stats-overview :deep(.van-grid-item__content) {
-    min-height: 58px;
-    border-radius: 12px;
-    padding: 4px 2px;
+  .stats-grid {
+    gap: 6px;
   }
 
-  .stats-overview :deep(.van-grid-item__text) {
+  .stat-card {
+    min-height: 56px;
+    grid-template-areas:
+      "icon"
+      "value"
+      "label";
+    grid-template-columns: 1fr;
+    justify-items: center;
+    row-gap: 3px;
+    padding: 8px 4px;
+  }
+
+  .stat-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 9px;
+    font-size: 14px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+  }
+
+  .stat-label {
     font-size: 10px;
-    margin-top: 4px;
-  }
-
-  .stats-overview :deep(.van-icon),
-  .stats-overview :deep(.van-grid-item__icon) {
-    font-size: 16px;
   }
 
   .stats-overview,

@@ -26,7 +26,7 @@
       </div>
     </div>
 
-    <div class="search-content">
+    <div ref="searchContentRef" class="search-content" @scroll.passive="saveScrollTop">
       <van-loading v-if="loading" class="loading-center" />
 
       <EmptyState
@@ -116,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, onActivated, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useModeStore, useComicStore, useImportTaskStore, useVideoStore, useGlobalSearchStore } from '@/stores'
@@ -152,12 +152,14 @@ const {
   searchExecuted,
   selectedPlatforms,
   platformOptions,
+  scrollTop,
 } = storeToRefs(searchStore)
 
 // 临时 UI 状态 — 组件销毁即消失
 const loading = ref(false)
 const loadingMore = ref(false)
 const showImportSheet = ref(false)
+const searchContentRef = ref(null)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -357,6 +359,10 @@ async function handleSearch() {
   hasMore.value = false
   selectedIds.value = []
   paginationInfo.value = null
+  searchStore.setScrollTop(0)
+  if (searchContentRef.value) {
+    searchContentRef.value.scrollTop = 0
+  }
 
   if (!normalizedKeyword) {
     return
@@ -370,6 +376,21 @@ async function handleSearch() {
   } finally {
     loading.value = false
   }
+}
+
+function saveScrollTop() {
+  const el = searchContentRef.value
+  if (!el) return
+  searchStore.setScrollTop(Number(el.scrollTop) || 0)
+}
+
+async function restoreScrollTop() {
+  await nextTick()
+  const el = searchContentRef.value
+  if (!el) return
+  const top = Number(scrollTop.value)
+  if (!Number.isFinite(top) || top <= 0) return
+  el.scrollTop = top
 }
 
 async function searchRemote(searchKeyword) {
@@ -469,8 +490,11 @@ watch(isVideoMode, async (newMode, oldMode) => {
 }, { immediate: true })
 
 onMounted(() => {
-  // onMounted 不再处理 —— watch 的 immediate: true 已覆盖
+  restoreScrollTop()
 })
+
+onActivated(restoreScrollTop)
+onBeforeUnmount(saveScrollTop)
 </script>
 
 <style scoped>

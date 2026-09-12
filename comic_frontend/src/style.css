@@ -591,6 +591,19 @@ a {
   background: var(--nav-bg);
 }
 
+.comic-detail.desktop-page-shell > .van-nav-bar:first-child,
+.recommendation-detail.desktop-page-shell > .van-nav-bar:first-child,
+.video-detail.desktop-page-shell > .van-nav-bar:first-child {
+  border-bottom-color: transparent;
+}
+
+.comic-detail.desktop-page-shell > .van-nav-bar:first-child + .detail-content,
+.recommendation-detail.desktop-page-shell > .van-nav-bar:first-child + .detail-content,
+.video-detail.desktop-page-shell > .van-nav-bar:first-child + .detail-content {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .desktop-page-shell > .van-nav-bar:first-child + .van-tabs,
 .desktop-page-shell > .van-nav-bar:first-child + .van-cell-group,
 .desktop-page-shell > .van-nav-bar:first-child + .storage-shell,
@@ -618,6 +631,48 @@ a {
   min-width: fit-content;
 }
 
+.manage-page-shell > .van-nav-bar:first-child {
+  border-bottom-color: transparent;
+}
+
+.manage-page-shell .van-tabs__wrap {
+  margin: 10px 12px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-xs);
+}
+
+.manage-page-shell .van-tabs__nav {
+  gap: 6px;
+  padding: 6px;
+  background: transparent;
+}
+
+.manage-page-shell .van-tab {
+  min-height: 38px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.manage-page-shell .van-tab--active {
+  background: rgba(89, 160, 255, 0.14);
+  color: var(--brand-600);
+}
+
+.manage-page-shell .van-tabs__line {
+  display: none;
+}
+
+.manage-page-shell .van-tabs__content {
+  padding-top: 2px;
+}
+
 @media (min-width: 1024px) {
   .desktop-page-shell {
     width: clamp(var(--desktop-page-min), var(--desktop-page-fluid), var(--desktop-page-max));
@@ -629,6 +684,10 @@ a {
     overflow: clip;
     backdrop-filter: blur(8px);
   }
+
+  .desktop-page-shell > .van-nav-bar:first-child {
+    border-radius: 16px 16px 0 0;
+  }
 }
 
 @media (max-width: 767px) {
@@ -636,6 +695,18 @@ a {
     margin-inline: 8px;
     border-radius: 14px;
     overflow: hidden;
+  }
+
+  .comic-detail.desktop-page-shell > .van-nav-bar:first-child,
+  .recommendation-detail.desktop-page-shell > .van-nav-bar:first-child,
+  .video-detail.desktop-page-shell > .van-nav-bar:first-child {
+    margin-inline: 0;
+    border-radius: 0;
+  }
+
+  .manage-page-shell .van-tabs__wrap {
+    margin-inline: 10px;
+    border-radius: 14px;
   }
 
   .van-popup--bottom {

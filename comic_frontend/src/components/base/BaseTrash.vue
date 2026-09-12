@@ -1,5 +1,5 @@
 <template>
-  <div class="base-trash">
+  <div class="base-trash manage-page-shell">
     <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()" />
     
     <van-tabs v-model:active="activeTab" sticky>

@@ -20,6 +20,7 @@ export const useGlobalSearchStore = defineStore('globalSearch', () => {
   const videoMode = ref(false)
   const selectedPlatforms = ref([])
   const platformOptions = ref([])
+  const scrollTop = ref(0)
 
   function setSearchState({
     keyword: kw,
@@ -45,6 +46,7 @@ export const useGlobalSearchStore = defineStore('globalSearch', () => {
     selectedIds.value = []
     paginationInfo.value = null
     searchExecuted.value = false
+    scrollTop.value = 0
   }
 
   function clearSelection() {
@@ -60,6 +62,10 @@ export const useGlobalSearchStore = defineStore('globalSearch', () => {
     }
   }
 
+  function setScrollTop(value) {
+    scrollTop.value = Math.max(0, Number(value) || 0)
+  }
+
   return {
     keyword,
     results,
@@ -71,9 +77,11 @@ export const useGlobalSearchStore = defineStore('globalSearch', () => {
     videoMode,
     selectedPlatforms,
     platformOptions,
+    scrollTop,
     setSearchState,
     clearResults,
     clearSelection,
     appendResults,
+    setScrollTop,
   }
 })
