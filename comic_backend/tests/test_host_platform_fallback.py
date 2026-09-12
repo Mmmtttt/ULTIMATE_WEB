@@ -14,6 +14,8 @@ os.environ.setdefault("ULTIMATE_CONFIG_DIR", str(BACKEND_ROOT / ".pytest_runtime
 import application.comic_app_service as comic_app_service_module
 import application.persisted_content_metadata as persisted_metadata_module
 import application.video_app_service as video_app_service_module
+import core.storage_layout as storage_layout_module
+import infrastructure.persistence.json_storage as json_storage_module
 import infrastructure.recommendation_cache_manager as recommendation_cache_manager_module
 import protocol.gateway as gateway_module
 import protocol.registry as registry_module
@@ -268,6 +270,9 @@ def test_recommendation_cache_manager_rebuilds_pk_cache_dir_from_protocol_templa
     cache_root = data_dir / "recommendation_cache" / "comic"
     actual_dir = cache_root / "PK" / "同步作者" / "同步作品"
     actual_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(storage_layout_module, "_NORMAL_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(storage_layout_module, "_PRIVATE_DATA_DIR", None)
+    json_storage_module.JsonStorage._instances.pop("recommendations_database.json", None)
 
     recommendations_json = meta_dir / "recommendations_database.json"
     _write_json(
