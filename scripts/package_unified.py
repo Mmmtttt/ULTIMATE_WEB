@@ -56,11 +56,13 @@ PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
     "THIRD_PARTY_PACKAGE_EXCLUDES",
 )
 ANDROID_THIRD_PARTY_MODE_DISABLED = "disabled"
+ANDROID_THIRD_PARTY_MODE_EXTERNAL = "external"
 ANDROID_THIRD_PARTY_MODE_SELECTED = "selected"
 ANDROID_THIRD_PARTY_MODE_SUPPORTED = "supported"
 ANDROID_THIRD_PARTY_MODE_ALL = "all"
 ANDROID_THIRD_PARTY_MODES = (
     ANDROID_THIRD_PARTY_MODE_DISABLED,
+    ANDROID_THIRD_PARTY_MODE_EXTERNAL,
     ANDROID_THIRD_PARTY_MODE_SELECTED,
     ANDROID_THIRD_PARTY_MODE_SUPPORTED,
     ANDROID_THIRD_PARTY_MODE_ALL,
@@ -247,6 +249,12 @@ def normalize_android_third_party_mode(packager_cfg: Dict) -> str:
         "none": ANDROID_THIRD_PARTY_MODE_DISABLED,
         "off": ANDROID_THIRD_PARTY_MODE_DISABLED,
         "false": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "external": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "external_plugins": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "extension": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "extensions": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "hotplug": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "dynamic": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
         "include": ANDROID_THIRD_PARTY_MODE_SELECTED,
         "include_only": ANDROID_THIRD_PARTY_MODE_SELECTED,
         "allowlist": ANDROID_THIRD_PARTY_MODE_SELECTED,
@@ -346,7 +354,7 @@ def resolve_android_plugin_roots(third_party_root: Path, packager_cfg: Dict) -> 
     all_roots = _discover_third_party_plugin_dirs(third_party_root)
     if mode == ANDROID_THIRD_PARTY_MODE_ALL:
         return all_roots
-    if mode == ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+    if mode in {ANDROID_THIRD_PARTY_MODE_SUPPORTED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
         return [root for root in all_roots if _is_android_supported_plugin_root(root)]
 
     selectors = normalize_android_plugin_selectors(packager_cfg)
@@ -394,7 +402,7 @@ def collect_plugin_manifest_payloads(plugin_roots: List[Path]) -> List[Dict[str,
 def collect_android_manifest_payloads(third_party_root: Path, packager_cfg: Dict) -> List[Dict[str, Any]]:
     mode = normalize_android_third_party_mode(packager_cfg)
     payloads = collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg))
-    if mode == ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+    if mode in {ANDROID_THIRD_PARTY_MODE_SUPPORTED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
         return [payload for payload in payloads if _manifest_android_enabled(payload)]
     return payloads
 
@@ -540,7 +548,7 @@ def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, pac
     if target_root.exists():
         shutil.rmtree(target_root)
 
-    if mode == ANDROID_THIRD_PARTY_MODE_DISABLED:
+    if mode in {ANDROID_THIRD_PARTY_MODE_DISABLED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
         return {"mode": mode, "copied": [], "plugin_ids": []}
 
     source_root = source_backend_dir / "third_party"
@@ -1953,9 +1961,24 @@ public class MainActivity extends BridgeActivity {{
 
     protocol_dir = py_dir / "protocol"
     protocol_dir.mkdir(parents=True, exist_ok=True)
+    android_pool_requirements = [
+        arg
+        for entry in pip_installs
+        for arg in entry
+        if str(arg or "").strip() and not str(arg or "").strip().startswith("-")
+    ]
+    write_plugin_dependency_pool_manifest(
+        protocol_dir / "plugin_dependency_pool_manifest.json",
+        android_pool_requirements,
+        platform_key="android",
+        dependency_root="chaquopy",
+    )
     third_party_root = source_backend_dir / "third_party"
     snapshot_plugin_ids = None
-    if normalize_android_third_party_mode(packager_cfg) in {
+    android_third_party_mode = normalize_android_third_party_mode(packager_cfg)
+    if android_third_party_mode == ANDROID_THIRD_PARTY_MODE_EXTERNAL:
+        snapshot_plugin_ids = []
+    elif android_third_party_mode in {
         ANDROID_THIRD_PARTY_MODE_SELECTED,
         ANDROID_THIRD_PARTY_MODE_SUPPORTED,
     }:
@@ -2219,7 +2242,14 @@ def _configure_android_plugin_roots(files_dir):
         except Exception as ex:
             import_error = repr(ex)
         packaged_root = os.path.join(module_dir, "third_party")
+        user_root = os.path.join(str(files_dir or "").strip() or ".", "plugins")
+        try:
+            os.makedirs(user_root, exist_ok=True)
+        except Exception:
+            pass
         roots = []
+        if os.path.isdir(user_root):
+            roots.append(user_root)
         if imported_root and os.path.isdir(imported_root):
             roots.append(imported_root)
         if os.path.isdir(packaged_root):
@@ -2237,6 +2267,11 @@ def _configure_android_plugin_roots(files_dir):
             joined = os.pathsep.join(roots)
             os.environ["ULTIMATE_PLUGIN_ROOTS"] = joined
             os.environ["BACKEND_PLUGIN_ROOTS"] = joined
+        if os.path.isdir(user_root):
+            os.environ["ULTIMATE_USER_PLUGIN_ROOT"] = user_root
+        dep_manifest = os.path.join(module_dir, "protocol", "plugin_dependency_pool_manifest.json")
+        if os.path.isfile(dep_manifest):
+            os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = dep_manifest
 
         try:
             entries = sorted(os.listdir(packaged_root))[:20] if os.path.isdir(packaged_root) else []
@@ -2246,9 +2281,11 @@ def _configure_android_plugin_roots(files_dir):
             files_dir,
             "android plugin roots "
             f"module_dir={module_dir!r} packaged_root={packaged_root!r} "
+            f"user_root={user_root!r} "
             f"imported_root={imported_root!r} import_error={import_error!r} "
             f"exists={os.path.exists(packaged_root)} is_dir={os.path.isdir(packaged_root)} "
-            f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r}",
+            f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r} "
+            f"dep_manifest={os.environ.get('ULTIMATE_PLUGIN_DEP_MANIFEST', '')!r}",
         )
     except Exception as ex:
         _write_boot_log(files_dir, f"android plugin root config failed: {ex!r}")
@@ -2600,6 +2637,8 @@ def write_desktop_bundle_scripts(
     backend_proxy_mode_bat = "set BACKEND_SERVE_FRONTEND=false\n" if has_frontend else ""
     backend_proxy_mode_ps1 = "$env:BACKEND_SERVE_FRONTEND = \"false\"\n" if has_frontend else ""
     backend_proxy_mode_sh = "export BACKEND_SERVE_FRONTEND=\"false\"\n" if has_frontend else ""
+    dependency_rel = str(get_common_plugin_dependency_relative_dir()).replace("\\", "/")
+    dependency_rel_win = dependency_rel.replace("/", "\\")
 
     bat = (
         "@echo off\n"
@@ -2611,6 +2650,10 @@ def write_desktop_bundle_scripts(
         f"{backend_proxy_mode_bat}"
         "set SCRIPT_DIR=%~dp0\n"
         "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
+        "set ULTIMATE_USER_PLUGIN_ROOT=%SCRIPT_DIR%plugins\n"
+        f"set ULTIMATE_PLUGIN_DEP_ROOTS=%SCRIPT_DIR%{dependency_rel_win}\n"
+        "set BACKEND_PLUGIN_DEP_ROOTS=%ULTIMATE_PLUGIN_DEP_ROOTS%\n"
+        "set ULTIMATE_PLUGIN_DEP_MANIFEST=%SCRIPT_DIR%runtime_deps\\dependency_pool_manifest.json\n"
         "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
         "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
         "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
@@ -2636,6 +2679,10 @@ def write_desktop_bundle_scripts(
         f"{backend_host_ps1}"
         f"{backend_proxy_mode_ps1}"
         "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
+        "$env:ULTIMATE_USER_PLUGIN_ROOT = Join-Path $scriptDir \"plugins\"\n"
+        f"$env:ULTIMATE_PLUGIN_DEP_ROOTS = Join-Path $scriptDir \"{dependency_rel}\"\n"
+        "$env:BACKEND_PLUGIN_DEP_ROOTS = $env:ULTIMATE_PLUGIN_DEP_ROOTS\n"
+        "$env:ULTIMATE_PLUGIN_DEP_MANIFEST = Join-Path $scriptDir \"runtime_deps/dependency_pool_manifest.json\"\n"
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
         "if (Test-Path $archiveTools) {\n"
         "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
@@ -2664,6 +2711,10 @@ def write_desktop_bundle_scripts(
             "setlocal\n"
             "set SCRIPT_DIR=%~dp0\n"
             "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
+            "set ULTIMATE_USER_PLUGIN_ROOT=%SCRIPT_DIR%plugins\n"
+            f"set ULTIMATE_PLUGIN_DEP_ROOTS=%SCRIPT_DIR%{dependency_rel_win}\n"
+            "set BACKEND_PLUGIN_DEP_ROOTS=%ULTIMATE_PLUGIN_DEP_ROOTS%\n"
+            "set ULTIMATE_PLUGIN_DEP_MANIFEST=%SCRIPT_DIR%runtime_deps\\dependency_pool_manifest.json\n"
             "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
             "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
             "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
@@ -2683,6 +2734,10 @@ def write_desktop_bundle_scripts(
             "$ErrorActionPreference = 'Stop'\n"
             "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
             "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
+            "$env:ULTIMATE_USER_PLUGIN_ROOT = Join-Path $scriptDir \"plugins\"\n"
+            f"$env:ULTIMATE_PLUGIN_DEP_ROOTS = Join-Path $scriptDir \"{dependency_rel}\"\n"
+            "$env:BACKEND_PLUGIN_DEP_ROOTS = $env:ULTIMATE_PLUGIN_DEP_ROOTS\n"
+            "$env:ULTIMATE_PLUGIN_DEP_MANIFEST = Join-Path $scriptDir \"runtime_deps/dependency_pool_manifest.json\"\n"
             "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
             "if (Test-Path $archiveTools) {\n"
             "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
@@ -2714,6 +2769,10 @@ def write_desktop_bundle_scripts(
         f"{backend_proxy_mode_sh}"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
+        "export ULTIMATE_USER_PLUGIN_ROOT=\"$SCRIPT_DIR/plugins\"\n"
+        f"export ULTIMATE_PLUGIN_DEP_ROOTS=\"$SCRIPT_DIR/{dependency_rel}\"\n"
+        "export BACKEND_PLUGIN_DEP_ROOTS=\"$ULTIMATE_PLUGIN_DEP_ROOTS\"\n"
+        "export ULTIMATE_PLUGIN_DEP_MANIFEST=\"$SCRIPT_DIR/runtime_deps/dependency_pool_manifest.json\"\n"
         "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
         "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
         "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
@@ -2747,6 +2806,10 @@ def write_desktop_bundle_scripts(
             "set -e\n"
             "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
             "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
+            "export ULTIMATE_USER_PLUGIN_ROOT=\"$SCRIPT_DIR/plugins\"\n"
+            f"export ULTIMATE_PLUGIN_DEP_ROOTS=\"$SCRIPT_DIR/{dependency_rel}\"\n"
+            "export BACKEND_PLUGIN_DEP_ROOTS=\"$ULTIMATE_PLUGIN_DEP_ROOTS\"\n"
+            "export ULTIMATE_PLUGIN_DEP_MANIFEST=\"$SCRIPT_DIR/runtime_deps/dependency_pool_manifest.json\"\n"
             "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
             "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
             "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
@@ -3017,17 +3080,22 @@ def prepare_desktop_release_bundle(
     if manifest_src.exists():
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
+    plugins_dir = bundle_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
     if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL:
-        external_plugin_roots = copy_external_plugins_to_bundle(backend_src, bundle_dir) if backend_src.exists() else []
+        external_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
+        remove_default_plugins_from_bundle_backend_source(bundle_dir, external_plugin_roots)
+        write_text(
+            plugins_dir / "README.md",
+            "Drop local protocol plugin zip packages or extracted plugin directories here. "
+            "Default repository plugin code is not bundled in external mode.\n",
+        )
     else:
-        plugins_dir = bundle_dir / "plugins"
-        plugins_dir.mkdir(parents=True, exist_ok=True)
         write_text(
             plugins_dir / "README.md",
             "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
         )
-        external_plugin_roots = []
-    external_plugin_roots.extend(copy_project_plugins_to_bundle(bundle_dir))
+        external_plugin_roots = copy_project_plugins_to_bundle(bundle_dir)
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
@@ -3049,7 +3117,8 @@ def prepare_desktop_release_bundle(
     if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
         notes.append("- default repository plugins are bundled into the executable; `plugins/` is reserved for extra plugins")
     else:
-        notes.append("- default repository plugins are placed under `plugins/` and loaded dynamically at runtime")
+        notes.append("- default repository plugin dependencies are prebuilt under `runtime_deps/`; plugin code is installed locally into `plugins/`")
+        notes.append("- local extension packages must be installed from the third-party config page, then restart the app")
     if archive_tools_dir is not None:
         notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
     if ffmpeg_tools_dir is not None:
@@ -3146,6 +3215,14 @@ def get_external_plugin_vendor_relative_dir() -> Path:
     return Path("vendor") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
 
 
+def get_common_plugin_dependency_relative_dir() -> Path:
+    return Path("runtime_deps") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
+
+
+def get_plugin_dependency_manifest_relative_path() -> Path:
+    return Path("runtime_deps") / "dependency_pool_manifest.json"
+
+
 def get_external_plugin_dependency_state_filename() -> str:
     return ".ultimate_vendor_state.json"
 
@@ -3161,6 +3238,58 @@ def _collect_external_plugin_requirements(payload: Dict[str, Any]) -> List[str]:
         return _normalize_string_list(external.get("pip_requirements") or [])
     pyinstaller = dict(packaging.get("pyinstaller") or {})
     return _normalize_string_list(pyinstaller.get("pip_requirements") or [])
+
+
+def _requirement_name(requirement: str) -> str:
+    text = str(requirement or "").strip()
+    if not text or text.startswith("-"):
+        return ""
+    return re.split(r"\s*(?:\[|==|>=|<=|~=|!=|>|<|=|;)\s*", text, maxsplit=1)[0].strip().lower().replace("_", "-")
+
+
+def collect_plugin_dependency_requirements(plugin_roots: List[Path], platform_key: str = "external") -> List[str]:
+    requirements: List[str] = []
+    for plugin_root in plugin_roots:
+        for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+            try:
+                payload = load_json(manifest_path)
+            except Exception:
+                continue
+            packaging = dict(payload.get("packaging") or {})
+            section = dict(packaging.get(platform_key) or {})
+            if section.get("pip_requirements"):
+                requirements.extend(_normalize_string_list(section.get("pip_requirements") or []))
+            elif platform_key == "external":
+                requirements.extend(_collect_external_plugin_requirements(payload))
+    return _normalize_string_list(requirements)
+
+
+def collect_desktop_dependency_plugin_roots(staged_backend: Path) -> List[Path]:
+    roots: List[Path] = []
+    third_party_root = staged_backend / "third_party"
+    roots.extend(discover_packaged_plugin_roots(third_party_root))
+    roots.extend(discover_project_plugin_roots())
+    return roots
+
+
+def write_plugin_dependency_pool_manifest(
+    manifest_path: Path,
+    requirements: List[str],
+    *,
+    platform_key: str,
+    dependency_root: str = "",
+) -> None:
+    payload = {
+        "version": 1,
+        "platform": platform_key,
+        "python_tag": current_plugin_python_tag(),
+        "platform_tag": current_plugin_platform_tag(),
+        "dependency_root": dependency_root,
+        "requirements": _normalize_string_list(requirements),
+        "requirement_names": sorted({name for name in (_requirement_name(item) for item in requirements) if name}),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    write_text(manifest_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def collect_external_plugin_metadata(plugin_root: Path) -> Dict[str, Any]:
@@ -3205,6 +3334,16 @@ def copy_external_plugins_to_bundle(staged_backend: Path, bundle_dir: Path) -> L
             shutil.rmtree(backend_plugin_root, ignore_errors=True)
 
     return copied_roots
+
+
+def remove_default_plugins_from_bundle_backend_source(bundle_dir: Path, plugin_roots: List[Path]) -> None:
+    backend_third_party = bundle_dir / "backend_source" / "third_party"
+    if not backend_third_party.exists():
+        return
+    for plugin_root in plugin_roots:
+        target = backend_third_party / plugin_root.name
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
 
 
 def copy_project_plugins_to_bundle(bundle_dir: Path, project_plugins_dir: Optional[Path] = None) -> List[Path]:
@@ -3262,40 +3401,31 @@ def _quote_powershell_single(text: str) -> str:
 
 
 def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: List[Path]) -> List[List[str]]:
+    requirements = collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
+    dependency_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_plugin_dependency_pool_manifest(
+        manifest_path,
+        requirements,
+        platform_key="external",
+        dependency_root=str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+    )
+    state_path = dependency_root / get_external_plugin_dependency_state_filename()
+    expected_state = json.dumps(
+        {
+            "requirements": requirements,
+            "dependency_root": str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+            "python_tag": current_plugin_python_tag(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     commands: List[List[str]] = []
-    script_specs: List[Dict[str, str]] = []
-    for plugin_root in plugin_roots:
-        metadata = collect_external_plugin_metadata(plugin_root)
-        requirements = list(metadata.get("requirements") or [])
-        if not requirements:
-            continue
-        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
-        vendor_target.mkdir(parents=True, exist_ok=True)
-        relative_vendor_target = vendor_target.relative_to(bundle_dir).as_posix()
-        state_path = get_external_plugin_dependency_state_path(plugin_root)
-        relative_state_path = state_path.relative_to(bundle_dir).as_posix()
-        commands.append(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--target",
-                str(vendor_target),
-                *requirements,
-            ]
-        )
-        script_specs.append(
-            {
-                "plugin_name": plugin_root.name,
-                "relative_vendor_target": relative_vendor_target,
-                "relative_state_path": relative_state_path,
-                "requirements": " ".join(requirements),
-                "requirements_ps": " ".join(_quote_powershell_single(item) for item in requirements),
-                "requirements_shell": " ".join(shlex.quote(item) for item in requirements),
-                "expected_state": _serialize_external_plugin_dependency_state(metadata),
-            }
-        )
+    if requirements:
+        commands.append([sys.executable, "-m", "pip", "install", "--target", str(dependency_root), *requirements])
 
     ps1_lines = [
         "$ErrorActionPreference = 'Stop'",
@@ -3319,49 +3449,48 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
         "  exit 1",
         "fi",
     ]
-    for spec in script_specs:
-        expected_state_ps = _quote_powershell_single(spec["expected_state"])
+    relative_dependency_root = str(get_common_plugin_dependency_relative_dir()).replace("\\", "/")
+    relative_state_path = (get_common_plugin_dependency_relative_dir() / get_external_plugin_dependency_state_filename()).as_posix()
+    relative_dependency_root_win = relative_dependency_root.replace("/", "\\")
+    relative_state_path_win = relative_state_path.replace("/", "\\")
+    requirements_ps = " ".join(_quote_powershell_single(item) for item in requirements)
+    requirements_shell = " ".join(shlex.quote(item) for item in requirements)
+    expected_state_ps = _quote_powershell_single(expected_state)
+    ps1_lines.append(f"$vendorPath = Join-Path $scriptDir {_quote_powershell_single(relative_dependency_root_win)}")
+    ps1_lines.append(f"$statePath = Join-Path $scriptDir {_quote_powershell_single(relative_state_path_win)}")
+    ps1_lines.append(f"$expectedState = {expected_state_ps}")
+    ps1_lines.append("New-Item -ItemType Directory -Force -Path $vendorPath | Out-Null")
+    if requirements:
         ps1_lines.append(
-            f"$vendorPath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_vendor_target'].replace('/', '\\'))}"
-        )
-        ps1_lines.append(
-            f"$statePath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_state_path'].replace('/', '\\'))}"
-        )
-        ps1_lines.append(f"$expectedState = {expected_state_ps}")
-        ps1_lines.append("New-Item -ItemType Directory -Force -Path $vendorPath | Out-Null")
-        ps1_lines.append(
-            f"if ((Test-Path $statePath) -and (Test-Path $vendorPath) -and "
-            f"(@(Get-ChildItem -Force $vendorPath -ErrorAction SilentlyContinue).Count -gt 0) -and "
-            f"((Get-Content -Raw -Path $statePath).Trim() -eq $expectedState)) "
-            f"{{ Write-Host \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\" }}"
+            "if ((Test-Path $statePath) -and (Test-Path $vendorPath) -and "
+            "(@(Get-ChildItem -Force $vendorPath -ErrorAction SilentlyContinue).Count -gt 0) -and "
+            "((Get-Content -Raw -Path $statePath).Trim() -eq $expectedState)) "
+            "{ Write-Host \"Skipping plugin dependency pool; already installed.\" }"
         )
         ps1_lines.append("else {")
-        ps1_lines.append(
-            f"  & $pythonCmd.Source -m pip install --target $vendorPath {spec['requirements_ps']}"
-        )
-        ps1_lines.append(
-            f"  if ($LASTEXITCODE -ne 0) {{ throw \"plugin dependency install failed: {spec['plugin_name']}\" }}"
-        )
+        ps1_lines.append(f"  & $pythonCmd.Source -m pip install --target $vendorPath {requirements_ps}")
+        ps1_lines.append("  if ($LASTEXITCODE -ne 0) { throw \"plugin dependency pool install failed\" }")
         ps1_lines.append("  Set-Content -Path $statePath -Value $expectedState -Encoding UTF8")
         ps1_lines.append("}")
+    else:
+        ps1_lines.append("Set-Content -Path $statePath -Value $expectedState -Encoding UTF8")
 
+    sh_lines.append(f"VENDOR_PATH=\"$SCRIPT_DIR/{relative_dependency_root}\"")
+    sh_lines.append(f"STATE_PATH=\"$SCRIPT_DIR/{relative_state_path}\"")
+    sh_lines.append(f"EXPECTED_STATE={shlex.quote(expected_state)}")
+    sh_lines.append("mkdir -p \"$VENDOR_PATH\"")
+    if requirements:
         sh_lines.append(
-            f"VENDOR_PATH=\"$SCRIPT_DIR/{spec['relative_vendor_target']}\""
+            "if [ -f \"$STATE_PATH\" ] && [ -n \"$(ls -A \"$VENDOR_PATH\" 2>/dev/null)\" ] "
+            "&& [ \"$(tr -d '\\r\\n' < \"$STATE_PATH\")\" = \"$EXPECTED_STATE\" ]; then"
         )
-        sh_lines.append(f"STATE_PATH=\"$SCRIPT_DIR/{spec['relative_state_path']}\"")
-        sh_lines.append(f"EXPECTED_STATE={shlex.quote(spec['expected_state'])}")
-        sh_lines.append("mkdir -p \"$VENDOR_PATH\"")
-        sh_lines.append(
-            f"if [ -f \"$STATE_PATH\" ] && [ -n \"$(ls -A \"$VENDOR_PATH\" 2>/dev/null)\" ] "
-            f"&& [ \"$(tr -d '\\r\\n' < \"$STATE_PATH\")\" = \"$EXPECTED_STATE\" ]; then"
-        )
-        sh_lines.append(f"  echo \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\"")
+        sh_lines.append("  echo \"Skipping plugin dependency pool; already installed.\"")
         sh_lines.append("else")
-        sh_lines.append(
-            f"  \"$PYTHON_CMD\" -m pip install --target \"$VENDOR_PATH\" {spec['requirements_shell']}"
-        )
+        sh_lines.append(f"  \"$PYTHON_CMD\" -m pip install --target \"$VENDOR_PATH\" {requirements_shell}")
         sh_lines.append("  printf '%s' \"$EXPECTED_STATE\" > \"$STATE_PATH\"")
         sh_lines.append("fi")
+    else:
+        sh_lines.append("printf '%s' \"$EXPECTED_STATE\" > \"$STATE_PATH\"")
 
     write_text(bundle_dir / "install_plugin_deps.ps1", "\n".join(ps1_lines) + "\n")
     sh_path = bundle_dir / "install_plugin_deps.sh"
@@ -3374,32 +3503,42 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
 
 
 def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Path]) -> Tuple[bool, str]:
-    outputs: List[str] = []
-    for plugin_root in plugin_roots:
-        metadata = collect_external_plugin_metadata(plugin_root)
-        requirements = list(metadata.get("requirements") or [])
-        if not requirements:
-            continue
-        if _external_plugin_dependency_install_is_current(plugin_root, metadata):
-            outputs.append(f"skip {plugin_root.name}: plugin dependencies already installed")
-            continue
-        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
-        vendor_target.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--target",
-            str(vendor_target),
-            *requirements,
-        ]
-        code, output = run_cmd(cmd, cwd=bundle_dir)
-        outputs.append(output)
-        if code != 0:
-            return False, output
-        _write_external_plugin_dependency_state(plugin_root, metadata)
-    return True, "\n".join(outputs)
+    requirements = collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
+    dependency_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()
+    write_plugin_dependency_pool_manifest(
+        manifest_path,
+        requirements,
+        platform_key="external",
+        dependency_root=str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+    )
+    expected_state = json.dumps(
+        {
+            "requirements": requirements,
+            "dependency_root": str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+            "python_tag": current_plugin_python_tag(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    state_path = dependency_root / get_external_plugin_dependency_state_filename()
+    if state_path.exists():
+        try:
+            if state_path.read_text(encoding="utf-8").strip() == expected_state and any(dependency_root.iterdir()):
+                return True, "skip: plugin dependency pool already installed"
+        except OSError:
+            pass
+    if not requirements:
+        write_text(state_path, expected_state + "\n")
+        return True, "skip: no external plugin dependencies"
+    cmd = [sys.executable, "-m", "pip", "install", "--target", str(dependency_root), *requirements]
+    code, output = run_cmd(cmd, cwd=bundle_dir)
+    if code != 0:
+        return False, output
+    write_text(state_path, expected_state + "\n")
+    return True, output
 
 
 def _scan_plugin_payloads(root_dir: Path, filename: str, *, apply_third_party_excludes: bool = True) -> Dict[str, Dict[str, Any]]:
@@ -3790,7 +3929,8 @@ def package_pyinstaller(
         frontend_binary_name=frontend_binary_name,
         frontend_entry=frontend_entry,
     )
-    external_plugin_roots = sorted((bundle_dir / "plugins").iterdir(), key=lambda item: item.name.lower()) if (bundle_dir / "plugins").exists() else []
+    staged_backend = staged_target_dir / "comic_backend"
+    external_plugin_roots = collect_desktop_dependency_plugin_roots(staged_backend) if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL else []
 
     if not execute:
         extra_msg = ""

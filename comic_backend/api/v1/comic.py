@@ -302,6 +302,27 @@ def save_third_party_config():
         error_logger.error(f"保存第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
 
+
+@comic_bp.route('/third-party/extensions/install', methods=['POST'])
+@require_third_party(error_response)
+def install_third_party_extension():
+    try:
+        upload = request.files.get('file')
+        if upload is None:
+            return error_response(400, "缺少扩展包文件")
+
+        from protocol.extension_service import install_extension_zip
+
+        result = install_extension_zip(upload)
+        app_logger.info(f"第三方扩展安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
     try:

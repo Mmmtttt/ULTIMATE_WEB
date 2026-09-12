@@ -2,6 +2,32 @@
   <div class="third-party-page desktop-page-shell">
     <van-nav-bar title="第三方平台配置" left-text="返回" left-arrow @click-left="$router.back()" />
 
+    <div class="extension-panel">
+      <van-cell-group inset>
+        <van-cell title="扩展包" label="安装本地 .zip 扩展包，安装后需要重启应用才会生效">
+          <template #right-icon>
+            <van-button size="small" type="primary" :loading="installingExtension" @click="selectExtensionPackage">
+              安装
+            </van-button>
+          </template>
+        </van-cell>
+        <van-cell
+          v-for="item in installedExtensions"
+          :key="item.plugin_id || item.directory"
+          :title="item.name || item.plugin_id || item.directory"
+          :label="extensionLabel(item)"
+        />
+        <van-cell v-if="installedExtensions.length === 0" title="未安装扩展" label="集成模式下可能已内置平台；扩展模式下可从这里安装" />
+      </van-cell-group>
+      <input
+        ref="extensionFileInput"
+        class="extension-file-input"
+        type="file"
+        accept=".zip,application/zip"
+        @change="installSelectedExtension"
+      />
+    </div>
+
     <div v-if="displayAdapters.length === 0" class="empty-hint">
       <van-empty description="暂无可配置的第三方平台" />
     </div>
@@ -86,6 +112,13 @@ const thirdPartySchema = ref({})
 const thirdPartyAdapters = ref({})
 const thirdPartyAdapterOrder = ref([])
 const adapterForms = ref({})
+const extensionFileInput = ref(null)
+const installingExtension = ref(false)
+const extensionState = ref({ installed: [] })
+
+const installedExtensions = computed(() => {
+  return Array.isArray(extensionState.value?.installed) ? extensionState.value.installed : []
+})
 
 const displayAdapters = computed(() => {
   if (Array.isArray(thirdPartyAdapterOrder.value) && thirdPartyAdapterOrder.value.length > 0) {
@@ -141,9 +174,42 @@ async function loadThirdPartyConfig() {
     thirdPartySchema.value = data.schema || {}
     thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
     thirdPartyAdapters.value = data.adapters || {}
+    extensionState.value = data.extensions || { installed: [] }
     ensureAdapterFormShape()
   } catch (error) {
     showFailToast(error?.message || '加载第三方配置失败')
+  }
+}
+
+function extensionLabel(item) {
+  const version = item?.version ? `版本 ${item.version}` : ''
+  const directory = item?.directory ? `目录 ${item.directory}` : ''
+  return [version, directory].filter(Boolean).join(' · ') || '重启后生效'
+}
+
+function selectExtensionPackage() {
+  extensionFileInput.value?.click()
+}
+
+async function installSelectedExtension(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  installingExtension.value = true
+  try {
+    const response = await comicApi.installThirdPartyExtension(file)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    installingExtension.value = false
+    if (event?.target) {
+      event.target.value = ''
+    }
   }
 }
 
@@ -210,6 +276,23 @@ onMounted(() => {
 
 .empty-hint {
   padding-top: 60px;
+}
+
+.extension-panel {
+  padding: 12px 0 4px;
+}
+
+.extension-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.extension-file-input {
+  display: none;
 }
 
 .adapter-panel {

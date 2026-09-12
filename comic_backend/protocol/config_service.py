@@ -116,6 +116,12 @@ class PluginConfigService:
             "plugins": [manifest.to_public_descriptor() for manifest in manifests],
             "configurable_plugins": [manifest.to_public_descriptor() for manifest in configurable],
         }
+        try:
+            from .extension_service import list_extensions
+
+            response["extensions"] = list_extensions()
+        except Exception:
+            response["extensions"] = {"installed": [], "requires_restart": True}
         response.update(adapters)
         return response
 

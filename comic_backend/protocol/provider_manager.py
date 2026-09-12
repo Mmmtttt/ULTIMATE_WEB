@@ -62,6 +62,11 @@ class ProviderManager:
             _append_relative_path(entry)
         for entry in vendor_templates:
             _append_relative_path(entry)
+        for env_key in ("ULTIMATE_PLUGIN_DEP_ROOTS", "BACKEND_PLUGIN_DEP_ROOTS"):
+            for entry in str(os.environ.get(env_key, "") or "").split(os.pathsep):
+                candidate = os.path.abspath(str(entry or "").strip())
+                if candidate and os.path.isdir(candidate):
+                    resolved.append(candidate)
 
         deduped: list[str] = []
         seen = set()

@@ -429,11 +429,33 @@ your-plugin/
 Android 构建支持：
 
 - `disabled`：不打包第三方运行时。
+- `external`：不把第三方库源码打进 APK，只把声明支持 Android 的插件依赖预置进 APK，并在运行时从应用私有 `plugins/` 目录加载用户安装的扩展包。
 - `selected`：只打包指定插件。
 - `supported`：打包所有声明 Android 支持的插件，当前推荐模式。
 - `all`：打包扫描到的所有插件，仅适合实验性验证。
 
 新增插件或 Android 适配失败时，可以暂时切回 `disabled` 或 `selected`，不会改变 Windows、Linux、Docker 的插件加载方式。
+
+### 8.4 扩展包模式
+
+桌面端 `plugin_package_mode: "external"` 和 Android 端 `android_backend_third_party_mode: "external"` 都遵循同一个原则：
+
+- 主程序包不预置第三方插件源码，也不会在启动后显示未安装的第三方平台。
+- 打包阶段根据各插件 `packaging.external.pip_requirements` 或 `packaging.android.pip_requirements` 构建通用依赖池。
+- 用户通过第三方配置页安装本地 `.zip` 扩展包；安装后需要重启后端或应用。
+- 安装时宿主只校验协议清单、平台支持声明、路径安全和依赖池是否覆盖扩展声明的依赖；宿主不识别具体平台名称。
+
+扩展包内容应是一个普通 zip，内部必须且只能包含一个 `ultimate-plugin.json`，且 Provider 代码和插件资源位于该 manifest 所在目录下。例如：
+
+```text
+comic-example.zip
+└── comic-example/
+    ├── ultimate-plugin.json
+    ├── ultimate_provider.py
+    └── example_runtime.py
+```
+
+如果扩展包声明了当前安装包没有预置的依赖，安装会被拒绝。需要新增依赖时，应先更新插件 manifest，再重新打包主程序依赖池。
 
 ## 9. 新增插件流程
 
@@ -483,9 +505,12 @@ Android 构建后必须检查：
 ```text
 android/app/src/main/python/third_party/
 android/app/src/main/python/protocol/mobile_protocol_snapshot.json
+android/app/src/main/python/protocol/plugin_dependency_pool_manifest.json
 ```
 
-两者必须包含同一组可运行插件。只有协议快照而没有 Provider 的插件属于打包错误。
+集成模式下，`third_party/` 和 `mobile_protocol_snapshot.json` 必须包含同一组可运行插件。只有协议快照而没有 Provider 的插件属于打包错误。
+
+扩展模式下，`third_party/` 和 `mobile_protocol_snapshot.json` 可以为空，但 `plugin_dependency_pool_manifest.json` 必须记录将来允许安装的扩展依赖。
 
 ## 11. 当前实现位置
 
@@ -495,6 +520,7 @@ android/app/src/main/python/protocol/mobile_protocol_snapshot.json
 | 清单对象 | `comic_backend/protocol/base.py` 的 `PluginManifest` |
 | Provider 基类与通用客户端 | `comic_backend/protocol/base.py` |
 | Provider 动态加载与配置注入 | `comic_backend/protocol/provider_manager.py` |
+| 扩展包安装与依赖池校验 | `comic_backend/protocol/extension_service.py` |
 | 统一网关 | `comic_backend/protocol/gateway.py` |
 | 业务路由 | `comic_backend/protocol/host_service.py` |
 | 兼容旧漫画调用 | `comic_backend/protocol/adapter_api.py`、`platform_service.py` |

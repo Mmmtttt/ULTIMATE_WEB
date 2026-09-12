@@ -456,6 +456,15 @@ export const comicApi = {
   saveThirdPartyConfig: (data) => {
     return request.post('/v1/comic/third-party/config', data)
   },
+
+  installThirdPartyExtension: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request.post('/v1/comic/third-party/extensions/install', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0
+    })
+  },
   
   // ==================== 回收站相关 ====================
   

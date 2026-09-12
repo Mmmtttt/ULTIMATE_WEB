@@ -250,7 +250,10 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
             },
         )
 
-        assert (bundle_dir / "plugins" / "JMComic-Crawler-Python" / "ultimate-plugin.json").exists()
+        dep_manifest = bundle_dir / "runtime_deps" / "dependency_pool_manifest.json"
+        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
+        assert dep_manifest.exists()
+        assert "commonx>=0.6.38" in dep_manifest.read_text(encoding="utf-8")
         assert not (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
         assert (bundle_dir / "backend_source" / "third_party" / "__init__.py").exists()
         assert (bundle_dir / "start_project.bat").exists()
@@ -294,7 +297,7 @@ def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_a
             binary_name="ultimate_backend_test",
             runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
         )
-        assert (bundle_dir / "plugins" / "JMComic-Crawler-Python" / "ultimate-plugin.json").exists()
+        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
         assert not (bundle_dir / "plugins" / "Missav").exists()
         assert not (bundle_dir / "backend_source" / "third_party" / "Missav").exists()
 
@@ -460,7 +463,7 @@ def test_install_external_plugin_dependencies_writes_state_and_skips_repeat_inst
         ok_first, output_first = package_unified.install_external_plugin_dependencies(temp_dir, [plugin_root])
         ok_second, output_second = package_unified.install_external_plugin_dependencies(temp_dir, [plugin_root])
 
-        state_path = plugin_root / package_unified.get_external_plugin_dependency_state_filename()
+        state_path = temp_dir / package_unified.get_common_plugin_dependency_relative_dir() / package_unified.get_external_plugin_dependency_state_filename()
         assert ok_first is True
         assert ok_second is True
         assert len(call_log) == 1
@@ -497,6 +500,9 @@ def test_desktop_bundle_scripts_export_external_plugin_root():
         assert "ULTIMATE_PLUGIN_ROOTS" in bat_text
         assert "ULTIMATE_PLUGIN_ROOTS" in ps1_text
         assert "ULTIMATE_PLUGIN_ROOTS" in sh_text
+        assert "ULTIMATE_USER_PLUGIN_ROOT" in bat_text
+        assert "ULTIMATE_PLUGIN_DEP_ROOTS" in ps1_text
+        assert "ULTIMATE_PLUGIN_DEP_MANIFEST" in sh_text
         assert "BACKEND_HOST=127.0.0.1" in bat_text
         assert "$env:BACKEND_HOST = \"127.0.0.1\"" in ps1_text
         assert "export BACKEND_HOST=\"127.0.0.1\"" in sh_text
