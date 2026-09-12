@@ -1,5 +1,17 @@
 <template>
   <div class="subscription-list-page">
+    <section class="subscription-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">{{ isVideoMode ? 'Actor Watch' : 'Author Watch' }}</p>
+        <h1>{{ isVideoMode ? '演员订阅' : '作者订阅' }}</h1>
+        <p>{{ isVideoMode ? '追踪演员最新视频，优先使用平台演员页缓存。' : '追踪作者最新漫画，缓存命中时显示最新作品封面。' }}</p>
+      </div>
+      <div class="hero-stat">
+        <strong>{{ filteredItems.length }}</strong>
+        <span>已订阅</span>
+      </div>
+    </section>
+
     <div class="header-actions">
       <van-search
         v-model="searchKeyword"
@@ -33,72 +45,55 @@
         description="添加订阅以获取更新提醒"
       />
 
-      <!-- Video Mode: Actor Grid -->
-      <div v-else-if="isVideoMode" class="actor-grid">
-        <div 
-          v-for="actor in filteredItems" 
-          :key="actor.id" 
-          class="actor-card"
-          data-testid="subscription-actor-card"
-          @click="goToDetail(actor)"
+      <div v-else class="subscription-grid" :class="{ 'video-mode': isVideoMode }">
+        <article
+          v-for="item in filteredItems"
+          :key="item.id"
+          class="subscription-card"
+          :data-testid="isVideoMode ? 'subscription-actor-card' : 'subscription-author-card'"
+          @click="goToDetail(item)"
         >
           <van-button
-            class="actor-unsubscribe-btn"
+            class="subscription-unsubscribe-btn"
             size="mini"
             type="danger"
             plain
             round
-            data-testid="subscription-actor-unsubscribe"
-            :loading="unsubscribingIds.has(String(actor.id || ''))"
-            @click.stop="unsubscribe(actor)"
+            :data-testid="isVideoMode ? 'subscription-actor-unsubscribe' : 'subscription-author-unsubscribe'"
+            :loading="unsubscribingIds.has(String(item.id || ''))"
+            @click.stop="unsubscribe(item)"
           >
             取消
           </van-button>
-          <div class="actor-avatar">
-            <!-- Placeholder for avatar if API provides one, currently using icon -->
-            <van-icon name="user-circle-o" size="40" color="#ddd" />
-            <div v-if="actor.new_work_count > 0" class="badge">{{ actor.new_work_count }}</div>
-          </div>
-          <div class="actor-name">{{ actor.name }}</div>
-          <div class="actor-update">{{ actor.last_work_title || '暂无更新' }}</div>
-        </div>
-      </div>
 
-      <!-- Comic Mode: Author List -->
-      <div v-else class="author-list">
-        <div
-          v-for="author in filteredItems"
-          :key="author.id"
-          class="author-card"
-          data-testid="subscription-author-card"
-          @click="goToDetail(author)"
-        >
-          <div class="author-main">
-            <div class="author-name-row">
-              <div class="author-name">{{ author.name }}</div>
-              <van-tag v-if="author.new_work_count > 0" type="danger" round class="author-badge">
-                {{ author.new_work_count }}
-              </van-tag>
+          <div class="subscription-cover" :class="{ 'has-cover': Boolean(getCoverUrl(item)) }">
+            <img
+              v-if="getCoverUrl(item)"
+              :src="getCoverUrl(item)"
+              :alt="getLatestTitle(item)"
+              loading="lazy"
+              decoding="async"
+            />
+            <div v-else class="cover-placeholder" :style="getPlaceholderStyle(item)">
+              <span>{{ getInitials(item.name) }}</span>
             </div>
-            <div class="author-update">{{ author.last_work_title || '暂无更新' }}</div>
+            <span class="kind-chip">{{ isVideoMode ? '演员' : '作者' }}</span>
+            <span v-if="item.new_work_count > 0" class="update-badge">{{ item.new_work_count }} 新</span>
           </div>
 
-          <div class="author-side">
-            <van-button
-              size="mini"
-              type="danger"
-              plain
-              round
-              class="author-unsubscribe-btn"
-              data-testid="subscription-author-unsubscribe"
-              :loading="unsubscribingIds.has(String(author.id || ''))"
-              @click.stop="unsubscribe(author)"
-            >
-              取消订阅
-            </van-button>
-            <van-icon name="arrow" class="author-arrow" />
+          <div class="subscription-body">
+            <div class="creator-row">
+              <h2>{{ item.name }}</h2>
+              <van-icon name="arrow" class="creator-arrow" />
+            </div>
+            <p class="latest-label">最新作品</p>
+            <p class="latest-title">{{ getLatestTitle(item) }}</p>
+            <div class="subscription-meta">
+              <span>{{ formatCheckTime(item.last_check_time) }}</span>
+              <span v-if="item.latest_work_platform">{{ item.latest_work_platform }}</span>
+            </div>
           </div>
-        </div>
+        </article>
       </div>
     </div>
 
@@ -155,6 +150,7 @@ import { useRouter } from 'vue-router'
 import { useModeStore, useActorStore, useAuthorStore } from '@/stores'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { showToast, showConfirmDialog } from 'vant'
+import { buildCoverUrl } from '@/api/image'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -183,6 +179,49 @@ const filteredItems = computed(() => {
     item.name?.toLowerCase().includes(searchKeyword.value.toLowerCase())
   )
 })
+
+function getCoverCandidate(item) {
+  const latestWork = item?.latest_work && typeof item.latest_work === 'object' ? item.latest_work : {}
+  return String(
+    item?.latest_work_cover_url ||
+    latestWork.cover_path_local ||
+    latestWork.cover_path ||
+    latestWork.cover_url ||
+    item?.avatar_url ||
+    ''
+  ).trim()
+}
+
+function getCoverUrl(item) {
+  const cover = getCoverCandidate(item)
+  return cover ? buildCoverUrl(cover) : ''
+}
+
+function getLatestTitle(item) {
+  const latestWork = item?.latest_work && typeof item.latest_work === 'object' ? item.latest_work : {}
+  return String(item?.last_work_title || latestWork.title || '').trim() || '暂无更新'
+}
+
+function getInitials(name) {
+  const text = String(name || '').trim()
+  if (!text) return isVideoMode.value ? '演' : '作'
+  return Array.from(text).slice(0, 2).join('')
+}
+
+function getPlaceholderStyle(item) {
+  const seed = Array.from(String(item?.name || '')).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  const hue = seed % 360
+  return {
+    background: `linear-gradient(135deg, hsl(${hue} 72% 38%), hsl(${(hue + 48) % 360} 78% 58%))`
+  }
+}
+
+function formatCheckTime(value) {
+  const text = String(value || '').trim()
+  if (!text) return '尚未检查'
+  const normalized = text.replace('T', ' ')
+  return `检查 ${normalized.slice(0, 16)}`
+}
 
 async function loadData() {
   loading.value = true
@@ -390,7 +429,75 @@ onMounted(() => {
 
 <style scoped>
 .subscription-list-page {
-  padding-bottom: 80px;
+  padding: 12px 12px 80px;
+}
+
+.subscription-hero {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 10px;
+  padding: clamp(16px, 3vw, 24px);
+  border: 1px solid var(--border-soft);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(47, 116, 255, 0.18), transparent 34%),
+    radial-gradient(circle at 92% 12%, rgba(255, 186, 73, 0.2), transparent 32%),
+    linear-gradient(135deg, var(--surface-2), var(--surface-1));
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-copy {
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--brand-600);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-copy h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: clamp(24px, 4vw, 34px);
+  line-height: 1.15;
+}
+
+.hero-copy p:last-child {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.hero-stat {
+  min-width: 88px;
+  padding: 14px 16px;
+  border: 1px solid rgba(47, 116, 255, 0.16);
+  border-radius: 20px;
+  background: rgba(47, 116, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.hero-stat strong {
+  color: var(--brand-600);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.hero-stat span {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .header-actions {
@@ -402,8 +509,9 @@ onMounted(() => {
   top: 0;
   z-index: 10;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  margin: 10px 10px 0;
+  border-radius: 18px;
+  margin: 0;
+  box-shadow: var(--shadow-xs);
 }
 
 .header-actions .van-search {
@@ -423,83 +531,28 @@ onMounted(() => {
   text-align: center;
 }
 
-.actor-grid {
+.subscription-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 16px;
-  padding: 16px;
+  padding: 16px 2px 0;
 }
 
-.actor-card {
+.subscription-grid.video-mode {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+
+.subscription-card {
   position: relative;
+  overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 22px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
-  box-shadow: 0 8px 18px rgba(2, 8, 18, 0.34);
-  cursor: pointer;
-}
-
-.actor-unsubscribe-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-}
-
-.actor-avatar {
-  position: relative;
-  margin-bottom: 8px;
-}
-
-.badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  background: #ee0a24;
-  color: #fff;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  border: 2px solid #fff;
-}
-
-.actor-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-strong);
-  margin-bottom: 4px;
-}
-
-.actor-update {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  width: 100%;
-}
-
-.author-list {
-  display: grid;
-  gap: 12px;
-  padding: 12px 16px 0;
-}
-
-.author-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 18px;
-  border-radius: 16px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface-2);
-  box-shadow: 0 10px 22px rgba(17, 27, 45, 0.08);
+  text-align: left;
+  box-shadow: var(--shadow-xs);
   cursor: pointer;
   transition:
     transform var(--motion-fast) var(--ease-standard),
@@ -507,55 +560,159 @@ onMounted(() => {
     box-shadow var(--motion-fast) var(--ease-standard);
 }
 
-.author-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(47, 116, 255, 0.28);
-  box-shadow: 0 16px 28px rgba(17, 27, 45, 0.12);
+.subscription-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(47, 116, 255, 0.32);
+  box-shadow: var(--shadow-sm);
 }
 
-.author-main {
-  min-width: 0;
-  flex: 1;
+.subscription-unsubscribe-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
 }
 
-.author-name-row {
+.subscription-cover {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(47, 116, 255, 0.16), rgba(255, 186, 73, 0.12)),
+    var(--surface-3, rgba(148, 163, 184, 0.12));
+}
+
+.video-mode .subscription-cover {
+  aspect-ratio: 16 / 10;
+}
+
+.subscription-cover img,
+.cover-placeholder {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.subscription-cover img {
+  object-fit: cover;
+  transform: scale(1.01);
+}
+
+.cover-placeholder {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: clamp(28px, 7vw, 54px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
 }
 
-.author-name {
-  font-size: 16px;
-  font-weight: 700;
+.cover-placeholder::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.28), transparent 28%),
+    linear-gradient(180deg, transparent, rgba(2, 8, 18, 0.22));
+}
+
+.cover-placeholder span {
+  position: relative;
+  z-index: 1;
+}
+
+.kind-chip,
+.update-badge {
+  position: absolute;
+  z-index: 2;
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kind-chip {
+  left: 10px;
+  top: 10px;
+  padding: 4px 9px;
+  color: #fff;
+  background: rgba(2, 8, 18, 0.48);
+}
+
+.update-badge {
+  left: 10px;
+  bottom: 10px;
+  padding: 5px 10px;
+  color: #fff;
+  background: linear-gradient(135deg, #ff4d4f, #ff8a00);
+  box-shadow: 0 8px 18px rgba(238, 10, 36, 0.28);
+}
+
+.subscription-body {
+  padding: 13px 14px 15px;
+}
+
+.creator-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.creator-row h2 {
+  margin: 0;
   color: var(--text-strong);
+  font-size: 17px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.author-badge {
+.creator-arrow {
   flex-shrink: 0;
+  color: var(--text-tertiary);
 }
 
-.author-update {
-  margin-top: 6px;
+.latest-label {
+  margin: 10px 0 3px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.latest-title {
+  min-height: 38px;
+  margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.author-side {
+.subscription-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 11px;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
-.author-arrow {
-  color: var(--text-tertiary);
-  font-size: 16px;
+.subscription-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subscription-dialog-body {
@@ -623,35 +780,55 @@ onMounted(() => {
 }
 
 @media (max-width: 767px) {
+  .subscription-list-page {
+    padding: 10px 10px 72px;
+  }
+
+  .subscription-hero {
+    flex-direction: column;
+    border-radius: 20px;
+  }
+
+  .hero-stat {
+    width: 100%;
+    min-width: 0;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+  }
+
   .header-actions {
     top: calc(var(--mobile-header-offset, 0px) + 8px);
-    margin: 8px 8px 0;
     padding: 10px 12px;
   }
 
-  .actor-grid {
+  .subscription-grid,
+  .subscription-grid.video-mode {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    padding: 12px;
-  }
-
-  .author-list {
-    padding: 12px 10px 0;
     gap: 10px;
+    padding-top: 12px;
   }
 
-  .author-card {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 14px;
+  .subscription-card {
+    border-radius: 18px;
   }
 
-  .author-side {
-    justify-content: space-between;
+  .subscription-body {
+    padding: 10px 11px 12px;
   }
 
-  .author-unsubscribe-btn {
-    min-width: 92px;
+  .creator-row h2 {
+    font-size: 15px;
+  }
+
+  .latest-title {
+    min-height: 34px;
+    font-size: 12px;
+  }
+
+  .subscription-unsubscribe-btn {
+    padding-inline: 8px;
   }
 }
 </style>

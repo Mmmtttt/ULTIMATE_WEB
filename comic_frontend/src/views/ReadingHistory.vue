@@ -1,5 +1,12 @@
 <template>
   <div class="history-page desktop-page-shell">
+    <van-nav-bar
+      title="阅读记录"
+      left-text="返回"
+      left-arrow
+      @click-left="$router.back()"
+    />
+
     <section class="history-hero">
       <div>
         <p class="eyebrow">{{ isVideoMode ? 'Video History' : 'Comic History' }}</p>
@@ -111,6 +118,10 @@ watch(contentType, reload)
 <style scoped>
 .history-page {
   padding: 14px 16px 24px;
+}
+
+.history-page :deep(.van-nav-bar) {
+  margin-bottom: 12px;
 }
 
 .history-hero {

@@ -310,12 +310,43 @@ class BaseCreatorAppService(BaseAppService[BaseCreator]):
     def _get_subscription_list_impl(self, repo: BaseCreatorRepository) -> ServiceResult:
         try:
             creators = repo.get_all()
-            creator_list = [creator.to_dict() for creator in creators]
+            creator_list = []
+            for creator in creators:
+                creator_info = creator.to_dict()
+                latest_work = self._get_cached_latest_work_for_creator(creator)
+                if latest_work:
+                    creator_info["latest_work"] = latest_work
+                    creator_info["latest_work_cover_url"] = latest_work.get("cover_url", "")
+                    creator_info["latest_work_platform"] = latest_work.get("platform", "")
+                creator_list.append(creator_info)
             app_logger.info(f"获取{self._entity_name}订阅列表成功，共 {len(creator_list)} 个")
             return ServiceResult.ok(creator_list)
         except Exception as e:
             error_logger.error(f"获取{self._entity_name}订阅列表失败: {e}")
             return ServiceResult.error(f"获取{self._entity_name}订阅列表失败")
+
+    def _get_cached_latest_work_for_creator(self, creator: BaseCreator) -> Dict[str, Any]:
+        if not creator:
+            return {}
+
+        try:
+            cache_key = f"{self._get_cache_key_prefix()}_{creator.name}"
+            cached_works = self._cache_manager.get_persistent(cache_key, self._get_cache_key_prefix())
+            if not isinstance(cached_works, list) or not cached_works:
+                return {}
+
+            latest = cached_works[0] if isinstance(cached_works[0], dict) else {}
+            if not latest:
+                return {}
+
+            work = dict(latest)
+            local_cover_url = self._resolve_cover_url_for_work(work)
+            if local_cover_url:
+                work["cover_url"] = local_cover_url
+            return work
+        except Exception as e:
+            error_logger.error(f"读取{self._entity_name}订阅封面缓存失败: {e}")
+            return {}
 
     def _subscribe_by_name_impl(
         self,
