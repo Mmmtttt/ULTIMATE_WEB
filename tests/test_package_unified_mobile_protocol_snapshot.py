@@ -200,13 +200,13 @@ def test_build_mobile_protocol_snapshot_merges_project_plugin_host_overlays(monk
         monkeypatch.setattr(package_unified, "PROJECT_PLUGINS_DIR", project_plugins_root)
 
         _write_json(
-            third_party_root / "javdb-api-scraper" / "javbus_plugin" / "ultimate-plugin.json",
+            third_party_root / "JavBus" / "ultimate-plugin.json",
             {
                 "protocol_version": "1.0",
                 "plugin": {
                     "id": "video.javbus",
                     "name": "JAVBUS",
-                    "entrypoint": "../ultimate_provider.py:JavbusProvider",
+                    "entrypoint": "./ultimate_provider.py:JavbusProvider",
                 },
                 "media_types": ["video"],
                 "capabilities": [{"key": "catalog.search"}],

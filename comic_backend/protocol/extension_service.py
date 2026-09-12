@@ -174,6 +174,53 @@ def _safe_dir_name(value: str) -> str:
     return name or "plugin"
 
 
+def _config_path() -> Path:
+    from core.constants import THIRD_PARTY_CONFIG_PATH
+
+    return Path(THIRD_PARTY_CONFIG_PATH).expanduser().resolve()
+
+
+def _load_config_document() -> Dict[str, Any]:
+    path = _config_path()
+    if not path.is_file():
+        return {"default_adapter": "", "adapters": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {"default_adapter": "", "adapters": {}}
+    except Exception:
+        return {"default_adapter": "", "adapters": {}}
+
+
+def _save_config_document(payload: Dict[str, Any]) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(payload or {}), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_extension_sources() -> Dict[str, Dict[str, Any]]:
+    sources = (_load_config_document().get("extension_sources") or {})
+    if not isinstance(sources, dict):
+        return {}
+    return {
+        str(plugin_id or "").strip(): dict(source or {})
+        for plugin_id, source in sources.items()
+        if str(plugin_id or "").strip() and isinstance(source, dict)
+    }
+
+
+def _save_extension_source(plugin_id: str, source: Dict[str, Any]) -> None:
+    normalized_plugin_id = str(plugin_id or "").strip()
+    if not normalized_plugin_id:
+        return
+    payload = _load_config_document()
+    sources = payload.get("extension_sources")
+    if not isinstance(sources, dict):
+        sources = {}
+        payload["extension_sources"] = sources
+    sources[normalized_plugin_id] = dict(source or {})
+    _save_config_document(payload)
+
+
 def _package_roots(extract_dir: Path) -> List[Path]:
     children = [item for item in extract_dir.iterdir() if item.name != "__MACOSX"]
     if len(children) == 1 and children[0].is_dir():
@@ -205,10 +252,16 @@ def _disable_nested_manifests(source_dir: Path, manifest_path: Path) -> List[str
 def list_extensions() -> Dict[str, Any]:
     root = _install_root(create=False)
     installed: List[Dict[str, Any]] = []
+    sources = _load_extension_sources()
+    installed_ids = set()
     if not root.is_dir():
         return {
             "install_root": str(root),
             "installed": installed,
+            "saved_sources": [
+                {"plugin_id": plugin_id, **source, "installed": False}
+                for plugin_id, source in sorted(sources.items())
+            ],
             "requires_restart": True,
         }
     for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
@@ -222,17 +275,25 @@ def list_extensions() -> Dict[str, Any]:
         except Exception:
             continue
         plugin = dict(payload.get("plugin") or {})
+        plugin_id = str(plugin.get("id") or "").strip()
+        if plugin_id:
+            installed_ids.add(plugin_id)
         installed.append(
             {
-                "plugin_id": str(plugin.get("id") or "").strip(),
+                "plugin_id": plugin_id,
                 "name": str(plugin.get("name") or plugin.get("id") or child.name).strip(),
                 "version": str(plugin.get("version") or "").strip(),
                 "directory": child.name,
+                "source": sources.get(plugin_id) or {},
             }
         )
     return {
         "install_root": str(root),
         "installed": installed,
+        "saved_sources": [
+            {"plugin_id": plugin_id, **source, "installed": plugin_id in installed_ids}
+            for plugin_id, source in sorted(sources.items())
+        ],
         "requires_restart": True,
     }
 
@@ -300,12 +361,41 @@ def install_extension_from_github(url: str) -> Dict[str, Any]:
         zip_path = temp_dir / "repo.zip"
         _download_url_to_file(archive_url, zip_path)
         result = _install_extension_zip_path(zip_path)
-        result["source"] = {
+        source = {
             "type": "github",
+            "url": str(url or "").strip(),
             "owner": owner,
             "repo": repo,
             "ref": resolved_ref,
         }
+        result["source"] = source
+        _save_extension_source(str(result.get("plugin_id") or ""), source)
         return result
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def reinstall_saved_extension(plugin_id: str) -> Dict[str, Any]:
+    normalized_plugin_id = str(plugin_id or "").strip()
+    source = _load_extension_sources().get(normalized_plugin_id) or {}
+    if str(source.get("type") or "").strip().lower() != "github" or not str(source.get("url") or "").strip():
+        raise ValueError("该扩展没有已保存的 GitHub 安装链接")
+    return install_extension_from_github(str(source.get("url") or "").strip())
+
+
+def delete_extension(plugin_id: str) -> Dict[str, Any]:
+    normalized_plugin_id = str(plugin_id or "").strip()
+    if not normalized_plugin_id:
+        raise ValueError("缺少扩展 plugin_id")
+    root = _install_root(create=True)
+    target_dir = (root / _safe_dir_name(normalized_plugin_id)).resolve()
+    if root not in target_dir.parents:
+        raise ValueError("扩展安装目录越界")
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    return {
+        "plugin_id": normalized_plugin_id,
+        "deleted": True,
+        "requires_restart": True,
+        "message": "扩展代码已删除，配置已保留，重启后生效",
+    }

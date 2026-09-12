@@ -344,6 +344,38 @@ def install_third_party_extension_from_github():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/third-party/extensions/<path:plugin_id>/reinstall', methods=['POST'])
+@require_third_party(error_response)
+def reinstall_third_party_extension(plugin_id):
+    try:
+        from protocol.extension_service import reinstall_saved_extension
+
+        result = reinstall_saved_extension(plugin_id)
+        app_logger.info(f"第三方扩展重新安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"重新安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/extensions/<path:plugin_id>', methods=['DELETE'])
+@require_third_party(error_response)
+def delete_third_party_extension(plugin_id):
+    try:
+        from protocol.extension_service import delete_extension
+
+        result = delete_extension(plugin_id)
+        app_logger.info(f"第三方扩展代码已删除: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"删除第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
     try:

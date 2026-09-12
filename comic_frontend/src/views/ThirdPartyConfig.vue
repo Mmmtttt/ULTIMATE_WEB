@@ -28,8 +28,49 @@
           :key="item.plugin_id || item.directory"
           :title="item.name || item.plugin_id || item.directory"
           :label="extensionLabel(item)"
-        />
-        <van-cell v-if="installedExtensions.length === 0" title="未安装扩展" label="集成模式下可能已内置平台；扩展模式下可从这里安装" />
+        >
+          <template #right-icon>
+            <div class="extension-actions">
+              <van-button
+                v-if="item.source?.url"
+                size="mini"
+                plain
+                type="primary"
+                :loading="Boolean(extensionActionMap[item.plugin_id])"
+                @click="reinstallExtension(item.plugin_id)"
+              >
+                更新
+              </van-button>
+              <van-button
+                size="mini"
+                plain
+                type="danger"
+                :loading="Boolean(extensionActionMap[item.plugin_id])"
+                @click="deleteExtension(item.plugin_id)"
+              >
+                删除
+              </van-button>
+            </div>
+          </template>
+        </van-cell>
+        <van-cell
+          v-for="item in savedExtensionSources"
+          :key="`source-${item.plugin_id}`"
+          :title="item.plugin_id"
+          :label="sourceLabel(item)"
+        >
+          <template #right-icon>
+            <van-button
+              size="small"
+              type="primary"
+              :loading="Boolean(extensionActionMap[item.plugin_id])"
+              @click="reinstallExtension(item.plugin_id)"
+            >
+              安装
+            </van-button>
+          </template>
+        </van-cell>
+        <van-cell v-if="installedExtensions.length === 0 && savedExtensionSources.length === 0" title="未安装扩展" label="集成模式下可能已内置平台；扩展模式下可从这里安装" />
       </van-cell-group>
       <input
         ref="extensionFileInput"
@@ -111,7 +152,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { showFailToast, showSuccessToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { openExternalUrl } from '@/runtime/browser'
@@ -129,9 +170,16 @@ const installingExtension = ref(false)
 const installingGithubExtension = ref(false)
 const githubExtensionUrl = ref('')
 const extensionState = ref({ installed: [] })
+const extensionActionMap = ref({})
 
 const installedExtensions = computed(() => {
   return Array.isArray(extensionState.value?.installed) ? extensionState.value.installed : []
+})
+
+const savedExtensionSources = computed(() => {
+  const sources = Array.isArray(extensionState.value?.saved_sources) ? extensionState.value.saved_sources : []
+  const installedIds = new Set(installedExtensions.value.map((item) => item.plugin_id).filter(Boolean))
+  return sources.filter((item) => item?.plugin_id && !installedIds.has(item.plugin_id))
 })
 
 const displayAdapters = computed(() => {
@@ -198,7 +246,12 @@ async function loadThirdPartyConfig() {
 function extensionLabel(item) {
   const version = item?.version ? `版本 ${item.version}` : ''
   const directory = item?.directory ? `目录 ${item.directory}` : ''
-  return [version, directory].filter(Boolean).join(' · ') || '重启后生效'
+  const source = item?.source?.url ? `来源 ${item.source.url}` : ''
+  return [version, directory, source].filter(Boolean).join(' · ') || '重启后生效'
+}
+
+function sourceLabel(item) {
+  return item?.url || [item?.owner, item?.repo].filter(Boolean).join('/') || '已保存安装来源'
 }
 
 function selectExtensionPackage() {
@@ -247,6 +300,54 @@ async function installGithubExtension() {
     showFailToast(error?.message || '扩展安装失败')
   } finally {
     installingGithubExtension.value = false
+  }
+}
+
+function setExtensionAction(pluginId, loading) {
+  extensionActionMap.value = { ...extensionActionMap.value, [pluginId]: loading }
+}
+
+async function reinstallExtension(pluginId) {
+  if (!pluginId) return
+  setExtensionAction(pluginId, true)
+  try {
+    const response = await comicApi.reinstallThirdPartyExtension(pluginId)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    setExtensionAction(pluginId, false)
+  }
+}
+
+async function deleteExtension(pluginId) {
+  if (!pluginId) return
+  try {
+    await showConfirmDialog({
+      title: '删除扩展代码',
+      message: '只会删除扩展代码，已保存的安装链接和平台配置会保留。删除后需要重启应用才会生效。'
+    })
+  } catch {
+    return
+  }
+  setExtensionAction(pluginId, true)
+  try {
+    const response = await comicApi.deleteThirdPartyExtension(pluginId)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展代码已删除，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '删除扩展失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '删除扩展失败')
+  } finally {
+    setExtensionAction(pluginId, false)
   }
 }
 
@@ -330,6 +431,12 @@ onMounted(() => {
 
 .extension-file-input {
   display: none;
+}
+
+.extension-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .adapter-panel {

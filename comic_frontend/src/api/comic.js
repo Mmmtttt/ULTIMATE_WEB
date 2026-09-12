@@ -471,6 +471,18 @@ export const comicApi = {
       timeout: 0
     })
   },
+
+  reinstallThirdPartyExtension: (pluginId) => {
+    return request.post(`/v1/comic/third-party/extensions/${encodeURIComponent(pluginId)}/reinstall`, {}, {
+      timeout: 0
+    })
+  },
+
+  deleteThirdPartyExtension: (pluginId) => {
+    return request.delete(`/v1/comic/third-party/extensions/${encodeURIComponent(pluginId)}`, {
+      timeout: 0
+    })
+  },
   
   // ==================== 回收站相关 ====================
   

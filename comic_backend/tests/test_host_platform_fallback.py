@@ -152,7 +152,7 @@ def _install_protocol_registry(monkeypatch, third_party_root: Path):
         },
     )
     _write_plugin(
-        third_party_root / "javdb-api-scraper" / "javbus_plugin",
+        third_party_root / "JavBus",
         plugin_id="video.javbus",
         config_key="javbus",
         media_type="video",

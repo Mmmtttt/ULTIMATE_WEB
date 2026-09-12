@@ -94,7 +94,7 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
         _write_manifest(backend_third_party / "Picacomic-Crawler", "comic.picacomic")
         _write_manifest(backend_third_party / "javdb-api-scraper", "video.javdb")
         _write_manifest(
-            backend_third_party / "javdb-api-scraper" / "javbus_plugin",
+            backend_third_party / "JavBus",
             "video.javbus",
             packaging={
                 "pyinstaller": {

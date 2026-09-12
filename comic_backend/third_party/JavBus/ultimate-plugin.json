@@ -1,0 +1,116 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "video.javbus",
+    "name": "JAVBUS",
+    "version": "1.0.0",
+    "entrypoint": "./ultimate_provider.py:JavbusProvider",
+    "config_key": "javbus"
+  },
+  "media_types": ["video"],
+  "identity": {
+    "content_type": "video",
+    "host_id_prefix": "JAVBUS",
+    "platform_label": "JAVBUS",
+    "aliases": ["javbus"]
+  },
+  "presentation": {
+    "media_card": {
+      "cover": {
+        "aspect_ratio": "2 / 3",
+        "fit": "contain"
+      },
+      "badge": {
+        "show_platform_label": true,
+        "label": "JAVBUS"
+      }
+    }
+  },
+  "capabilities": [
+    { "key": "catalog.search" },
+    { "key": "catalog.detail" },
+    { "key": "person.search" },
+    { "key": "person.works" },
+    { "key": "health.query.status" }
+  ],
+  "configuration": {
+    "order": 40,
+    "label": "JAVBUS",
+    "credential": {
+      "enabled_field": "enabled",
+      "required_fields": [],
+      "unconfigured_message": "",
+      "disabled_message": "JAVBUS 平台未启用，不能使用该平台查询。"
+    },
+    "sections": [
+      {
+        "id": "basic",
+        "label": "基础配置",
+        "fields": [
+          { "key": "enabled", "label": "启用", "type": "boolean" }
+        ]
+      }
+    ]
+  },
+  "resource_policy": {
+    "assets": {
+      "cover": {
+        "url_base": "https://www.javbus.com",
+        "request_profiles": [
+          {
+            "match_hosts": ["javbus.com"],
+            "referer_template": "https://www.javbus.com/{content_id}",
+            "frontend_proxy": true
+          }
+        ]
+      },
+      "image": {
+        "url_base": "https://www.javbus.com",
+        "request_profiles": [
+          {
+            "match_hosts": ["javbus.com"],
+            "referer_template": "https://www.javbus.com/{content_id}",
+            "frontend_proxy": true
+          }
+        ]
+      },
+      "preview_video": {
+        "available": false,
+        "download_enabled": false
+      }
+    }
+  },
+  "runtime": {
+    "python_paths": [".", "lib"],
+    "vendor_path_templates": [
+      "vendor/python",
+      "vendor/python/{python_tag}",
+      "vendor/python/{python_tag}/{platform_tag}"
+    ]
+  },
+  "packaging": {
+    "external": {
+      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0", "lxml>=4.9.0", "beautifulsoup4>=4.12.0"]
+    },
+    "pyinstaller": {
+      "collect_all": ["curl_cffi", "cffi", "lxml"],
+      "pip_requirements": ["curl_cffi>=0.6.0", "cffi>=1.15.0", "lxml>=4.9.0", "beautifulsoup4>=4.12.0"]
+    },
+    "android": {
+      "enabled": true,
+      "pip_options": ["--no-deps"],
+      "pip_requirements": [
+        "cffi==1.17.1",
+        "chaquopy-libffi>=3.3",
+        "pycparser>=2.21",
+        "curl-cffi==0.16.3",
+        "lxml==5.3.0",
+        "chaquopy-libxml2>=2.9.8",
+        "chaquopy-libxslt>=1.1.32",
+        "requests>=2.31.0",
+        "beautifulsoup4>=4.13.4",
+        "soupsieve>=2.5"
+      ]
+    }
+  }
+}
