@@ -60,6 +60,40 @@ def _plugin_zip(plugin_id: str, requirements: list[str] | None = None, *, unsafe
     return raw.getvalue()
 
 
+def _plugin_payload(plugin_id: str) -> dict:
+    return {
+        "protocol_version": "2.0",
+        "plugin": {
+            "id": plugin_id,
+            "name": plugin_id,
+            "entrypoint": "./ultimate_provider.py:DemoProvider",
+        },
+        "media_types": ["comic"],
+        "packaging": {
+            "external": {"pip_requirements": []},
+            "android": {"enabled": True, "pip_requirements": []},
+        },
+    }
+
+
+def _repo_zip_with_root_and_nested_manifests() -> bytes:
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w") as archive:
+        archive.writestr("repo/ultimate-plugin.json", json.dumps(_plugin_payload("video.root"), ensure_ascii=False))
+        archive.writestr("repo/ultimate_provider.py", "class DemoProvider: pass\n")
+        archive.writestr("repo/nested/ultimate-plugin.json", json.dumps(_plugin_payload("video.nested"), ensure_ascii=False))
+        archive.writestr("repo/nested/ultimate_provider.py", "class DemoProvider: pass\n")
+    return raw.getvalue()
+
+
+def _repo_zip_with_two_nested_manifests() -> bytes:
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w") as archive:
+        archive.writestr("repo/a/ultimate-plugin.json", json.dumps(_plugin_payload("video.a"), ensure_ascii=False))
+        archive.writestr("repo/b/ultimate-plugin.json", json.dumps(_plugin_payload("video.b"), ensure_ascii=False))
+    return raw.getvalue()
+
+
 def test_install_extension_zip_installs_when_dependency_pool_covers_requirements(monkeypatch, tmp_path):
     service = _load_extension_service()
     install_root = tmp_path / "plugins"
@@ -105,6 +139,39 @@ def test_install_extension_zip_rejects_path_traversal(monkeypatch, tmp_path):
         assert "不安全路径" in str(exc)
     else:
         raise AssertionError("unsafe zip member should be rejected")
+
+
+def test_install_extension_zip_prefers_root_manifest_and_ignores_nested_plugins(monkeypatch, tmp_path):
+    service = _load_extension_service()
+    install_root = tmp_path / "plugins"
+    dep_manifest = tmp_path / "dependency_pool_manifest.json"
+    dep_manifest.write_text(json.dumps({"requirement_names": []}), encoding="utf-8")
+    monkeypatch.setenv("ULTIMATE_USER_PLUGIN_ROOT", str(install_root))
+    monkeypatch.setenv("ULTIMATE_PLUGIN_DEP_MANIFEST", str(dep_manifest))
+    monkeypatch.setenv("BACKEND_RUNTIME_PROFILE", "full")
+
+    result = service.install_extension_zip(_Upload(_repo_zip_with_root_and_nested_manifests()))
+
+    assert result["plugin_id"] == "video.root"
+    assert result["ignored_manifests"] == ["nested/ultimate-plugin.json"]
+    assert (install_root / "video.root" / "ultimate-plugin.json").exists()
+    assert not (install_root / "video.root" / "nested" / "ultimate-plugin.json").exists()
+    assert [item["plugin_id"] for item in service.list_extensions()["installed"]] == ["video.root"]
+
+
+def test_install_extension_zip_rejects_ambiguous_nested_manifests(monkeypatch, tmp_path):
+    service = _load_extension_service()
+    monkeypatch.setenv("ULTIMATE_USER_PLUGIN_ROOT", str(tmp_path / "plugins"))
+
+    try:
+        service.install_extension_zip(_Upload(_repo_zip_with_two_nested_manifests()))
+    except ValueError as exc:
+        message = str(exc)
+        assert "必须明确一个根 ultimate-plugin.json" in message
+        assert "repo/a/ultimate-plugin.json" in message
+        assert "repo/b/ultimate-plugin.json" in message
+    else:
+        raise AssertionError("ambiguous nested manifests should be rejected")
 
 
 def test_install_extension_from_github_downloads_repo_zip(monkeypatch, tmp_path):

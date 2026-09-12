@@ -174,6 +174,34 @@ def _safe_dir_name(value: str) -> str:
     return name or "plugin"
 
 
+def _package_roots(extract_dir: Path) -> List[Path]:
+    children = [item for item in extract_dir.iterdir() if item.name != "__MACOSX"]
+    if len(children) == 1 and children[0].is_dir():
+        return [extract_dir, children[0]]
+    return [extract_dir]
+
+
+def _select_manifest(extract_dir: Path, manifests: List[Path]) -> Path:
+    for root in _package_roots(extract_dir):
+        manifest_path = root / "ultimate-plugin.json"
+        if manifest_path in manifests:
+            return manifest_path
+    if len(manifests) == 1:
+        return manifests[0]
+    paths = ", ".join(str(path.relative_to(extract_dir)).replace("\\", "/") for path in manifests)
+    raise ValueError("扩展包必须明确一个根 ultimate-plugin.json；发现多个: " + paths)
+
+
+def _disable_nested_manifests(source_dir: Path, manifest_path: Path) -> List[str]:
+    ignored: List[str] = []
+    for nested_manifest in sorted(source_dir.rglob("ultimate-plugin.json")):
+        if nested_manifest == manifest_path:
+            continue
+        ignored.append(str(nested_manifest.relative_to(source_dir)).replace("\\", "/"))
+        nested_manifest.unlink()
+    return ignored
+
+
 def list_extensions() -> Dict[str, Any]:
     root = _install_root(create=False)
     installed: List[Dict[str, Any]] = []
@@ -218,9 +246,9 @@ def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
         _safe_extract(zip_path, extract_dir)
 
         manifests = sorted(extract_dir.rglob("ultimate-plugin.json"))
-        if len(manifests) != 1:
-            raise ValueError("扩展包必须且只能包含一个 ultimate-plugin.json")
-        manifest_path = manifests[0]
+        if not manifests:
+            raise ValueError("扩展包缺少 ultimate-plugin.json")
+        manifest_path = _select_manifest(extract_dir, manifests)
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         plugin_id = _plugin_id(payload)
         if not plugin_id:
@@ -229,6 +257,7 @@ def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
         _validate_dependency_pool(payload)
 
         source_dir = manifest_path.parent.resolve()
+        ignored_manifests = _disable_nested_manifests(source_dir, manifest_path)
         target_dir = (root / _safe_dir_name(plugin_id)).resolve()
         if root not in target_dir.parents:
             raise ValueError("扩展安装目录越界")
@@ -238,6 +267,7 @@ def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
         return {
             "plugin_id": plugin_id,
             "directory": target_dir.name,
+            "ignored_manifests": ignored_manifests,
             "requires_restart": True,
             "message": "扩展安装成功，重启后生效",
         }
