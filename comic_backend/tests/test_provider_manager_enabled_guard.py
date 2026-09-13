@@ -190,3 +190,24 @@ def test_provider_manager_child_capability_blocks_when_parent_switch_disabled():
         manager.execute("video.child", "catalog.search", {"keyword": "x"})
 
     assert manager._config_store.requests == ["parent"]
+
+
+def test_provider_manager_config_serialization_falls_back_when_optional_dependency_is_missing(monkeypatch):
+    manager = _make_manager({})
+
+    def fail_to_load_provider(_plugin_id):
+        raise ModuleNotFoundError("common")
+
+    monkeypatch.setattr(manager, "get_provider", fail_to_load_provider)
+
+    result = manager.serialize_public_config(
+        "comic.demo",
+        {
+            "enabled": True,
+            "display_name": "Demo",
+            "password": "secret",
+            "cookies": {"session": "secret"},
+        },
+    )
+
+    assert result == {"enabled": True, "display_name": "Demo"}

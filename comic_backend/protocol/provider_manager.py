@@ -7,6 +7,8 @@ import platform
 import sys
 from typing import Any, Dict, Optional
 
+from infrastructure.logger import app_logger
+
 from .base import PluginManifest, ProtocolProvider
 from .credential_guard import get_manifest_credential_status
 from .registry import PluginRegistry, get_plugin_registry
@@ -219,9 +221,45 @@ class ProviderManager:
         provider = self.get_provider(plugin_id)
         return provider.normalize_config(dict(payload or {}))
 
+    @staticmethod
+    def _fallback_public_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        sensitive_fragments = (
+            "password",
+            "token",
+            "cookie",
+            "secret",
+            "authorization",
+            "session",
+        )
+
+        def redact(value: Any, key: str = "") -> Any:
+            normalized_key = str(key or "").strip().lower()
+            if normalized_key and any(fragment in normalized_key for fragment in sensitive_fragments):
+                return None
+            if isinstance(value, dict):
+                return {
+                    item_key: redacted
+                    for item_key, item_value in value.items()
+                    if (redacted := redact(item_value, str(item_key))) is not None
+                }
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            return value
+
+        result = redact(dict(config or {}))
+        return result if isinstance(result, dict) else {}
+
     def serialize_public_config(self, plugin_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
-        provider = self.get_provider(plugin_id)
-        return provider.serialize_public_config(dict(config or {}))
+        try:
+            provider = self.get_provider(plugin_id)
+            return provider.serialize_public_config(dict(config or {}))
+        except (ImportError, ModuleNotFoundError) as exc:
+            app_logger.warning(
+                "plugin config serializer unavailable; using generic redaction: plugin=%s error=%s",
+                plugin_id,
+                exc,
+            )
+            return self._fallback_public_config(config)
 
     def get_query_status(self, plugin_id: str) -> Dict[str, Any]:
         manifest = self.registry.get_manifest(plugin_id)
