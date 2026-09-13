@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.mark.integration
-def test_recommendation_migrate_to_local_route_creates_async_task(third_party_client, monkeypatch):
+def test_recommendation_migrate_to_local_route_creates_async_task(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard preview-comic migrate route contract, ensuring it only creates async import tasks.
@@ -18,7 +18,7 @@ def test_recommendation_migrate_to_local_route_creates_async_task(third_party_cl
       1. Route returns `task_id` instead of synchronous migrate stats.
       2. Task uses `import_type=migrate_to_local`, `target=home`, `content_type=comic`.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     task_manager_module = importlib.import_module("infrastructure.task_manager")
     captured = {}
 
@@ -50,7 +50,7 @@ def test_recommendation_migrate_to_local_route_creates_async_task(third_party_cl
 
     response = client.post(
         "/api/v1/recommendation/migrate-to-local",
-        json={"recommendation_ids": ["JM_100001", "PK_200002", ""]},
+        json={"recommendation_ids": ["CA_100001", "CB_200002", ""]},
     )
     payload = response.get_json()
 
@@ -59,12 +59,12 @@ def test_recommendation_migrate_to_local_route_creates_async_task(third_party_cl
     assert payload["data"]["task_id"] == "task-rec-migrate-001"
     assert payload["data"]["content_type"] == "comic"
 
-    assert captured["platform"] == "JM"
+    assert captured["platform"] == "CA"
     assert captured["import_type"] == "migrate_to_local"
     assert captured["target"] == "home"
     assert captured["comic_id"] is None
     assert captured["keyword"] is None
-    assert captured["comic_ids"] == ["JM_100001", "PK_200002"]
+    assert captured["comic_ids"] == ["CA_100001", "CB_200002"]
     assert captured["content_type"] == "comic"
     assert captured["extra_data"] == {
         "source": "preview",
@@ -73,7 +73,7 @@ def test_recommendation_migrate_to_local_route_creates_async_task(third_party_cl
 
 
 @pytest.mark.integration
-def test_video_recommendation_migrate_to_local_route_creates_async_task(third_party_client, monkeypatch):
+def test_video_recommendation_migrate_to_local_route_creates_async_task(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard preview-video migrate route contract, ensuring it only creates async import tasks.
@@ -85,7 +85,7 @@ def test_video_recommendation_migrate_to_local_route_creates_async_task(third_pa
       1. Route returns `task_id` instead of synchronous migrate stats.
       2. Task uses `import_type=migrate_to_local`, `target=home`, `content_type=video`.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     task_manager_module = importlib.import_module("infrastructure.task_manager")
     captured = {}
 
@@ -117,7 +117,7 @@ def test_video_recommendation_migrate_to_local_route_creates_async_task(third_pa
 
     response = client.post(
         "/api/v1/video/recommendation/migrate-to-local",
-        json={"video_ids": ["JAVDB_wKgxKe", "JAVBUS_VEO777", " "]},
+        json={"video_ids": ["VA_wKgxKe", "VB_VEO777", " "]},
     )
     payload = response.get_json()
 
@@ -126,12 +126,12 @@ def test_video_recommendation_migrate_to_local_route_creates_async_task(third_pa
     assert payload["data"]["task_id"] == "task-video-migrate-001"
     assert payload["data"]["content_type"] == "video"
 
-    assert captured["platform"] == "JAVDB"
+    assert captured["platform"] == "VA"
     assert captured["import_type"] == "migrate_to_local"
     assert captured["target"] == "home"
     assert captured["comic_id"] is None
     assert captured["keyword"] is None
-    assert captured["comic_ids"] == ["JAVDB_wKgxKe", "JAVBUS_VEO777"]
+    assert captured["comic_ids"] == ["VA_wKgxKe", "VB_VEO777"]
     assert captured["content_type"] == "video"
     assert captured["extra_data"] == {
         "source": "preview",
