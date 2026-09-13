@@ -9,9 +9,6 @@ output
 build
 data
 tests
-开发进展
-设计文档
-需求文档
 **/__pycache__/
 **/*.pyc
 **/*.pyo
