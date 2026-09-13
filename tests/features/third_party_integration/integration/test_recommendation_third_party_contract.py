@@ -11,7 +11,7 @@ def _ok_result(data=None, message="ok"):
 
 
 @pytest.mark.integration
-def test_recommendation_cache_download_returns_503_when_third_party_unavailable(third_party_client, monkeypatch):
+def test_recommendation_cache_download_returns_503_when_third_party_unavailable(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/recommendation/cache/download` unavailable branch so disabled third-party runtime is reported clearly.
@@ -25,7 +25,7 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
     - History:
       - 2026-03-23: Added runtime-guard branch coverage for recommendation cache download.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
 
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
@@ -42,7 +42,7 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
 
     response = client.post(
         "/api/v1/recommendation/cache/download",
-        json={"recommendation_id": "JM000001"},
+        json={"recommendation_id": "CA000001"},
     )
     payload = response.get_json()
 
@@ -52,7 +52,7 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
 
 
 @pytest.mark.integration
-def test_recommendation_cache_download_forwards_platform_download_contract(third_party_client, monkeypatch):
+def test_recommendation_cache_download_forwards_platform_download_contract(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard recommendation cache download contract with third-party platform service:
@@ -60,20 +60,20 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     - Steps:
       1. Mock recommendation detail, cache manager methods, and `update_total_page`.
       2. Mock `third_party.platform_service.get_platform_service().download_album`.
-      3. Call `POST /api/v1/recommendation/cache/download` with a JM recommendation id.
+      3. Call `POST /api/v1/recommendation/cache/download` with a fake comic recommendation id.
       4. Assert third-party call args and final API payload.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. `download_album` receives `platform=JM`, `original_id`, `show_progress=False`, and JM cache dir.
+      2. `download_album` receives fake comic platform, `original_id`, `show_progress=False`, and platform cache dir.
       3. API returns `status=downloaded` with cached pages and normalized `total_pages`.
     - History:
       - 2026-03-23: Added strong contract guard for recommendation cache download chain.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
     platform_service_module = importlib.import_module("third_party.platform_service")
     captured = {"download": [], "add_to_cache": [], "update_total_page": []}
-    recommendation_id = "JM777001"
+    recommendation_id = "CA777001"
 
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
     monkeypatch.setattr(recommendation_api.recommendation_service, "_get_platform_service", lambda: object())
@@ -126,10 +126,10 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     assert payload["data"]["cached_pages"] == [1, 2, 3, 4, 5, 6]
 
     assert len(captured["download"]) == 1
-    assert captured["download"][0]["platform"] == "JM"
+    assert captured["download"][0]["platform"] == "CA"
     assert captured["download"][0]["original_id"] == "777001"
     assert captured["download"][0]["show_progress"] is False
-    assert "/recommendation_cache/comic/JM" in captured["download"][0]["download_dir"].replace("\\", "/")
+    assert "/recommendation_cache/comic/CA" in captured["download"][0]["download_dir"].replace("\\", "/")
 
     # First add uses third-party reported local page count, second add uses actual cached page count.
     assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 6)]
@@ -137,7 +137,7 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
 
 
 @pytest.mark.integration
-def test_recommendation_cache_download_rejects_partial_cache_success(third_party_client, monkeypatch):
+def test_recommendation_cache_download_rejects_partial_cache_success(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard partial preview cache recovery. If the backend knows the album has more
@@ -151,11 +151,11 @@ def test_recommendation_cache_download_rejects_partial_cache_success(third_party
       2. `update_total_page` is not called with the incomplete page count.
       3. The partial cache index can still be refreshed for a later retry.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
     platform_service_module = importlib.import_module("third_party.platform_service")
     captured = {"add_to_cache": [], "update_total_page": []}
-    recommendation_id = "JM777002"
+    recommendation_id = "CA777002"
 
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
     monkeypatch.setattr(recommendation_api.recommendation_service, "_get_platform_service", lambda: object())
@@ -201,7 +201,7 @@ def test_recommendation_cache_download_rejects_partial_cache_success(third_party
 
 
 @pytest.mark.integration
-def test_unified_comic_update_endpoint_dispatches_preview_source(third_party_client, monkeypatch):
+def test_unified_comic_update_endpoint_dispatches_preview_source(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard the single comic update API pair for preview-library comics.
@@ -212,7 +212,7 @@ def test_unified_comic_update_endpoint_dispatches_preview_source(third_party_cli
       1. The unified comic endpoint dispatches to recommendation update logic.
       2. No separate recommendation update endpoint is needed by the frontend.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     comic_api = importlib.import_module("api.v1.comic")
     captured = []
 
@@ -228,19 +228,19 @@ def test_unified_comic_update_endpoint_dispatches_preview_source(third_party_cli
 
     response = client.post(
         "/api/v1/comic/update/check",
-        json={"comic_id": "JM777001", "source": "preview"},
+        json={"comic_id": "CA777001", "source": "preview"},
     )
     payload = response.get_json()
 
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["msg"] == "preview checked"
-    assert payload["data"]["recommendation_id"] == "JM777001"
-    assert captured == ["JM777001"]
+    assert payload["data"]["recommendation_id"] == "CA777001"
+    assert captured == ["CA777001"]
 
 
 @pytest.mark.integration
-def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_client, monkeypatch):
+def test_unified_comic_cover_repair_endpoint_dispatches_source(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard the single-comic cover repair API source dispatch for local and preview libraries.
@@ -251,7 +251,7 @@ def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_clien
       1. Local call defaults to `source=local`.
       2. Preview call preserves `source=preview`.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     comic_api = importlib.import_module("api.v1.comic")
     captured = []
 
@@ -260,7 +260,7 @@ def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_clien
         return _ok_result({
             "comic_id": comic_id,
             "source": source,
-            "cover_path": f"/static/cover/JM/{comic_id}.jpg",
+            "cover_path": f"/static/cover/CA/{comic_id}.jpg",
             "changed": True,
         }, "cover repaired")
 
@@ -268,11 +268,11 @@ def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_clien
 
     local_response = client.post(
         "/api/v1/comic/cover/repair",
-        json={"comic_id": "JM777003"},
+        json={"comic_id": "CA777003"},
     )
     preview_response = client.post(
         "/api/v1/comic/cover/repair",
-        json={"comic_id": "JM777004", "source": "preview"},
+        json={"comic_id": "CA777004", "source": "preview"},
     )
 
     local_payload = local_response.get_json()
@@ -284,4 +284,4 @@ def test_unified_comic_cover_repair_endpoint_dispatches_source(third_party_clien
     assert preview_payload["code"] == 200
     assert local_payload["data"]["source"] == "local"
     assert preview_payload["data"]["source"] == "preview"
-    assert captured == [("JM777003", "local"), ("JM777004", "preview")]
+    assert captured == [("CA777003", "local"), ("CA777004", "preview")]
