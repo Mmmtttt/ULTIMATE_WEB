@@ -142,7 +142,7 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     用例描述:
     - 用例目的: 看护漫画远程搜索接口对第三方库 search_albums 的调用契约，防止关键词/分页/适配器参数回归。
     - 测试步骤:
-      1. mock third_party.external_api.search_albums 记录入参。
+      1. mock protocol.adapter_api.search_albums 记录入参。
       2. 调用 GET /api/v1/comic/search-third-party?platform=all&page=2。
       3. 断言 CA/CB 两个平台都被调用，且参数正确映射。
     - 预期结果:
@@ -154,7 +154,7 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
       - 2026-09-02: 适配 nhentai 插件接入，改为子集断言，未知平台 mock 返回空结果。
     """
     client = third_party_client["client"]
-    external_api = importlib.import_module("third_party.external_api")
+    external_api = importlib.import_module("protocol.adapter_api")
     calls = []
 
     searchable_adapters = {"comic_alpha", "comic_beta"}
@@ -230,7 +230,7 @@ def test_comic_search_third_party_rejects_invalid_platform(third_party_client):
 def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_client, monkeypatch):
     client = third_party_client["client"]
     config_path = third_party_client["third_party_config_path"]
-    external_api = importlib.import_module("third_party.external_api")
+    external_api = importlib.import_module("protocol.adapter_api")
     original_config = load_json(config_path)
 
     config = load_json(config_path)
@@ -319,8 +319,8 @@ def test_comic_import_online_by_id_forwards_platform_service_contract(third_part
     """
     client = third_party_client["client"]
     meta_dir = third_party_client["meta_dir"]
-    external_api = importlib.import_module("third_party.external_api")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    external_api = importlib.import_module("protocol.adapter_api")
+    platform_service_module = importlib.import_module("protocol.platform_service")
 
     monkeypatch.setattr(
         external_api,
@@ -391,8 +391,8 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
     """
     client = third_party_client["client"]
     config_path = third_party_client["third_party_config_path"]
-    external_api = importlib.import_module("third_party.external_api")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    external_api = importlib.import_module("protocol.adapter_api")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     config = load_json(config_path)
     config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "pk-user", "password": "pk-pass"}
@@ -453,8 +453,8 @@ def test_comic_import_online_by_favorite_forwards_get_favorites_contract(third_p
     """
     client = third_party_client["client"]
     meta_dir = third_party_client["meta_dir"]
-    external_api = importlib.import_module("third_party.external_api")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    external_api = importlib.import_module("protocol.adapter_api")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     captured = {}
 
     def fake_get_favorites(adapter_name=None):
@@ -522,8 +522,8 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
     config_path = third_party_client["third_party_config_path"]
     data_dir = third_party_client["data_dir"]
     meta_dir = third_party_client["meta_dir"]
-    external_api = importlib.import_module("third_party.external_api")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    external_api = importlib.import_module("protocol.adapter_api")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     config = load_json(config_path)
     config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "pk-user", "password": "pk-pass"}
@@ -619,7 +619,7 @@ def test_comic_update_check_and_download_forward_platform_contract(third_party_c
     client = third_party_client["client"]
     data_dir = third_party_client["data_dir"]
     meta_dir = third_party_client["meta_dir"]
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     calls = {"meta": [], "download": []}
     comics_path = meta_dir / "comics_database.json"
     comics_payload = load_json(comics_path)

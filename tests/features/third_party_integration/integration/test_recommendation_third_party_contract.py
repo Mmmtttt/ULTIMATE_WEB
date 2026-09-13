@@ -59,7 +59,7 @@ def test_recommendation_cache_download_forwards_platform_download_contract(fake_
       API input -> platform/original_id mapping -> download_album args -> cache/page mapping.
     - Steps:
       1. Mock recommendation detail, cache manager methods, and `update_total_page`.
-      2. Mock `third_party.platform_service.get_platform_service().download_album`.
+      2. Mock `protocol.platform_service.get_platform_service().download_album`.
       3. Call `POST /api/v1/recommendation/cache/download` with a fake comic recommendation id.
       4. Assert third-party call args and final API payload.
     - Expected:
@@ -71,7 +71,7 @@ def test_recommendation_cache_download_forwards_platform_download_contract(fake_
     """
     client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     captured = {"download": [], "add_to_cache": [], "update_total_page": []}
     recommendation_id = "CA777001"
 
@@ -153,7 +153,7 @@ def test_recommendation_cache_download_rejects_partial_cache_success(fake_third_
     """
     client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     captured = {"add_to_cache": [], "update_total_page": []}
     recommendation_id = "CA777002"
 

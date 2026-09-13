@@ -48,9 +48,9 @@ def _configure_teledrive(config_path, **updates):
 
 
 @pytest.mark.integration
-def test_teledrive_manifest_config_defaults_and_token_redaction(legacy_third_party_client):
-    client = legacy_third_party_client["client"]
-    config_path = legacy_third_party_client["third_party_config_path"]
+def test_teledrive_manifest_config_defaults_and_token_redaction(teledrive_client):
+    client = teledrive_client["client"]
+    config_path = teledrive_client["third_party_config_path"]
 
     response = client.get("/api/v1/comic/third-party/config")
     payload = response.get_json()
@@ -99,9 +99,9 @@ def test_teledrive_manifest_config_defaults_and_token_redaction(legacy_third_par
 
 
 @pytest.mark.integration
-def test_teledrive_json_routes_proxy_bridge_with_bearer_token(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
-    _configure_teledrive(legacy_third_party_client["third_party_config_path"])
+def test_teledrive_json_routes_proxy_bridge_with_bearer_token(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
+    _configure_teledrive(teledrive_client["third_party_config_path"])
     calls = []
 
     def fake_request(method, url, **kwargs):
@@ -160,9 +160,9 @@ def test_teledrive_json_routes_proxy_bridge_with_bearer_token(legacy_third_party
 
 
 @pytest.mark.integration
-def test_teledrive_file_content_preserves_range_and_stream_headers(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
-    _configure_teledrive(legacy_third_party_client["third_party_config_path"])
+def test_teledrive_file_content_preserves_range_and_stream_headers(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
+    _configure_teledrive(teledrive_client["third_party_config_path"])
     calls = []
 
     def fake_request(method, url, **kwargs):

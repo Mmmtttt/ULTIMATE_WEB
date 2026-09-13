@@ -14,15 +14,15 @@ def _ok_result(data=None, message="ok"):
 def test_author_service_search_works_forwards_platform_adapter_contract(fake_third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护作者服务 _search_works 对 third_party.external_api.search_albums 的调用契约，防止平台映射/参数透传错误。
+    - 用例目的: 看护作者服务搜索对协议适配器搜索能力的调用契约，防止平台映射/参数透传错误。
     - 测试步骤:
-      1. mock author_service._get_external_api.search_albums 记录参数并返回 JM/PK 各一条作品。
+      1. mock author_service._get_external_api.search_albums 记录参数并返回两个协议平台各一条作品。
       2. 调用 author_service._search_works("Alice", page=1, max_pages=2)。
       3. 校验 adapter_name/max_pages/fast_mode 参数和返回平台字段。
     - 预期结果:
       1. search_albums 至少以两个 fake 漫画适配器被调用（平台列表来自协议注册表，随插件动态扩展）。
       2. max_pages=2、fast_mode=True 被正确传递。
-      3. 返回 works 同时包含 JM、PK 平台。
+      3. 返回 works 同时包含两个协议平台。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者第三方搜索契约。
       - 2026-09-02: 适配 nhentai 插件接入，改为子集断言避免平台集合硬编码。

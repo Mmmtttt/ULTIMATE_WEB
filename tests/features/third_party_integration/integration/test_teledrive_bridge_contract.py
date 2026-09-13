@@ -37,7 +37,7 @@ def _png_bytes(color: str) -> bytes:
 
 
 @pytest.mark.integration
-def test_teledrive_config_public_serialization_hides_token(legacy_third_party_client):
+def test_teledrive_config_public_serialization_hides_token(teledrive_client):
     from application.teledrive_app_service import TeleDriveProtocolProvider
 
     provider = TeleDriveProtocolProvider(manifest={}, manifest_path="")
@@ -62,8 +62,8 @@ def test_teledrive_config_public_serialization_hides_token(legacy_third_party_cl
 
 
 @pytest.mark.integration
-def test_teledrive_import_and_catalog_routes_call_service(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
+def test_teledrive_import_and_catalog_routes_call_service(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
     import api.v1.teledrive as teledrive_api
 
     calls = []
@@ -120,7 +120,7 @@ def test_teledrive_import_and_catalog_routes_call_service(legacy_third_party_cli
 
 
 @pytest.mark.integration
-def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(legacy_third_party_client):
+def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(teledrive_client):
     from application.teledrive_app_service import TeleDriveAppService
 
     service = TeleDriveAppService()
@@ -168,7 +168,7 @@ def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(legacy_
 
 
 @pytest.mark.integration
-def test_teledrive_sync_library_downloads_preview_covers_locally(legacy_third_party_client, monkeypatch):
+def test_teledrive_sync_library_downloads_preview_covers_locally(teledrive_client, monkeypatch):
     from application.teledrive_app_service import TeleDriveAppService
 
     service = TeleDriveAppService()
@@ -304,8 +304,8 @@ def test_teledrive_sync_library_downloads_preview_covers_locally(legacy_third_pa
     assert result["stats"]["comic_cover_cached"] == 1
     assert result["stats"]["video_cover_cached"] == 1
 
-    meta_dir = legacy_third_party_client["meta_dir"]
-    data_dir = legacy_third_party_client["data_dir"]
+    meta_dir = teledrive_client["meta_dir"]
+    data_dir = teledrive_client["data_dir"]
 
     recommendation_db = load_json(meta_dir / "recommendations_database.json")
     recommendation = next(item for item in recommendation_db["recommendations"] if item["id"] == comic_id)
@@ -322,8 +322,8 @@ def test_teledrive_sync_library_downloads_preview_covers_locally(legacy_third_pa
 
 
 @pytest.mark.integration
-def test_teledrive_file_proxy_preserves_range_and_stream_headers(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
+def test_teledrive_file_proxy_preserves_range_and_stream_headers(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
     import api.v1.teledrive as teledrive_api
     from application.teledrive_app_service import TeleDriveAppService
 
@@ -367,8 +367,8 @@ def test_teledrive_file_proxy_preserves_range_and_stream_headers(legacy_third_pa
 
 
 @pytest.mark.integration
-def test_teledrive_file_proxy_bridge_error_uses_http_status(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
+def test_teledrive_file_proxy_bridge_error_uses_http_status(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
     import api.v1.teledrive as teledrive_api
     from application.teledrive_app_service import TeleDriveAppService, TeleDriveBridgeError
 
@@ -391,8 +391,8 @@ def test_teledrive_file_proxy_bridge_error_uses_http_status(legacy_third_party_c
 
 
 @pytest.mark.integration
-def test_teledrive_recommendation_cache_routes_stream_remote_pages(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
+def test_teledrive_recommendation_cache_routes_stream_remote_pages(teledrive_client, monkeypatch):
+    client = teledrive_client["client"]
     import api.v1.recommendation as recommendation_api
     from application.teledrive_app_service import TeleDriveAppService
 
@@ -430,7 +430,7 @@ def test_teledrive_recommendation_cache_routes_stream_remote_pages(legacy_third_
 
 
 @pytest.mark.integration
-def test_teledrive_service_builds_bridge_requests_and_auth_headers(legacy_third_party_client):
+def test_teledrive_service_builds_bridge_requests_and_auth_headers(teledrive_client):
     from application.teledrive_app_service import TeleDriveAppService
 
     calls = []
@@ -483,13 +483,13 @@ def test_teledrive_service_builds_bridge_requests_and_auth_headers(legacy_third_
 
 
 @pytest.mark.integration
-def test_teledrive_recommendation_migrate_to_local_downloads_pages(legacy_third_party_client, monkeypatch):
+def test_teledrive_recommendation_migrate_to_local_downloads_pages(teledrive_client, monkeypatch):
     from application.recommendation_app_service import RecommendationAppService
     from application.persisted_content_metadata import resolve_data_relative_path
     import application.teledrive_app_service as teledrive_service_module
 
     comic_id = "TD-COMIC-folder-1"
-    meta_dir = legacy_third_party_client["meta_dir"]
+    meta_dir = teledrive_client["meta_dir"]
 
     recommendation_db_path = meta_dir / "recommendations_database.json"
     recommendation_db = load_json(recommendation_db_path)
@@ -581,13 +581,13 @@ def test_teledrive_recommendation_migrate_to_local_downloads_pages(legacy_third_
 
 
 @pytest.mark.integration
-def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(legacy_third_party_client, monkeypatch):
+def test_teledrive_video_migrate_to_local_downloads_episode_and_assets(teledrive_client, monkeypatch):
     from application.video_app_service import VideoAppService
     import application.teledrive_app_service as teledrive_service_module
 
-    client = legacy_third_party_client["client"]
+    client = teledrive_client["client"]
     video_id = "TD-VIDEO-folder-2"
-    meta_dir = legacy_third_party_client["meta_dir"]
+    meta_dir = teledrive_client["meta_dir"]
 
     recommendation_db_path = meta_dir / "video_recommendations_database.json"
     recommendation_db = load_json(recommendation_db_path)
