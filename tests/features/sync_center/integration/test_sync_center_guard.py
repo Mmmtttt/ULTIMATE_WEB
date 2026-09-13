@@ -451,7 +451,7 @@ def test_directional_pull_remaps_tag_list_ids_and_verifies_each_transferred_asse
     _upsert_by_id(
         source_comics.setdefault("comics", []),
         {
-            "id": "PK698e14e13951674692432507",
+            "id": "CB698e14e13951674692432507",
             "title": "Delta New Comic",
             "title_jp": "",
             "author": "Sync Source",
@@ -602,7 +602,7 @@ def test_directional_pull_remaps_tag_list_ids_and_verifies_each_transferred_asse
     target_comics_after = load_json(target_comics_path).get("comics", [])
     target_videos_after = load_json(target_videos_path).get("videos", [])
 
-    new_comic = find_by_id(target_comics_after, "PK698e14e13951674692432507")
+    new_comic = find_by_id(target_comics_after, "CB698e14e13951674692432507")
     assert new_comic is not None
     assert "tag_002" in (new_comic.get("tag_ids") or [])
     assert "tag_004" in (new_comic.get("tag_ids") or [])
@@ -1501,7 +1501,7 @@ def test_list_scope_pull_fetches_remote_lists_and_pulls_only_missing_members(dua
 
     local_comic_id = f"CA_LIST_PULL_LOCAL_{suffix.upper()}"
     duplicate_comic_id = f"CA_LIST_PULL_DUP_{suffix.upper()}"
-    preview_comic_id = f"PK_LIST_PULL_PREVIEW_{suffix.upper()}"
+    preview_comic_id = f"CB_LIST_PULL_PREVIEW_{suffix.upper()}"
     local_video_id = f"LOCAL_LIST_PULL_VIDEO_{suffix.upper()}"
     preview_video_id = f"VA_LIST_PULL_PREVIEW_{suffix.upper()}"
 
