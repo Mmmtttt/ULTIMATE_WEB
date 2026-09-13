@@ -120,19 +120,28 @@ def test_teledrive_import_and_catalog_routes_call_service(teledrive_client, monk
 
 
 @pytest.mark.integration
-def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(teledrive_client):
+def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(teledrive_client, monkeypatch):
     from application.teledrive_app_service import TeleDriveAppService
+    import application.teledrive_app_service as teledrive_service
+
+    original_platform_segment_check = teledrive_service._is_known_platform_segment
+    monkeypatch.setattr(
+        teledrive_service,
+        "_is_known_platform_segment",
+        lambda segment: str(segment or "").upper() == "A_SOURCE"
+        or original_platform_segment_check(segment),
+    )
 
     service = TeleDriveAppService()
     skipped = []
 
     comic_items = [
         {"id": "comic-root", "type": "folder", "name": "comic", "path": "/comic"},
-        {"id": "jm-root", "type": "folder", "name": "JM", "path": "/comic/JM"},
-        {"id": "work-1", "type": "folder", "name": "86233", "path": "/comic/JM/86233"},
-        {"id": "chapter-1", "type": "folder", "name": "1", "path": "/comic/JM/86233/1"},
-        {"id": "page-2", "type": "file", "name": "002.jpg", "path": "/comic/JM/86233/1/002.jpg", "mime_type": "image/jpeg"},
-        {"id": "page-1", "type": "file", "name": "001.jpg", "path": "/comic/JM/86233/1/001.jpg", "mime_type": "image/jpeg"},
+        {"id": "source-a-root", "type": "folder", "name": "A_SOURCE", "path": "/comic/A_SOURCE"},
+        {"id": "work-1", "type": "folder", "name": "86233", "path": "/comic/A_SOURCE/86233"},
+        {"id": "chapter-1", "type": "folder", "name": "1", "path": "/comic/A_SOURCE/86233/1"},
+        {"id": "page-2", "type": "file", "name": "002.jpg", "path": "/comic/A_SOURCE/86233/1/002.jpg", "mime_type": "image/jpeg"},
+        {"id": "page-1", "type": "file", "name": "001.jpg", "path": "/comic/A_SOURCE/86233/1/001.jpg", "mime_type": "image/jpeg"},
         {"id": "loose-root", "type": "folder", "name": "MYBOOK", "path": "/comic/MYBOOK"},
         {"id": "loose-page", "type": "file", "name": "001.png", "path": "/comic/MYBOOK/001.png", "mime_type": "image/png"},
         {"id": "skip-zip", "type": "file", "name": "book.zip", "path": "/comic/MYBOOK/book.zip", "mime_type": "application/zip"},
@@ -140,7 +149,7 @@ def test_teledrive_directory_recognizer_uses_fixed_comic_and_video_roots(teledri
     comics = service._recognize_comics(comic_items, skipped)
 
     assert [comic["title"] for comic in comics] == ["86233", "MYBOOK"]
-    assert comics[0]["author"] == "JM"
+    assert comics[0]["author"] == "A_SOURCE"
     assert comics[0]["total_page"] == 2
     assert comics[0]["display"]["teledrive"]["pages"][0]["name"] == "001.jpg"
     assert any(item["reason"] == "unsupported_comic_file" for item in skipped)
@@ -181,8 +190,8 @@ def test_teledrive_sync_library_downloads_preview_covers_locally(teledrive_clien
                 "id": comic_id,
                 "title": "TeleDrive Comic Cover",
                 "title_jp": "",
-                "author": "JM",
-                "desc": "TeleDrive: /comic/JM/cover-demo",
+                "author": "A_SOURCE",
+                "desc": "TeleDrive: /comic/A_SOURCE/cover-demo",
                 "cover_path": f"/api/v1/comic/image?comic_id={comic_id}&page_num=1",
                 "total_page": 2,
                 "current_page": 1,
@@ -206,10 +215,10 @@ def test_teledrive_sync_library_downloads_preview_covers_locally(teledrive_clien
                     "teledrive": {
                         "type": "comic",
                         "root": "/comic",
-                        "path": "/comic/JM/cover-demo",
+                        "path": "/comic/A_SOURCE/cover-demo",
                         "folder_id": "folder-cover",
                         "work_id": "cover-demo",
-                        "platform_segment": "JM",
+                        "platform_segment": "A_SOURCE",
                         "pages": [
                             {"file_id": "page-1", "name": "001.png", "relative_path": "1/001.png"},
                             {"file_id": "page-2", "name": "002.png", "relative_path": "1/002.png"},
@@ -522,7 +531,7 @@ def test_teledrive_recommendation_migrate_to_local_downloads_pages(teledrive_cli
             "display": {
                 "teledrive": {
                     "type": "comic",
-                    "path": "/comic/JM/86233",
+                    "path": "/comic/A_SOURCE/86233",
                     "folder_id": "folder-1",
                     "work_id": "86233",
                     "pages": [
