@@ -20,7 +20,7 @@ def test_author_service_search_works_forwards_platform_adapter_contract(fake_thi
       2. 调用 author_service._search_works("Alice", page=1, max_pages=2)。
       3. 校验 adapter_name/max_pages/fast_mode 参数和返回平台字段。
     - 预期结果:
-      1. search_albums 至少以 jmcomic/picacomic 被调用（平台列表来自协议注册表，随插件动态扩展，如 nhentai）。
+      1. search_albums 至少以两个 fake 漫画适配器被调用（平台列表来自协议注册表，随插件动态扩展）。
       2. max_pages=2、fast_mode=True 被正确传递。
       3. 返回 works 同时包含 JM、PK 平台。
     - 历史变更:

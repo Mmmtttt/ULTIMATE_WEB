@@ -198,6 +198,19 @@ def _fake_manifest(
             ],
             "comic_dir": {"template": "{album_id}"},
         }
+    capability_keys = {str(item.get("key") or "").strip() for item in capabilities}
+    if "collection.favorites_basic" in capability_keys:
+        manifest["collections"] = {
+            "list_mode": "virtual_only",
+            "virtual_lists": [
+                {
+                    "id": "favorites",
+                    "name": "我的收藏",
+                    "description": "fake protocol favorites",
+                    "capability": "collection.favorites_basic",
+                }
+            ],
+        }
     return manifest
 
 
@@ -258,6 +271,7 @@ def _write_fake_protocol_plugins(root: Path) -> None:
                 capabilities=[
                     {"key": "catalog.search"},
                     {"key": "catalog.detail"},
+                    {"key": "collection.favorites_basic"},
                     {"key": "asset.bundle.fetch"},
                     {"key": "asset.cover.fetch"},
                     {"key": "asset.preview.resolve"},
