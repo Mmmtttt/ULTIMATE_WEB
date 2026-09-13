@@ -21,6 +21,14 @@ test("video tag search load more forwards page and imports to recommendation", a
   const searchQueries = [];
   const importTaskBodies = [];
 
+  await page.route("**/api/v1/config/system**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, msg: "ok", data: { runtime: { third_party_enabled: true, runtime_profile: "full" } } }),
+    });
+  });
+
   await page.route("**/api/v1/comic/third-party/config", async (route) => {
     await route.fulfill({
       status: 200,
@@ -36,9 +44,9 @@ test("video tag search load more forwards page and imports to recommendation", a
           },
           plugins: [
             {
-              plugin_id: "video.video_alpha",
+              plugin_id: "video.alpha",
               config_key: "video_alpha",
-              name: "VA",
+              name: "Video Alpha",
               version: "1.0.0",
               media_types: ["video"],
               capabilities: ["taxonomy.tag_search", "taxonomy.tags", "health.query.status"],
@@ -70,7 +78,7 @@ test("video tag search load more forwards page and imports to recommendation", a
     });
   });
 
-  await page.route("**/api/v1/video/third-party/video_alpha/health-status", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/health-status", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -82,7 +90,7 @@ test("video tag search load more forwards page and imports to recommendation", a
     });
   });
 
-  await page.route("**/api/v1/video/third-party/video_alpha/tags**", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/tags**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -104,7 +112,7 @@ test("video tag search load more forwards page and imports to recommendation", a
     });
   });
 
-  await page.route("**/api/v1/video/third-party/video_alpha/search-by-tags**", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/search-by-tags**", async (route) => {
     const url = new URL(route.request().url());
     const pageNum = url.searchParams.get("page");
     searchQueries.push({
@@ -179,11 +187,11 @@ test("video tag search load more forwards page and imports to recommendation", a
   expect(importTaskBodies[0]).toMatchObject({
     import_type: "by_list",
     target: "recommendation",
-    platform: "VA",
+    platform: "VIDEO_ALPHA",
     content_type: "video",
   });
   expect(importTaskBodies[0].item_ids).toEqual(["VIDA-2"]);
 
-  expect(hasApiCall(requests, "/api/v1/video/third-party/video_alpha/search-by-tags")).toBeTruthy();
+  expect(hasApiCall(requests, "/api/v1/video/third-party/va/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();
 });
