@@ -52,7 +52,7 @@
     <van-cell-group inset class="config-group">
       <van-cell
         title="预览库导入自动下载资源"
-        label="开启后导入到预览库时将自动异步下载高清封面和预览视频（JavBus 无预览视频时自动跳过）"
+        label="开启后导入到预览库时将自动异步下载高清封面和预览视频（无预览视频时自动跳过）"
       >
         <template #right-icon>
           <van-switch v-model="autoDownloadPreviewImportAssets" @change="updatePreviewImportAssetDownload" />

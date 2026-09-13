@@ -25,7 +25,7 @@ def test_author_service_search_works_forwards_platform_adapter_contract(fake_thi
       3. 返回 works 同时包含两个协议平台。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者第三方搜索契约。
-      - 2026-09-02: 适配 nhentai 插件接入，改为子集断言避免平台集合硬编码。
+      - 2026-09-02: 改为子集断言避免平台集合硬编码。
     """
     author_api = fake_third_party_client["author_api"]
     service = author_api.author_service
@@ -123,7 +123,7 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(fake_thi
       3. search_albums 与 get_album_by_id 均被触发。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者新作详情补全契约。
-      - 2026-09-02: 适配 nhentai 插件接入，mock 对未知平台返回空结果。
+      - 2026-09-02: mock 对未知平台返回空结果。
     """
     client = fake_third_party_client["client"]
     author_api = fake_third_party_client["author_api"]

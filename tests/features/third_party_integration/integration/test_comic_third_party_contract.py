@@ -148,11 +148,11 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
       3. 断言 CA/CB 两个平台都被调用，且参数正确映射。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. search_albums 至少为 comic_alpha/comic_beta 各调用一次（平台集合随插件动态扩展，如 nhentai）。
+      2. search_albums 至少为 comic_alpha/comic_beta 各调用一次（平台集合随插件动态扩展）。
       3. page=2、max_pages=1、fast_mode=True 被正确透传。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖第三方搜索参数映射契约。
-      - 2026-09-02: 适配 nhentai 插件接入，改为子集断言，未知平台 mock 返回空结果。
+      - 2026-09-02: 改为子集断言，未知平台 mock 返回空结果。
     """
     client = third_party_client["client"]
     external_api = importlib.import_module("protocol.adapter_api")
@@ -264,7 +264,7 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
         payload = response.get_json()
         assert response.status_code == 200
         assert payload["code"] == 200
-        # 未配置凭据的 comic_beta 必须被跳过；nhentai 走匿名访问视为已配置，可一并参与 all 搜索
+        # 未配置凭据的 comic_beta 必须被跳过；走匿名访问视为已配置，可一并参与 all 搜索
         assert "comic_alpha" in calls
         assert "comic_beta" not in calls
         assert len((payload["data"] or {}).get("results") or []) == len(calls)

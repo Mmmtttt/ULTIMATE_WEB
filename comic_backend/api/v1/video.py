@@ -2524,7 +2524,7 @@ def third_party_search():
             platforms_to_search = search_plugins
             is_multi_platform = False
         elif ',' in normalized_platform:
-            # 多平台逗号分隔，如 "hanime1,javbus"
+            # 多平台逗号分隔
             platform_names = [p.strip() for p in normalized_platform.split(',') if p.strip()]
             platforms_to_search = []
             for pname in platform_names:
