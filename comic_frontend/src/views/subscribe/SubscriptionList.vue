@@ -133,13 +133,13 @@
             <van-field
               v-model="manualActorPlatform"
               label="平台"
-              placeholder="javdb"
+              placeholder="输入平台标识"
               clearable
             />
             <van-field
               v-model="manualActorSource"
               label="链接/ID"
-              placeholder="https://javdb.com/actors/0R1n3 或 0R1n3"
+              placeholder="输入平台演员页链接或演员 ID"
               clearable
             />
             <p class="manual-source-hint">
@@ -173,7 +173,7 @@ const searchKeyword = ref('')
 const showAddPopup = ref(false)
 const newSubscriptionName = ref('')
 const showManualActorSource = ref(false)
-const manualActorPlatform = ref('javdb')
+const manualActorPlatform = ref('')
 const manualActorSource = ref('')
 const checkingUpdates = ref(false)
 const unsubscribingIds = reactive(new Set())
@@ -286,7 +286,7 @@ function openAddDialog() {
 function resetAddForm() {
   newSubscriptionName.value = ''
   showManualActorSource.value = false
-  manualActorPlatform.value = 'javdb'
+  manualActorPlatform.value = ''
   manualActorSource.value = ''
 }
 
