@@ -33,6 +33,7 @@
       "backend_port": 5035,
       "android_backend_enable_third_party": true,
       "android_backend_third_party_mode": "supported",
+      "resident_dependency_pool": "build/resident_dependency_pools.json",
       "android_extract_packages": [
         "third_party"
       ],

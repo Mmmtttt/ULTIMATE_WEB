@@ -60,6 +60,35 @@ def _write_manifest(plugin_dir: Path, plugin_id: str, packaging: dict | None = N
     )
 
 
+def test_resident_dependency_pool_is_available_without_plugin_sources():
+    package_unified = _load_package_unified_module()
+
+    requirements = package_unified.load_resident_dependency_requirements({}, "android")
+
+    assert "commonx>=0.6.38" in requirements
+    assert "curl-cffi==0.16.3" in requirements
+    assert "chaquopy-libffi>=3.3" in requirements
+
+
+def test_android_dependency_collection_merges_resident_and_plugin_requirements(tmp_path):
+    package_unified = _load_package_unified_module()
+    third_party = tmp_path / "third_party"
+    _write_manifest(
+        third_party / "demo",
+        "demo.plugin",
+        {"android": {"enabled": True, "pip_requirements": ["demo-only==1.0"]}},
+    )
+
+    requirements = package_unified.collect_android_pip_install_entries(
+        {"android_backend_enable_third_party": True},
+        tmp_path,
+    )
+    flattened = [item for entry in requirements for item in entry]
+
+    assert "commonx>=0.6.38" in flattened
+    assert "demo-only==1.0" in flattened
+
+
 def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binary():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"

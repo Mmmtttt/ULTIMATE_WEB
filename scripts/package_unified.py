@@ -37,6 +37,7 @@ DEFAULT_STAGED_DIR = ROOT_DIR / "output" / "multi_target"
 DEFAULT_PACKAGES_DIR = ROOT_DIR / "output" / "packages"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
+DEFAULT_RESIDENT_DEPENDENCY_POOL = ROOT_DIR / "build" / "resident_dependency_pools.json"
 DEFAULT_APP_VERSION = "0.0.0"
 DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 PROJECT_PLUGINS_DIR = ROOT_DIR / "plugins"
@@ -466,6 +467,27 @@ def collect_android_pip_options(packager_cfg: Dict, source_backend_dir: Path) ->
     return entries
 
 
+def load_resident_dependency_requirements(packager_cfg: Dict, platform_key: str) -> List[str]:
+    """Load platform runtime dependencies independently of discovered plugins."""
+    configured_path = str(packager_cfg.get("resident_dependency_pool") or "").strip()
+    pool_path = Path(configured_path) if configured_path else DEFAULT_RESIDENT_DEPENDENCY_POOL
+    if not pool_path.is_absolute():
+        pool_path = ROOT_DIR / pool_path
+    if not pool_path.is_file():
+        return []
+    try:
+        payload = load_json(pool_path)
+    except Exception as exc:
+        raise ValueError(f"invalid resident dependency pool: {pool_path}: {exc}") from exc
+    pools = payload.get("pools") if isinstance(payload, dict) else None
+    if not isinstance(pools, dict):
+        raise ValueError(f"invalid resident dependency pool format: {pool_path}")
+    requirements = pools.get(platform_key) or []
+    if not isinstance(requirements, list):
+        raise ValueError(f"resident dependency pool must be a list: {pool_path} ({platform_key})")
+    return _normalize_string_list(requirements)
+
+
 def collect_android_pip_install_entries(packager_cfg: Dict, source_backend_dir: Path) -> List[List[str]]:
     default_reqs = [
         "flask==2.3.0",
@@ -492,8 +514,12 @@ def collect_android_pip_install_entries(packager_cfg: Dict, source_backend_dir: 
     if not isinstance(reqs, list) or not reqs:
         reqs = default_reqs
 
+    resident_requirements = []
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        resident_requirements = load_resident_dependency_requirements(packager_cfg, "android")
     entries = merge_pip_install_entries(
         reqs,
+        resident_requirements,
         packager_cfg.get("embed_backend_pip_install_args") or [],
         packager_cfg.get("android_backend_pip_install_args") or [],
     )
@@ -3464,7 +3490,10 @@ def _quote_powershell_single(text: str) -> str:
 
 
 def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: List[Path]) -> List[List[str]]:
-    requirements = collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    requirements = _normalize_string_list(
+        load_resident_dependency_requirements({}, "external")
+        + collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    )
     dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
     dependency_root.mkdir(parents=True, exist_ok=True)
     manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()
@@ -3566,7 +3595,10 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
 
 
 def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Path]) -> Tuple[bool, str]:
-    requirements = collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    requirements = _normalize_string_list(
+        load_resident_dependency_requirements({}, "external")
+        + collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    )
     dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
     dependency_root.mkdir(parents=True, exist_ok=True)
     manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()

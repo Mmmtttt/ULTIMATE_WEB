@@ -441,7 +441,7 @@ Android 构建支持：
 桌面端 `plugin_package_mode: "external"` 和 Android 端 `android_backend_third_party_mode: "external"` 都遵循同一个原则：
 
 - 主程序包不预置第三方插件源码，也不会在启动后显示未安装的第三方平台。
-- 打包阶段根据各插件 `packaging.external.pip_requirements` 或 `packaging.android.pip_requirements` 构建通用依赖池。
+- 打包阶段将平台常驻依赖池与各插件 `packaging.external.pip_requirements` 或 `packaging.android.pip_requirements` 合并，构建通用依赖池。
 - 用户通过第三方配置页安装本地 `.zip` 扩展包；安装后需要重启后端或应用。
 - 安装时宿主只校验协议清单、平台支持声明、路径安全和依赖池是否覆盖扩展声明的依赖；宿主不识别具体平台名称。
 
@@ -456,6 +456,10 @@ comic-example.zip
 ```
 
 如果扩展包声明了当前安装包没有预置的依赖，安装会被拒绝。需要新增依赖时，应先更新插件 manifest，再重新打包主程序依赖池。
+
+常驻依赖池位于主项目的 `build/resident_dependency_pools.json`，按 `external` 和 `android` 分组维护。它只描述平台运行时已经预置的通用 Python 能力，不包含插件名称，也不替代插件清单中的依赖声明。即使构建时没有检出任何插件源码，常驻依赖仍会进入对应平台的依赖池；插件安装时仍以插件清单为准进行依赖校验。
+
+常驻池适合放置多个扩展共享、且已经验证过目标平台兼容性的依赖。包含原生代码或体积较大的新依赖前，应先完成目标 Python、ABI 和平台构建验证；有版本冲突的依赖不得通过覆盖顺序解决，应调整版本约束或拆分运行时池。
 
 也可以在第三方配置页输入公开 GitHub 仓库链接安装扩展。仓库内容要求与 zip 扩展包完全一致：仓库内必须且只能包含一个 `ultimate-plugin.json`。支持普通仓库链接和指定分支链接，例如：
 
@@ -519,7 +523,7 @@ android/app/src/main/python/protocol/plugin_dependency_pool_manifest.json
 
 集成模式下，`third_party/` 和 `mobile_protocol_snapshot.json` 必须包含同一组可运行插件。只有协议快照而没有 Provider 的插件属于打包错误。
 
-扩展模式下，`third_party/` 和 `mobile_protocol_snapshot.json` 可以为空，但 `plugin_dependency_pool_manifest.json` 必须记录将来允许安装的扩展依赖。
+扩展模式下，`third_party/` 和 `mobile_protocol_snapshot.json` 可以为空，但 `plugin_dependency_pool_manifest.json` 必须至少记录常驻依赖，并在有插件源码时合并记录插件声明的依赖。
 
 ## 11. 当前实现位置
 

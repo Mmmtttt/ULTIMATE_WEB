@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "description": "Platform runtime dependencies available to hot-pluggable extensions.",
+  "pools": {
+    "external": [
+      "commonx>=0.6.38",
+      "curl-cffi>=0.6.0",
+      "cffi>=1.15.0",
+      "lxml>=4.9.0",
+      "beautifulsoup4>=4.12.0",
+      "playwright>=1.55.0"
+    ],
+    "android": [
+      "cffi==1.17.1",
+      "chaquopy-libffi>=3.3",
+      "pycparser>=2.21",
+      "commonx>=0.6.38",
+      "pycryptodome==3.21.0",
+      "curl-cffi==0.16.3",
+      "lxml==5.3.0",
+      "chaquopy-libxml2>=2.9.8",
+      "chaquopy-libxslt>=1.1.32",
+      "requests>=2.31.0",
+      "beautifulsoup4>=4.13.4",
+      "soupsieve>=2.5",
+      "chaquopy-libyaml>=0.2.5",
+      "Pillow==11.0.0",
+      "chaquopy-freetype>=2.9.1",
+      "chaquopy-libjpeg>=1.5.3"
+    ]
+  }
+}
