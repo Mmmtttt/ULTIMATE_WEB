@@ -294,6 +294,49 @@ def test_plugin_registry_scans_external_plugin_roots_from_env(monkeypatch):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_plugin_registry_can_scan_only_explicit_plugin_roots(monkeypatch, tmp_path):
+    external_root = tmp_path / "external_plugins"
+    bundled_root = tmp_path / "backend_source"
+    external_plugin = external_root / "external_plugin"
+    bundled_plugin = bundled_root / "third_party" / "bundled_plugin"
+    external_plugin.mkdir(parents=True, exist_ok=True)
+    bundled_plugin.mkdir(parents=True, exist_ok=True)
+
+    def write_manifest(plugin_dir: Path, plugin_id: str) -> None:
+        (plugin_dir / "ultimate-plugin.json").write_text(
+            json.dumps(
+                {
+                    "protocol_version": "2.0",
+                    "plugin": {
+                        "id": plugin_id,
+                        "name": plugin_id,
+                        "version": "1.0.0",
+                        "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
+                    },
+                    "media_types": ["comic"],
+                    "capabilities": [{"key": "catalog.search"}],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    write_manifest(external_plugin, "comic.demo.external_only")
+    write_manifest(bundled_plugin, "comic.demo.should_not_load")
+
+    monkeypatch.setattr(registry_module, "BACKEND_ROOT", str(bundled_root))
+    monkeypatch.setattr(registry_module, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ULTIMATE_PLUGIN_ROOTS", str(external_root))
+    monkeypatch.setenv("ULTIMATE_PLUGIN_ROOTS_ONLY", "1")
+
+    registry = registry_module.PluginRegistry()
+    plugin_ids = {manifest.plugin_id for manifest in registry.list_manifests()}
+
+    assert "comic.demo.external_only" in plugin_ids
+    assert "comic.demo.should_not_load" not in plugin_ids
+
+
 def test_plugin_registry_scans_release_bundle_plugins_root(monkeypatch):
     workspace_tmp_root = Path.cwd() / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)

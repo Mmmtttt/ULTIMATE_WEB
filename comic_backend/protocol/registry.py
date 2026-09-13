@@ -21,6 +21,10 @@ _PLUGIN_ROOT_ENV_KEYS = (
     "ULTIMATE_PLUGIN_ROOTS",
     "BACKEND_PLUGIN_ROOTS",
 )
+_PLUGIN_ROOTS_ONLY_ENV_KEYS = (
+    "ULTIMATE_PLUGIN_ROOTS_ONLY",
+    "BACKEND_PLUGIN_ROOTS_ONLY",
+)
 _SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 _METADATA_ONLY_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
 _DEBUG_LOG_ENV = "ULTIMATE_PROTOCOL_BOOT_LOG"
@@ -59,6 +63,7 @@ class PluginRegistry:
             return [self.search_root]
 
         candidates: List[str] = []
+        explicit_roots: List[str] = []
 
         for env_key in _PLUGIN_ROOT_ENV_KEYS:
             raw_value = str(os.environ.get(env_key, "") or "").strip()
@@ -67,7 +72,15 @@ class PluginRegistry:
             for item in raw_value.split(os.pathsep):
                 normalized = os.path.abspath(str(item or "").strip())
                 if normalized:
-                    candidates.append(normalized)
+                    explicit_roots.append(normalized)
+
+        candidates.extend(explicit_roots)
+        roots_only = bool(explicit_roots) and any(
+            str(os.environ.get(env_key, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+            for env_key in _PLUGIN_ROOTS_ONLY_ENV_KEYS
+        )
+        if roots_only:
+            return self._dedupe_paths(candidates)
 
         candidates.extend(
             [
@@ -93,6 +106,10 @@ class PluginRegistry:
                 ]
             )
 
+        return self._dedupe_paths(candidates)
+
+    @staticmethod
+    def _dedupe_paths(candidates: List[str]) -> List[str]:
         deduped: List[str] = []
         seen = set()
         for candidate in candidates:
