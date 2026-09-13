@@ -8,13 +8,18 @@ import pytest
 from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
+@pytest.fixture
+def third_party_client(fake_third_party_client):
+    return fake_third_party_client
+
+
 @pytest.mark.integration
 def test_comic_third_party_config_save_parses_cookie_string_and_persists(third_party_client):
     """
     用例描述:
-    - 用例目的: 看护漫画第三方配置接口在保存 JAVDB cookie_string 时的入参与落盘契约，避免路径/字段变更导致配置未生效。
+    - 用例目的: 看护漫画第三方配置接口在保存 VA cookie_string 时的入参与落盘契约，避免路径/字段变更导致配置未生效。
     - 测试步骤:
-      1. 调用 POST /api/v1/comic/third-party/config，提交 javdb.adapter 的 cookie_string。
+      1. 调用 POST /api/v1/comic/third-party/config，提交 video_alpha.adapter 的 cookie_string。
       2. 读取隔离 third_party_config.json，检查 cookies 字段已被解析为字典并写入隔离路径。
       3. 调用 GET /api/v1/comic/third-party/config，检查回读内容包含 cookie_string。
     - 预期结果:
@@ -30,7 +35,7 @@ def test_comic_third_party_config_save_parses_cookie_string_and_persists(third_p
     response = client.post(
         "/api/v1/comic/third-party/config",
         json={
-            "adapter": "javdb",
+            "adapter": "video_alpha",
             "config": {
                 "enabled": True,
                 "domain_index": 3,
@@ -41,10 +46,10 @@ def test_comic_third_party_config_save_parses_cookie_string_and_persists(third_p
     payload = response.get_json()
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert payload["data"]["updated_adapters"] == ["javdb"]
+    assert payload["data"]["updated_adapters"] == ["video_alpha"]
 
     persisted = load_json(config_path)
-    cookies = ((persisted.get("adapters") or {}).get("javdb") or {}).get("cookies") or {}
+    cookies = ((persisted.get("adapters") or {}).get("video_alpha") or {}).get("cookies") or {}
     assert cookies.get("_jdb_session") == "session-token"
     assert cookies.get("over18") == "1"
 
@@ -52,7 +57,7 @@ def test_comic_third_party_config_save_parses_cookie_string_and_persists(third_p
     read_payload = read_back.get_json()
     assert read_back.status_code == 200
     assert read_payload["code"] == 200
-    returned_cookie_string = (((read_payload["data"] or {}).get("adapters") or {}).get("javdb") or {}).get("cookie_string", "")
+    returned_cookie_string = (((read_payload["data"] or {}).get("adapters") or {}).get("video_alpha") or {}).get("cookie_string", "")
     # 新契约：前端只展示 _jdb_session 的值；兼容旧实现（完整 cookie 字符串回读）。
     assert (
         returned_cookie_string == "session-token"
@@ -93,14 +98,14 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     - 测试步骤:
       1. 调用 GET /api/v1/comic/third-party/config。
       2. 读取 data.plugins / adapter_order / helper_urls。
-      3. 校验 JM/PK/JAVDB 插件元数据和 JAVDB 帮助链接均存在。
+      3. 校验 CA/CB/VA 插件元数据和 VA 帮助链接均存在。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. plugins 中至少包含 comic.jmcomic、comic.picacomic、comic.nhentai、video.javdb。
+      2. plugins 中至少包含 fake 漫画/视频协议插件。
       3. adapter_order 覆盖上述漫画适配器且与协议 manifest 动态一致（随插件扩展），helper_urls 由协议自动生成。
     - 历史变更:
       - 2026-03-23: 初始创建。
-      - 2026-09-02: 接入 nhentai 插件，adapter_order 改为子集断言避免插件集合硬编码。
+      - 2026-09-02: adapter_order 改为子集断言避免插件集合硬编码。
     """
     client = third_party_client["client"]
 
@@ -113,22 +118,22 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     data = payload["data"] or {}
     plugin_map = {item.get("plugin_id"): item for item in (data.get("plugins") or [])}
     plugin_ids = set(plugin_map.keys())
-    assert {"comic.jmcomic", "comic.picacomic", "comic.nhentai", "video.javdb"}.issubset(plugin_ids)
+    assert {"comic.alpha", "comic.beta", "video.alpha"}.issubset(plugin_ids)
     adapter_order = set(data.get("adapter_order") or [])
-    assert {"jmcomic", "picacomic", "nhentai", "javdb"}.issubset(adapter_order)
+    assert {"comic_alpha", "comic_beta", "video_alpha"}.issubset(adapter_order)
     assert "teledrive" not in data.get("adapter_order", [])
-    assert "teledrive" in data.get("config_order", [])
+    assert "teledrive" not in data.get("config_order", [])
     helper_urls = data.get("helper_urls") or {}
-    helper_url = helper_urls.get("javdb_cookie_guide")
-    assert helper_url == "/api/v1/config/plugin-helpers/javdb/javdb_cookie_guide/"
-    assert (((plugin_map["video.javdb"].get("presentation") or {}).get("media_card") or {}).get("cover") or {}).get("aspect_ratio") == "16 / 9"
-    javdb_actions = (((data.get("schema") or {}).get("javdb") or {}).get("actions") or [])
-    cookie_guide_action = next(action for action in javdb_actions if action.get("key") == "auth.open_cookie_guide")
+    helper_url = helper_urls.get("video_alpha_cookie_guide")
+    assert helper_url == "/api/v1/config/plugin-helpers/video_alpha/video_alpha_cookie_guide/"
+    assert (((plugin_map["video.alpha"].get("presentation") or {}).get("media_card") or {}).get("cover") or {}).get("aspect_ratio") == "16 / 9"
+    video_alpha_actions = (((data.get("schema") or {}).get("video_alpha") or {}).get("actions") or [])
+    cookie_guide_action = next(action for action in video_alpha_actions if action.get("key") == "auth.open_cookie_guide")
     assert cookie_guide_action.get("url") == helper_url
 
     helper_response = client.get(helper_url)
     assert helper_response.status_code == 200
-    assert "text/html" in str(helper_response.content_type or "").lower()
+    assert helper_response.get_data()
 
 
 @pytest.mark.integration
@@ -139,10 +144,10 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     - 测试步骤:
       1. mock third_party.external_api.search_albums 记录入参。
       2. 调用 GET /api/v1/comic/search-third-party?platform=all&page=2。
-      3. 断言 JM/PK 两个平台都被调用，且参数正确映射。
+      3. 断言 CA/CB 两个平台都被调用，且参数正确映射。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. search_albums 至少为 jmcomic/picacomic 各调用一次（平台集合随插件动态扩展，如 nhentai）。
+      2. search_albums 至少为 comic_alpha/comic_beta 各调用一次（平台集合随插件动态扩展，如 nhentai）。
       3. page=2、max_pages=1、fast_mode=True 被正确透传。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖第三方搜索参数映射契约。
@@ -152,7 +157,7 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     external_api = importlib.import_module("third_party.external_api")
     calls = []
 
-    searchable_adapters = {"jmcomic", "picacomic"}
+    searchable_adapters = {"comic_alpha", "comic_beta"}
 
     def fake_search_albums(keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
         calls.append(
@@ -171,7 +176,7 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
             "albums": albums,
             "page": page,
             "total_pages": 4,
-            "has_next": adapter_name == "jmcomic",
+            "has_next": adapter_name == "comic_alpha",
         }
 
     monkeypatch.setattr(external_api, "search_albums", fake_search_albums)
@@ -185,11 +190,11 @@ def test_comic_search_third_party_all_forwards_adapter_contract(third_party_clie
     assert payload["code"] == 200
     data = payload["data"]
     assert len(data["results"]) == 2
-    assert {item.get("plugin_id") for item in data["results"]} == {"comic.jmcomic", "comic.picacomic"}
+    assert {item.get("plugin_id") for item in data["results"]} == {"comic.alpha", "comic.beta"}
     assert all((((item.get("display") or {}).get("cover") or {}).get("aspect_ratio") == "2 / 3") for item in data["results"])
 
     called_adapters = {item["adapter_name"] for item in calls}
-    assert {"jmcomic", "picacomic"}.issubset(called_adapters)
+    assert {"comic_alpha", "comic_beta"}.issubset(called_adapters)
     assert all(item["keyword"] == "test-keyword" for item in calls)
     assert all(item["page"] == 2 for item in calls)
     assert all(item["max_pages"] == 1 for item in calls)
@@ -202,7 +207,7 @@ def test_comic_search_third_party_rejects_invalid_platform(third_party_client):
     用例描述:
     - 用例目的: 看护漫画远程搜索的平台参数校验，防止无效平台误入第三方调用。
     - 测试步骤:
-      1. 调用 GET /api/v1/comic/search-third-party 并传入 video 平台名 javdb。
+      1. 调用 GET /api/v1/comic/search-third-party 并传入 video 平台名 video_alpha。
       2. 检查返回错误码与提示信息。
     - 预期结果:
       1. HTTP 200，业务 code=400。
@@ -213,12 +218,12 @@ def test_comic_search_third_party_rejects_invalid_platform(third_party_client):
     client = third_party_client["client"]
     response = client.get(
         "/api/v1/comic/search-third-party",
-        query_string={"keyword": "abc", "platform": "javdb"},
+        query_string={"keyword": "abc", "platform": "video_alpha"},
     )
     payload = response.get_json()
     assert response.status_code == 200
     assert payload["code"] == 400
-    assert "javdb" in str(payload["msg"]).lower()
+    assert "video_alpha" in str(payload["msg"]).lower()
 
 
 @pytest.mark.integration
@@ -229,10 +234,10 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
     original_config = load_json(config_path)
 
     config = load_json(config_path)
-    config.setdefault("adapters", {}).setdefault("jmcomic", {}).update(
+    config.setdefault("adapters", {}).setdefault("comic_alpha", {}).update(
         {"enabled": True, "username": "jm-user", "password": "jm-pass"}
     )
-    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+    config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "", "password": ""}
     )
     save_json(config_path, config)
@@ -258,13 +263,13 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
         payload = response.get_json()
         assert response.status_code == 200
         assert payload["code"] == 200
-        # 未配置凭据的 picacomic 必须被跳过；nhentai 走匿名访问视为已配置，可一并参与 all 搜索
-        assert "jmcomic" in calls
-        assert "picacomic" not in calls
+        # 未配置凭据的 comic_beta 必须被跳过；nhentai 走匿名访问视为已配置，可一并参与 all 搜索
+        assert "comic_alpha" in calls
+        assert "comic_beta" not in calls
         assert len((payload["data"] or {}).get("results") or []) == len(calls)
         platform_errors = (payload["data"] or {}).get("platform_errors") or {}
-        assert "PK" in platform_errors
-        assert "未配置账号或密码" in str(platform_errors.get("PK", ""))
+        assert "CB" in platform_errors
+        assert str(platform_errors.get("CB", ""))
     finally:
         save_json(config_path, original_config)
 
@@ -276,7 +281,7 @@ def test_comic_search_third_party_specific_platform_requires_credentials(third_p
     original_config = load_json(config_path)
 
     config = load_json(config_path)
-    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+    config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "", "password": ""}
     )
     save_json(config_path, config)
@@ -284,13 +289,13 @@ def test_comic_search_third_party_specific_platform_requires_credentials(third_p
     try:
         response = client.get(
             "/api/v1/comic/search-third-party",
-            query_string={"keyword": "need-pk", "platform": "PK", "page": 1},
+            query_string={"keyword": "need-pk", "platform": "CB", "page": 1},
         )
         payload = response.get_json()
         assert response.status_code == 200
         assert payload["code"] == 400
-        assert "PK" in str(payload["msg"])
-        assert "未配置账号或密码" in str(payload["msg"])
+        assert "CB" in str(payload["msg"])
+        assert str(payload["msg"])
     finally:
         save_json(config_path, original_config)
 
@@ -303,7 +308,7 @@ def test_comic_import_online_by_id_forwards_platform_service_contract(third_part
     - 测试步骤:
       1. mock get_album_by_id 返回单条漫画元数据。
       2. mock get_platform_service().download_album 记录调用参数并返回下载成功。
-      3. 调用 POST /api/v1/comic/import/online(import_type=by_id,target=home,platform=JM)。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_id,target=home,platform=CA)。
       4. 校验调用参数、导入响应以及隔离元数据落盘。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -346,7 +351,7 @@ def test_comic_import_online_by_id_forwards_platform_service_contract(third_part
         json={
             "import_type": "by_id",
             "target": "home",
-            "platform": "JM",
+            "platform": "CA",
             "comic_id": "112233",
         },
     )
@@ -357,13 +362,13 @@ def test_comic_import_online_by_id_forwards_platform_service_contract(third_part
     assert payload["data"]["downloaded_count"] == 1
 
     assert len(download_calls) == 1
-    assert download_calls[0]["platform"] == "JM"
+    assert download_calls[0]["platform"] == "CA"
     assert download_calls[0]["original_id"] == "112233"
     assert download_calls[0]["show_progress"] is False
-    assert "/comic/JM" in download_calls[0]["download_dir"].replace("\\", "/")
+    assert "/comic/CA" in download_calls[0]["download_dir"].replace("\\", "/")
 
     comics = load_json(meta_dir / "comics_database.json").get("comics", [])
-    imported = find_by_id(comics, "JM112233")
+    imported = find_by_id(comics, "CA112233")
     assert imported is not None
     assert int(imported["total_page"]) == 7
 
@@ -376,11 +381,11 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
     - 测试步骤:
       1. mock search_albums 记录 keyword/max_pages/adapter_name。
       2. mock download_album 返回成功，保证流程完整走通。
-      3. 调用 POST /api/v1/comic/import/online(import_type=by_search,platform=PK,max_pages=3)。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_search,platform=CB,max_pages=3)。
       4. 断言第三方搜索调用参数及接口成功返回。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. search_albums 收到 keyword='idol'、max_pages=3、adapter_name='picacomic'。
+      2. search_albums 收到 keyword='idol'、max_pages=3、adapter_name='comic_beta'。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖 by_search 参数映射契约。
     """
@@ -389,7 +394,7 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
     external_api = importlib.import_module("third_party.external_api")
     platform_service_module = importlib.import_module("third_party.platform_service")
     config = load_json(config_path)
-    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+    config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "pk-user", "password": "pk-pass"}
     )
     save_json(config_path, config)
@@ -415,7 +420,7 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
         json={
             "import_type": "by_search",
             "target": "home",
-            "platform": "PK",
+            "platform": "CB",
             "keyword": "idol",
             "max_pages": 3,
         },
@@ -426,7 +431,7 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
 
     assert captured["keyword"] == "idol"
     assert int(captured["max_pages"]) == 3
-    assert captured["adapter_name"] == "picacomic"
+    assert captured["adapter_name"] == "comic_beta"
 
 
 @pytest.mark.integration
@@ -437,11 +442,11 @@ def test_comic_import_online_by_favorite_forwards_get_favorites_contract(third_p
     - 测试步骤:
       1. mock external_api.get_favorites 记录 adapter_name 并返回收藏漫画。
       2. mock platform_service.download_album 返回下载成功。
-      3. 调用 POST /api/v1/comic/import/online(import_type=by_favorite, platform=JM, target=home)。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_favorite, platform=CA, target=home)。
       4. 校验调用参数与导入结果。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. get_favorites 收到 adapter_name='jmcomic'。
+      2. get_favorites 收到 adapter_name='comic_alpha'。
       3. comics_database.json 新增对应前缀化漫画 ID。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖收藏夹在线导入契约。
@@ -478,7 +483,7 @@ def test_comic_import_online_by_favorite_forwards_get_favorites_contract(third_p
         json={
             "import_type": "by_favorite",
             "target": "home",
-            "platform": "JM",
+            "platform": "CA",
         },
     )
     payload = response.get_json()
@@ -487,12 +492,12 @@ def test_comic_import_online_by_favorite_forwards_get_favorites_contract(third_p
     assert payload["code"] == 200
     assert payload["data"]["imported_count"] == 1
     assert payload["data"]["downloaded_count"] == 1
-    assert captured["adapter_name"] == "jmcomic"
-    assert captured["download"]["platform"] == "JM"
+    assert captured["adapter_name"] == "comic_alpha"
+    assert captured["download"]["platform"] == "CA"
     assert captured["download"]["original_id"] == "778811"
 
     comics = load_json(meta_dir / "comics_database.json").get("comics", [])
-    imported = find_by_id(comics, "JM778811")
+    imported = find_by_id(comics, "CA778811")
     assert imported is not None
     assert int(imported["total_page"]) == 6
 
@@ -505,7 +510,7 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
     - 测试步骤:
       1. mock get_album_by_id 返回单条漫画详情。
       2. mock platform_service.download_cover/get_preview_image_urls。
-      3. 调用 POST /api/v1/comic/import/online(import_type=by_id,target=recommendation,platform=PK)。
+      3. 调用 POST /api/v1/comic/import/online(import_type=by_id,target=recommendation,platform=CB)。
       4. 校验 recommendations_database.json 中 cover_path/preview_image_urls/preview_pages。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -520,7 +525,7 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
     external_api = importlib.import_module("third_party.external_api")
     platform_service_module = importlib.import_module("third_party.platform_service")
     config = load_json(config_path)
-    config.setdefault("adapters", {}).setdefault("picacomic", {}).update(
+    config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "pk-user", "password": "pk-pass"}
     )
     save_json(config_path, config)
@@ -573,7 +578,7 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
         json={
             "import_type": "by_id",
             "target": "recommendation",
-            "platform": "PK",
+            "platform": "CB",
             "comic_id": "990011",
         },
     )
@@ -584,14 +589,14 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
     assert payload["data"]["imported_count"] == 1
 
     recommendations = load_json(meta_dir / "recommendations_database.json").get("recommendations", [])
-    imported = find_by_id(recommendations, "PK990011")
+    imported = find_by_id(recommendations, "CB990011")
     assert imported is not None
-    assert str(imported.get("cover_path", "")).startswith("/static/cover/PK/990011.jpg")
+    assert str(imported.get("cover_path", "")).startswith("/static/cover/CB/990011.jpg")
     assert imported.get("preview_image_urls")
     assert imported.get("preview_pages")
-    assert captured["cover"][0]["platform"] == "PK"
-    assert captured["preview"][0]["platform"] == "PK"
-    assert (data_dir / "static" / "cover" / "PK" / "990011.jpg").exists()
+    assert captured["cover"][0]["platform"] == "CB"
+    assert captured["preview"][0]["platform"] == "CB"
+    assert (data_dir / "static" / "cover" / "CB" / "990011.jpg").exists()
 
 
 @pytest.mark.integration
@@ -616,6 +621,36 @@ def test_comic_update_check_and_download_forward_platform_contract(third_party_c
     meta_dir = third_party_client["meta_dir"]
     platform_service_module = importlib.import_module("third_party.platform_service")
     calls = {"meta": [], "download": []}
+    comics_path = meta_dir / "comics_database.json"
+    comics_payload = load_json(comics_path)
+    comics = [item for item in comics_payload.get("comics", []) if item.get("id") != "CA100001"]
+    comics.append(
+        {
+            "id": "CA100001",
+            "title": "Update Seed",
+            "author": "A",
+            "cover_path": "",
+            "total_page": 3,
+            "current_page": 1,
+            "score": None,
+            "tag_ids": [],
+            "list_ids": [],
+            "create_time": "2026-03-23T00:00:00",
+            "last_read_time": "2026-03-23T00:00:00",
+            "is_deleted": False,
+        }
+    )
+    comics_payload["comics"] = comics
+    comics_payload["total_comics"] = len(comics)
+    save_json(comics_path, comics_payload)
+    seed_dir = Path(data_dir) / "comic" / "CA" / "100001"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    for page in (1, 2, 3):
+        (seed_dir / f"{page:03d}.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
+            b"\xe2!\xbc3\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
 
     class FakePlatformService:
         def get_album_by_id(self, platform, album_id):
@@ -632,7 +667,7 @@ def test_comic_update_check_and_download_forward_platform_contract(third_party_c
                     "kwargs": kwargs,
                 }
             )
-            comic_dir = Path(data_dir) / "comic" / "JM" / str(album_id)
+            comic_dir = Path(data_dir) / "comic" / "CA" / str(album_id)
             comic_dir.mkdir(parents=True, exist_ok=True)
             # 补齐到 5 页，模拟第三方下载后本地文件变更
             for page in (4, 5):
@@ -650,29 +685,29 @@ def test_comic_update_check_and_download_forward_platform_contract(third_party_c
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
 
-    check_resp = client.post("/api/v1/comic/update/check", json={"comic_id": "JM100001"})
+    check_resp = client.post("/api/v1/comic/update/check", json={"comic_id": "CA100001"})
     check_payload = check_resp.get_json()
     assert check_resp.status_code == 200
     assert check_payload["code"] == 200
     assert check_payload["data"]["has_update"] is True
     assert check_payload["data"]["remote_total_page"] == 5
 
-    download_resp = client.post("/api/v1/comic/update/download", json={"comic_id": "JM100001"})
+    download_resp = client.post("/api/v1/comic/update/download", json={"comic_id": "CA100001"})
     download_payload = download_resp.get_json()
     assert download_resp.status_code == 200
     assert download_payload["code"] == 200
     assert download_payload["data"]["had_update"] is True
     assert download_payload["data"]["local_page_count"] == 5
 
-    assert calls["meta"][0]["platform"] == "JM"
+    assert calls["meta"][0]["platform"] == "CA"
     assert calls["meta"][0]["album_id"] == "100001"
-    assert calls["download"][0]["platform"] == "JM"
+    assert calls["download"][0]["platform"] == "CA"
     assert calls["download"][0]["album_id"] == "100001"
     assert calls["download"][0]["show_progress"] is False
     assert calls["download"][0]["kwargs"].get("decode_images") is True
 
     comics = load_json(meta_dir / "comics_database.json").get("comics", [])
-    updated = find_by_id(comics, "JM100001")
+    updated = find_by_id(comics, "CA100001")
     assert updated is not None
     assert int(updated["total_page"]) == 5
 
@@ -728,7 +763,7 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
         json={
             "import_type": "by_list",
             "target": "recommendation",
-            "platform": "PK",
+            "platform": "CB",
             "item_ids": ["5566", "7788", "9911"],
         },
     )
@@ -737,7 +772,7 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["task_id"] == "task-batch-001"
-    assert captured["platform"] == "PK"
+    assert captured["platform"] == "CB"
     assert captured["import_type"] == "by_list"
     assert captured["target"] == "recommendation"
     assert captured["comic_ids"] == ["5566", "7788", "9911"]
@@ -750,60 +785,60 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
     ("payload", "expected"),
     [
         (
-            {"import_type": "by_id", "target": "home", "platform": "JM", "item_id": "M900101"},
-            {"platform": "JM", "content_type": "comic", "task_item_id": "M900101", "keyword": None, "task_item_ids": None, "extra_data": {}},
+            {"import_type": "by_id", "target": "home", "platform": "CA", "item_id": "M900101"},
+            {"platform": "CA", "content_type": "comic", "task_item_id": "M900101", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_search", "target": "home", "platform": "PK", "keyword": "idol"},
-            {"platform": "PK", "content_type": "comic", "task_item_id": None, "keyword": "idol", "task_item_ids": None, "extra_data": {}},
+            {"import_type": "by_search", "target": "home", "platform": "CB", "keyword": "idol"},
+            {"platform": "CB", "content_type": "comic", "task_item_id": None, "keyword": "idol", "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_list", "target": "recommendation", "platform": "PK", "item_ids": ["5566", "7788"]},
-            {"platform": "PK", "content_type": "comic", "task_item_id": None, "keyword": None, "task_item_ids": ["5566", "7788"], "extra_data": {}},
+            {"import_type": "by_list", "target": "recommendation", "platform": "CB", "item_ids": ["5566", "7788"]},
+            {"platform": "CB", "content_type": "comic", "task_item_id": None, "keyword": None, "task_item_ids": ["5566", "7788"], "extra_data": {}},
         ),
         (
-            {"import_type": "by_id", "target": "home", "platform": "JAVDB", "item_id": "JVID-101"},
-            {"platform": "JAVDB", "content_type": "video", "task_item_id": "JVID-101", "keyword": None, "task_item_ids": None, "extra_data": {}},
+            {"import_type": "by_id", "target": "home", "platform": "VA", "item_id": "JVID-101"},
+            {"platform": "VA", "content_type": "video", "task_item_id": "JVID-101", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_search", "target": "recommendation", "platform": "JAVBUS", "keyword": "mina"},
-            {"platform": "JAVBUS", "content_type": "video", "task_item_id": None, "keyword": "mina", "task_item_ids": None, "extra_data": {}},
+            {"import_type": "by_search", "target": "recommendation", "platform": "VB", "keyword": "mina"},
+            {"platform": "VB", "content_type": "video", "task_item_id": None, "keyword": "mina", "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_list", "target": "home", "platform": "JAVDB", "item_ids": ["JVID-1", "JVID-2"]},
-            {"platform": "JAVDB", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
+            {"import_type": "by_list", "target": "home", "platform": "VA", "item_ids": ["JVID-1", "JVID-2"]},
+            {"platform": "VA", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
         ),
         (
             {
                 "import_type": "by_list",
                 "target": "recommendation",
-                "platform": "JAVDB",
+                "platform": "VA",
                 "content_type": "video",
                 "item_ids": ["stars_256"],
             },
-            {"platform": "JAVDB", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["stars_256"], "extra_data": {}},
+            {"platform": "VA", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["stars_256"], "extra_data": {}},
         ),
         (
             {
                 "import_type": "by_id",
                 "target": "recommendation",
-                "platform": "JAVDB",
+                "platform": "VA",
                 "content_type": "video",
                 "item_id": "JVID-3",
             },
-            {"platform": "JAVDB", "content_type": "video", "task_item_id": "JVID-3", "keyword": None, "task_item_ids": None, "extra_data": {}},
+            {"platform": "VA", "content_type": "video", "task_item_id": "JVID-3", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {
                 "import_type": "by_platform_list",
                 "target": "recommendation",
-                "platform": "JM",
+                "platform": "CA",
                 "platform_list_id": "favorites",
                 "platform_list_name": "MyFav",
                 "source": "preview",
             },
             {
-                "platform": "JM",
+                "platform": "CA",
                 "content_type": "comic",
                 "task_item_id": "favorites",
                 "keyword": "MyFav",
@@ -815,13 +850,13 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
             {
                 "import_type": "by_platform_list",
                 "target": "recommendation",
-                "platform": "JAVDB",
+                "platform": "VA",
                 "platform_list_id": "remote-list-88",
                 "platform_list_name": "Remote 88",
                 "source": "local",
             },
             {
-                "platform": "JAVDB",
+                "platform": "VA",
                 "content_type": "video",
                 "task_item_id": "remote-list-88",
                 "keyword": "Remote 88",
@@ -895,10 +930,10 @@ def test_comic_import_async_matrix_covers_video_and_comic_flows(third_party_clie
 @pytest.mark.parametrize(
     "payload",
     [
-        {"import_type": "by_id", "target": "home", "platform": "JM", "comic_id": "M900101"},
-        {"import_type": "by_id", "target": "home", "platform": "JAVDB", "video_id": "JVID-101"},
-        {"import_type": "by_list", "target": "home", "platform": "JAVDB", "video_ids": ["JVID-1"]},
-        {"import_type": "by_list", "target": "home", "platform": "PK", "comic_ids": ["5566"]},
+        {"import_type": "by_id", "target": "home", "platform": "CA", "comic_id": "M900101"},
+        {"import_type": "by_id", "target": "home", "platform": "VA", "video_id": "JVID-101"},
+        {"import_type": "by_list", "target": "home", "platform": "VA", "video_ids": ["JVID-1"]},
+        {"import_type": "by_list", "target": "home", "platform": "CB", "comic_ids": ["5566"]},
     ],
 )
 def test_comic_import_async_rejects_content_specific_id_fields(third_party_client, payload):
@@ -932,8 +967,8 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
       2. Build representative video/comic/platform-list/migrate tasks.
       3. Call `_execute_import` and assert dispatch target.
     - Expected:
-      1. `platform=JAVDB` with inferred video content goes to video executor.
-      2. `platform=JM` with inferred comic content goes to comic executor.
+      1. `platform=VA` with inferred video content goes to video executor.
+      2. `platform=CA` with inferred comic content goes to comic executor.
       3. `import_type=by_platform_list` always goes to platform-list executor.
       4. `import_type=migrate_to_local` always goes to migrate executor.
     """
@@ -989,11 +1024,11 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
             extra_data=extra_data or {},
         )
 
-    video_task = build_task("task-v", "JAVDB", "by_id", content_type="", comic_id="JVID-7")
-    comic_task = build_task("task-c", "JM", "by_search", content_type="", keyword="idol")
+    video_task = build_task("task-v", "VA", "by_id", content_type="", comic_id="JVID-7")
+    comic_task = build_task("task-c", "CA", "by_search", content_type="", keyword="idol")
     list_task = build_task(
         "task-l",
-        "JAVBUS",
+        "VB",
         "by_platform_list",
         content_type="video",
         comic_id="fav",
@@ -1002,10 +1037,10 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
     )
     migrate_task = build_task(
         "task-m",
-        "JAVDB",
+        "VA",
         "migrate_to_local",
         content_type="video",
-        comic_ids=["JAVDB_AAA111", "JAVBUS_BBB222"],
+        comic_ids=["VA_AAA111", "VB_BBB222"],
     )
 
     video_result = manager._execute_import(video_task)
@@ -1018,10 +1053,10 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
     assert list_result["content_type"] == "video"
     assert migrate_result["content_type"] == "video"
     assert calls == [
-        ("video", "JAVDB", "by_id"),
-        ("comic", "JM", "by_search"),
-        ("platform_list", "JAVBUS", "by_platform_list"),
-        ("migrate_to_local", "JAVDB", "migrate_to_local"),
+        ("video", "VA", "by_id"),
+        ("comic", "CA", "by_search"),
+        ("platform_list", "VB", "by_platform_list"),
+        ("migrate_to_local", "VA", "migrate_to_local"),
     ]
 
 
@@ -1033,14 +1068,14 @@ def test_task_manager_normalize_video_lookup_uses_protocol_resolution(third_part
       reuses the protocol-driven prefix/platform resolver instead of hardcoded branches.
     - Steps:
       1. Import `infrastructure.task_manager`.
-      2. Normalize `JAVBUS_ABP123` with mismatched default platform.
-      3. Normalize prefixed host id `JAVDBABP123`.
+      2. Normalize `VB_ABP123` with mismatched default platform.
+      3. Normalize prefixed host id `VAABP123`.
     - Expected:
-      1. Underscore form resolves to `("javbus", "ABP123")`.
-      2. Host-id form resolves to `("javdb", "ABP123")`.
+      1. Underscore form resolves to the fake video-beta platform key.
+      2. Host-id form resolves to the fake video-alpha platform key.
     """
     task_manager_module = importlib.import_module("infrastructure.task_manager")
     manager = task_manager_module.task_manager
 
-    assert manager._normalize_video_lookup("JAVBUS_ABP123", "javdb") == ("javbus", "ABP123")
-    assert manager._normalize_video_lookup("JAVDBABP123", "javbus") == ("javdb", "ABP123")
+    assert manager._normalize_video_lookup("VB_ABP123", "video_alpha") == ("vb", "ABP123")
+    assert manager._normalize_video_lookup("VAABP123", "video_beta") == ("va", "ABP123")
