@@ -1,6 +1,6 @@
 const { test, expect, startApiRequestRecorder } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "JM100003";
+const COMIC_ID = "COMIC_ALPHA100003";
 const TOTAL_PAGE = 5;
 const BACKEND_BASE_URL = "http://127.0.0.1:5010";
 
@@ -100,7 +100,7 @@ async function setComicProgress(page, comicId, currentPage) {
  * 用例描述:
  * - 用例目的: 看护阅读页预加载顺序与上下/左右模式下的无缝拼接，避免新增功能引入页面断层或预加载退化。
  * - 测试步骤:
- *   1. 打开 /reader/JM100003?page=3 并记录图片请求。
+ *   1. 打开 /reader/COMIC_ALPHA100003?page=3 并记录图片请求。
  *   2. 校验预加载优先命中锚点页（3页）且先于边缘页（1页）请求。
  *   3. 校验左右模式下相邻页面水平拼接无明显间隙。
  *   4. 切换到上下模式并校验垂直拼接无明显间隙。
@@ -183,7 +183,7 @@ test("reader preloads around focus page and keeps seamless page stitching", asyn
  * 用例描述:
  * - 用例目的: 深度看护桌面端阅读交互（滚轮翻页、Ctrl+滚轮缩放、缩放后平移、全屏开关）。
  * - 测试步骤:
- *   1. 打开 /reader/JM100003?page=1 并展开控制条。
+ *   1. 打开 /reader/COMIC_ALPHA100003?page=1 并展开控制条。
  *   2. 滚轮推动左右模式翻页到第2页。
  *   3. Ctrl+滚轮触发缩放，校验缩放提示出现。
  *   4. 缩放状态下继续滚轮，校验页面轨道 transform 变化（平移生效）。
@@ -260,11 +260,11 @@ test("desktop reader supports wheel paging zoom pan and fullscreen toggle", asyn
  * 用例描述:
  * - 用例目的: 看护“从漫画详情页进入阅读页时自动定位到 current_page”主链路。
  * - 测试步骤:
- *   1. 先通过后端接口把 JM100003 进度写到第4页。
- *   2. 从 /comic/JM100003 点击“继续阅读”进入阅读页。
+ *   1. 先通过后端接口把 COMIC_ALPHA100003 进度写到第4页。
+ *   2. 从 /comic/COMIC_ALPHA100003 点击“继续阅读”进入阅读页。
  *   3. 校验阅读页页码定位到 4/5。
  * - 预期结果:
- *   1. 路由跳转到 /reader/JM100003。
+ *   1. 路由跳转到 /reader/COMIC_ALPHA100003。
  *   2. 阅读页首屏页码为 4/5。
  * - 历史变更:
  *   - 2026-03-24: 初始创建，补齐详情入口继续阅读看护。
@@ -293,7 +293,7 @@ test.describe("mobile touch reader interactions", () => {
    * 用例描述:
    * - 用例目的: 看护手机端触摸交互主链路（单指滑动触发翻页滚动 + 双指缩放触发缩放状态）。
    * - 测试步骤:
-   *   1. 以移动端上下文打开 /reader/JM100003?page=1。
+   *   1. 以移动端上下文打开 /reader/COMIC_ALPHA100003?page=1。
    *   2. 通过 CDP 注入单指触摸滑动，校验容器 scrollLeft 增加。
    *   3. 注入双指外扩手势，校验 page-track transform 出现 scale。
    * - 预期结果:

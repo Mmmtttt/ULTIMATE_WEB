@@ -6,7 +6,7 @@ const {
   buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "JM100001";
+const COMIC_ID = "COMIC_ALPHA100001";
 const COMIC_TITLE = "E2E Comic Alpha";
 
 /**
@@ -34,7 +34,7 @@ test("library browse opens comic detail with expected backend calls", async ({ p
     title_jp: "",
     author: "Tester A",
     desc: "Seeded comic for end-to-end validation.",
-    cover_path: "/static/mock/JM100001.jpg",
+    cover_path: "/static/mock/COMIC_ALPHA100001.jpg",
     total_page: 3,
     current_page: 1,
     score: 8.5,

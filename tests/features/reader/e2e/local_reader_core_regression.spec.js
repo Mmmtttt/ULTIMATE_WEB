@@ -5,8 +5,8 @@ const {
   hasApiCall,
 } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "JM100001";
-const SECONDARY_COMIC_ID = "JM100002";
+const COMIC_ID = "COMIC_ALPHA100001";
+const SECONDARY_COMIC_ID = "COMIC_ALPHA100002";
 
 async function setReaderDefaultConfig(page, overrides = {}) {
   await page.addInitScript((overrideConfig) => {
@@ -58,7 +58,7 @@ async function waitPageIndicator(page, expectedText) {
  * 用例描述:
  * - 用例目的: 看护本地漫画阅读页主链路，确保“按页恢复 + 图片加载 + 关键后端请求”稳定。
  * - 测试步骤:
- *   1. 直接进入 /reader/JM100001?page=2。
+ *   1. 直接进入 /reader/COMIC_ALPHA100001?page=2。
  *   2. 等待阅读页加载并展开底部控制条。
  *   3. 校验页码恢复为第 2 页、图片地址指向后端图片接口。
  *   4. 校验已发出轻量 detail 请求，且普通本地漫画不再请求全量 images 列表。
@@ -109,7 +109,7 @@ test("local reader restores route page and loads backend images", async ({ page 
  * 用例描述:
  * - 用例目的: 看护本地阅读页的“翻页进度上报 + 模式切换保持锚点页”行为，避免新增功能时回归。
  * - 测试步骤:
- *   1. 进入 /reader/JM100001?page=1 并展开控制条。
+ *   1. 进入 /reader/COMIC_ALPHA100001?page=1 并展开控制条。
  *   2. 使用键盘 ArrowRight 翻到下一页。
  *   3. 切换阅读模式（左右 -> 上下）。
  *   4. 校验页码仍保持在当前页，并校验进度 PUT 请求体。
@@ -164,7 +164,7 @@ test("local reader keeps anchor page when toggling mode and persists progress", 
  * - 用例目的: 看护“默认翻页模式”配置对阅读页初始模式的影响，确保设置页配置持续生效。
  * - 测试步骤:
  *   1. 预先注入 localStorage 的 comic_config（defaultPageMode=up_down）。
- *   2. 打开 /reader/JM100002。
+ *   2. 打开 /reader/COMIC_ALPHA100002。
  *   3. 校验阅读页初始模式容器。
  * - 预期结果:
  *   1. 首屏使用 up-down 模式容器渲染。
@@ -186,7 +186,7 @@ test("local reader uses configured default page mode on first render", async ({ 
  * - 用例目的: 看护本地阅读页「单页浏览」模式，确保开启后每次仅渲染当前页，且翻页仍正常工作。
  * - 测试步骤:
  *   1. 预先注入 singlePageBrowsing=true 的 comic_config。
- *   2. 打开 /reader/JM100001?page=2 并展示控制栏。
+ *   2. 打开 /reader/COMIC_ALPHA100001?page=2 并展示控制栏。
  *   3. 校验 single-page-mode 生效、仅渲染一张图片、初始定位到第 2 页。
  *   4. 触发下一页并校验仍仅渲染一张图片且图片 URL 切换到第 3 页。
  * - 预期结果:

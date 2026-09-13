@@ -41,18 +41,18 @@ test("global search resets previous keyword and stays remote-only", async ({ pag
         data: {
           results: [
             {
-              id: "JM100001",
+              id: "COMIC_ALPHA100001",
               title: "Remote Comic Alpha",
               author: "Remote Author",
               cover_path: "/static/default/default_cover.jpg",
               score: 8.6,
-              platform: "JM",
+              platform: "COMIC_ALPHA",
             },
           ],
           page: 1,
           has_more: false,
           platform_info: {
-            JM: {
+            COMIC_ALPHA: {
               page: 1,
               total_pages: 1,
             },

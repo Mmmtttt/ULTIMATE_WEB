@@ -2,7 +2,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 
 /**
  * 用例描述:
- * - 用例目的: 看护前端“VIDEO_ALPHA 标签搜索下一页 + 导入到预览库”链路，防止 page 参数、追加渲染和导入 target 回归。
+ * - 用例目的: 看护前端“VA 标签搜索下一页 + 导入到预览库”链路，防止 page 参数、追加渲染和导入 target 回归。
  * - 测试步骤:
  *   1. mock health-status/tags/search-by-tags/import 接口，并为搜索接口返回两页数据。
  *   2. 用户进入 /video-tag-search，选择标签并发起首次搜索。
@@ -38,15 +38,15 @@ test("video tag search load more forwards page and imports to recommendation", a
             {
               plugin_id: "video.video_alpha",
               config_key: "video_alpha",
-              name: "VIDEO_ALPHA",
+              name: "VA",
               version: "1.0.0",
               media_types: ["video"],
               capabilities: ["taxonomy.tag_search", "taxonomy.tags", "health.query.status"],
-              lookup_names: ["video.video_alpha", "video_alpha", "VIDEO_ALPHA"],
+              lookup_names: ["video.video_alpha", "video_alpha", "VA"],
               identity: {
                 content_type: "video",
-                host_id_prefix: "VIDEO_ALPHA",
-                platform_label: "VIDEO_ALPHA",
+                host_id_prefix: "VA",
+                platform_label: "VA",
                 aliases: ["video_alpha"],
               },
               presentation: {
@@ -58,7 +58,7 @@ test("video tag search load more forwards page and imports to recommendation", a
                   },
                   badge: {
                     show_platform_label: true,
-                    label: "VIDEO_ALPHA",
+                    label: "VA",
                   },
                 },
               },
@@ -179,7 +179,7 @@ test("video tag search load more forwards page and imports to recommendation", a
   expect(importTaskBodies[0]).toMatchObject({
     import_type: "by_list",
     target: "recommendation",
-    platform: "VIDEO_ALPHA",
+    platform: "VA",
     content_type: "video",
   });
   expect(importTaskBodies[0].item_ids).toEqual(["VIDA-2"]);

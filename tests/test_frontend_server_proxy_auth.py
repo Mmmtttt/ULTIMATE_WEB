@@ -311,7 +311,7 @@ def test_frontend_proxy_streams_local_video_without_buffering(monkeypatch, tmp_p
     assert calls[-1]["kwargs"]["headers"]["range"] == "bytes=0-"
 
 
-def test_frontend_proxy_streams_missav_proxy2_without_buffering(monkeypatch, tmp_path):
+def test_frontend_proxy_streams_stream_alpha_proxy2_without_buffering(monkeypatch, tmp_path):
     frontend_server = _load_frontend_server()
     _configure_frontend_server(frontend_server, tmp_path, _server_config(auth_enabled=False))
 
@@ -328,7 +328,7 @@ def test_frontend_proxy_streams_missav_proxy2_without_buffering(monkeypatch, tmp
 
     app = frontend_server.create_app()
     client = app.test_client()
-    response = client.get("/api/v1/video/proxy2?url=https%3A%2F%2Fmissav.example%2Findex.m3u8")
+    response = client.get("/api/v1/video/proxy2?url=https%3A%2F%2Fstream_alpha.example%2Findex.m3u8")
 
     assert response.status_code == 200
     assert response.data == b"#EXTM3U\n#EXTINF:1,\nseg.ts\n"

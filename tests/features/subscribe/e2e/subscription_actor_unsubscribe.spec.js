@@ -90,8 +90,8 @@ test("actor subscription add dialog can submit a manual actor source", async ({ 
 
   const dialogInputs = page.locator(".van-dialog input");
   await dialogInputs.nth(0).fill(actorName);
-  await dialogInputs.nth(1).fill("javdb");
-  await dialogInputs.nth(2).fill("https://javdb.com/actors/J2EwW");
+  await dialogInputs.nth(1).fill("video_alpha");
+  await dialogInputs.nth(2).fill("https://video_alpha.com/actors/J2EwW");
   await page.locator(".van-dialog__confirm").click();
 
   await expect.poll(() => subscribeRequests.length).toBe(1);
@@ -99,10 +99,10 @@ test("actor subscription add dialog can submit a manual actor source", async ({ 
     name: actorName,
     actor_refs: [
       {
-        platform: "javdb",
+        platform: "video_alpha",
         actor_id: "J2EwW",
         actor_name: actorName,
-        actor_url: "https://javdb.com/actors/J2EwW",
+        actor_url: "https://video_alpha.com/actors/J2EwW",
       },
     ],
   });

@@ -79,13 +79,13 @@ def _service(recommendation: Recommendation, platform_service: FakePlatformServi
 
 
 def test_check_recommendation_update_compares_remote_pages_with_known_pages(monkeypatch):
-    recommendation = Recommendation(id="JM123", title="Local", total_page=10)
+    recommendation = Recommendation(id="CA123", title="Local", total_page=10)
     service = _service(recommendation, FakePlatformService())
 
     monkeypatch.setattr(
         recommendation_app_service,
         "split_prefixed_id",
-        lambda content_id, media_type=None: ("JM", "123", None),
+        lambda content_id, media_type=None: ("CA", "123", None),
     )
     monkeypatch.setattr(
         recommendation_app_service.recommendation_cache_manager,
@@ -93,7 +93,7 @@ def test_check_recommendation_update_compares_remote_pages_with_known_pages(monk
         lambda _rid: list(range(1, 11)),
     )
 
-    result = service.check_recommendation_update("JM123")
+    result = service.check_recommendation_update("CA123")
 
     assert result.success is True
     assert result.data["can_update"] is True
@@ -104,13 +104,13 @@ def test_check_recommendation_update_compares_remote_pages_with_known_pages(monk
 
 
 def test_check_recommendation_update_treats_partial_cache_as_update(monkeypatch):
-    recommendation = Recommendation(id="JM123", title="Local", total_page=12)
+    recommendation = Recommendation(id="CA123", title="Local", total_page=12)
     service = _service(recommendation, FakePlatformService())
 
     monkeypatch.setattr(
         recommendation_app_service,
         "split_prefixed_id",
-        lambda content_id, media_type=None: ("JM", "123", None),
+        lambda content_id, media_type=None: ("CA", "123", None),
     )
     monkeypatch.setattr(
         recommendation_app_service.recommendation_cache_manager,
@@ -118,7 +118,7 @@ def test_check_recommendation_update_treats_partial_cache_as_update(monkeypatch)
         lambda _rid: list(range(1, 7)),
     )
 
-    result = service.check_recommendation_update("JM123")
+    result = service.check_recommendation_update("CA123")
 
     assert result.success is True
     assert result.data["can_update"] is True
@@ -132,7 +132,7 @@ def test_check_recommendation_update_treats_partial_cache_as_update(monkeypatch)
 
 
 def test_download_recommendation_update_refreshes_cache_and_metadata(monkeypatch):
-    recommendation = Recommendation(id="JM123", title="Local", total_page=10, current_page=9)
+    recommendation = Recommendation(id="CA123", title="Local", total_page=10, current_page=9)
     platform_service = FakePlatformService()
     service = _service(recommendation, platform_service)
     cached_pages = {"pages": list(range(1, 11))}
@@ -141,7 +141,7 @@ def test_download_recommendation_update_refreshes_cache_and_metadata(monkeypatch
     monkeypatch.setattr(
         recommendation_app_service,
         "split_prefixed_id",
-        lambda content_id, media_type=None: ("JM", "123", None),
+        lambda content_id, media_type=None: ("CA", "123", None),
     )
 
     def fake_get_cached_pages(_rid):
@@ -164,14 +164,14 @@ def test_download_recommendation_update_refreshes_cache_and_metadata(monkeypatch
     )
     monkeypatch.setattr(service, "_refresh_recommendation_persisted_metadata", lambda _rec: False)
 
-    result = service.download_recommendation_update("JM123")
+    result = service.download_recommendation_update("CA123")
 
     assert result.success is True
     assert result.data["had_update"] is True
     assert result.data["old_total_page"] == 10
     assert result.data["cached_page_count"] == 12
-    assert added_to_cache == [("JM123", 12)]
-    assert platform_service.downloads[0]["platform"] == "JM"
+    assert added_to_cache == [("CA123", 12)]
+    assert platform_service.downloads[0]["platform"] == "CA"
     assert platform_service.downloads[0]["album_id"] == "123"
     assert platform_service.downloads[0]["show_progress"] is False
     assert service._recommendation_repo.recommendation.title == "Remote Title"
@@ -181,7 +181,7 @@ def test_download_recommendation_update_refreshes_cache_and_metadata(monkeypatch
 
 
 def test_download_recommendation_update_does_not_shrink_total_page_on_partial_cache(monkeypatch):
-    recommendation = Recommendation(id="JM123", title="Local", total_page=12, current_page=9)
+    recommendation = Recommendation(id="CA123", title="Local", total_page=12, current_page=9)
     platform_service = FakePlatformService()
     service = _service(recommendation, platform_service)
     cached_pages = {"pages": list(range(1, 7))}
@@ -190,7 +190,7 @@ def test_download_recommendation_update_does_not_shrink_total_page_on_partial_ca
     monkeypatch.setattr(
         recommendation_app_service,
         "split_prefixed_id",
-        lambda content_id, media_type=None: ("JM", "123", None),
+        lambda content_id, media_type=None: ("CA", "123", None),
     )
     monkeypatch.setattr(
         recommendation_app_service.recommendation_cache_manager,
@@ -203,11 +203,11 @@ def test_download_recommendation_update_does_not_shrink_total_page_on_partial_ca
         lambda rid, page_count: added_to_cache.append((rid, page_count)) or True,
     )
 
-    result = service.download_recommendation_update("JM123")
+    result = service.download_recommendation_update("CA123")
 
     assert result.success is False
     assert "缓存仍不完整" in result.message
     assert service._recommendation_repo.recommendation.total_page == 12
     assert service._recommendation_repo.recommendation.current_page == 9
     assert service._recommendation_repo.saved == []
-    assert added_to_cache == [("JM123", 12)]
+    assert added_to_cache == [("CA123", 12)]

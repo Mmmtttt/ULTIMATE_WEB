@@ -37,7 +37,7 @@ def _upsert_recommendation(meta_dir: Path, recommendation_id: str, *, total_page
                 "title_jp": "",
                 "author": "Reader Contract",
                 "desc": "Seeded recommendation for reader contract tests.",
-                "cover_path": "/static/cover/JM/100001.png",
+                "cover_path": "/static/cover/CA/100001.png",
                 "total_page": total_page,
                 "current_page": current_page,
                 "score": 8.0,
@@ -66,8 +66,8 @@ def _upsert_recommendation(meta_dir: Path, recommendation_id: str, *, total_page
 
 
 def _seed_recommendation_cache(data_dir: Path, recommendation_id: str, page_count: int) -> None:
-    original_id = recommendation_id.replace("JM", "", 1)
-    cache_dir = data_dir / "recommendation_cache" / "comic" / "JM" / original_id
+    original_id = recommendation_id.replace("CA", "", 1)
+    cache_dir = data_dir / "recommendation_cache" / "comic" / "CA" / original_id
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     for page in range(1, page_count + 1):
@@ -81,8 +81,8 @@ def test_recommendation_reader_cache_status_and_image_contract(integration_runti
     用例描述:
     - 用例目的: 看护预览阅读页依赖的缓存查询/取图契约，确保命中缓存时可直接按页读取图片。
     - 测试步骤:
-      1. 在 recommendations_database.json 中写入一个 JM 推荐条目。
-      2. 在 recommendation_cache/comic/JM/<original_id> 写入多页真实图片文件。
+      1. 在 recommendations_database.json 中写入一个 CA 推荐条目。
+      2. 在 recommendation_cache/comic/CA/<original_id> 写入多页真实图片文件。
       3. 调用 cache/status、cache/image、recommendation/detail 接口。
       4. 校验缓存状态、图片可读性与 detail 中 is_cached/预览图片 URL 结构。
     - 预期结果:
@@ -95,7 +95,7 @@ def test_recommendation_reader_cache_status_and_image_contract(integration_runti
     base_url = integration_runtime["base_url"]
     meta_dir: Path = integration_runtime["meta_dir"]
     data_dir: Path = integration_runtime["data_dir"]
-    recommendation_id = "JM920101"
+    recommendation_id = "CA920101"
 
     _upsert_recommendation(meta_dir, recommendation_id, total_page=3, current_page=1)
     _seed_recommendation_cache(data_dir, recommendation_id, page_count=3)
@@ -159,7 +159,7 @@ def test_recommendation_reader_progress_persistence_and_validation(integration_r
     """
     base_url = integration_runtime["base_url"]
     meta_dir: Path = integration_runtime["meta_dir"]
-    recommendation_id = "JM920102"
+    recommendation_id = "CA920102"
 
     _upsert_recommendation(meta_dir, recommendation_id, total_page=4, current_page=1)
 

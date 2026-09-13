@@ -5,7 +5,7 @@ const {
   hasApiCall,
 } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "JM100001";
+const COMIC_ID = "COMIC_ALPHA100001";
 const COMIC_TITLE = "E2E Comic Alpha";
 
 async function createListFromManagePage(page, listName) {

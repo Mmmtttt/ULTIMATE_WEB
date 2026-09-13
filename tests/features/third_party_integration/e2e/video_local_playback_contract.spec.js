@@ -1,17 +1,17 @@
 const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../shared/e2e_helpers");
 
-const VIDEO_ID = "VIDEO_ALPHA900001";
+const VIDEO_ID = "VA900001";
 
 /**
  * 用例描述:
  * - 用例目的: 看护“本地视频详情页点击播放”端到端链路，确保用户点击后会请求后端播放源接口，并将第三方代理地址映射到播放器。
  * - 测试步骤:
- *   1. 进入 `/video/VIDEO_ALPHA900001`，等待详情页渲染。
- *   2. mock `/api/v1/video/VIDEO_ALPHA900001/play-urls` 返回当前协议层约定的 `provider_groups + sources` 播放数据。
+ *   1. 进入 `/video/VA900001`，等待详情页渲染。
+ *   2. mock `/api/v1/video/VA900001/play-urls` 返回当前协议层约定的 `provider_groups + sources` 播放数据。
  *   3. 用户点击封面播放区域 `.video-preview`。
  *   4. 断言播放器区域出现，并命中 `/api/v1/video/proxy2?...` 请求。
  * - 预期结果:
- *   1. 前端发起 `/api/v1/video/VIDEO_ALPHA900001/play-urls` 请求。
+ *   1. 前端发起 `/api/v1/video/VA900001/play-urls` 请求。
  *   2. 页面切换到播放器态（`.video-player-section` 可见）。
  *   3. 播放链路实际命中后端代理地址（而非裸第三方地址）。
  * - 历史变更:

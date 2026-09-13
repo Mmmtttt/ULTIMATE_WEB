@@ -39,7 +39,7 @@ def test_video_import_creates_video_with_valid_params(integration_runtime):
             "code": video_code,
             "title": f"Test Video {video_suffix}",
             "actors": ["Actor A", "Actor B"],
-            "cover_path": "/static/cover/JAVDB/900001.png",
+            "cover_path": "/static/cover/VA/900001.png",
         },
         timeout=5,
     )
@@ -115,13 +115,13 @@ def test_video_batch_import_creates_multiple_videos(integration_runtime):
                     "id": video_id_1,
                     "code": f"BATCH1-{suffix1}",
                     "title": f"Batch Video 1 {suffix1}",
-                    "cover_path": "/static/cover/JAVDB/900001.png",
+                    "cover_path": "/static/cover/VA/900001.png",
                 },
                 {
                     "id": video_id_2,
                     "code": f"BATCH2-{suffix2}",
                     "title": f"Batch Video 2 {suffix2}",
-                    "cover_path": "/static/cover/JAVDB/900002.png",
+                    "cover_path": "/static/cover/VA/900002.png",
                 },
             ]
         },
@@ -725,7 +725,7 @@ def test_video_detail_returns_full_info(integration_runtime):
     用例描述:
     - 用例目的: 验证视频详情接口返回完整的视频信息。
     - 测试步骤:
-      1. 调用 GET /api/v1/video/detail?video_id=JAVDB900001。
+      1. 调用 GET /api/v1/video/detail?video_id=VA900001。
       2. 检查返回数据完整性。
     - 预期结果:
       1. HTTP 200，业务 code=200。
@@ -999,9 +999,9 @@ def test_video_detail_preview_assets_normalize_local_relative_path(integration_r
     videos_path = meta_dir / "videos_database.json"
 
     original_payload = load_json(videos_path)
-    video_id = "JAVDBLOCALPREVIEW900004"
-    preview_relative_path = f"video/JAVDB/{video_id}/hls/index.m3u8"
-    preview_abs_path = data_dir / "video" / "JAVDB" / video_id / "hls" / "index.m3u8"
+    video_id = "VALOCALPREVIEW900004"
+    preview_relative_path = f"video/VA/{video_id}/hls/index.m3u8"
+    preview_abs_path = data_dir / "video" / "VA" / video_id / "hls" / "index.m3u8"
     preview_abs_path.parent.mkdir(parents=True, exist_ok=True)
     preview_abs_path.write_text("#EXTM3U\n", encoding="utf-8")
 
@@ -1033,9 +1033,9 @@ def test_video_detail_preview_assets_normalize_local_relative_path(integration_r
                 "preview_video_local": preview_relative_path,
                 "cover_path_local": "",
                 "thumbnail_images_local": [],
-                "platform": "JAVDB",
-                "plugin_id": "video.javdb",
-                "plugin_name": "JAVDB",
+                "platform": "VA",
+                "plugin_id": "video.alpha",
+                "plugin_name": "VA",
             }
         )
         payload["videos"] = videos

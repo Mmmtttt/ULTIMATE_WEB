@@ -36,7 +36,7 @@ class FakeTagRepository:
 
 def test_repair_single_cover_updates_one_local_comic(monkeypatch):
     comic = Comic(
-        id="JM100001",
+        id="CA100001",
         title="Local Comic",
         cover_path="/static/default/default_cover.jpg",
         total_units=3,
@@ -48,26 +48,26 @@ def test_repair_single_cover_updates_one_local_comic(monkeypatch):
     )
 
     def fake_sync_cover(record, platform_service):
-        record["cover_path"] = "/static/cover/JM/100001.jpg"
+        record["cover_path"] = "/static/cover/CA/100001.jpg"
         return True, True
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: object())
     monkeypatch.setattr(service, "_sync_cover_for_record", fake_sync_cover)
 
-    result = service.repair_single_cover("JM100001", source="local")
+    result = service.repair_single_cover("CA100001", source="local")
 
     assert result.success is True
     assert result.data["source"] == "local"
     assert result.data["changed"] is True
     assert result.data["downloaded_cover"] is True
-    assert result.data["cover_path"] == "/static/cover/JM/100001.jpg"
-    assert service._comic_repo.entity.cover_path == "/static/cover/JM/100001.jpg"
+    assert result.data["cover_path"] == "/static/cover/CA/100001.jpg"
+    assert service._comic_repo.entity.cover_path == "/static/cover/CA/100001.jpg"
     assert len(service._comic_repo.saved) == 1
 
 
 def test_repair_single_cover_updates_one_recommendation_comic(monkeypatch):
     recommendation = Recommendation(
-        id="JM200001",
+        id="CA200001",
         title="Preview Comic",
         cover_path="/static/default/default_cover.jpg",
         total_page=3,
@@ -80,18 +80,18 @@ def test_repair_single_cover_updates_one_recommendation_comic(monkeypatch):
     service._recommendation_repo = FakeEntityRepository(recommendation)
 
     def fake_sync_cover(record, platform_service):
-        record["cover_path"] = "/static/cover/JM/200001.jpg"
+        record["cover_path"] = "/static/cover/CA/200001.jpg"
         return True, True
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: object())
     monkeypatch.setattr(service, "_sync_cover_for_record", fake_sync_cover)
 
-    result = service.repair_single_cover("JM200001", source="preview")
+    result = service.repair_single_cover("CA200001", source="preview")
 
     assert result.success is True
     assert result.data["source"] == "preview"
     assert result.data["changed"] is True
     assert result.data["downloaded_cover"] is True
-    assert result.data["cover_path"] == "/static/cover/JM/200001.jpg"
-    assert service._recommendation_repo.entity.cover_path == "/static/cover/JM/200001.jpg"
+    assert result.data["cover_path"] == "/static/cover/CA/200001.jpg"
+    assert service._recommendation_repo.entity.cover_path == "/static/cover/CA/200001.jpg"
     assert len(service._recommendation_repo.saved) == 1

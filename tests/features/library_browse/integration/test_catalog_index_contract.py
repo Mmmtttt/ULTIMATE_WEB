@@ -345,7 +345,7 @@ def test_recommendation_paginated_list_uses_sqlite_index(integration_runtime):
         "title": "Index Preview Comic",
         "author": "Preview Tester",
         "desc": "preview index contract",
-        "cover_path": "/static/cover/JM/100001.png",
+        "cover_path": "/static/cover/CA/100001.png",
         "total_page": 10,
         "current_page": 1,
         "score": 11,
@@ -399,7 +399,7 @@ def test_video_recommendation_paginated_list_uses_sqlite_index(integration_runti
         "creator": "Preview Maker",
         "actors": ["Actor A"],
         "desc": "preview video index contract",
-        "cover_path": "/static/cover/JAVDB/900001.png",
+        "cover_path": "/static/cover/VA/900001.png",
         "cover_path_local": "",
         "thumbnail_images": [],
         "thumbnail_images_local": [],
@@ -473,7 +473,7 @@ def test_versioned_cover_routes_use_long_cache(integration_runtime):
     base_url = integration_runtime["base_url"]
 
     response = requests.get(
-        f"{base_url}/static/cover/JM/100001.png",
+        f"{base_url}/static/cover/CA/100001.png",
         params={"v": "unit-test"},
         timeout=5,
     )
@@ -502,8 +502,8 @@ def test_comic_paginated_list_exposes_versioned_cover_url_without_changing_cover
     payload = response.json()
     assert payload["code"] == 200
     item = payload["data"]["items"][0]
-    assert item["cover_path"] == "/static/cover/JM/100001.png"
-    assert item["cover_url"].startswith("/static/cover/JM/100001.png?v=")
+    assert item["cover_path"] == "/static/cover/CA/100001.png"
+    assert item["cover_url"].startswith("/static/cover/CA/100001.png?v=")
     assert item["cover_thumbnail_url"].startswith("/api/v1/performance/cover-thumbnail?")
 
     thumbnail_response = requests.get(f"{base_url}{item['cover_thumbnail_url']}", timeout=5)

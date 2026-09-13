@@ -5,7 +5,7 @@ const {
   hasApiCall,
 } = require("../../../shared/e2e_helpers");
 
-const PRIMARY_VIDEO_ID = "JAVDB900001";
+const PRIMARY_VIDEO_ID = "VA900001";
 const VIDEO_TITLE = "Seed Video";
 
 async function restoreVideoIfInTrash(page) {

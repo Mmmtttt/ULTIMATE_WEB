@@ -150,7 +150,7 @@ def test_<case_name>(integration_runtime):
 2. 视频接口：
    - /api/v1/video/third-party/search
    - /api/v1/video/third-party/<platform>/health-status
-   - /api/v1/video/third-party/javdb/search-by-tags
+   - /api/v1/video/third-party/video_alpha/search-by-tags
    - /api/v1/video/third-party/detail
    - /api/v1/video/third-party/actor/search
    - /api/v1/video/third-party/actor/works
@@ -180,7 +180,7 @@ def test_<case_name>(integration_runtime):
    - /api/v1/recommendation/cache/download
    - /api/v1/config/system（data_dir 变更触发 third-party 路径重定向）
 6. 在线播放头部契约：
-   - VideoAppService._build_preview_video_headers 对 javdb URL 必须携带 Referer 与 Cookie
+   - VideoAppService._build_preview_video_headers 对 video_alpha URL 必须携带 Referer 与 Cookie
 7. 不访问真实第三方网络，统一使用 mock/stub。
 8. 每个用例都要写“用例描述（目的/步骤/预期/历史变更）”。
 9. 断言必须包含：调用方式、关键入参、返回映射、异常分支。

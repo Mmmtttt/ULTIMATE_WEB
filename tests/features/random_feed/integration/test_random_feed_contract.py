@@ -49,8 +49,8 @@ def _append_cached_recommendation(meta_dir: Path, data_dir: Path, recommendation
     payload["total_recommendations"] = len(recommendations)
     save_json(recommendation_path, payload)
 
-    original_id = recommendation_id.replace("JM", "", 1)
-    cache_dir = data_dir / "recommendation_cache" / "comic" / "JM" / original_id
+    original_id = recommendation_id.replace("CA", "", 1)
+    cache_dir = data_dir / "recommendation_cache" / "comic" / "CA" / original_id
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / "001.jpg").write_bytes(JPEG_1X1)
 
@@ -60,7 +60,7 @@ def _append_cached_video_recommendation(meta_dir: Path, data_dir: Path, video_id
     payload = load_json(recommendation_path)
     recommendations = payload.setdefault("video_recommendations", [])
 
-    cover_path_local = f"/media/recommendation_cache/video/JAVDB/{video_id.replace('JAVDB', '', 1)}/cover.jpg"
+    cover_path_local = f"/media/recommendation_cache/video/VA/{video_id.replace('VA', '', 1)}/cover.jpg"
     recommendations.append(
         {
             "id": video_id,
@@ -87,7 +87,7 @@ def _append_cached_video_recommendation(meta_dir: Path, data_dir: Path, video_id
     payload["total_video_recommendations"] = len(recommendations)
     save_json(recommendation_path, payload)
 
-    asset_path = data_dir / "recommendation_cache" / "video" / "JAVDB" / video_id.replace("JAVDB", "", 1) / "cover.jpg"
+    asset_path = data_dir / "recommendation_cache" / "video" / "VA" / video_id.replace("VA", "", 1) / "cover.jpg"
     asset_path.parent.mkdir(parents=True, exist_ok=True)
     asset_path.write_bytes(JPEG_1X1)
 
@@ -158,7 +158,7 @@ def test_random_feed_comic_includes_cached_preview_candidates(integration_runtim
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]
     data_dir = integration_runtime["data_dir"]
-    preview_id = "JM990001"
+    preview_id = "CA990001"
 
     _append_cached_recommendation(meta_dir, data_dir, preview_id)
 
@@ -179,7 +179,7 @@ def test_random_feed_video_includes_local_and_cached_preview_assets(integration_
     base_url = integration_runtime["base_url"]
     meta_dir = integration_runtime["meta_dir"]
     data_dir = integration_runtime["data_dir"]
-    preview_video_id = "JAVDB990001"
+    preview_video_id = "VA990001"
 
     _append_cached_video_recommendation(meta_dir, data_dir, preview_video_id)
 
@@ -193,7 +193,7 @@ def test_random_feed_video_includes_local_and_cached_preview_assets(integration_
     assert any(item.get("source") == "local" for item in items)
     assert any(item.get("source") == "preview" for item in items)
     assert any(
-        f"/media/recommendation_cache/video/JAVDB/{preview_video_id.replace('JAVDB', '', 1)}/cover.jpg"
+        f"/media/recommendation_cache/video/VA/{preview_video_id.replace('VA', '', 1)}/cover.jpg"
         in str(item.get("image_url", ""))
         for item in items
     )

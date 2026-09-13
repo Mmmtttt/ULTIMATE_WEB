@@ -2,7 +2,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 
 /**
  * 用例描述:
- * - 用例目的: 看护视频全网搜索在“同一行混合 VIDEO_ALPHA 横图 + VIDEO_BETA 竖图”时的卡片布局契约，
+ * - 用例目的: 看护视频全网搜索在“同一行混合 VA 横图 + VB 竖图”时的卡片布局契约，
  *   防止横图卡片被强制拉高到竖图高度导致大片留白。
  * - 测试步骤:
  *   1. mock `/api/v1/video/third-party/search` 返回一条 video_alpha 与一条 video_beta 结果。
@@ -40,7 +40,7 @@ test("video global search mixed video_alpha/video_beta cards keep independent co
           videos: [
             {
               id: "VIDA-DB-1",
-              title: "VIDEO_ALPHA Landscape Card",
+              title: "VA Landscape Card",
               code: "DB-001",
               platform: "video_alpha",
               cover_url: "/static/default/default_cover.jpg",
@@ -52,14 +52,14 @@ test("video global search mixed video_alpha/video_beta cards keep independent co
                   fit: "cover",
                 },
                 badge: {
-                  label: "VIDEO_ALPHA",
+                  label: "VA",
                   show_platform_label: true,
                 },
               },
             },
             {
               id: "VIDA-BUS-1",
-              title: "VIDEO_BETA Portrait Card",
+              title: "VB Portrait Card",
               code: "BUS-001",
               platform: "video_beta",
               cover_url: "/static/default/default_cover.jpg",
@@ -70,7 +70,7 @@ test("video global search mixed video_alpha/video_beta cards keep independent co
                   fit: "contain",
                 },
                 badge: {
-                  label: "VIDEO_BETA",
+                  label: "VB",
                   show_platform_label: true,
                 },
               },

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -1019,7 +1019,7 @@ def test_organize_database_backfills_soft_ref_cover_from_default_placeholder(int
         refreshed = _find_comic_by_title(refreshed_data, title)
         repaired_cover = str(refreshed.get("cover_path") or "").strip()
         assert repaired_cover
-        assert repaired_cover.startswith("/static/cover/JM/")
+        assert repaired_cover.startswith("/static/cover/CA/")
         cover_rel = repaired_cover[len("/static/cover/") :].replace("/", os.sep)
         cover_abs = (integration_runtime["data_dir"] / "static" / "cover" / cover_rel)
         assert cover_abs.exists()
@@ -1225,7 +1225,7 @@ def test_local_import_move_mode_can_resume_after_move_then_failed_indexing(integ
         if local_asset_dir_name:
             repaired_dir = data_dir / "comic" / "local" / local_asset_dir_name
         else:
-            original_id = comic_id[len("JM"):] if comic_id.startswith("JM") else comic_id
+            original_id = comic_id[len("CA"):] if comic_id.startswith("CA") else comic_id
             repaired_dir = data_dir / "comic" / "local" / original_id
         assert repaired_dir.exists()
         _write_png(repaired_dir / "001.png")

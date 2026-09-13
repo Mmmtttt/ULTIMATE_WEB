@@ -9,9 +9,9 @@ const {
 } = require("../../../shared/e2e_helpers");
 
 const BACKEND_BASE_URL = process.env.E2E_BACKEND_BASE_URL || "http://127.0.0.1:5010";
-const CACHED_RECOMMENDATION_ID = "JM910001";
-const UNCACHED_RECOMMENDATION_ID = "JM910002";
-const PARTIAL_CACHE_RECOMMENDATION_ID = "JM910006";
+const CACHED_RECOMMENDATION_ID = "CA910001";
+const UNCACHED_RECOMMENDATION_ID = "CA910002";
+const PARTIAL_CACHE_RECOMMENDATION_ID = "CA910006";
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgN6QHdwAAAAASUVORK5CYII=",
   "base64",
@@ -77,7 +77,7 @@ async function addRecommendation(
       total_page: totalPage,
       current_page: currentPage,
       score: 8.5,
-      cover_path: "/static/cover/JM/100001.png",
+      cover_path: "/static/cover/CA/100001.png",
       tag_ids: ["tag_action"],
     },
   });
@@ -87,12 +87,12 @@ async function addRecommendation(
 }
 
 async function seedRecommendationCache(runtimeDataDir, recommendationId, pageCount) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.mkdir(cacheDir, { recursive: true });
@@ -103,12 +103,12 @@ async function seedRecommendationCache(runtimeDataDir, recommendationId, pageCou
 }
 
 async function seedRecommendationCachePage(runtimeDataDir, recommendationId, pageNum) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.mkdir(cacheDir, { recursive: true });
@@ -117,12 +117,12 @@ async function seedRecommendationCachePage(runtimeDataDir, recommendationId, pag
 }
 
 async function clearRecommendationCache(runtimeDataDir, recommendationId) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.rm(cacheDir, { recursive: true, force: true });
@@ -311,7 +311,7 @@ test("preview reader single-page mode keeps centered snap paging", async ({
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910004";
+  const recommendationId = "CA910004";
 
   await setReaderDefaultConfig(page, {
     defaultPageMode: "left_right",
@@ -402,7 +402,7 @@ test("preview reader progressively renders cached pages before download call fin
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910005";
+  const recommendationId = "CA910005";
 
   await addRecommendation(request, recommendationId, "Reader Gate Progressive Cache", 5, {
     currentPage: 2,
@@ -517,7 +517,7 @@ test("recommendation detail continue reading opens reader at saved progress", as
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910003";
+  const recommendationId = "CA910003";
 
   await addRecommendation(request, recommendationId, "Reader Gate Detail Continue", 3, {
     currentPage: 2,

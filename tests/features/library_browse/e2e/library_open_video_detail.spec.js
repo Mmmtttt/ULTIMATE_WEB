@@ -6,7 +6,7 @@ const {
   buildPaginatedData,
 } = require("../../../shared/e2e_helpers");
 
-const VIDEO_ID = "JAVDB900001";
+const VIDEO_ID = "VA900001";
 const VIDEO_TITLE = "Seed Video";
 
 function buildVideo(id, title, score = 8.8) {

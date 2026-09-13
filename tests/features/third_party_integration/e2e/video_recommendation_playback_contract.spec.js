@@ -1,18 +1,18 @@
 const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../shared/e2e_helpers");
 
-const RECOMMENDATION_ID = "VIDEO_ALPHAREC9001";
+const RECOMMENDATION_ID = "VAREC9001";
 
 /**
  * 用例描述:
  * - 用例目的: 看护“推荐视频详情页点击播放”端到端链路，确保前端调用推荐播放源接口，并将第三方 `proxy_url` 映射为后端代理地址。
  * - 测试步骤:
- *   1. 进入 `/video-recommendation/VIDEO_ALPHAREC9001`。
+ *   1. 进入 `/video-recommendation/VAREC9001`。
  *   2. mock 推荐详情接口，返回含 code 的推荐视频数据。
  *   3. mock 推荐播放源接口，返回当前协议层约定的 `provider_groups + sources` 数据。
  *   4. 用户点击 `.video-preview` 触发播放。
  *   5. 断言请求链路、播放器渲染与 `/api/v1/video/proxy2` 命中。
  * - 预期结果:
- *   1. 前端发起 `/api/v1/video/recommendation/VIDEO_ALPHAREC9001/play-urls`。
+ *   1. 前端发起 `/api/v1/video/recommendation/VAREC9001/play-urls`。
  *   2. 页面展示播放器。
  *   3. 播放链路实际命中 `/api/v1/video/proxy2?...` 代理地址。
  * - 历史变更:
@@ -56,7 +56,7 @@ test("recommendation video detail click-to-play triggers recommendation play-url
           tags: [],
           source: "preview",
           is_deleted: false,
-          cover_path: "/static/cover/VIDEO_ALPHA/900001.png",
+          cover_path: "/static/cover/VA/900001.png",
           thumbnail_images: [],
         },
       }),

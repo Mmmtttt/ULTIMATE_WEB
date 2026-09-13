@@ -82,10 +82,10 @@ def test_comic_trash_permanent_delete_removes_record(integration_runtime):
     from tests.shared.test_constants import FIFTH_COMIC_ID
 
     temp_numeric = str((uuid4().int % 900000) + 100000)
-    temp_comic_id = f"JM{temp_numeric}"
+    temp_comic_id = f"CA{temp_numeric}"
     temp_title = f"Trash Delete {temp_numeric}"
-    source_dir = data_dir / "comic" / "JM" / FIFTH_COMIC_ID.replace("JM", "", 1)
-    temp_dir = data_dir / "comic" / "JM" / temp_comic_id.replace("JM", "", 1)
+    source_dir = data_dir / "comic" / "CA" / FIFTH_COMIC_ID.replace("CA", "", 1)
+    temp_dir = data_dir / "comic" / "CA" / temp_comic_id.replace("CA", "", 1)
     if temp_dir.exists():
         shutil.rmtree(temp_dir, ignore_errors=True)
     shutil.copytree(source_dir, temp_dir)

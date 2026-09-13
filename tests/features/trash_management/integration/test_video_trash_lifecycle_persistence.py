@@ -41,7 +41,7 @@ def test_video_trash_lifecycle_persistence(integration_runtime):
             "code": video_code,
             "title": f"Temporary Video {video_suffix}",
             "actors": ["Integration Actor"],
-            "cover_path": "/static/cover/JAVDB/900001.png",
+            "cover_path": "/static/cover/VA/900001.png",
         },
         timeout=5,
     )

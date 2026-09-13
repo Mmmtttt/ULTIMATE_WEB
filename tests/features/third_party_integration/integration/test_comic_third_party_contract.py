@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import shutil
 from pathlib import Path
 
 import pytest
@@ -395,7 +396,7 @@ def test_comic_import_online_by_search_forwards_search_contract(third_party_clie
     platform_service_module = importlib.import_module("protocol.platform_service")
     config = load_json(config_path)
     config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
-        {"enabled": True, "account": "pk-user", "password": "pk-pass"}
+        {"enabled": True, "account": "test-comic-beta", "password": "test-comic-beta-pass"}
     )
     save_json(config_path, config)
 
@@ -526,7 +527,7 @@ def test_comic_import_online_recommendation_saves_cover_and_preview_contract(thi
     platform_service_module = importlib.import_module("protocol.platform_service")
     config = load_json(config_path)
     config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
-        {"enabled": True, "account": "pk-user", "password": "pk-pass"}
+        {"enabled": True, "account": "test-comic-beta", "password": "test-comic-beta-pass"}
     )
     save_json(config_path, config)
     captured = {"cover": [], "preview": []}
@@ -644,6 +645,7 @@ def test_comic_update_check_and_download_forward_platform_contract(third_party_c
     comics_payload["total_comics"] = len(comics)
     save_json(comics_path, comics_payload)
     seed_dir = Path(data_dir) / "comic" / "CA" / "100001"
+    shutil.rmtree(seed_dir, ignore_errors=True)
     seed_dir.mkdir(parents=True, exist_ok=True)
     for page in (1, 2, 3):
         (seed_dir / f"{page:03d}.png").write_bytes(
@@ -797,16 +799,16 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
             {"platform": "CB", "content_type": "comic", "task_item_id": None, "keyword": None, "task_item_ids": ["5566", "7788"], "extra_data": {}},
         ),
         (
-            {"import_type": "by_id", "target": "home", "platform": "VA", "item_id": "JVID-101"},
-            {"platform": "VA", "content_type": "video", "task_item_id": "JVID-101", "keyword": None, "task_item_ids": None, "extra_data": {}},
+            {"import_type": "by_id", "target": "home", "platform": "VA", "item_id": "VIDA-101"},
+            {"platform": "VA", "content_type": "video", "task_item_id": "VIDA-101", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {"import_type": "by_search", "target": "recommendation", "platform": "VB", "keyword": "mina"},
             {"platform": "VB", "content_type": "video", "task_item_id": None, "keyword": "mina", "task_item_ids": None, "extra_data": {}},
         ),
         (
-            {"import_type": "by_list", "target": "home", "platform": "VA", "item_ids": ["JVID-1", "JVID-2"]},
-            {"platform": "VA", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["JVID-1", "JVID-2"], "extra_data": {}},
+            {"import_type": "by_list", "target": "home", "platform": "VA", "item_ids": ["VIDA-1", "VIDA-2"]},
+            {"platform": "VA", "content_type": "video", "task_item_id": None, "keyword": None, "task_item_ids": ["VIDA-1", "VIDA-2"], "extra_data": {}},
         ),
         (
             {
@@ -824,9 +826,9 @@ def test_comic_import_async_by_list_forwards_batch_payload_contract(third_party_
                 "target": "recommendation",
                 "platform": "VA",
                 "content_type": "video",
-                "item_id": "JVID-3",
+                "item_id": "VIDA-3",
             },
-            {"platform": "VA", "content_type": "video", "task_item_id": "JVID-3", "keyword": None, "task_item_ids": None, "extra_data": {}},
+            {"platform": "VA", "content_type": "video", "task_item_id": "VIDA-3", "keyword": None, "task_item_ids": None, "extra_data": {}},
         ),
         (
             {
@@ -931,8 +933,8 @@ def test_comic_import_async_matrix_covers_video_and_comic_flows(third_party_clie
     "payload",
     [
         {"import_type": "by_id", "target": "home", "platform": "CA", "comic_id": "M900101"},
-        {"import_type": "by_id", "target": "home", "platform": "VA", "video_id": "JVID-101"},
-        {"import_type": "by_list", "target": "home", "platform": "VA", "video_ids": ["JVID-1"]},
+        {"import_type": "by_id", "target": "home", "platform": "VA", "video_id": "VIDA-101"},
+        {"import_type": "by_list", "target": "home", "platform": "VA", "video_ids": ["VIDA-1"]},
         {"import_type": "by_list", "target": "home", "platform": "CB", "comic_ids": ["5566"]},
     ],
 )
@@ -1024,7 +1026,7 @@ def test_task_manager_execute_import_dispatches_by_content_type_and_import_type(
             extra_data=extra_data or {},
         )
 
-    video_task = build_task("task-v", "VA", "by_id", content_type="", comic_id="JVID-7")
+    video_task = build_task("task-v", "VA", "by_id", content_type="", comic_id="VIDA-7")
     comic_task = build_task("task-c", "CA", "by_search", content_type="", keyword="idol")
     list_task = build_task(
         "task-l",

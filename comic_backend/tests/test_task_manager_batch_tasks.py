@@ -200,7 +200,7 @@ def test_execute_comic_import_backfills_storage_fields_before_save(tmp_path, mon
         lambda albums, existing_tags, platform: {
             "comics": [
                 {
-                    "id": "JMTEST001",
+                    "id": "CATEST001",
                     "title": "Task Import Comic",
                     "title_jp": "",
                     "author": "Tester",
@@ -235,23 +235,23 @@ def test_execute_comic_import_backfills_storage_fields_before_save(tmp_path, mon
 
     class _FakeComicService:
         def _refresh_comic_persisted_metadata(self, comic, *, source: str):
-            comic["storage_path_relative"] = "comic/JM/TEST001"
+            comic["storage_path_relative"] = "comic/CA/TEST001"
             comic["storage_path_kind"] = "local_dir"
-            comic["platform"] = "JM"
+            comic["platform"] = "CA"
             return True
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: _FakePlatformService())
-    monkeypatch.setattr(platform_meta_module, "split_prefixed_id", lambda comic_id, media_type="comic": ("JM", "TEST001", None))
+    monkeypatch.setattr(platform_meta_module, "split_prefixed_id", lambda comic_id, media_type="comic": ("CA", "TEST001", None))
     monkeypatch.setattr(comic_app_module, "ComicAppService", _FakeComicService)
 
-    task_id = manager.create_task(platform="JM", import_type="by_id", target="home", comic_id="TEST001")
+    task_id = manager.create_task(platform="CA", import_type="by_id", target="home", comic_id="TEST001")
     task = manager.get_task(task_id)
 
     result = manager._execute_import(task)
 
     assert result["success"] is True
     saved = json.loads(json_file.read_text(encoding="utf-8"))
-    assert saved["comics"][0]["storage_path_relative"] == "comic/JM/TEST001"
+    assert saved["comics"][0]["storage_path_relative"] == "comic/CA/TEST001"
     assert saved["comics"][0]["storage_path_kind"] == "local_dir"
 
 
@@ -285,9 +285,9 @@ def test_execute_video_import_backfills_storage_fields_for_preview_records(tmp_p
 
     class _FakeVideoService:
         def _refresh_video_persisted_metadata(self, video, *, source: str):
-            video["storage_path_relative"] = "recommendation_cache/video/JAVDB/JAVDBTEST001"
+            video["storage_path_relative"] = "recommendation_cache/video/VA/VATEST001"
             video["storage_path_kind"] = "preview_asset_dir"
-            video["platform"] = "JAVDB"
+            video["platform"] = "VA"
             return True
 
         def get_video_by_code(self, code):
@@ -306,8 +306,8 @@ def test_execute_video_import_backfills_storage_fields_for_preview_records(tmp_p
         def create_tag(self, name, content_type):
             return _ServiceResult(True, "ok", {"id": f"tag_{name}"})
 
-    monkeypatch.setattr(video_runtime_module, "resolve_video_lookup_context", lambda video_id="", platform_name="": ("javdb", video_id or "TEST001", None))
-    monkeypatch.setattr(video_runtime_module, "build_video_host_id", lambda platform, lookup: "JAVDBTEST001")
+    monkeypatch.setattr(video_runtime_module, "resolve_video_lookup_context", lambda video_id="", platform_name="": ("video_alpha", video_id or "TEST001", None))
+    monkeypatch.setattr(video_runtime_module, "build_video_host_id", lambda platform, lookup: "VATEST001")
     monkeypatch.setattr(video_runtime_module, "get_video_adapter", lambda platform, existing_tags: _FakeAdapter())
     monkeypatch.setattr(video_runtime_module, "platform_allows_preview_video_download", lambda **kwargs: False)
     monkeypatch.setattr(video_runtime_module, "sanitize_preview_video_value", lambda value: str(value or "").strip())
@@ -316,12 +316,12 @@ def test_execute_video_import_backfills_storage_fields_for_preview_records(tmp_p
     monkeypatch.setattr(video_app_module, "VideoAppService", _FakeVideoService)
     monkeypatch.setattr(tag_app_module, "TagAppService", _FakeTagService)
 
-    task_id = manager.create_task(platform="javdb", import_type="by_id", target="recommendation", comic_id="TEST001", content_type="video")
+    task_id = manager.create_task(platform="video_alpha", import_type="by_id", target="recommendation", comic_id="TEST001", content_type="video")
     task = manager.get_task(task_id)
 
     result = manager._execute_import(task)
 
     assert result["success"] is True
     saved = json.loads(preview_json.read_text(encoding="utf-8"))
-    assert saved["video_recommendations"][0]["storage_path_relative"] == "recommendation_cache/video/JAVDB/JAVDBTEST001"
+    assert saved["video_recommendations"][0]["storage_path_relative"] == "recommendation_cache/video/VA/VATEST001"
     assert saved["video_recommendations"][0]["storage_path_kind"] == "preview_asset_dir"

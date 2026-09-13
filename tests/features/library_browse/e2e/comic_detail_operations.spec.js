@@ -6,16 +6,16 @@ const {
   confirmDialog,
 } = require("../../../shared/e2e_helpers");
 
-const TRASH_TEST_COMIC_ID = "JM100005";
+const TRASH_TEST_COMIC_ID = "COMIC_ALPHA100005";
 const TRASH_TEST_COMIC_TITLE = "E2E Comic Epsilon";
-const CHAPTER_COMIC_ID = "JM100001";
+const CHAPTER_COMIC_ID = "COMIC_ALPHA100001";
 const CHAPTER_COMIC_TITLE = "E2E Comic Alpha";
 
 /**
  * 用例描述:
  * - 用例目的: 强看护漫画详情页评分更新主链路，确保前端操作会触发正确后端请求。
  * - 测试步骤:
- *   1. 打开 `/comic/JM100005` 详情页（使用专用测试漫画，不影响排序测试）。
+ *   1. 打开 `/comic/COMIC_ALPHA100005` 详情页（使用专用测试漫画，不影响排序测试）。
  *   2. 点击评分组件设置新评分。
  *   3. 校验 `/api/v1/comic/score` PUT 请求参数正确。
  *   4. 恢复原始评分。
@@ -24,7 +24,7 @@ const CHAPTER_COMIC_TITLE = "E2E Comic Alpha";
  *   2. 页面显示更新后的评分。
  * - 历史变更:
  *   - 2026-03-25: 初始创建，覆盖漫画详情评分更新主链路。
- *   - 2026-03-26: 改用 JM100005 避免影响 library_sort_by_score 测试。
+ *   - 2026-03-26: 改用 COMIC_ALPHA100005 避免影响 library_sort_by_score 测试。
  *   - 2026-03-26: 测试结束后恢复原始评分。
  */
 test("comic detail page updates score via API", async ({ page }) => {
@@ -59,7 +59,7 @@ test("comic detail page updates score via API", async ({ page }) => {
  * 用例描述:
  * - 用例目的: 强看护漫画详情页收藏切换主链路，确保前端操作会触发正确后端请求。
  * - 测试步骤:
- *   1. 打开 `/comic/JM100005` 详情页。
+ *   1. 打开 `/comic/COMIC_ALPHA100005` 详情页。
  *   2. 点击收藏按钮。
  *   3. 校验 `/api/v1/list/favorite/toggle` PUT 请求。
  * - 预期结果:
@@ -67,7 +67,7 @@ test("comic detail page updates score via API", async ({ page }) => {
  *   2. 按钮状态切换。
  * - 历史变更:
  *   - 2026-03-25: 初始创建，覆盖漫画详情收藏主链路。
- *   - 2026-03-26: 改用 JM100005 避免影响其他测试。
+ *   - 2026-03-26: 改用 COMIC_ALPHA100005 避免影响其他测试。
  */
 test("comic detail page toggles favorite via API", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
@@ -98,7 +98,7 @@ test("comic detail page toggles favorite via API", async ({ page }) => {
  * - 用例目的: 强看护漫画详情页移入回收站主链路，确保前端操作会触发正确后端请求。
  * - 测试步骤:
  *   1. 先检查漫画是否在库中，如果不在则从回收站恢复。
- *   2. 打开 `/comic/JM100005` 详情页（使用专用测试漫画，不影响其他测试）。
+ *   2. 打开 `/comic/COMIC_ALPHA100005` 详情页（使用专用测试漫画，不影响其他测试）。
  *   3. 点击"移入回收站"按钮。
  *   4. 确认对话框。
  *   5. 校验 `/api/v1/comic/trash/move` PUT 请求。
@@ -108,7 +108,7 @@ test("comic detail page toggles favorite via API", async ({ page }) => {
  *   2. 操作完成后页面跳转。
  * - 历史变更:
  *   - 2026-03-25: 初始创建，覆盖漫画详情移入回收站主链路。
- *   - 2026-03-26: 改用 JM100005 避免影响其他测试用例。
+ *   - 2026-03-26: 改用 COMIC_ALPHA100005 避免影响其他测试用例。
  *   - 2026-03-26: 测试结束后恢复数据状态。
  *   - 2026-03-26: 增加前置检查，确保测试数据可用。
  */
@@ -165,14 +165,14 @@ test("comic detail page moves to trash via API", async ({ page }) => {
  * 用例描述:
  * - 用例目的: 强看护漫画详情页开始阅读主链路，确保点击阅读按钮跳转到阅读器页面。
  * - 测试步骤:
- *   1. 打开 `/comic/JM100005` 详情页。
+ *   1. 打开 `/comic/COMIC_ALPHA100005` 详情页。
  *   2. 点击"开始阅读"或"继续阅读"按钮。
  *   3. 校验路由跳转到阅读器页面。
  * - 预期结果:
- *   1. 路由跳转到 `/reader/JM100005`。
+ *   1. 路由跳转到 `/reader/COMIC_ALPHA100005`。
  * - 历史变更:
  *   - 2026-03-25: 初始创建，覆盖漫画详情开始阅读主链路。
- *   - 2026-03-26: 改用 JM100005 避免影响其他测试。
+ *   - 2026-03-26: 改用 COMIC_ALPHA100005 避免影响其他测试。
  */
 test("comic detail page starts reading and navigates to reader", async ({ page }) => {
   await page.goto(`/comic/${TRASH_TEST_COMIC_ID}`);
@@ -188,10 +188,10 @@ test("comic detail page starts reading and navigates to reader", async ({ page }
  * 用例描述:
  * - 用例目的: 强看护漫画详情页章节跳转链路，确保章节入口只在详情页体现且能跳到正确全局页码。
  * - 测试步骤:
- *   1. 打开 `/comic/JM100001` 详情页。
+ *   1. 打开 `/comic/COMIC_ALPHA100001` 详情页。
  *   2. 校验章节区默认折叠，章节卡片已渲染但不可见。
  *   3. 展开章节列表并点击第二个章节卡片。
- *   4. 校验路由跳转到 `/reader/JM100001?page=3`。
+ *   4. 校验路由跳转到 `/reader/COMIC_ALPHA100001?page=3`。
  * - 预期结果:
  *   1. 章节区默认折叠，点击“展开章节”后显示两张章节卡片。
  *   2. 点击章节后直接跳到对应起始页。

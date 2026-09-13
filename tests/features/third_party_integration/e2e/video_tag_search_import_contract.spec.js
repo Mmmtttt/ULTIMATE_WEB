@@ -2,9 +2,9 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 
 /**
  * 用例描述:
- * - 用例目的: 看护前端“VIDEO_ALPHA 标签搜索 -> 导入”链路与后端第三方接口契约，防止 tag_ids/page/import body 参数回归。
+ * - 用例目的: 看护前端“VA 标签搜索 -> 导入”链路与后端第三方接口契约，防止 tag_ids/page/import body 参数回归。
  * - 测试步骤:
- *   1. mock VIDEO_ALPHA health-status/tags/search-by-tags/import 接口返回。
+ *   1. mock VA health-status/tags/search-by-tags/import 接口返回。
  *   2. 用户进入 /video-tag-search，必要时切换到视频模式，选择标签并执行搜索。
  *   3. 用户选择搜索结果并执行导入到本地库。
  *   4. 断言 search-by-tags 与 import 请求参数，以及前端结果渲染。
@@ -37,15 +37,15 @@ test("video tag search forwards third-party query and import contracts", async (
             {
               plugin_id: "video.video_alpha",
               config_key: "video_alpha",
-              name: "VIDEO_ALPHA",
+              name: "VA",
               version: "1.0.0",
               media_types: ["video"],
               capabilities: ["taxonomy.tag_search", "taxonomy.tags", "health.query.status"],
-              lookup_names: ["video.video_alpha", "video_alpha", "VIDEO_ALPHA"],
+              lookup_names: ["video.video_alpha", "video_alpha", "VA"],
               identity: {
                 content_type: "video",
-                host_id_prefix: "VIDEO_ALPHA",
-                platform_label: "VIDEO_ALPHA",
+                host_id_prefix: "VA",
+                platform_label: "VA",
                 aliases: ["video_alpha"],
               },
               presentation: {
@@ -57,7 +57,7 @@ test("video tag search forwards third-party query and import contracts", async (
                   },
                   badge: {
                     show_platform_label: true,
-                    label: "VIDEO_ALPHA",
+                    label: "VA",
                   },
                 },
               },
@@ -173,7 +173,7 @@ test("video tag search forwards third-party query and import contracts", async (
   expect(importTaskBodies[0]).toMatchObject({
     import_type: "by_list",
     target: "home",
-    platform: "VIDEO_ALPHA",
+    platform: "VA",
     content_type: "video",
   });
   expect(importTaskBodies[0].item_ids).toEqual(["VIDA-1"]);

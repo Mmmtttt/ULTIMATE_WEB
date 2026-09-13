@@ -152,6 +152,7 @@ def _fake_manifest(
     storage_field: str = "",
     storage_relative_dir: str = "",
     cover_fit: str = "cover",
+    cover_aspect_ratio: str = "",
     helpers: dict | None = None,
     actions: list[dict] | None = None,
 ) -> dict:
@@ -174,7 +175,7 @@ def _fake_manifest(
         "presentation": {
             "media_card": {
                 "cover": {
-                    "aspect_ratio": "16 / 9" if media_type == "video" else "2 / 3",
+                    "aspect_ratio": cover_aspect_ratio or ("16 / 9" if media_type == "video" else "2 / 3"),
                     "fit": cover_fit,
                     "path_mode": "local_static",
                 },
@@ -339,6 +340,7 @@ def _write_fake_protocol_plugins(root: Path) -> None:
                 capabilities=common_video_capabilities,
                 fields=[{"key": "enabled", "label": "启用", "type": "boolean"}],
                 cover_fit="contain",
+                cover_aspect_ratio="2 / 3",
             ),
         ),
     ]

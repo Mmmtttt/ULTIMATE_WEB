@@ -150,7 +150,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "title_jp": "",
                 "author": "Tester A",
                 "desc": "Seeded comic for end-to-end validation.",
-                "cover_path": f"/static/cover/JM/{PRIMARY_COMIC_ORIGINAL_ID}.png",
+                "cover_path": f"/static/cover/CA/{PRIMARY_COMIC_ORIGINAL_ID}.png",
                 "total_page": 3,
                 "current_page": 1,
                 "score": 8.5,
@@ -166,7 +166,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "title_jp": "",
                 "author": "Tester B",
                 "desc": "Secondary seeded comic.",
-                "cover_path": f"/static/cover/JM/{SECONDARY_COMIC_ORIGINAL_ID}.png",
+                "cover_path": f"/static/cover/CA/{SECONDARY_COMIC_ORIGINAL_ID}.png",
                 "total_page": 2,
                 "current_page": 1,
                 "score": 7,
@@ -182,7 +182,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "title_jp": "",
                 "author": "Tester C",
                 "desc": "High score action comic.",
-                "cover_path": f"/static/cover/JM/{THIRD_COMIC_ORIGINAL_ID}.png",
+                "cover_path": f"/static/cover/CA/{THIRD_COMIC_ORIGINAL_ID}.png",
                 "total_page": 5,
                 "current_page": 5,
                 "score": 9.8,
@@ -198,7 +198,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "title_jp": "",
                 "author": "Tester D",
                 "desc": "Drama only comic for include-tag filter.",
-                "cover_path": f"/static/cover/JM/{FOURTH_COMIC_ORIGINAL_ID}.png",
+                "cover_path": f"/static/cover/CA/{FOURTH_COMIC_ORIGINAL_ID}.png",
                 "total_page": 4,
                 "current_page": 1,
                 "score": 6.2,
@@ -214,7 +214,7 @@ def _seed_meta_data(meta_dir: Path) -> None:
                 "title_jp": "",
                 "author": "Tester B",
                 "desc": "Low score action comic for score-range filter.",
-                "cover_path": f"/static/cover/JM/{FIFTH_COMIC_ORIGINAL_ID}.png",
+                "cover_path": f"/static/cover/CA/{FIFTH_COMIC_ORIGINAL_ID}.png",
                 "total_page": 3,
                 "current_page": 1,
                 "score": 4.1,
@@ -247,11 +247,12 @@ def _seed_meta_data(meta_dir: Path) -> None:
         "videos": [
             {
                 "id": PRIMARY_VIDEO_ID,
+                "plugin_id": "video.alpha",
                 "code": "TEST-900001",
                 "title": "Seed Video",
                 "creator": "Video Creator",
                 "actors": ["Actor A"],
-                "cover_path": "/static/cover/JAVDB/900001.png",
+                "cover_path": "/static/cover/VA/900001.png",
                 "thumbnail_images": [],
                 "video_url": "",
                 "score": 8,
@@ -265,11 +266,12 @@ def _seed_meta_data(meta_dir: Path) -> None:
             },
             {
                 "id": SECONDARY_VIDEO_ID,
+                "plugin_id": "video.alpha",
                 "code": "TEST-900002",
                 "title": SECONDARY_VIDEO_TITLE,
                 "creator": "Video Creator B",
                 "actors": ["Actor B"],
-                "cover_path": "/static/cover/JAVDB/900002.png",
+                "cover_path": "/static/cover/VA/900002.png",
                 "thumbnail_images": [],
                 "video_url": "",
                 "score": 9.5,
@@ -283,11 +285,12 @@ def _seed_meta_data(meta_dir: Path) -> None:
             },
             {
                 "id": THIRD_VIDEO_ID,
+                "plugin_id": "video.alpha",
                 "code": "TEST-900003",
                 "title": THIRD_VIDEO_TITLE,
                 "creator": "Video Creator C",
                 "actors": ["Actor C"],
-                "cover_path": "/static/cover/JAVDB/900003.png",
+                "cover_path": "/static/cover/VA/900003.png",
                 "thumbnail_images": [],
                 "video_url": "",
                 "score": 5.5,
@@ -405,7 +408,7 @@ def _seed_media(data_dir: Path) -> None:
         (FOURTH_COMIC_ORIGINAL_ID, 4),
         (FIFTH_COMIC_ORIGINAL_ID, 3),
     ):
-        comic_dir = data_dir / "comic" / "JM" / original_id
+        comic_dir = data_dir / "comic" / "CA" / original_id
         chapter_layout = chapter_seed_layout.get(original_id)
         if chapter_layout:
             for relative_path in chapter_layout:
@@ -413,15 +416,15 @@ def _seed_media(data_dir: Path) -> None:
         else:
             for page in range(1, page_count + 1):
                 _write_png(comic_dir / f"{page:03d}.png")
-        _write_png(data_dir / "static" / "cover" / "JM" / f"{original_id}.png")
-        _write_jpg(data_dir / "static" / "cover" / "JM" / f"{original_id}.jpg")
+        _write_png(data_dir / "static" / "cover" / "CA" / f"{original_id}.png")
+        _write_jpg(data_dir / "static" / "cover" / "CA" / f"{original_id}.jpg")
 
-    _write_png(data_dir / "static" / "cover" / "JAVDB" / "900001.png")
-    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900001.jpg")
-    _write_png(data_dir / "static" / "cover" / "JAVDB" / "900002.png")
-    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900002.jpg")
-    _write_png(data_dir / "static" / "cover" / "JAVDB" / "900003.png")
-    _write_jpg(data_dir / "static" / "cover" / "JAVDB" / "900003.jpg")
+    _write_png(data_dir / "static" / "cover" / "VA" / "900001.png")
+    _write_jpg(data_dir / "static" / "cover" / "VA" / "900001.jpg")
+    _write_png(data_dir / "static" / "cover" / "VA" / "900002.png")
+    _write_jpg(data_dir / "static" / "cover" / "VA" / "900002.jpg")
+    _write_png(data_dir / "static" / "cover" / "VA" / "900003.png")
+    _write_jpg(data_dir / "static" / "cover" / "VA" / "900003.jpg")
     _write_jpg(data_dir / "static" / "default" / "default_cover.jpg")
 
 
@@ -444,12 +447,12 @@ def _seed_structures(data_dir: Path) -> None:
     for rel in (
         "cache/comic",
         "cache/video",
-        "recommendation_cache/comic/JM",
-        "recommendation_cache/video/JAVDB",
-        "video/JAVDB",
-        "video/JAVBUS",
+        "recommendation_cache/comic/CA",
+        "recommendation_cache/video/VA",
+        "video/VA",
+        "video/VB",
         "video/LOCAL",
-        "comic/PK",
+        "comic/CB",
         "static/cover/LOCAL",
     ):
         (data_dir / rel).mkdir(parents=True, exist_ok=True)
@@ -490,11 +493,12 @@ def prepare_profile(profile: str, clean: bool = True) -> Dict[str, str]:
     _write_json(
         third_party_config_path,
         {
-            "default_adapter": "jmcomic",
+            "default_adapter": "comic_alpha",
             "adapters": {
-                "jmcomic": {"enabled": False},
-                "picacomic": {"enabled": False},
-                "javdb": {"enabled": False},
+                "comic_alpha": {"enabled": False},
+                "comic_beta": {"enabled": False},
+                "video_alpha": {"enabled": False},
+                "video_beta": {"enabled": False},
             },
         },
     )
