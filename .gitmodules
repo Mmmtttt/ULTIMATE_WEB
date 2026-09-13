@@ -13,3 +13,6 @@
 [submodule "comic_backend/third_party/nhentai_for_ultimate"]
 	path = comic_backend/third_party/nhentai_for_ultimate
 	url = https://github.com/niaonhu001/nhentai_for_ultimate.git
+[submodule "comic_backend/third_party/JavBus"]
+	path = comic_backend/third_party/JavBus
+	url = https://github.com/Mmmtttt/javbus-api-scraper.git
