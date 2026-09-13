@@ -9,6 +9,7 @@ from core.storage_layout import (  # noqa: F401
     get_video_recommendation_cache_dir, get_video_cache_dir,
     get_local_pictures_dir, get_local_video_pictures_dir,
     get_local_video_cover_dir,
+    list_protocol_platform_storage_dirs, list_platform_cover_dirs,
     set_current_space_mode, get_current_space_mode,
     SPACE_MODE_NORMAL, SPACE_MODE_PRIVATE,
     ensure_storage_layout, normalize_to_data_dir,
