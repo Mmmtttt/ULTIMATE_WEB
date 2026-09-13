@@ -10,7 +10,7 @@ def _ok_result(data=None, message="ok"):
 
 
 @pytest.mark.integration
-def test_video_actor_search_works_route_forwards_offset_limit(third_party_client, monkeypatch):
+def test_video_actor_search_works_route_forwards_offset_limit(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/video/actor/search-works` contract from frontend query args to actor service call.
@@ -25,8 +25,8 @@ def test_video_actor_search_works_route_forwards_offset_limit(third_party_client
     - History:
       - 2026-03-23: Added video actor search entry contract guard.
     """
-    client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+    client = fake_third_party_client["client"]
+    video_api = fake_third_party_client["video_api"]
     captured = {}
 
     def fake_search(actor_name, offset=0, limit=5):
@@ -59,7 +59,7 @@ def test_video_actor_search_works_route_forwards_offset_limit(third_party_client
 
 
 @pytest.mark.integration
-def test_video_actor_works_route_forwards_actor_id_offset_limit(third_party_client, monkeypatch):
+def test_video_actor_works_route_forwards_actor_id_offset_limit(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/video/actor/works/<actor_id>` contract so route-level paging is forwarded unchanged.
@@ -74,8 +74,8 @@ def test_video_actor_works_route_forwards_actor_id_offset_limit(third_party_clie
     - History:
       - 2026-03-23: Added video actor works entry contract guard.
     """
-    client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+    client = fake_third_party_client["client"]
+    video_api = fake_third_party_client["video_api"]
     captured = {}
 
     def fake_get(actor_id, offset=0, limit=5):
@@ -105,7 +105,7 @@ def test_video_actor_works_route_forwards_actor_id_offset_limit(third_party_clie
 
 
 @pytest.mark.integration
-def test_video_actor_works_cache_clear_route_forwards_actor_name(third_party_client, monkeypatch):
+def test_video_actor_works_cache_clear_route_forwards_actor_name(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/video/actor/works-cache/clear` route contract so optional `actor_name` query is forwarded
@@ -121,8 +121,8 @@ def test_video_actor_works_cache_clear_route_forwards_actor_name(third_party_cli
     - History:
       - 2026-03-24: Added cache-clear contract guard for video actor third-party works cache path.
     """
-    client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+    client = fake_third_party_client["client"]
+    video_api = fake_third_party_client["video_api"]
     captured = {}
 
     def fake_clear(actor_name=None):
