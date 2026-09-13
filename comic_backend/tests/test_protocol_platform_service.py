@@ -14,8 +14,10 @@ class _FakeGateway:
         self.executed = []
         self.clients = []
         self._manifest_by_lookup = {
-            "jm": "comic.jmcomic",
-            "javdb": "video.javdb",
+            "ca": "comic.alpha",
+            "comic_alpha": "comic.alpha",
+            "va": "video.alpha",
+            "video_alpha": "video.alpha",
         }
 
     def get_manifest_by_lookup(self, lookup_name, capability=None):
@@ -55,7 +57,7 @@ def test_platform_service_routes_download_album_to_protocol_capability():
     service._initialized = True
 
     detail, success = service.download_album(
-        "JM",
+        "CA",
         "1001",
         "D:/tmp/download",
         show_progress=False,
@@ -66,7 +68,7 @@ def test_platform_service_routes_download_album_to_protocol_capability():
     assert detail == {"saved": 5}
     assert service._gateway.executed == [
         {
-            "plugin_id": "comic.jmcomic",
+            "plugin_id": "comic.alpha",
             "capability": "asset.bundle.fetch",
             "params": {
                 "album_id": "1001",
@@ -84,13 +86,14 @@ def test_platform_service_defaults_to_generic_favorites_basic_capability_without
     service._gateway = _FakeGateway()
     service._initialized = True
 
-    service.get_favorites_basic("JAVDB")
+    service.get_favorites_basic("VA")
 
     assert service._gateway.executed == [
         {
-            "plugin_id": "video.javdb",
+            "plugin_id": "video.alpha",
             "capability": "collection.favorites_basic",
             "params": {},
             "context": {},
         }
     ]
+

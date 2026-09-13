@@ -7,11 +7,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+import protocol.host_service as host_service_module
 from protocol.host_service import ProtocolHostService
 
 
 class _FakeConfigStore:
-    def __init__(self, default_adapter="jmcomic"):
+    def __init__(self, default_adapter="comic_alpha"):
         self._default_adapter = default_adapter
 
     def get_default_adapter(self):
@@ -83,9 +84,9 @@ def test_host_service_executes_comic_adapter_via_single_manifest_resolution():
     gateway = _FakeGateway(
         [
             _make_manifest(
-                "comic.jmcomic",
-                "jmcomic",
-                ["jmcomic", "JM"],
+                "comic.alpha",
+                "comic_alpha",
+                ["comic_alpha", "CA"],
                 ["comic"],
                 ["catalog.search"],
             )
@@ -98,10 +99,10 @@ def test_host_service_executes_comic_adapter_via_single_manifest_resolution():
         {"keyword": "alice", "page": 2, "max_pages": 3},
     )
 
-    assert payload["plugin_id"] == "comic.jmcomic"
+    assert payload["plugin_id"] == "comic.alpha"
     assert gateway.executed == [
         {
-            "plugin_id": "comic.jmcomic",
+            "plugin_id": "comic.alpha",
             "capability": "catalog.search",
             "params": {"keyword": "alice", "page": 2, "max_pages": 3},
             "context": {},
@@ -109,23 +110,32 @@ def test_host_service_executes_comic_adapter_via_single_manifest_resolution():
     ]
 
 
-def test_host_service_builds_video_client_from_protocol_manifest():
+def test_host_service_builds_video_client_from_protocol_manifest(monkeypatch):
     gateway = _FakeGateway(
         [
             _make_manifest(
-                "video.javdb",
-                "javdb",
-                ["javdb", "JAVDB"],
+                "video.alpha",
+                "video_alpha",
+                ["video_alpha", "VA"],
                 ["video"],
                 ["catalog.search", "catalog.detail"],
             )
         ]
     )
     service = ProtocolHostService(gateway=gateway, config_store=_FakeConfigStore())
+    monkeypatch.setattr(
+        host_service_module,
+        "resolve_platform_manifest",
+        lambda platform_name, media_type=None, capability=None: gateway.get_manifest_by_lookup(
+            platform_name,
+            capability=capability,
+        ),
+    )
 
-    client = service.get_video_client("javdb")
+    client = service.get_video_client("video_alpha")
     payload = client.search_videos("mio", page=1, max_pages=2)
 
-    assert client.plugin_id == "video.javdb"
-    assert payload["plugin_id"] == "video.javdb"
+    assert client.plugin_id == "video.alpha"
+    assert payload["plugin_id"] == "video.alpha"
     assert gateway.executed[0]["capability"] == "catalog.search"
+
