@@ -74,11 +74,11 @@ def _write_plugin(plugin_dir: Path, *, plugin_id: str, config_key: str, media_ty
 
 def _install_protocol_registry(monkeypatch, third_party_root: Path):
     _write_plugin(
-        third_party_root / "JMComic-Crawler-Python",
-        plugin_id="comic.jmcomic",
-        config_key="jmcomic",
+        third_party_root / "comic_alpha_plugin",
+        plugin_id="comic.alpha",
+        config_key="comic_alpha",
         media_type="comic",
-        host_prefix="JM",
+        host_prefix="CA",
         overlay={
             "storage": {
                 "host_resolution": {
@@ -102,11 +102,11 @@ def _install_protocol_registry(monkeypatch, third_party_root: Path):
         },
     )
     _write_plugin(
-        third_party_root / "Picacomic-Crawler",
-        plugin_id="comic.picacomic",
-        config_key="picacomic",
+        third_party_root / "comic_beta_plugin",
+        plugin_id="comic.beta",
+        config_key="comic_beta",
         media_type="comic",
-        host_prefix="PK",
+        host_prefix="CB",
         overlay={
             "storage": {
                 "host_resolution": {
@@ -136,11 +136,11 @@ def _install_protocol_registry(monkeypatch, third_party_root: Path):
         },
     )
     _write_plugin(
-        third_party_root / "javdb-api-scraper",
-        plugin_id="video.javdb",
-        config_key="javdb",
+        third_party_root / "video_alpha_plugin",
+        plugin_id="video.alpha",
+        config_key="video_alpha",
         media_type="video",
-        host_prefix="JAVDB",
+        host_prefix="VA",
         overlay={
             "presentation": {
                 "media_card": {
@@ -154,11 +154,11 @@ def _install_protocol_registry(monkeypatch, third_party_root: Path):
         },
     )
     _write_plugin(
-        third_party_root / "JavBus",
-        plugin_id="video.javbus",
-        config_key="javbus",
+        third_party_root / "video_beta_plugin",
+        plugin_id="video.beta",
+        config_key="video_beta",
         media_type="video",
-        host_prefix="JAVBUS",
+        host_prefix="VB",
         overlay={
             "presentation": {
                 "media_card": {
@@ -184,11 +184,11 @@ def test_infer_existing_host_comic_dir_for_jm_uses_protocol_template(tmp_path, m
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
     comic_root = tmp_path / "comic"
     local_root = comic_root / "local"
-    target_dir = comic_root / "JM" / "1406651"
+    target_dir = comic_root / "CA" / "1406651"
     target_dir.mkdir(parents=True, exist_ok=True)
 
     resolved = infer_existing_host_comic_dir(
-        "JM1406651",
+        "CA1406651",
         {"title": "作品", "author": "作者"},
         comic_root=str(comic_root),
         local_root=str(local_root),
@@ -202,25 +202,25 @@ def test_infer_existing_host_comic_dir_for_pk_supports_canonical_and_legacy_prot
     comic_root = tmp_path / "comic"
     local_root = comic_root / "local"
 
-    new_dir = comic_root / "PK" / "作者A" / "作品A"
+    new_dir = comic_root / "CB" / "作者A" / "作品A"
     new_dir.mkdir(parents=True, exist_ok=True)
-    legacy_dir = comic_root / "PK" / "comics" / "作者B" / "作品B"
+    legacy_dir = comic_root / "CB" / "comics" / "作者B" / "作品B"
     legacy_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_new = infer_existing_host_comic_dir(
-        "PKabc123",
+        "CBabc123",
         {"author": "作者A", "title": "作品A"},
         comic_root=str(comic_root),
         local_root=str(local_root),
     )
     resolved_legacy = infer_existing_host_comic_dir(
-        "PKdef456",
+        "CBdef456",
         {"author": "作者B", "title": "作品B"},
         comic_root=str(comic_root),
         local_root=str(local_root),
     )
     resolved_missing = infer_existing_host_comic_dir(
-        "PKmissing",
+        "CBmissing",
         {"author": "作者C", "title": "作品C"},
         comic_root=str(comic_root),
         local_root=str(local_root),
@@ -234,23 +234,23 @@ def test_infer_existing_host_comic_dir_for_pk_supports_canonical_and_legacy_prot
 def test_recommendation_cache_dir_for_pk_uses_protocol_templates_matching_local_library(tmp_path, monkeypatch):
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
     cache_root = tmp_path / "recommendation_cache" / "comic"
-    existing_dir = cache_root / "PK" / "作者A" / "作品A"
+    existing_dir = cache_root / "CB" / "作者A" / "作品A"
     existing_dir.mkdir(parents=True, exist_ok=True)
-    legacy_dir = cache_root / "PK" / "comics" / "作者B" / "作品B"
+    legacy_dir = cache_root / "CB" / "comics" / "作者B" / "作品B"
     legacy_dir.mkdir(parents=True, exist_ok=True)
 
     canonical = build_host_recommendation_cache_dir(
-        "PKabc123",
+        "CBabc123",
         {"author": "作者A", "title": "作品A"},
         cache_root=str(cache_root),
     )
     resolved = infer_existing_host_recommendation_cache_dir(
-        "PKabc123",
+        "CBabc123",
         {"author": "作者A", "title": "作品A"},
         cache_root=str(cache_root),
     )
     resolved_legacy = infer_existing_host_recommendation_cache_dir(
-        "PKdef456",
+        "CBdef456",
         {"author": "作者B", "title": "作品B"},
         cache_root=str(cache_root),
     )
@@ -268,7 +268,7 @@ def test_recommendation_cache_manager_rebuilds_pk_cache_dir_from_protocol_templa
     data_dir = tmp_path / "data"
     meta_dir = data_dir / "meta_data"
     cache_root = data_dir / "recommendation_cache" / "comic"
-    actual_dir = cache_root / "PK" / "同步作者" / "同步作品"
+    actual_dir = cache_root / "CB" / "同步作者" / "同步作品"
     actual_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(storage_layout_module, "_NORMAL_DATA_DIR", str(data_dir))
     monkeypatch.setattr(storage_layout_module, "_PRIVATE_DATA_DIR", None)
@@ -280,10 +280,10 @@ def test_recommendation_cache_manager_rebuilds_pk_cache_dir_from_protocol_templa
         {
             "recommendations": [
                 {
-                    "id": "PK698e14e13951674692432507",
+                    "id": "CB698e14e13951674692432507",
                     "author": "同步作者",
                     "title": "同步作品",
-                    "storage_path_relative": "recommendation_cache/comic/PK/698e14e13951674692432507",
+                    "storage_path_relative": "recommendation_cache/comic/CB/698e14e13951674692432507",
                     "storage_path_kind": "preview_cache_dir",
                 }
             ]
@@ -306,7 +306,7 @@ def test_recommendation_cache_manager_rebuilds_pk_cache_dir_from_protocol_templa
         cache_index_file=str(meta_dir / "recommendation_cache_index.json"),
     )
 
-    resolved = manager._get_comic_cache_dir("PK698e14e13951674692432507")
+    resolved = manager._get_comic_cache_dir("CB698e14e13951674692432507")
 
     assert resolved == str(actual_dir)
 
@@ -319,7 +319,7 @@ def test_recommendation_cache_manager_reads_pk_cached_page_from_protocol_legacy_
     data_dir = tmp_path / "data"
     meta_dir = data_dir / "meta_data"
     cache_root = data_dir / "recommendation_cache" / "comic"
-    legacy_dir = cache_root / "PK" / "comics" / "旧作者" / "旧作品"
+    legacy_dir = cache_root / "CB" / "comics" / "旧作者" / "旧作品"
     legacy_dir.mkdir(parents=True, exist_ok=True)
     (legacy_dir / "001.png").write_bytes(b"fake-image")
 
@@ -329,10 +329,10 @@ def test_recommendation_cache_manager_reads_pk_cached_page_from_protocol_legacy_
         {
             "recommendations": [
                 {
-                    "id": "PKlegacy0001",
+                    "id": "CBlegacy0001",
                     "author": "旧作者",
                     "title": "旧作品",
-                    "storage_path_relative": "recommendation_cache/comic/PK/legacy0001",
+                    "storage_path_relative": "recommendation_cache/comic/CB/legacy0001",
                     "storage_path_kind": "preview_cache_dir",
                 }
             ]
@@ -355,7 +355,7 @@ def test_recommendation_cache_manager_reads_pk_cached_page_from_protocol_legacy_
         cache_index_file=str(meta_dir / "recommendation_cache_index.json"),
     )
 
-    image_path = manager.get_cached_page_path("PKlegacy0001", 1)
+    image_path = manager.get_cached_page_path("CBlegacy0001", 1)
 
     assert image_path == str(legacy_dir / "001.png")
 
@@ -370,16 +370,16 @@ def test_infer_existing_host_comic_dir_for_pk_works_from_snapshot_only_registry(
                     {
                         "protocol_version": "2.0",
                         "plugin": {
-                            "id": "comic.picacomic",
-                            "name": "Picacomic",
+                            "id": "comic.beta",
+                            "name": "Comic Beta",
                             "version": "0.0.0-snapshot",
-                            "config_key": "picacomic",
+                            "config_key": "comic_beta",
                             "entrypoint": "protocol.snapshot_provider:MetadataOnlyProvider",
                         },
                         "media_types": ["comic"],
                         "identity": {
-                            "platform_label": "PK",
-                            "host_id_prefix": "PK",
+                            "platform_label": "CB",
+                            "host_id_prefix": "CB",
                         },
                         "storage": {
                             "comic_dir": {
@@ -408,19 +408,19 @@ def test_infer_existing_host_comic_dir_for_pk_works_from_snapshot_only_registry(
 
     comic_root = tmp_path / "comic"
     local_root = comic_root / "local"
-    new_dir = comic_root / "PK" / "作者A" / "作品A"
+    new_dir = comic_root / "CB" / "作者A" / "作品A"
     new_dir.mkdir(parents=True, exist_ok=True)
-    legacy_dir = comic_root / "PK" / "comics" / "作者B" / "作品B"
+    legacy_dir = comic_root / "CB" / "comics" / "作者B" / "作品B"
     legacy_dir.mkdir(parents=True, exist_ok=True)
 
     resolved_new = infer_existing_host_comic_dir(
-        "PKnew001",
+        "CBnew001",
         {"author": "作者A", "title": "作品A"},
         comic_root=str(comic_root),
         local_root=str(local_root),
     )
     resolved_legacy = infer_existing_host_comic_dir(
-        "PKlegacy001",
+        "CBlegacy001",
         {"author": "作者B", "title": "作品B"},
         comic_root=str(comic_root),
         local_root=str(local_root),
@@ -450,7 +450,7 @@ def test_recommendation_cache_manager_does_not_fabricate_album_id_cache_dir_with
         {
             "recommendations": [
                 {
-                    "id": "PKmissing0001",
+                    "id": "CBmissing0001",
                     "author": "缺失作者",
                     "title": "缺失作品",
                     "storage_path_relative": "",
@@ -476,7 +476,7 @@ def test_recommendation_cache_manager_does_not_fabricate_album_id_cache_dir_with
         cache_index_file=str(meta_dir / "recommendation_cache_index.json"),
     )
 
-    resolved = manager._get_comic_cache_dir("PKmissing0001")
+    resolved = manager._get_comic_cache_dir("CBmissing0001")
 
     assert resolved == ""
 
@@ -485,7 +485,7 @@ def test_file_parser_ignores_invalid_relative_path_and_falls_back_to_protocol_te
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
     comic_root = tmp_path / "comic"
     local_root = comic_root / "local"
-    actual_dir = comic_root / "JM" / "1406651"
+    actual_dir = comic_root / "CA" / "1406651"
     actual_dir.mkdir(parents=True, exist_ok=True)
     meta_dir = tmp_path / "meta"
 
@@ -496,10 +496,10 @@ def test_file_parser_ignores_invalid_relative_path_and_falls_back_to_protocol_te
         {
             "comics": [
                 {
-                    "id": "JM1406651",
+                    "id": "CA1406651",
                     "title": "旧记录作品",
                     "author": "作者A",
-                    "storage_path_relative": "comic/JM1406651",
+                    "storage_path_relative": "comic/CA1406651",
                     "storage_path_kind": "local_dir",
                 }
             ]
@@ -513,7 +513,7 @@ def test_file_parser_ignores_invalid_relative_path_and_falls_back_to_protocol_te
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
 
-    resolved = file_parser_module.file_parser._get_comic_dir("JM1406651")
+    resolved = file_parser_module.file_parser._get_comic_dir("CA1406651")
 
     assert resolved == str(actual_dir)
 
@@ -522,7 +522,7 @@ def test_comic_app_service_rebuilds_storage_path_from_protocol_template(tmp_path
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
     comic_root = tmp_path / "comic"
     local_root = comic_root / "local"
-    actual_dir = comic_root / "JM" / "1406651"
+    actual_dir = comic_root / "CA" / "1406651"
     actual_dir.mkdir(parents=True, exist_ok=True)
     meta_dir = tmp_path / "meta"
 
@@ -533,10 +533,10 @@ def test_comic_app_service_rebuilds_storage_path_from_protocol_template(tmp_path
         {
             "comics": [
                 {
-                    "id": "JM1406651",
+                    "id": "CA1406651",
                     "title": "旧记录作品",
                     "author": "作者A",
-                    "storage_path_relative": "comic/JM1406651",
+                    "storage_path_relative": "comic/CA1406651",
                     "storage_path_kind": "local_dir",
                 }
             ]
@@ -555,10 +555,10 @@ def test_comic_app_service_rebuilds_storage_path_from_protocol_template(tmp_path
     service = comic_app_service_module.ComicAppService()
     comic = Comic.from_dict(
         {
-            "id": "JM1406651",
+            "id": "CA1406651",
             "title": "旧记录作品",
             "author": "作者A",
-            "storage_path_relative": "comic/JM1406651",
+            "storage_path_relative": "comic/CA1406651",
             "storage_path_kind": "local_dir",
         }
     )
@@ -571,15 +571,15 @@ def test_comic_app_service_rebuilds_storage_path_from_protocol_template(tmp_path
 
 def test_merge_host_video_display_uses_protocol_presentation_with_generic_default_fallback(tmp_path, monkeypatch):
     _install_protocol_registry(monkeypatch, tmp_path / "third_party")
-    javdb_display = merge_host_video_display({"id": "JAVDBabc123"})
-    javbus_display = merge_host_video_display({"cover_path": "/static/cover/JAVBUS/xyz.jpg"})
+    video_alpha_display = merge_host_video_display({"id": "VAabc123"})
+    video_beta_display = merge_host_video_display({"cover_path": "/static/cover/VB/xyz.jpg"})
     local_display = merge_host_video_display({"id": "LOCALV001"})
     unknown_display = merge_host_video_display({"id": "UNKNOWN001"})
 
-    assert (((javdb_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
-    assert (((javdb_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "3 / 2"
-    assert (((javbus_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "2 / 3"
-    assert (((javbus_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "2 / 3"
+    assert (((video_alpha_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
+    assert (((video_alpha_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "3 / 2"
+    assert (((video_beta_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "2 / 3"
+    assert (((video_beta_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "2 / 3"
     assert (((local_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
     assert (((local_display.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "16 / 9"
     assert (((unknown_display.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9"
@@ -592,10 +592,10 @@ def test_video_app_service_annotates_local_video_with_protocol_presentation_when
 
     annotated = video_app_service_module.VideoAppService._annotate_video_record(
         {
-            "id": "JAVDBakKE7q",
+            "id": "VAakKE7q",
             "platform": "",
             "display": {},
-            "cover_path": "/static/cover/JAVDB/akKE7q.jpg",
+            "cover_path": "/static/cover/VA/akKE7q.jpg",
         }
     )
 
@@ -620,3 +620,4 @@ def test_video_app_service_annotates_local_video_with_generic_landscape_default_
 
     assert ((((annotated.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
     assert ((((annotated.get("display") or {}).get("cover") or {}).get("mobile_aspect_ratio")) == "16 / 9")
+

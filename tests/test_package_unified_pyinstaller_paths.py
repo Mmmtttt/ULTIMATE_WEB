@@ -71,8 +71,8 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
         staged_target_dir = temp_dir / "staged"
         backend_third_party = staged_target_dir / "comic_backend" / "third_party"
         _write_manifest(
-            backend_third_party / "JMComic-Crawler-Python",
-            "comic.jmcomic",
+            backend_third_party / "plugin_alpha",
+            "comic.alpha",
             packaging={
                 "pyinstaller": {
                     "collect_all": ["common", "Crypto"],
@@ -81,8 +81,8 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
             },
         )
         _write_manifest(
-            backend_third_party / "Missav",
-            "video.missav",
+            backend_third_party / "plugin_beta",
+            "video.beta",
             packaging={
                 "pyinstaller": {
                     "collect_all": ["curl_cffi", "cffi"],
@@ -91,11 +91,11 @@ def test_write_pyinstaller_scripts_excludes_external_plugins_from_compiled_binar
                 }
             },
         )
-        _write_manifest(backend_third_party / "Picacomic-Crawler", "comic.picacomic")
-        _write_manifest(backend_third_party / "javdb-api-scraper", "video.javdb")
+        _write_manifest(backend_third_party / "plugin_gamma", "comic.gamma")
+        _write_manifest(backend_third_party / "plugin_delta", "video.delta")
         _write_manifest(
-            backend_third_party / "JavBus",
-            "video.javbus",
+            backend_third_party / "plugin_epsilon",
+            "video.epsilon",
             packaging={
                 "pyinstaller": {
                     "collect_all": ["curl_cffi", "lxml"],
@@ -166,8 +166,8 @@ def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_kee
         staged_target_dir = temp_dir / "staged"
         backend_third_party = staged_target_dir / "comic_backend" / "third_party"
         _write_manifest(
-            backend_third_party / "JMComic-Crawler-Python",
-            "comic.jmcomic",
+            backend_third_party / "plugin_alpha",
+            "comic.alpha",
             packaging={
                 "pyinstaller": {
                     "collect_all": ["common", "Crypto"],
@@ -176,8 +176,8 @@ def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_kee
             },
         )
         _write_manifest(
-            backend_third_party / "Missav",
-            "video.missav",
+            backend_third_party / "plugin_beta",
+            "video.beta",
             packaging={
                 "pyinstaller": {
                     "collect_all": ["curl_cffi", "cffi"],
@@ -209,8 +209,8 @@ def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_kee
         assert "curl_cffi" in collect_all_args
         assert "cffi" in collect_all_args
         assert "curl_cffi._wrapper" in hidden_import_args
-        assert any("comic_backend/third_party/JMComic-Crawler-Python" in item for item in add_data_args)
-        assert any("comic_backend/third_party/Missav" in item for item in add_data_args)
+        assert any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
+        assert any("comic_backend/third_party/plugin_beta" in item for item in add_data_args)
         assert cmd[-1] == "comic_backend/app.py"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -234,8 +234,8 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
         (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
 
         _write_manifest(
-            third_party_root / "JMComic-Crawler-Python",
-            "comic.jmcomic",
+            third_party_root / "plugin_alpha",
+            "comic.alpha",
             packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
         )
 
@@ -251,10 +251,10 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
         )
 
         dep_manifest = bundle_dir / "runtime_deps" / "dependency_pool_manifest.json"
-        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
+        assert not (bundle_dir / "plugins" / "plugin_alpha").exists()
         assert dep_manifest.exists()
         assert "commonx>=0.6.38" in dep_manifest.read_text(encoding="utf-8")
-        assert not (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
+        assert not (bundle_dir / "backend_source" / "third_party" / "plugin_alpha").exists()
         assert (bundle_dir / "backend_source" / "third_party" / "__init__.py").exists()
         assert (bundle_dir / "start_project.bat").exists()
         assert (bundle_dir / "start_project.ps1").exists()
@@ -268,7 +268,7 @@ def test_prepare_desktop_release_bundle_moves_plugins_outside_backend_source():
 
 def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_add_data(monkeypatch):
     package_unified = _load_package_unified_module()
-    monkeypatch.setenv(package_unified.PLUGIN_PACKAGE_EXCLUDES_ENV, "Missav")
+    monkeypatch.setenv(package_unified.PLUGIN_PACKAGE_EXCLUDES_ENV, "plugin_beta")
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
     temp_dir = workspace_tmp_root / f"bundle_excluded_plugins_{uuid4().hex[:8]}"
@@ -283,10 +283,10 @@ def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_a
         (staged_target_dir / "comic_frontend_dist" / "index.html").parent.mkdir(parents=True, exist_ok=True)
         (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
 
-        _write_manifest(third_party_root / "JMComic-Crawler-Python", "comic.jmcomic")
+        _write_manifest(third_party_root / "plugin_alpha", "comic.alpha")
         _write_manifest(
-            third_party_root / "Missav",
-            "video.missav",
+            third_party_root / "plugin_beta",
+            "video.beta",
             packaging={"pyinstaller": {"collect_all": ["curl_cffi"]}},
         )
 
@@ -297,9 +297,9 @@ def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_a
             binary_name="ultimate_backend_test",
             runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
         )
-        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
-        assert not (bundle_dir / "plugins" / "Missav").exists()
-        assert not (bundle_dir / "backend_source" / "third_party" / "Missav").exists()
+        assert not (bundle_dir / "plugins" / "plugin_alpha").exists()
+        assert not (bundle_dir / "plugins" / "plugin_beta").exists()
+        assert not (bundle_dir / "backend_source" / "third_party" / "plugin_beta").exists()
 
         cmd = package_unified.write_pyinstaller_scripts(
             out_dir=temp_dir / "pyinstaller",
@@ -313,8 +313,8 @@ def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_a
         collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
         add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
         assert "curl_cffi" not in collect_all_args
-        assert not any("comic_backend/third_party/Missav" in item for item in add_data_args)
-        assert any("comic_backend/third_party/JMComic-Crawler-Python" in item for item in add_data_args)
+        assert not any("comic_backend/third_party/plugin_beta" in item for item in add_data_args)
+        assert any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -338,7 +338,7 @@ def test_bundled_pyinstaller_adds_project_plugin_host_overlays(monkeypatch):
 
         staged_target_dir = temp_dir / "staged"
         backend_third_party = staged_target_dir / "comic_backend" / "third_party"
-        _write_manifest(backend_third_party / "JMComic-Crawler-Python", "comic.jmcomic")
+        _write_manifest(backend_third_party / "plugin_alpha", "comic.alpha")
 
         cmd = package_unified.write_pyinstaller_scripts(
             out_dir=temp_dir / "pyinstaller",
@@ -374,8 +374,8 @@ def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_s
         (staged_target_dir / "comic_frontend_dist" / "index.html").write_text("<html></html>", encoding="utf-8")
 
         _write_manifest(
-            third_party_root / "JMComic-Crawler-Python",
-            "comic.jmcomic",
+            third_party_root / "plugin_alpha",
+            "comic.alpha",
             packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
         )
 
@@ -391,8 +391,8 @@ def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_s
             plugin_package_mode="bundled",
         )
 
-        assert (bundle_dir / "backend_source" / "third_party" / "JMComic-Crawler-Python").exists()
-        assert not (bundle_dir / "plugins" / "JMComic-Crawler-Python").exists()
+        assert (bundle_dir / "backend_source" / "third_party" / "plugin_alpha").exists()
+        assert not (bundle_dir / "plugins" / "plugin_alpha").exists()
         assert (bundle_dir / "plugins" / "README.md").exists()
         dep_manifest = bundle_dir / "runtime_deps" / "dependency_pool_manifest.json"
         assert dep_manifest.exists()
@@ -412,10 +412,10 @@ def test_write_external_plugin_dependency_scripts_are_idempotent_and_fail_fast()
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        plugin_root = temp_dir / "plugins" / "javdb-api-scraper"
+        plugin_root = temp_dir / "plugins" / "plugin_delta"
         _write_manifest(
             plugin_root,
-            "video.javdb",
+            "video.delta",
             packaging={"external": {"pip_requirements": ["curl_cffi>=0.6.0", "lxml>=4.9.0"]}},
         )
 
@@ -445,10 +445,10 @@ def test_install_external_plugin_dependencies_writes_state_and_skips_repeat_inst
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        plugin_root = temp_dir / "plugins" / "JMComic-Crawler-Python"
+        plugin_root = temp_dir / "plugins" / "plugin_alpha"
         _write_manifest(
             plugin_root,
-            "comic.jmcomic",
+            "comic.alpha",
             packaging={"external": {"pip_requirements": ["commonx>=0.6.38"]}},
         )
 
@@ -638,3 +638,4 @@ def test_copy_ffmpeg_runtime_tools_auto_provisions_windows_when_missing(monkeypa
         assert (result / "ffprobe.exe").exists()
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+

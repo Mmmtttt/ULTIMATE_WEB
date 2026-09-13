@@ -200,29 +200,29 @@ def test_build_mobile_protocol_snapshot_merges_project_plugin_host_overlays(monk
         monkeypatch.setattr(package_unified, "PROJECT_PLUGINS_DIR", project_plugins_root)
 
         _write_json(
-            third_party_root / "JavBus" / "ultimate-plugin.json",
+            third_party_root / "video_overlay_child" / "ultimate-plugin.json",
             {
                 "protocol_version": "1.0",
                 "plugin": {
-                    "id": "video.javbus",
-                    "name": "JAVBUS",
-                    "entrypoint": "./ultimate_provider.py:JavbusProvider",
+                    "id": "video.overlay.child",
+                    "name": "Video Overlay Child",
+                    "entrypoint": "./ultimate_provider.py:DemoProvider",
                 },
                 "media_types": ["video"],
                 "capabilities": [{"key": "catalog.search"}],
-                "identity": {"platform_label": "JAVBUS", "host_id_prefix": "JAVBUS"},
+                "identity": {"platform_label": "VID2", "host_id_prefix": "VID2"},
             },
         )
         _write_json(
-            project_plugins_root / "javbus-parent-config" / "ultimate-host.json",
+            project_plugins_root / "child-parent-config" / "ultimate-host.json",
             {
                 "plugin": {
-                    "id": "video.javbus",
-                    "config_parent_key": "javdb",
+                    "id": "video.overlay.child",
+                    "config_parent_key": "video_parent",
                 },
                 "configuration": {
                     "credential": {
-                        "disabled_message": "JAVDB disabled",
+                        "disabled_message": "parent disabled",
                     }
                 },
             },
@@ -230,11 +230,11 @@ def test_build_mobile_protocol_snapshot_merges_project_plugin_host_overlays(monk
 
         snapshot = package_unified.build_mobile_protocol_snapshot(third_party_root)
         manifests = {item["plugin"]["id"]: item for item in snapshot.get("manifests", [])}
-        javbus = manifests["video.javbus"]
+        child = manifests["video.overlay.child"]
 
-        assert javbus["plugin"].get("config_key") == ""
-        assert javbus["plugin"].get("config_parent_key") == "javdb"
-        assert javbus["configuration"]["credential"]["disabled_message"] == "JAVDB disabled"
+        assert child["plugin"].get("config_key") == ""
+        assert child["plugin"].get("config_parent_key") == "video_parent"
+        assert child["configuration"]["credential"]["disabled_message"] == "parent disabled"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
