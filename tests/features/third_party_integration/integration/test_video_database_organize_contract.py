@@ -8,13 +8,13 @@ from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
 @pytest.mark.integration
-def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus_and_uses_first_result(
-    third_party_client,
+def test_video_organize_enrich_local_metadata_prefers_primary_then_fallback_and_uses_first_result(
+    fake_third_party_client,
     monkeypatch,
 ):
-    client = third_party_client["client"]
-    meta_dir: Path = third_party_client["meta_dir"]
-    video_service_module = third_party_client["video_service_module"]
+    client = fake_third_party_client["client"]
+    meta_dir: Path = fake_third_party_client["meta_dir"]
+    video_service_module = fake_third_party_client["video_service_module"]
 
     videos_path = meta_dir / "videos_database.json"
     tags_path = meta_dir / "tags_database.json"
@@ -31,22 +31,22 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
             calls.append(("search", self.platform_name, str(keyword), int(page), int(max_pages)))
             code = str(keyword or "").strip().upper()
 
-            if self.platform_name == "javdb":
+            if self.platform_name == "video_alpha":
                 if code == "ABP-111":
                     return {
                         "videos": [
-                            {"video_id": "JAVDB_111_FIRST", "title": "First On JavDB"},
-                            {"video_id": "JAVDB_111_SECOND", "title": "Second On JavDB"},
+                            {"video_id": "VA_111_FIRST", "title": "First On Video Alpha"},
+                            {"video_id": "VA_111_SECOND", "title": "Second On Video Alpha"},
                         ]
                     }
                 return {"videos": []}
 
-            if self.platform_name == "javbus":
+            if self.platform_name == "video_beta":
                 if code == "BUS-222":
                     return {
                         "videos": [
-                            {"video_id": "JAVBUS_222_FIRST", "title": "First On JavBus"},
-                            {"video_id": "JAVBUS_222_SECOND", "title": "Second On JavBus"},
+                            {"video_id": "VB_222_FIRST", "title": "First On Video Beta"},
+                            {"video_id": "VB_222_SECOND", "title": "Second On Video Beta"},
                         ]
                     }
                 return {"videos": []}
@@ -56,41 +56,41 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
         def get_video_detail(self, video_id, movie_type=None):
             calls.append(("detail", self.platform_name, str(video_id)))
             normalized_id = str(video_id or "").strip().upper()
-            if normalized_id == "JAVDB_111_FIRST":
+            if normalized_id == "VA_111_FIRST":
                 return {
-                    "video_id": "JAVDB_111_FIRST",
+                    "video_id": "VA_111_FIRST",
                     "code": "ABP-111",
-                    "title": "JAVDB 标题",
+                    "title": "Video Alpha 标题",
                     "date": "2025-01-01",
-                    "series": "JAVDB 系列",
+                    "series": "Video Alpha 系列",
                     "actors": ["演员A"],
                     "tags": ["标签甲", "标签乙"],
-                    "cover_url": "https://example.com/javdb-cover.jpg",
-                    "thumbnail_images": ["https://example.com/javdb-thumb-1.jpg"],
-                    "preview_video": "https://example.com/javdb-preview.mp4",
+                    "cover_url": "https://example.com/video-alpha-cover.jpg",
+                    "thumbnail_images": ["https://example.com/video-alpha-thumb-1.jpg"],
+                    "preview_video": "https://example.com/video-alpha-preview.mp4",
                 }
-            if normalized_id == "JAVBUS_222_FIRST":
+            if normalized_id == "VB_222_FIRST":
                 return {
-                    "video_id": "JAVBUS_222_FIRST",
+                    "video_id": "VB_222_FIRST",
                     "code": "BUS-222",
-                    "title": "JAVBUS 首条标题",
+                    "title": "Video Beta 首条标题",
                     "date": "2024-12-12",
-                    "series": "JAVBUS 系列",
+                    "series": "Video Beta 系列",
                     "actors": ["演员B"],
                     "tags": ["标签乙", "标签丙"],
-                    "cover_url": "https://example.com/javbus-cover.jpg",
-                    "thumbnail_images": ["https://example.com/javbus-thumb-1.jpg"],
-                    "preview_video": "https://example.com/javbus-preview.mp4",
+                    "cover_url": "https://example.com/video-beta-cover.jpg",
+                    "thumbnail_images": ["https://example.com/video-beta-thumb-1.jpg"],
+                    "preview_video": "https://example.com/video-beta-preview.mp4",
                 }
             return {}
 
-    fake_javdb = FakeAdapter("javdb")
-    fake_javbus = FakeAdapter("javbus")
+    fake_video_alpha = FakeAdapter("video_alpha")
+    fake_video_beta = FakeAdapter("video_beta")
 
     monkeypatch.setattr(
         video_service_module.VideoAppService,
         "_build_video_metadata_adapters",
-        lambda self: {"javdb": fake_javdb, "javbus": fake_javbus},
+        lambda self: {"video_alpha": fake_video_alpha, "video_beta": fake_video_beta},
     )
     monkeypatch.setattr(video_service_module.VideoAppService, "cache_cover_to_static_async", lambda *args, **kwargs: None)
     monkeypatch.setattr(video_service_module.VideoAppService, "cache_thumbnail_images_async", lambda *args, **kwargs: None)
@@ -108,7 +108,7 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
                     {"id": "LOCALV_A", "code": "ABP-111", "title": "原始A", "creator": "", "actors": [], "tag_ids": [], "is_deleted": False},
                     {"id": "LOCALV_B", "code": "BUS-222", "title": "原始B", "creator": "", "actors": [], "tag_ids": [], "is_deleted": False},
                     {"id": "LOCALV_C", "code": "NOMATCH-333", "title": "原始C", "creator": "", "actors": [], "tag_ids": [], "is_deleted": False},
-                    {"id": "JAVDB_REMOTE", "code": "REMOTE-1", "title": "非LOCAL", "creator": "", "actors": [], "tag_ids": [], "is_deleted": False},
+                    {"id": "VA_REMOTE", "code": "REMOTE-1", "title": "非LOCAL", "creator": "", "actors": [], "tag_ids": [], "is_deleted": False},
                 ],
             },
         )
@@ -133,19 +133,19 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
         assert payload["code"] == 200
 
         data = payload["data"] or {}
-        assert data["search_platform_order"] == ["javdb", "javbus"]
-        assert data["matched_by_platform"] == {"javdb": 1, "javbus": 1}
-        assert "matched_on_javdb" not in data
-        assert "matched_on_javbus" not in data
+        assert data["search_platform_order"] == ["video_alpha", "video_beta"]
+        assert data["matched_by_platform"] == {"video_alpha": 1, "video_beta": 1}
+        assert "matched_on_video_alpha" not in data
+        assert "matched_on_video_beta" not in data
         assert data["updated_records"] == 2
         assert data["skipped_no_match"] == 1
         assert data["skipped_already_enriched"] == 0
         assert data["created_tags"] >= 2
 
-        assert ("search", "javdb", "ABP-111", 1, 1) in calls
-        assert ("search", "javdb", "BUS-222", 1, 1) in calls
-        assert ("search", "javbus", "BUS-222", 1, 1) in calls
-        assert ("detail", "javbus", "JAVBUS_222_FIRST") in calls
+        assert ("search", "video_alpha", "ABP-111", 1, 1) in calls
+        assert ("search", "video_alpha", "BUS-222", 1, 1) in calls
+        assert ("search", "video_beta", "BUS-222", 1, 1) in calls
+        assert ("detail", "video_beta", "VB_222_FIRST") in calls
 
         refreshed_videos = load_json(videos_path).get("videos") or []
         refreshed_tags = load_json(tags_path).get("tags") or []
@@ -158,11 +158,11 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
         assert local_b is not None
         assert local_c is not None
 
-        assert local_a["title"] == "JAVDB 标题"
+        assert local_a["title"] == "Video Alpha 标题"
         assert local_a["creator"] == "演员A"
         assert local_a["local_metadata_enriched"] is True
 
-        assert local_b["title"] == "JAVBUS 首条标题"
+        assert local_b["title"] == "Video Beta 首条标题"
         assert local_b["creator"] == "演员B"
         assert local_b["local_metadata_enriched"] is True
 
@@ -178,12 +178,12 @@ def test_video_organize_enrich_local_metadata_prefers_javdb_then_fallback_javbus
 
 @pytest.mark.integration
 def test_video_local_metadata_refresh_updates_single_local_record_and_appends_tags(
-    third_party_client,
+    fake_third_party_client,
     monkeypatch,
 ):
-    client = third_party_client["client"]
-    meta_dir: Path = third_party_client["meta_dir"]
-    video_service_module = third_party_client["video_service_module"]
+    client = fake_third_party_client["client"]
+    meta_dir: Path = fake_third_party_client["meta_dir"]
+    video_service_module = fake_third_party_client["video_service_module"]
 
     videos_path = meta_dir / "videos_database.json"
     tags_path = meta_dir / "tags_database.json"
@@ -196,15 +196,15 @@ def test_video_local_metadata_refresh_updates_single_local_record_and_appends_ta
 
         def search_videos(self, keyword, page=1, max_pages=1):
             code = str(keyword or "").strip().upper()
-            if self.platform_name == "javdb" and code == "ABP-111":
-                return {"videos": [{"video_id": "JAVDB_111", "title": "Remote title"}]}
+            if self.platform_name == "video_alpha" and code == "ABP-111":
+                return {"videos": [{"video_id": "VA_111", "title": "Remote title"}]}
             return {"videos": []}
 
         def get_video_detail(self, video_id, movie_type=None):
-            if str(video_id or "").strip().upper() != "JAVDB_111":
+            if str(video_id or "").strip().upper() != "VA_111":
                 return {}
             return {
-                "video_id": "JAVDB_111",
+                "video_id": "VA_111",
                 "code": "ABP-111",
                 "title": "Remote Updated Title",
                 "date": "2026-01-01",
@@ -219,7 +219,7 @@ def test_video_local_metadata_refresh_updates_single_local_record_and_appends_ta
     monkeypatch.setattr(
         video_service_module.VideoAppService,
         "_build_video_metadata_adapters",
-        lambda self: {"javdb": FakeAdapter("javdb"), "javbus": FakeAdapter("javbus")},
+        lambda self: {"video_alpha": FakeAdapter("video_alpha"), "video_beta": FakeAdapter("video_beta")},
     )
     monkeypatch.setattr(video_service_module.VideoAppService, "cache_cover_to_static_async", lambda *args, **kwargs: None)
     monkeypatch.setattr(video_service_module.VideoAppService, "cache_thumbnail_images_async", lambda *args, **kwargs: None)
@@ -279,8 +279,8 @@ def test_video_local_metadata_refresh_updates_single_local_record_and_appends_ta
         assert data["id"] == "LOCALV_A"
         assert data["title"] == "Remote Updated Title"
         assert data["creator"] == "Actor Remote"
-        assert data["metadata_refresh"]["matched_platform"] == "javdb"
-        assert data["metadata_refresh"]["search_platform_order"] == ["javdb", "javbus"]
+        assert data["metadata_refresh"]["matched_platform"] == "video_alpha"
+        assert data["metadata_refresh"]["search_platform_order"] == ["video_alpha", "video_beta"]
         assert data["metadata_refresh"]["bound_tags"] >= 1
 
         refreshed_videos = load_json(videos_path).get("videos") or []
