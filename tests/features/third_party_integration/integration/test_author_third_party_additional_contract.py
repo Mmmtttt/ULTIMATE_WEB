@@ -12,7 +12,7 @@ def _ok_result(data=None, message="ok"):
 
 
 @pytest.mark.integration
-def test_author_search_works_route_forwards_offset_limit_and_author_name(third_party_client, monkeypatch):
+def test_author_search_works_route_forwards_offset_limit_and_author_name(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/author/search-works` route-to-service contract so `author_name/offset/limit` are not rewritten.
@@ -27,8 +27,8 @@ def test_author_search_works_route_forwards_offset_limit_and_author_name(third_p
     - History:
       - 2026-03-23: Added route forwarding contract guard for author search works.
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
     captured = {}
 
     def fake_search(author_name, offset=0, limit=5):
@@ -38,7 +38,7 @@ def test_author_search_works_route_forwards_offset_limit_and_author_name(third_p
         return _ok_result(
             {
                 "creator_name": author_name,
-                "works": [{"id": "W1", "title": "Work-1", "platform": "JM"}],
+                "works": [{"id": "W1", "title": "Work-1", "platform": "CA"}],
                 "total": 1,
                 "offset": offset,
                 "limit": limit,
@@ -58,14 +58,14 @@ def test_author_search_works_route_forwards_offset_limit_and_author_name(third_p
     assert payload["code"] == 200
     assert captured == {"author_name": "Alice", "offset": 2, "limit": 3}
     assert payload["data"]["works"][0]["id"] == "W1"
-    assert payload["data"]["works"][0]["plugin_id"] == "comic.jmcomic"
-    assert payload["data"]["works"][0]["display"]["badge"]["label"] == "JM"
+    assert payload["data"]["works"][0]["plugin_id"] == "comic.alpha"
+    assert payload["data"]["works"][0]["display"]["badge"]["label"] == "CA"
     assert payload["data"]["offset"] == 2
     assert payload["data"]["limit"] == 3
 
 
 @pytest.mark.integration
-def test_author_check_updates_route_triggers_remote_search_and_persists_latest_work(third_party_client, monkeypatch):
+def test_author_check_updates_route_triggers_remote_search_and_persists_latest_work(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/author/check-updates` end-to-end backend chain: third-party search result -> author metadata persistence.
@@ -81,9 +81,9 @@ def test_author_check_updates_route_triggers_remote_search_and_persists_latest_w
     - History:
       - 2026-03-23: Added update-check persistence contract guard for author third-party chain.
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
-    meta_dir = third_party_client["meta_dir"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
+    meta_dir = fake_third_party_client["meta_dir"]
     service = author_api.author_service
     captured = {"search": [], "cache_set": []}
 
@@ -105,8 +105,8 @@ def test_author_check_updates_route_triggers_remote_search_and_persists_latest_w
         captured["search"].append({"author_name": author_name, "page": page, "max_pages": max_pages})
         return {
             "works": [
-                {"id": "910001", "title": "Newest Work", "platform": "JM", "cover_url": "u1"},
-                {"id": "910000", "title": "Older Work", "platform": "PK", "cover_url": "u2"},
+                {"id": "910001", "title": "Newest Work", "platform": "CA", "cover_url": "u1"},
+                {"id": "910000", "title": "Older Work", "platform": "CB", "cover_url": "u2"},
             ],
             "has_more": False,
             "page": page,
@@ -134,7 +134,7 @@ def test_author_check_updates_route_triggers_remote_search_and_persists_latest_w
 
 
 @pytest.mark.integration
-def test_author_works_route_returns_503_when_external_api_unavailable_and_cache_only_false(third_party_client, monkeypatch):
+def test_author_works_route_returns_503_when_external_api_unavailable_and_cache_only_false(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/author/works/<author_id>` non-cache branch runtime guard: no third-party means explicit unavailable response.
@@ -148,8 +148,8 @@ def test_author_works_route_returns_503_when_external_api_unavailable_and_cache_
     - History:
       - 2026-03-23: Added runtime guard branch test for author works route.
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
 
     monkeypatch.setattr(
         author_api.author_service,
@@ -169,7 +169,7 @@ def test_author_works_route_returns_503_when_external_api_unavailable_and_cache_
 
 
 @pytest.mark.integration
-def test_author_works_route_cache_only_bypasses_external_api_guard(third_party_client, monkeypatch):
+def test_author_works_route_cache_only_bypasses_external_api_guard(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/author/works/<author_id>?cache_only=true` branch so cache-only requests never require external API availability.
@@ -185,8 +185,8 @@ def test_author_works_route_cache_only_bypasses_external_api_guard(third_party_c
     - History:
       - 2026-03-23: Added cache-only bypass guard for author works route.
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
     captured = {}
 
     def fail_if_called():
