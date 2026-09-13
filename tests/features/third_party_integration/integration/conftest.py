@@ -122,6 +122,13 @@ class FakeProtocolProvider(ProtocolProvider):
         if capability == "person.works":
             return {"works": [{"video_id": "work-1", "title": "Work"}], "page": int(params.get("page") or 1), "has_next": False}
 
+        if capability == "health.query.status":
+            cookies = dict(config.get("cookies") or {})
+            return {
+                "configured": bool(config.get("enabled", True)),
+                "has_session_cookie": bool(cookies.get("_session")),
+            }
+
         return {}
 '''
 
