@@ -9,9 +9,9 @@ from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
 @pytest.mark.integration
-def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is_idempotent(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    meta_dir: Path = third_party_client["meta_dir"]
+def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is_idempotent(legacy_third_party_client, monkeypatch):
+    client = legacy_third_party_client["client"]
+    meta_dir: Path = legacy_third_party_client["meta_dir"]
     platform_service_module = importlib.import_module("third_party.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
@@ -194,11 +194,11 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
 
 @pytest.mark.integration
 def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwriting_title(
-    third_party_client,
+    legacy_third_party_client,
     monkeypatch,
 ):
-    client = third_party_client["client"]
-    meta_dir: Path = third_party_client["meta_dir"]
+    client = legacy_third_party_client["client"]
+    meta_dir: Path = legacy_third_party_client["meta_dir"]
     platform_service_module = importlib.import_module("third_party.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
@@ -304,11 +304,11 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
 
 @pytest.mark.integration
 def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detail_fanout(
-    third_party_client,
+    legacy_third_party_client,
     monkeypatch,
 ):
-    client = third_party_client["client"]
-    meta_dir: Path = third_party_client["meta_dir"]
+    client = legacy_third_party_client["client"]
+    meta_dir: Path = legacy_third_party_client["meta_dir"]
     platform_service_module = importlib.import_module("third_party.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
@@ -398,3 +398,4 @@ def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detai
     finally:
         save_json(comics_path, original_comics)
         save_json(tags_path, original_tags)
+

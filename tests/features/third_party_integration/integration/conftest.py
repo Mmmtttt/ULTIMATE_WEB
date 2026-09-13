@@ -489,7 +489,7 @@ def _ensure_backend_utils_package(backend_root: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def third_party_client():
+def legacy_third_party_client():
     prepared = prepare_profile("integration_third_party", clean=True)
     third_party_config_path = Path(prepared["third_party_config_path"])
     try:

@@ -235,7 +235,7 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
 
     config = load_json(config_path)
     config.setdefault("adapters", {}).setdefault("comic_alpha", {}).update(
-        {"enabled": True, "username": "jm-user", "password": "jm-pass"}
+        {"enabled": True, "username": "alpha-user", "password": "alpha-pass"}
     )
     config.setdefault("adapters", {}).setdefault("comic_beta", {}).update(
         {"enabled": True, "account": "", "password": ""}
@@ -247,7 +247,7 @@ def test_comic_search_third_party_all_skips_unconfigured_platforms(third_party_c
     def fake_search_albums(keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
         calls.append(str(adapter_name))
         return {
-            "albums": [{"album_id": "jm-id", "title": "jm-title", "tags": []}],
+            "albums": [{"album_id": "alpha-id", "title": "alpha-title", "tags": []}],
             "page": page,
             "total_pages": 1,
             "has_next": False,
@@ -1079,3 +1079,4 @@ def test_task_manager_normalize_video_lookup_uses_protocol_resolution(third_part
 
     assert manager._normalize_video_lookup("VB_ABP123", "video_alpha") == ("vb", "ABP123")
     assert manager._normalize_video_lookup("VAABP123", "video_beta") == ("va", "ABP123")
+

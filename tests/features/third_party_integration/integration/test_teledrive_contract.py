@@ -48,9 +48,9 @@ def _configure_teledrive(config_path, **updates):
 
 
 @pytest.mark.integration
-def test_teledrive_manifest_config_defaults_and_token_redaction(third_party_client):
-    client = third_party_client["client"]
-    config_path = third_party_client["third_party_config_path"]
+def test_teledrive_manifest_config_defaults_and_token_redaction(legacy_third_party_client):
+    client = legacy_third_party_client["client"]
+    config_path = legacy_third_party_client["third_party_config_path"]
 
     response = client.get("/api/v1/comic/third-party/config")
     payload = response.get_json()
@@ -99,9 +99,9 @@ def test_teledrive_manifest_config_defaults_and_token_redaction(third_party_clie
 
 
 @pytest.mark.integration
-def test_teledrive_json_routes_proxy_bridge_with_bearer_token(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    _configure_teledrive(third_party_client["third_party_config_path"])
+def test_teledrive_json_routes_proxy_bridge_with_bearer_token(legacy_third_party_client, monkeypatch):
+    client = legacy_third_party_client["client"]
+    _configure_teledrive(legacy_third_party_client["third_party_config_path"])
     calls = []
 
     def fake_request(method, url, **kwargs):
@@ -160,9 +160,9 @@ def test_teledrive_json_routes_proxy_bridge_with_bearer_token(third_party_client
 
 
 @pytest.mark.integration
-def test_teledrive_file_content_preserves_range_and_stream_headers(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    _configure_teledrive(third_party_client["third_party_config_path"])
+def test_teledrive_file_content_preserves_range_and_stream_headers(legacy_third_party_client, monkeypatch):
+    client = legacy_third_party_client["client"]
+    _configure_teledrive(legacy_third_party_client["third_party_config_path"])
     calls = []
 
     def fake_request(method, url, **kwargs):
@@ -213,3 +213,4 @@ def test_teledrive_file_content_preserves_range_and_stream_headers(third_party_c
 
     get_call = calls[0]
     assert get_call["url"] == "http://bridge.local/v1/files/file-1/content?name=video.mp4"
+
