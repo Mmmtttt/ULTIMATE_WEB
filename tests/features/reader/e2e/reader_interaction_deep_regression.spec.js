@@ -1,6 +1,6 @@
 const { test, expect, startApiRequestRecorder } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "COMIC_ALPHA100003";
+const COMIC_ID = "CA100003";
 const TOTAL_PAGE = 5;
 const BACKEND_BASE_URL = "http://127.0.0.1:5010";
 

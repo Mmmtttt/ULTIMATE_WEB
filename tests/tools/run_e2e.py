@@ -23,8 +23,6 @@ from tests.shared.test_constants import E2E_BACKEND_PORT, E2E_FRONTEND_PORT, E2E
 from tests.tools.prepare_test_env import prepare_profile
 
 PARALLEL_SAFE_SPECS = [
-    "tests/features/global_search/e2e/global_search_remote_only_reset_state.spec.js",
-    "tests/features/library_browse/e2e/library_open_detail.spec.js",
     "tests/features/library_browse/e2e/library_open_video_detail.spec.js",
     "tests/features/library_browse/e2e/library_sort_by_score.spec.js",
     "tests/features/library_browse/e2e/video_library_sort_by_score.spec.js",
@@ -228,7 +226,9 @@ def main() -> int:
 
     npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
     npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
-    cpu_based = max(1, min(4, (os.cpu_count() or 1)))
+    # The E2E suites share one seeded backend and filesystem. Keep the default
+    # deterministic; callers can still opt into parallel workers explicitly.
+    cpu_based = 1
     parallel_workers = args.workers if args.workers and args.workers > 0 else cpu_based
     parallel_specs, serial_specs = _build_spec_plan(repo_root)
 

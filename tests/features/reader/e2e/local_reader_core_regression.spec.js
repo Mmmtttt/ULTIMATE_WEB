@@ -5,8 +5,8 @@ const {
   hasApiCall,
 } = require("../../../shared/e2e_helpers");
 
-const COMIC_ID = "COMIC_ALPHA100001";
-const SECONDARY_COMIC_ID = "COMIC_ALPHA100002";
+const COMIC_ID = "CA100001";
+const SECONDARY_COMIC_ID = "CA100002";
 
 async function setReaderDefaultConfig(page, overrides = {}) {
   await page.addInitScript((overrideConfig) => {

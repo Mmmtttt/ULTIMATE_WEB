@@ -6,9 +6,9 @@ const {
   confirmDialog,
 } = require("../../../shared/e2e_helpers");
 
-const TRASH_TEST_COMIC_ID = "COMIC_ALPHA100005";
+const TRASH_TEST_COMIC_ID = "CA100005";
 const TRASH_TEST_COMIC_TITLE = "E2E Comic Epsilon";
-const CHAPTER_COMIC_ID = "COMIC_ALPHA100001";
+const CHAPTER_COMIC_ID = "CA100001";
 const CHAPTER_COMIC_TITLE = "E2E Comic Alpha";
 
 /**

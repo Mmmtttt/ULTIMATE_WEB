@@ -78,6 +78,8 @@ async function addRecommendation(
       current_page: currentPage,
       score: 8.5,
       cover_path: "/static/cover/CA/100001.png",
+      storage_path_relative: `recommendation_cache/comic/CA/${recommendationId.replace(/^CA/, "")}`,
+      storage_path_kind: "preview_cache_dir",
       tag_ids: ["tag_action"],
     },
   });
