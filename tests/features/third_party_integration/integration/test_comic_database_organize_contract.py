@@ -9,10 +9,10 @@ from tests.shared.runtime_data import find_by_id, load_json, save_json
 
 
 @pytest.mark.integration
-def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is_idempotent(legacy_third_party_client, monkeypatch):
-    client = legacy_third_party_client["client"]
-    meta_dir: Path = legacy_third_party_client["meta_dir"]
-    platform_service_module = importlib.import_module("third_party.platform_service")
+def test_comic_organize_enrich_local_metadata_prefers_ca_then_fallback_cb_and_is_idempotent(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    meta_dir: Path = fake_third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("protocol.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
     tags_path = meta_dir / "tags_database.json"
@@ -27,22 +27,22 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
             calls.append(("search", platform_name, str(keyword), bool(fast_mode)))
 
             if keyword == "少女冒险第1话":
-                if platform_name == "JM":
-                    return {"albums": [{"album_id": "jm_1", "title": "少女冒险 第1话"}]}
+                if platform_name == "CA":
+                    return {"albums": [{"album_id": "ca_1", "title": "少女冒险 第1话"}]}
                 return {"albums": []}
 
             if keyword == "神秘岛第2话":
-                if platform_name == "JM":
+                if platform_name == "CA":
                     return {"albums": []}
-                if platform_name == "PK":
-                    return {"albums": [{"album_id": "pk_2", "title": "完全不同标题"}]}
+                if platform_name == "CB":
+                    return {"albums": [{"album_id": "cb_2", "title": "完全不同标题"}]}
                 return {"albums": []}
 
             if keyword == "回退测试第1话":
-                if platform_name == "JM":
-                    raise RuntimeError("jm search temporary error")
-                if platform_name == "PK":
-                    return {"albums": [{"album_id": "pk_4", "title": "回退测试 第1话"}]}
+                if platform_name == "CA":
+                    raise RuntimeError("ca search temporary error")
+                if platform_name == "CB":
+                    return {"albums": [{"album_id": "cb_4", "title": "回退测试 第1话"}]}
                 return {"albums": []}
 
             return {"albums": []}
@@ -51,35 +51,35 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
             platform_name = str(getattr(platform, "value", platform))
             calls.append(("detail", platform_name, str(album_id)))
 
-            if str(album_id) == "jm_1":
+            if str(album_id) == "ca_1":
                 return {
                     "albums": [
                         {
-                            "album_id": "jm_1",
+                            "album_id": "ca_1",
                             "title": "少女冒险 第1话",
-                            "author": "作者JM",
+                            "author": "作者CA",
                             "tags": ["冒险", "奇幻", "冒险"],
                         }
                     ]
                 }
-            if str(album_id) == "pk_2":
+            if str(album_id) == "cb_2":
                 return {
                     "albums": [
                         {
-                            "album_id": "pk_2",
+                            "album_id": "cb_2",
                             "title": "完全不同标题",
-                            "author": "作者PK",
+                            "author": "作者CB",
                             "tags": ["悬疑"],
                         }
                     ]
                 }
-            if str(album_id) == "pk_4":
+            if str(album_id) == "cb_4":
                 return {
                     "albums": [
                         {
-                            "album_id": "pk_4",
+                            "album_id": "cb_4",
                             "title": "回退测试 第1话",
-                            "author": "作者PK回退",
+                            "author": "作者CB回退",
                             "tags": ["科幻"],
                         }
                     ]
@@ -87,6 +87,8 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
             return {"albums": []}
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+    comic_service_module = importlib.import_module("application.comic_app_service")
+    monkeypatch.setattr(comic_service_module.ComicAppService, "_should_skip_remote_detail", lambda *_args: False)
 
     try:
         save_json(
@@ -103,7 +105,7 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
                     {"id": "LOCAL1004", "title": "回退测试 第1话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "LOCAL1005", "title": "少女冒险（修订）第1话", "author": "", "tag_ids": [], "is_deleted": False},
                     {"id": "LOCAL1006", "title": "无结果作品 第1话", "author": "", "tag_ids": [], "is_deleted": False},
-                    {"id": "JM100001", "title": "普通在线漫画", "author": "A", "tag_ids": [], "is_deleted": False},
+                    {"id": "CA100001", "title": "普通在线漫画", "author": "A", "tag_ids": [], "is_deleted": False},
                 ],
             },
         )
@@ -129,9 +131,9 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         assert first_payload["code"] == 200
 
         first_data = first_payload["data"] or {}
-        assert first_data["matched_by_platform"]["JM"] == 2
-        assert first_data["matched_by_platform"]["PK"] == 2
-        assert first_data["search_platform_order"][:2] == ["JM", "PK"]
+        assert first_data["matched_by_platform"]["CA"] == 2
+        assert first_data["matched_by_platform"]["CB"] == 2
+        assert first_data["search_platform_order"][:2] == ["CA", "CB"]
         assert first_data["updated_records"] == 4
         assert first_data["updated_authors"] == 4
         assert first_data["created_tags"] == 3
@@ -140,12 +142,12 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         assert first_data["skipped_already_enriched"] == 1
 
         first_run_calls = list(calls)
-        assert ("search", "JM", "神秘岛第2话", True) in first_run_calls
-        assert ("search", "PK", "神秘岛第2话", True) in first_run_calls
-        assert ("search", "JM", "回退测试第1话", True) in first_run_calls
-        assert ("search", "PK", "回退测试第1话", True) in first_run_calls
+        assert ("search", "CA", "神秘岛第2话", True) in first_run_calls
+        assert ("search", "CB", "神秘岛第2话", True) in first_run_calls
+        assert ("search", "CA", "回退测试第1话", True) in first_run_calls
+        assert ("search", "CB", "回退测试第1话", True) in first_run_calls
         assert all(item[3] is True for item in first_run_calls if item[0] == "search")
-        assert sum(1 for item in first_run_calls if item == ("search", "JM", "少女冒险第1话", True)) == 1
+        assert sum(1 for item in first_run_calls if item == ("search", "CA", "少女冒险第1话", True)) == 1
 
         refreshed_comics = load_json(comics_path).get("comics") or []
         refreshed_tags = load_json(tags_path).get("tags") or []
@@ -162,10 +164,10 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
         assert local_1005 is not None
         assert local_1006 is not None
 
-        assert local_1001["author"] == "作者JM"
-        assert local_1002["author"] == "作者PK"
-        assert local_1004["author"] == "作者PK回退"
-        assert local_1005["author"] == "作者JM"
+        assert local_1001["author"] == "作者CA"
+        assert local_1002["author"] == "作者CB"
+        assert local_1004["author"] == "作者CB回退"
+        assert local_1005["author"] == "作者CA"
         assert local_1001["local_metadata_enriched"] is True
         assert local_1002["local_metadata_enriched"] is True
         assert local_1004["local_metadata_enriched"] is True
@@ -194,12 +196,12 @@ def test_comic_organize_enrich_local_metadata_prefers_jm_then_fallback_pk_and_is
 
 @pytest.mark.integration
 def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwriting_title(
-    legacy_third_party_client,
+    fake_third_party_client,
     monkeypatch,
 ):
-    client = legacy_third_party_client["client"]
-    meta_dir: Path = legacy_third_party_client["meta_dir"]
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    client = fake_third_party_client["client"]
+    meta_dir: Path = fake_third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("protocol.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
     tags_path = meta_dir / "tags_database.json"
@@ -210,17 +212,17 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
         def search_albums(self, platform, keyword, max_pages=1, fast_mode=False):
             platform_name = str(getattr(platform, "value", platform))
             normalized_keyword = str(keyword or "").strip().lower()
-            if platform_name == "JM" and normalized_keyword.replace(" ", "") in {"mylocalcomicchapter1", "mylocalcomic"}:
-                return {"albums": [{"album_id": "jm_1", "title": "Remote changed title"}]}
+            if platform_name == "CA" and normalized_keyword.replace(" ", "") in {"mylocalcomicchapter1", "mylocalcomic"}:
+                return {"albums": [{"album_id": "ca_1", "title": "Remote changed title"}]}
             return {"albums": []}
 
         def get_album_by_id(self, platform, album_id):
-            if str(album_id or "").strip() != "jm_1":
+            if str(album_id or "").strip() != "ca_1":
                 return {"albums": []}
             return {
                 "albums": [
                     {
-                        "album_id": "jm_1",
+                        "album_id": "ca_1",
                         "title": "Remote changed title",
                         "author": "Remote Author",
                         "tags": ["ManualComicTag", "NewComicTag"],
@@ -229,6 +231,8 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
             }
 
     monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+    comic_service_module = importlib.import_module("application.comic_app_service")
+    monkeypatch.setattr(comic_service_module.ComicAppService, "_should_skip_remote_detail", lambda *_args: False)
 
     try:
         save_json(
@@ -280,7 +284,7 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
         assert data["id"] == "LOCAL2001"
         assert data["title"] == "My Local Comic Chapter 1"
         assert data["author"] == "Remote Author"
-        assert data["metadata_refresh"]["matched_platform"] == "JM"
+        assert data["metadata_refresh"]["matched_platform"] == "CA"
         assert data["metadata_refresh"]["bound_tags"] >= 1
 
         refreshed_comics = load_json(comics_path).get("comics") or []
@@ -303,13 +307,13 @@ def test_comic_local_metadata_refresh_updates_author_and_tags_without_overwritin
 
 
 @pytest.mark.integration
-def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detail_fanout(
-    legacy_third_party_client,
+def test_comic_local_metadata_refresh_ca_uses_first_search_payload_without_detail_fanout(
+    fake_third_party_client,
     monkeypatch,
 ):
-    client = legacy_third_party_client["client"]
-    meta_dir: Path = legacy_third_party_client["meta_dir"]
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    client = fake_third_party_client["client"]
+    meta_dir: Path = fake_third_party_client["meta_dir"]
+    platform_service_module = importlib.import_module("protocol.platform_service")
 
     comics_path = meta_dir / "comics_database.json"
     tags_path = meta_dir / "tags_database.json"
@@ -320,12 +324,12 @@ def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detai
     class FakePlatformService:
         def search_albums(self, platform, keyword, max_pages=1, fast_mode=False):
             platform_name = str(getattr(platform, "value", platform))
-            if platform_name != "JM":
+            if platform_name != "CA":
                 return {"albums": []}
             return {
                 "albums": [
                     {
-                        "album_id": "jm_533565",
+                        "album_id": "ca_533565",
                         "title": "Remote Title",
                         "author": "Search Author",
                         "tags": ["SearchTagA", "SearchTagB"],
@@ -388,7 +392,7 @@ def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detai
         data = payload["data"] or {}
         assert data["id"] == "LOCAL3001"
         assert data["author"] == "Search Author"
-        assert data["metadata_refresh"]["matched_platform"] == "JM"
+        assert data["metadata_refresh"]["matched_platform"] == "CA"
         assert calls["detail"] == 0
 
         refreshed_tags = load_json(tags_path).get("tags") or []
@@ -398,4 +402,5 @@ def test_comic_local_metadata_refresh_jm_uses_first_search_payload_without_detai
     finally:
         save_json(comics_path, original_comics)
         save_json(tags_path, original_tags)
+
 

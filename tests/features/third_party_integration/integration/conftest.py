@@ -244,7 +244,7 @@ def _write_fake_protocol_plugins(root: Path) -> None:
                 required_fields=["username", "password"],
                 order=10,
                 capabilities=[
-                    {"key": "catalog.search"},
+                    {"key": "catalog.search", "result_detail_policy": {"mode": "search_payload"}},
                     {"key": "catalog.detail"},
                     {"key": "collection.favorites"},
                     {"key": "collection.favorites_basic"},
