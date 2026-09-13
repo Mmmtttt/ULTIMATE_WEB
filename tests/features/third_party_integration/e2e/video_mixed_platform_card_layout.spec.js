@@ -2,10 +2,10 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 
 /**
  * 用例描述:
- * - 用例目的: 看护视频全网搜索在“同一行混合 JAVDB 横图 + JAVBUS 竖图”时的卡片布局契约，
+ * - 用例目的: 看护视频全网搜索在“同一行混合 VIDEO_ALPHA 横图 + VIDEO_BETA 竖图”时的卡片布局契约，
  *   防止横图卡片被强制拉高到竖图高度导致大片留白。
  * - 测试步骤:
- *   1. mock `/api/v1/video/third-party/search` 返回一条 javdb 与一条 javbus 结果。
+ *   1. mock `/api/v1/video/third-party/search` 返回一条 video_alpha 与一条 video_beta 结果。
  *   2. 进入 `/search`，在视频模式下直接发起全网搜索。
  *   3. 校验结果区同时出现 landscape/portrait 两类封面容器。
  *   4. 断言两类封面容器高度显著不同（横图更矮），避免同高拉伸。
@@ -14,7 +14,7 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
  *   2. `.video-cover-landscape` 与 `.video-cover-portrait` 同时存在。
  *   3. landscape 高度 < portrait 高度，且高度差明显。
  */
-test("video global search mixed javdb/javbus cards keep independent cover ratios", async ({ page }) => {
+test("video global search mixed video_alpha/video_beta cards keep independent cover ratios", async ({ page }) => {
   const requests = startApiRequestRecorder(page);
   const searchQueries = [];
 
@@ -39,10 +39,10 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
           has_next: false,
           videos: [
             {
-              id: "JVID-DB-1",
-              title: "JAVDB Landscape Card",
+              id: "VIDA-DB-1",
+              title: "VIDEO_ALPHA Landscape Card",
               code: "DB-001",
-              platform: "javdb",
+              platform: "video_alpha",
               cover_url: "/static/default/default_cover.jpg",
               actors: ["A"],
               display: {
@@ -52,16 +52,16 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
                   fit: "cover",
                 },
                 badge: {
-                  label: "JAVDB",
+                  label: "VIDEO_ALPHA",
                   show_platform_label: true,
                 },
               },
             },
             {
-              id: "JVID-BUS-1",
-              title: "JAVBUS Portrait Card",
+              id: "VIDA-BUS-1",
+              title: "VIDEO_BETA Portrait Card",
               code: "BUS-001",
-              platform: "javbus",
+              platform: "video_beta",
               cover_url: "/static/default/default_cover.jpg",
               actors: ["B"],
               display: {
@@ -70,7 +70,7 @@ test("video global search mixed javdb/javbus cards keep independent cover ratios
                   fit: "contain",
                 },
                 badge: {
-                  label: "JAVBUS",
+                  label: "VIDEO_BETA",
                   show_platform_label: true,
                 },
               },
