@@ -17,6 +17,7 @@ from core.utils import get_current_time, get_preview_pages
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from protocol.base import ProtocolProvider
+from protocol.gateway import get_protocol_gateway
 from protocol.runtime_config import ProtocolConfigStore
 
 
@@ -36,20 +37,6 @@ TELEDRIVE_STORAGE_KIND_DIR = "teledrive_dir"
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi", ".ts", ".m3u8"}
 COVER_FILENAMES = {"cover.jpg"}
-KNOWN_PLATFORM_SEGMENTS = {
-    "JM",
-    "JMCOMIC",
-    "JMC",
-    "EH",
-    "EX",
-    "EXHENTAI",
-    "NH",
-    "NHENTAI",
-    "HITOMI",
-    "PIXIV",
-    "MISSAV",
-    "JABLE",
-}
 
 
 class TeleDriveBridgeError(RuntimeError):
@@ -162,9 +149,25 @@ def _natural_key(value: str) -> List[Any]:
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(value or ""))]
 
 
+def _get_protocol_platform_segments() -> set[str]:
+    segments: set[str] = set()
+    try:
+        manifests = get_protocol_gateway().list_manifests()
+    except Exception:
+        return segments
+
+    for manifest in manifests:
+        lookup_names = getattr(manifest, "list_lookup_names", lambda: [])()
+        for value in lookup_names:
+            normalized = re.sub(r"[^A-Za-z0-9]", "", str(value or "").upper())
+            if normalized:
+                segments.add(normalized)
+    return segments
+
+
 def _is_known_platform_segment(segment: str) -> bool:
     normalized = re.sub(r"[^A-Za-z0-9]", "", str(segment or "").upper())
-    return normalized in KNOWN_PLATFORM_SEGMENTS
+    return bool(normalized) and normalized in _get_protocol_platform_segments()
 
 
 def _safe_item_id(prefix: str, item_id: str) -> str:
