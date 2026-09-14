@@ -2,193 +2,235 @@
   <div class="system-config desktop-page-shell">
     <van-nav-bar title="系统设置" left-text="返回" left-arrow @click-left="$router.back()" />
 
-    <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('pageMode', $event)">
-        <span class="select-label">默认翻页模式</span>
-        <span class="select-value">{{ pageModeLabel }} <van-icon name="arrow-down" size="12" /></span>
+    <section class="settings-section">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">READER EXPERIENCE</span>
+          <h2>阅读体验</h2>
+        </div>
+        <span class="section-note">常用设置</span>
       </div>
-      <van-cell
-        title="左右翻页方向（漫画阅读）"
-        :label="pageModeValue === 'left_right' ? '开启后按右→左方向翻页（更接近日漫阅读习惯）' : '仅在左右翻页模式下生效'"
-      >
-        <template #right-icon>
-          <van-switch
-            :model-value="leftRightReadingReversedValue"
-            :disabled="pageModeValue !== 'left_right'"
-            @update:model-value="updateLeftRightReadingReversed"
+      <van-cell-group inset class="config-group settings-card">
+        <div class="select-row" @click.stop="toggleDropdown('pageMode', $event)">
+          <div class="setting-copy">
+            <span class="select-label">默认翻页模式</span>
+            <span class="setting-description">可选择上下翻页、左→右或右→左翻页</span>
+          </div>
+          <span class="select-value">{{ pageModeLabel }} <van-icon name="arrow-down" size="12" /></span>
+        </div>
+        <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页内容（可继续缩放、滑动与翻页）">
+          <template #right-icon>
+            <van-switch v-model="singlePageBrowsingValue" @change="updateSinglePageBrowsing" />
+          </template>
+        </van-cell>
+        <div class="select-row" @click.stop="toggleDropdown('background', $event)">
+          <div class="setting-copy">
+            <span class="select-label">默认背景色</span>
+            <span class="setting-description">应用于漫画阅读页的默认背景</span>
+          </div>
+          <span class="select-value">{{ backgroundLabel }} <van-icon name="arrow-down" size="12" /></span>
+        </div>
+      </van-cell-group>
+    </section>
+
+    <section class="settings-section">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">LIBRARY & CONTENT</span>
+          <h2>列表与内容</h2>
+        </div>
+        <span class="section-note">显示设置</span>
+      </div>
+      <van-cell-group inset class="config-group settings-card">
+        <van-cell title="内容模式" label="切换漫画与视频的内容模式">
+          <template #right-icon>
+            <ModeSwitch class="settings-mode-switch" />
+          </template>
+        </van-cell>
+        <van-cell :title="`当前模式：${currentModeLabel}`" class="mode-status-cell" />
+        <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
+          <div class="setting-copy">
+            <span class="select-label">列表分页数量</span>
+            <span class="setting-description">本地库、预览库等列表的默认分页数量</span>
+          </div>
+          <span class="select-value">{{ pageSizeLabel }} <van-icon name="arrow-down" size="12" /></span>
+        </div>
+        <van-cell
+          title="预览库导入自动下载资源"
+          label="开启后导入到预览库时将自动异步下载高清封面和预览视频（无预览视频时自动跳过）"
+        >
+          <template #right-icon>
+            <van-switch v-model="autoDownloadPreviewImportAssets" @change="updatePreviewImportAssetDownload" />
+          </template>
+        </van-cell>
+      </van-cell-group>
+    </section>
+
+    <section class="settings-section settings-section--compact">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">PLATFORM</span>
+          <h2>平台与诊断</h2>
+        </div>
+      </div>
+      <van-cell-group inset class="config-group settings-card">
+        <van-cell
+          title="Debug 日志模式"
+          label="开启后记录更完整的诊断日志；关闭时保留错误和重要操作日志。"
+        >
+          <template #right-icon>
+            <van-switch v-model="debugModeValue" @change="updateDebugMode" />
+          </template>
+        </van-cell>
+        <van-cell title="第三方平台配置" label="管理搜索、导入和补全信息使用的平台" is-link to="/config/third-party" />
+      </van-cell-group>
+    </section>
+
+    <section class="settings-section settings-section--advanced">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">SERVICE & DATA</span>
+          <h2>服务与数据</h2>
+        </div>
+        <span class="section-note">高级设置</span>
+      </div>
+
+      <details class="config-disclosure">
+        <summary class="config-disclosure-summary">
+          <span class="disclosure-icon"><van-icon name="lock" size="17" /></span>
+          <span class="disclosure-copy">
+            <strong>项目密码</strong>
+            <small>{{ canChangeProjectPassword ? '正常空间可修改登录密码' : '仅正常空间可修改' }}</small>
+          </span>
+          <van-icon name="arrow" size="16" class="disclosure-chevron" />
+        </summary>
+        <div class="disclosure-body">
+          <p class="disclosure-note">保存后新密码立即用于后续登录，不会显示当前密码。</p>
+          <van-field
+            v-model="projectPassword"
+            type="password"
+            label="新密码"
+            placeholder="请输入新的登录密码"
+            autocomplete="new-password"
           />
-        </template>
-      </van-cell>
-      <van-cell title="单页浏览" label="开启后阅读页每次仅显示一页内容（可继续缩放、滑动与翻页）">
-        <template #right-icon>
-          <van-switch v-model="singlePageBrowsingValue" @change="updateSinglePageBrowsing" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell title="内容模式">
-        <template #right-icon>
-          <ModeSwitch class="settings-mode-switch" />
-        </template>
-      </van-cell>
-      <van-cell :title="`当前模式：${currentModeLabel}`" />
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
-        <span class="select-label">列表分页数量</span>
-        <span class="select-value">{{ pageSizeLabel }} <van-icon name="arrow-down" size="12" /></span>
-      </div>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <div class="select-row" @click.stop="toggleDropdown('background', $event)">
-        <span class="select-label">默认背景色</span>
-        <span class="select-value">{{ backgroundLabel }} <van-icon name="arrow-down" size="12" /></span>
-      </div>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell
-        title="预览库导入自动下载资源"
-        label="开启后导入到预览库时将自动异步下载高清封面和预览视频（无预览视频时自动跳过）"
-      >
-        <template #right-icon>
-          <van-switch v-model="autoDownloadPreviewImportAssets" @change="updatePreviewImportAssetDownload" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell
-        title="Debug 日志模式"
-        label="开启后记录更完整的诊断日志；关闭时保留错误和重要操作日志。"
-      >
-        <template #right-icon>
-          <van-switch v-model="debugModeValue" @change="updateDebugMode" />
-        </template>
-      </van-cell>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <van-cell title="第三方平台配置" is-link to="/config/third-party" />
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <div class="config-group-header compact">
-        <div class="config-group-title">项目密码</div>
-        <div class="config-group-desc">仅在正常空间可修改；保存后新密码立即用于后续登录。</div>
-      </div>
-      <van-field
-        v-model="projectPassword"
-        type="password"
-        label="新密码"
-        placeholder="请输入新的登录密码"
-        autocomplete="new-password"
-      />
-      <van-field
-        v-model="projectPasswordConfirm"
-        type="password"
-        label="确认密码"
-        placeholder="再次输入新密码"
-        autocomplete="new-password"
-      />
-      <div class="inline-actions single">
-        <van-button
-          type="primary"
-          block
-          round
-          :disabled="!canChangeProjectPassword"
-          :loading="savingProjectPassword"
-          @click="saveProjectPassword"
-        >
-          {{ canChangeProjectPassword ? '保存项目密码' : '仅正常空间可修改' }}
-        </van-button>
-      </div>
-    </van-cell-group>
-
-    <van-cell-group inset class="config-group">
-      <div class="config-group-header">
-        <div class="config-group-title">数据目录配置</div>
-        <div class="config-group-desc">修改后会重启后端；迁移模式会同时移动当前 `data` 目录内容。</div>
-      </div>
-      <div class="path-summary-grid">
-        <div class="path-summary-card">
-          <span class="path-summary-label">当前运行目录</span>
-          <code class="path-summary-value">{{ runtimeDataDir || '读取中...' }}</code>
+          <van-field
+            v-model="projectPasswordConfirm"
+            type="password"
+            label="确认密码"
+            placeholder="再次输入新密码"
+            autocomplete="new-password"
+          />
+          <div class="inline-actions single">
+            <van-button
+              type="primary"
+              block
+              round
+              :disabled="!canChangeProjectPassword"
+              :loading="savingProjectPassword"
+              @click="saveProjectPassword"
+            >
+              {{ canChangeProjectPassword ? '保存项目密码' : '仅正常空间可修改' }}
+            </van-button>
+          </div>
         </div>
-        <div v-if="resolvedDataDir && resolvedDataDir !== runtimeDataDir" class="path-summary-card emphasis">
-          <span class="path-summary-label">待生效目录</span>
-          <code class="path-summary-value">{{ resolvedDataDir }}</code>
-        </div>
-      </div>
-      <van-field
-        v-model="systemDataDir"
-        label="data_dir"
-        placeholder="例如 ./comic_backend/data 或 D:\\MyData\\ULTIMATE"
-      />
-      <div class="inline-actions">
-        <van-button
-          type="primary"
-          block
-          round
-          :loading="savingSystemConfigMode === 'migrate'"
-          @click="saveSystemDataDirWithMigration"
-        >
-          保存并迁移 data 目录
-        </van-button>
-        <van-button
-          plain
-          type="primary"
-          block
-          round
-          class="secondary-action"
-          :loading="savingSystemConfigMode === 'rebind'"
-          @click="saveSystemDataDirWithoutMigration"
-        >
-          仅保存 data 目录路径
-        </van-button>
-      </div>
-    </van-cell-group>
+      </details>
 
-    <van-cell-group inset class="config-group">
-      <div class="config-group-header">
-        <div class="config-group-title">配置文件目录</div>
-        <div class="config-group-desc">会迁移 `server_config.json` 与 `third_party_config.json`，并在保存后自动重启后端。</div>
-      </div>
-      <div class="path-summary-grid">
-        <div class="path-summary-card">
-          <span class="path-summary-label">当前运行目录</span>
-          <code class="path-summary-value">{{ runtimeConfigDir || '读取中...' }}</code>
+      <details class="config-disclosure">
+        <summary class="config-disclosure-summary">
+          <span class="disclosure-icon"><van-icon name="folder-o" size="17" /></span>
+          <span class="disclosure-copy">
+            <strong>数据目录配置</strong>
+            <small>{{ runtimeDataDir || '正在读取当前运行目录' }}</small>
+          </span>
+          <van-icon name="arrow" size="16" class="disclosure-chevron" />
+        </summary>
+        <div class="disclosure-body">
+          <p class="disclosure-note">修改后会重启后端；迁移模式会同时移动当前 data 目录内容。</p>
+          <div class="path-summary-grid">
+            <div class="path-summary-card">
+              <span class="path-summary-label">当前运行目录</span>
+              <code class="path-summary-value">{{ runtimeDataDir || '读取中...' }}</code>
+            </div>
+            <div v-if="resolvedDataDir && resolvedDataDir !== runtimeDataDir" class="path-summary-card emphasis">
+              <span class="path-summary-label">待生效目录</span>
+              <code class="path-summary-value">{{ resolvedDataDir }}</code>
+            </div>
+          </div>
+          <van-field
+            v-model="systemDataDir"
+            label="data_dir"
+            placeholder="例如 ./comic_backend/data 或 D:\\MyData\\ULTIMATE"
+          />
+          <div class="inline-actions">
+            <van-button
+              type="primary"
+              block
+              round
+              :loading="savingSystemConfigMode === 'migrate'"
+              @click="saveSystemDataDirWithMigration"
+            >
+              保存并迁移 data 目录
+            </van-button>
+            <van-button
+              plain
+              type="primary"
+              block
+              round
+              class="secondary-action"
+              :loading="savingSystemConfigMode === 'rebind'"
+              @click="saveSystemDataDirWithoutMigration"
+            >
+              仅保存 data 目录路径
+            </van-button>
+          </div>
         </div>
-        <div v-if="selectedConfigDir" class="path-summary-card" :class="{ emphasis: selectedConfigDir !== runtimeConfigDir }">
-          <span class="path-summary-label">{{ selectedConfigDir === runtimeConfigDir ? '当前选中目录' : '重启后生效目录' }}</span>
-          <code class="path-summary-value">{{ selectedConfigDir }}</code>
+      </details>
+
+      <details class="config-disclosure">
+        <summary class="config-disclosure-summary">
+          <span class="disclosure-icon"><van-icon name="setting-o" size="17" /></span>
+          <span class="disclosure-copy">
+            <strong>配置文件目录</strong>
+            <small>{{ selectedConfigDir || runtimeConfigDir || '正在读取当前配置目录' }}</small>
+          </span>
+          <van-icon name="arrow" size="16" class="disclosure-chevron" />
+        </summary>
+        <div class="disclosure-body">
+          <p class="disclosure-note">会迁移 server_config.json 与 third_party_config.json，并在保存后自动重启后端。</p>
+          <div class="path-summary-grid">
+            <div class="path-summary-card">
+              <span class="path-summary-label">当前运行目录</span>
+              <code class="path-summary-value">{{ runtimeConfigDir || '读取中...' }}</code>
+            </div>
+            <div v-if="selectedConfigDir" class="path-summary-card" :class="{ emphasis: selectedConfigDir !== runtimeConfigDir }">
+              <span class="path-summary-label">{{ selectedConfigDir === runtimeConfigDir ? '当前选中目录' : '重启后生效目录' }}</span>
+              <code class="path-summary-value">{{ selectedConfigDir }}</code>
+            </div>
+            <div class="path-summary-card">
+              <span class="path-summary-label">默认目录 / 来源</span>
+              <code class="path-summary-value">{{ defaultConfigDir || '-' }}</code>
+              <span class="path-summary-meta">来源：{{ configDirSourceLabel }}</span>
+            </div>
+          </div>
+          <van-field
+            v-model="configDirInput"
+            label="config_dir"
+            placeholder="例如 C:\\Users\\用户名\\AppData\\Roaming\\ULTIMATE_WEB"
+          />
+          <div class="inline-actions">
+            <van-button
+              type="primary"
+              block
+              round
+              :loading="savingConfigDir"
+              @click="saveConfigDir"
+            >
+              保存配置目录并迁移配置文件
+            </van-button>
+          </div>
         </div>
-        <div class="path-summary-card">
-          <span class="path-summary-label">默认目录 / 来源</span>
-          <code class="path-summary-value">{{ defaultConfigDir || '-' }}</code>
-          <span class="path-summary-meta">来源：{{ configDirSourceLabel }}</span>
-        </div>
-      </div>
-      <van-field
-        v-model="configDirInput"
-        label="config_dir"
-        placeholder="例如 C:\\Users\\用户名\\AppData\\Roaming\\ULTIMATE_WEB"
-      />
-      <div class="inline-actions">
-        <van-button
-          type="primary"
-          block
-          round
-          :loading="savingConfigDir"
-          @click="saveConfigDir"
-        >
-          保存配置目录并迁移配置文件
-        </van-button>
-      </div>
-    </van-cell-group>
+      </details>
+    </section>
 
     <div class="action-area">
       <van-button type="danger" block round @click="confirmReset">
@@ -250,8 +292,9 @@ const dropdownStyle = computed(() => ({
 }))
 
 const pageModeColumns = [
-  { text: '左右翻页', value: 'left_right' },
   { text: '上下翻页', value: 'up_down' },
+  { text: '左→右翻页', value: 'left_right' },
+  { text: '右→左翻页', value: 'left_right_reversed' },
 ]
 
 const pageSizeColumns = pageSizeOptions.map(s => ({ text: `每页 ${s} 条`, value: s }))
@@ -268,8 +311,13 @@ const dropdownColumnMap = {
   background: backgroundColumns,
 }
 
+const pageModeSelection = computed(() => {
+  if (pageModeValue.value !== 'left_right') return 'up_down'
+  return leftRightReadingReversedValue.value ? 'left_right_reversed' : 'left_right'
+})
+
 const dropdownValueMap = computed(() => ({
-  pageMode: pageModeValue.value,
+  pageMode: pageModeSelection.value,
   pageSize: pageSizeValue.value,
   background: backgroundValue.value,
 }))
@@ -277,10 +325,12 @@ const dropdownValueMap = computed(() => ({
 const activeDropdownColumns = computed(() => dropdownColumnMap[activeDropdown.value] || [])
 const activeDropdownValue = computed(() => dropdownValueMap.value[activeDropdown.value])
 
-const pageModeMap = { left_right: '左右翻页', up_down: '上下翻页' }
 const backgroundMap = { white: '白色背景', dark: '深色背景', sepia: '护眼色背景' }
 
-const pageModeLabel = computed(() => pageModeMap[pageModeValue.value] || pageModeValue.value)
+const pageModeLabel = computed(() => {
+  const selected = pageModeColumns.find(option => option.value === pageModeSelection.value)
+  return selected?.text || '上下翻页'
+})
 const pageSizeLabel = computed(() => `每页 ${pageSizeValue.value} 条`)
 const backgroundLabel = computed(() => backgroundMap[backgroundValue.value] || backgroundValue.value)
 
@@ -336,13 +386,12 @@ function toggleDropdown(name, event) {
   activeDropdown.value = name
 }
 
-function onDropdownSelect(value) {
+async function onDropdownSelect(value) {
   const name = activeDropdown.value
   activeDropdown.value = ''
   if (name === 'pageMode') {
-    if (pageModeValue.value === value) return
-    pageModeValue.value = value
-    updatePageMode()
+    if (pageModeSelection.value === value) return
+    await updateReadingMode(value)
   } else if (name === 'pageSize') {
     if (pageSizeValue.value === value) return
     pageSizeValue.value = value
@@ -390,17 +439,16 @@ async function loadConfigDirInfo() {
   }
 }
 
-async function updatePageMode() {
+async function updateReadingMode(value) {
+  const reversed = value === 'left_right_reversed'
+  pageModeValue.value = value === 'up_down' ? 'up_down' : 'left_right'
+  leftRightReadingReversedValue.value = reversed
   configStore.setPageMode(pageModeValue.value)
+  configStore.setLeftRightReadingReversed(reversed)
   const ok = await configStore.saveConfigToServer()
   if (!ok) {
     showFailToast('默认翻页模式保存失败')
   }
-}
-
-function updateLeftRightReadingReversed(value) {
-  leftRightReadingReversedValue.value = Boolean(value)
-  configStore.setLeftRightReadingReversed(leftRightReadingReversedValue.value)
 }
 
 async function updateBackground() {
@@ -631,13 +679,58 @@ onUnmounted(() => {
 
 <style scoped>
 .system-config {
+  width: min(100%, 1080px);
   min-height: 95vh;
+  margin: 0 auto;
   background: transparent;
-  padding-bottom: 20px;
+  padding: 0 var(--page-gutter) calc(28px + env(safe-area-inset-bottom, 0px));
+}
+
+.settings-section {
+  margin: 0 0 22px;
+}
+
+.settings-section--compact {
+  margin-bottom: 24px;
+}
+
+.settings-section--advanced {
+  margin-top: 28px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 4px 10px;
+}
+
+.section-heading h2 {
+  margin: 3px 0 0;
+  color: var(--text-strong);
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.section-kicker {
+  display: block;
+  color: var(--brand-600);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.section-note {
+  padding-bottom: 2px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .config-group {
-  margin: 12px;
+  margin: 0;
   overflow: hidden;
   border: 1px solid var(--border-soft);
   border-radius: 18px;
@@ -650,39 +743,182 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.config-group-header {
-  padding: 16px 16px 10px;
+.settings-card :deep(.van-cell) {
+  min-height: 58px;
+  padding: 12px 16px;
 }
 
-.config-group-header.compact {
-  padding-bottom: 6px;
+.settings-card :deep(.van-cell__title) {
+  min-width: 0;
 }
 
-.config-group-title {
-  font-size: 16px;
+.settings-card :deep(.van-cell__value) {
+  flex: 0 0 auto;
+}
+
+.settings-card :deep(.van-cell__label) {
+  max-width: 700px;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.mode-status-cell :deep(.van-cell__title) {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  padding: 12px 16px;
+  cursor: pointer;
+  position: relative;
+  background: transparent;
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+
+.select-row:hover {
+  background: var(--brand-soft, rgba(89, 160, 255, 0.08));
+}
+
+.setting-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.select-label {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.setting-description {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.select-value {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.config-disclosure {
+  margin: 0 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.config-disclosure-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 70px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+
+.config-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.config-disclosure-summary:hover {
+  background: var(--brand-soft, rgba(89, 160, 255, 0.08));
+}
+
+.disclosure-icon {
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(89, 160, 255, 0.24);
+  border-radius: 11px;
+  color: var(--brand-600);
+  background: var(--brand-soft, rgba(89, 160, 255, 0.1));
+}
+
+.disclosure-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.disclosure-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
   font-weight: 700;
-  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.config-group-desc {
-  margin-top: 6px;
+.disclosure-copy small {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disclosure-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-base) var(--ease-standard);
+}
+
+details[open] .disclosure-chevron {
+  transform: rotate(90deg);
+  color: var(--brand-600);
+}
+
+.disclosure-body {
+  border-top: 1px solid var(--border-soft);
+  padding: 4px 0 2px;
+}
+
+.disclosure-note {
+  margin: 10px 16px 4px;
+  color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-tertiary);
+}
+
+.disclosure-body :deep(.van-field) {
+  background: transparent;
 }
 
 .path-summary-grid {
   display: grid;
   gap: 10px;
-  padding: 0 16px 14px;
+  padding: 10px 16px 6px;
 }
 
 .path-summary-card {
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 12px;
-  border-radius: 12px;
   border: 1px solid var(--border-soft);
+  border-radius: 12px;
   background: var(--surface-1);
 }
 
@@ -692,28 +928,28 @@ onUnmounted(() => {
 }
 
 .path-summary-label {
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
 }
 
 .path-summary-value {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-primary);
   white-space: pre-wrap;
-  word-break: break-all;
 }
 
 .path-summary-meta {
-  font-size: 12px;
   color: var(--text-tertiary);
+  font-size: 12px;
 }
 
 .inline-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
   padding: 10px 16px 16px;
 }
@@ -727,14 +963,14 @@ onUnmounted(() => {
 }
 
 .mmmtttt-config {
-  text-align: center;
-  font-size: 12px;
-  color: #969799;
   padding: 16px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .action-area {
-  padding: 20px 16px;
+  padding: 16px 0 10px;
 }
 
 .settings-mode-switch {
@@ -742,46 +978,50 @@ onUnmounted(() => {
   transform-origin: right center;
 }
 
-/* 内联下拉框 */
-.select-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  min-height: 48px;
-  cursor: pointer;
-  position: relative;
-  background: transparent;
-}
-
-.select-label {
-  font-size: 14px;
-  color: var(--text-primary);
-  flex-shrink: 0;
-}
-
-.select-value {
-  font-size: 14px;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 @media (min-width: 1024px) {
-  .path-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .system-config {
+    padding-inline: 24px;
   }
 }
 
 @media (max-width: 767px) {
-  .config-group {
-    margin-inline: 10px;
+  .system-config {
+    padding-inline: 10px;
+  }
+
+  .section-heading {
+    margin-inline: 2px;
+  }
+
+  .section-heading h2 {
+    font-size: 17px;
+  }
+
+  .section-note {
+    font-size: 11px;
+  }
+
+  .config-group,
+  .config-disclosure {
     border-radius: 16px;
   }
 
-  .inline-actions {
-    grid-template-columns: 1fr;
+  .config-disclosure-summary {
+    min-height: 66px;
+    padding-inline: 13px;
+  }
+
+  .disclosure-copy small {
+    max-width: calc(100vw - 112px);
+  }
+
+  .select-row {
+    min-height: 64px;
+    padding-inline: 14px;
+  }
+
+  .select-value {
+    font-size: 13px;
   }
 }
 </style>
