@@ -2705,6 +2705,7 @@ def write_desktop_bundle_scripts(
     binary_name: str,
     runtime_env: Dict[str, str],
     frontend_binary_name: str = "",
+    launcher_binary_name: str = "",
 ) -> None:
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
@@ -2946,7 +2947,22 @@ def write_desktop_bundle_scripts(
             "Write-Output $p"
         )
 
-        app_bat = (
+        if launcher_binary_name:
+            app_bat = (
+                "@echo off\n"
+                "setlocal\n"
+                "set SCRIPT_DIR=%~dp0\n"
+                f"set {PLUGIN_PACKAGE_EXCLUDES_ENV}={','.join(get_third_party_exclude_names())}\n"
+                f"if exist \"%SCRIPT_DIR%bin\\{launcher_binary_name}.exe\" (\n"
+                f"  \"%SCRIPT_DIR%bin\\{launcher_binary_name}.exe\" --root \"%SCRIPT_DIR%\" --mode packaged "
+                f"--backend-exe \"{binary_name}.exe\" --frontend-exe \"{frontend_binary_name}.exe\" --open-browser\n"
+                "  exit /b %ERRORLEVEL%\n"
+                ")\n"
+                "call \"%SCRIPT_DIR%scripts\\start_backend.bat\"\n"
+                "start \"UltimateWeb-Frontend\" \"%SCRIPT_DIR%scripts\\start_frontend.bat\"\n"
+            )
+        else:
+            app_bat = (
             "@echo off\n"
             "setlocal\n"
             "set SCRIPT_DIR=%~dp0\n"
@@ -2957,10 +2973,24 @@ def write_desktop_bundle_scripts(
             "start \"UltimateWeb-Frontend\" \"%SCRIPT_DIR%start_frontend.bat\"\n"
             "timeout /t 2 >nul\n"
             "start \"\" \"https://127.0.0.1:%APP_PORT%/\"\n"
-        )
+            )
         write_text(bundle_dir / "start_app.bat", app_bat)
 
-        app_ps1 = (
+        if launcher_binary_name:
+            launcher_app_ps1 = (
+                "$ErrorActionPreference = 'Stop'\n"
+                "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+                f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{','.join(get_third_party_exclude_names())}\"\n"
+                f"$launcherPath = Join-Path $scriptDir 'bin/{launcher_binary_name}.exe'\n"
+                "if (Test-Path -LiteralPath $launcherPath) {\n"
+                f"    & $launcherPath --root $scriptDir --mode packaged --backend-exe '{binary_name}.exe' --frontend-exe '{frontend_binary_name}.exe' --open-browser\n"
+                "    exit $LASTEXITCODE\n"
+                "}\n"
+                "& (Join-Path $scriptDir 'scripts/start_backend.ps1')\n"
+                "Start-Process -FilePath (Join-Path $scriptDir 'scripts/start_frontend.ps1') -WindowStyle Normal\n"
+            )
+        else:
+            frontend_app_ps1 = (
             "$ErrorActionPreference = 'Stop'\n"
             "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
             "$appPort = 5173\n"
@@ -2997,8 +3027,8 @@ def write_desktop_bundle_scripts(
             "Start-Process -FilePath (Join-Path $scriptDir 'start_frontend.ps1') -WindowStyle Normal\n"
             "Start-Sleep -Seconds 2\n"
             "Start-Process (\"https://127.0.0.1:{0}/\" -f $appPort)\n"
-        )
-        write_text(bundle_dir / "start_app.ps1", app_ps1)
+            )
+        write_text(bundle_dir / "start_app.ps1", launcher_app_ps1 if launcher_binary_name else frontend_app_ps1)
     else:
         app_bat = (
         "@echo off\n"
@@ -3048,6 +3078,8 @@ def write_desktop_bundle_scripts(
         "Start-Process (\"http://127.0.0.1:{0}/\" -f $appPort)\n"
     )
     write_text(bundle_dir / "start_app.ps1", app_ps1)
+    if has_frontend:
+        write_text(bundle_dir / "start_app.ps1", launcher_app_ps1 if launcher_binary_name else frontend_app_ps1)
 
 
 def tidy_desktop_bundle_launchers(bundle_dir: Path) -> None:
@@ -3104,14 +3136,16 @@ def tidy_desktop_bundle_launchers(bundle_dir: Path) -> None:
         "@echo off\n"
         "setlocal\n"
         "set SCRIPT_DIR=%~dp0\n"
-        "call \"%SCRIPT_DIR%scripts\\start_app.bat\"\n",
+        "start \"\" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%SCRIPT_DIR%scripts\\start_app.ps1\"\n"
+        "exit /b 0\n",
     )
     write_text(
         bundle_dir / "start_project.ps1",
         "$ErrorActionPreference = 'Stop'\n"
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
-        "& (Join-Path $scriptDir 'scripts/start_app.ps1')\n"
-        "exit $LASTEXITCODE\n",
+        "$appScript = Join-Path $scriptDir 'scripts/start_app.ps1'\n"
+        "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $appScript) -WindowStyle Hidden\n"
+        "exit 0\n",
     )
 
 
@@ -3124,6 +3158,7 @@ def prepare_desktop_release_bundle(
     plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
     frontend_binary_name: str = "",
     frontend_entry: str = "",
+    launcher_binary_name: str = "",
 ) -> Path:
     plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     bundle_dir = target_out_dir / "release_bundle"
@@ -3213,6 +3248,7 @@ def prepare_desktop_release_bundle(
         binary_name=binary_name,
         runtime_env=runtime_env,
         frontend_binary_name=frontend_binary_name,
+        launcher_binary_name=launcher_binary_name,
     )
     tidy_desktop_bundle_launchers(bundle_dir)
     return bundle_dir
@@ -3948,6 +3984,7 @@ def package_pyinstaller(
     frontend_dist_dir = str(packager_cfg.get("frontend_dist_dir", "comic_frontend_dist")).strip()
     frontend_binary_name = str(packager_cfg.get("frontend_binary_name", "")).strip()
     frontend_entry = str(packager_cfg.get("frontend_entry", "")).strip()
+    launcher_binary_name = str(packager_cfg.get("launcher_binary_name", "")).strip() if target == "windows" else ""
 
     cmd = write_pyinstaller_scripts(
         out_dir=target_out_dir,
@@ -3967,6 +4004,7 @@ def package_pyinstaller(
         plugin_package_mode=plugin_mode,
         frontend_binary_name=frontend_binary_name,
         frontend_entry=frontend_entry,
+        launcher_binary_name=launcher_binary_name,
     )
     staged_backend = staged_target_dir / "comic_backend"
     external_plugin_roots = collect_desktop_dependency_plugin_roots(staged_backend)
@@ -4064,6 +4102,35 @@ def package_pyinstaller(
             shutil.copy2(fe_built_binary, bundle_dir / "bin" / fe_built_binary.name)
             frontend_built = True
 
+    # The Windows control center is intentionally separate from the backend
+    # and frontend binaries so Linux and Android keep their existing launchers.
+    launcher_built = False
+    if launcher_binary_name:
+        launcher_out_dir = target_out_dir / "launcher_pyinstaller"
+        launcher_cmd = _write_launcher_pyinstaller_script(
+            out_dir=launcher_out_dir,
+            target=target,
+            binary_name=launcher_binary_name,
+        )
+        launcher_code, launcher_output = run_cmd(launcher_cmd, cwd=ROOT_DIR, env=runtime_env)
+        launcher_build_log = target_out_dir / "pyinstaller_launcher.log"
+        write_text(launcher_build_log, launcher_output)
+        if launcher_code != 0:
+            return PackageResult(
+                target=target,
+                status="failed",
+                message=f"launcher pyinstaller failed with code {launcher_code}; see {launcher_build_log}",
+                output_dir=str(target_out_dir),
+                command=launcher_cmd,
+            )
+        launcher_dist_dir = launcher_out_dir / "dist"
+        launcher_built_binary = launcher_dist_dir / launcher_binary_name
+        if target == "windows":
+            launcher_built_binary = launcher_built_binary.with_suffix(".exe")
+        if launcher_built_binary.exists():
+            shutil.copy2(launcher_built_binary, bundle_dir / "bin" / launcher_built_binary.name)
+            launcher_built = True
+
     # Copy frontend dist if available
     frontend_source_dir = staged_target_dir / frontend_dist_dir
     if frontend_source_dir.exists():
@@ -4075,6 +4142,8 @@ def package_pyinstaller(
     status_msg = f"pyinstaller build completed and desktop release bundle updated (plugin_package_mode={plugin_mode}"
     if frontend_binary_name:
         status_msg += f"; frontend={'built' if frontend_built else 'failed'}"
+    if launcher_binary_name:
+        status_msg += f"; launcher={'built' if launcher_built else 'failed'}"
     status_msg += ")"
 
     return PackageResult(
@@ -4084,6 +4153,44 @@ def package_pyinstaller(
         output_dir=str(target_out_dir),
         command=cmd,
     )
+
+
+def _write_launcher_pyinstaller_script(
+    out_dir: Path,
+    target: str,
+    binary_name: str,
+) -> List[str]:
+    """Generate the Windows-only GUI launcher executable."""
+    dist_dir = out_dir / "dist"
+    work_dir = out_dir / "build"
+    spec_dir = out_dir / "spec"
+    source = ROOT_DIR / "scripts" / "windows_launcher.py"
+    cmd = [
+        "python",
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
+        "--windowed",
+        "--name",
+        binary_name,
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
+        "--specpath",
+        str(spec_dir),
+        str(source),
+    ]
+    ps1 = (
+        "$ErrorActionPreference = 'Stop'\n"
+        + "Set-Location '" + str(ROOT_DIR).replace("'", "''") + "'\n"
+        + " ".join([f'\"{part}\"' if " " in part else part for part in cmd])
+        + "\n"
+    )
+    write_text(out_dir / "run_pyinstaller.ps1", ps1)
+    return cmd
 
 
 def _write_frontend_pyinstaller_script(

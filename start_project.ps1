@@ -1,7 +1,7 @@
 # 启动项目脚本
 # 检测并安装依赖，然后停止已运行的服务，最后启动后端和前端服务
 
-$rootDir = $PWD.Path
+$rootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $scriptsDir = Join-Path $rootDir "scripts"
 
 Set-Location $rootDir
@@ -92,24 +92,13 @@ Write-Host "Stopping existing services..." -ForegroundColor Cyan
 Start-Sleep -Seconds 2
 
 Write-Host "" -ForegroundColor Green
-Write-Host "Starting backend service..." -ForegroundColor Cyan
-$backendPath = Join-Path $rootDir "comic_backend"
-Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$backendPath`" && python app.py"
-
-Write-Host "Waiting for backend service to start..." -ForegroundColor Cyan
-Start-Sleep -Seconds 5
-
-Write-Host "Starting frontend service..." -ForegroundColor Cyan
-$frontendPath = Join-Path $rootDir "comic_frontend"
-Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$frontendPath`" && npm run dev"
-
-Write-Host "Waiting for frontend service to start..." -ForegroundColor Cyan
-Start-Sleep -Seconds 8
-
-Write-Host "" -ForegroundColor Green
-Write-Host "=== Services Started ===" -ForegroundColor Green
-Write-Host "Backend: http://127.0.0.1:5000" -ForegroundColor Yellow
-Write-Host "Frontend: http://localhost:5173/" -ForegroundColor Yellow
-Write-Host "" -ForegroundColor Green
-Write-Host "To stop services, run: .\scripts\stop_services.ps1" -ForegroundColor Yellow
-Write-Host "To view status, run: .\scripts\view_status.ps1" -ForegroundColor Yellow
+Write-Host "Starting Windows control center..." -ForegroundColor Cyan
+$launcherPath = Join-Path $rootDir "scripts\windows_launcher.py"
+$launcherArgs = '"{0}" --root "{1}" --mode dev --open-browser' -f $launcherPath, $rootDir
+$pythonw = Get-Command "pythonw.exe" -ErrorAction SilentlyContinue
+if ($pythonw) {
+    Start-Process -FilePath $pythonw.Source -ArgumentList $launcherArgs -WorkingDirectory $rootDir -WindowStyle Hidden
+} else {
+    Start-Process -FilePath "python.exe" -ArgumentList $launcherArgs -WorkingDirectory $rootDir -WindowStyle Hidden
+}
+Write-Host "Control center started. Closing it will stop the backend and frontend." -ForegroundColor Green

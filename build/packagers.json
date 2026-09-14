@@ -9,7 +9,8 @@
       "frontend_dist_dir": "comic_frontend_dist",
       "frontend_serve_path": "/",
       "frontend_binary_name": "ultimate_frontend_windows",
-      "frontend_entry": "comic_frontend/frontend_server.py"
+      "frontend_entry": "comic_frontend/frontend_server.py",
+      "launcher_binary_name": "ultimate_launcher_windows"
     },
     "linux": {
       "type": "pyinstaller",

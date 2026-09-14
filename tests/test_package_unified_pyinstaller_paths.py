@@ -576,6 +576,71 @@ def test_desktop_bundle_scripts_lock_backend_to_loopback_when_frontend_proxy_exi
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_windows_control_center_launcher_is_the_packaged_entrypoint():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_windows_launcher_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bundle_dir = temp_dir / "bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        package_unified.write_desktop_bundle_scripts(
+            bundle_dir=bundle_dir,
+            binary_name="ultimate_backend_windows",
+            frontend_binary_name="ultimate_frontend_windows",
+            launcher_binary_name="ultimate_launcher_windows",
+            runtime_env={
+                "BACKEND_RUNTIME_PROFILE": "full",
+                "BACKEND_ENABLE_THIRD_PARTY": "true",
+            },
+        )
+
+        bat_text = (bundle_dir / "start_app.bat").read_text(encoding="utf-8")
+        ps1_text = (bundle_dir / "start_app.ps1").read_text(encoding="utf-8")
+
+        assert "ultimate_launcher_windows.exe" in bat_text
+        assert "--mode packaged" in bat_text
+        assert "ultimate_launcher_windows.exe" in ps1_text
+        assert "--mode packaged" in ps1_text
+        assert "Start-Process -FilePath (Join-Path $scriptDir 'start_backend.ps1')" not in ps1_text
+
+        package_unified.tidy_desktop_bundle_launchers(bundle_dir)
+        start_bat = (bundle_dir / "start_project.bat").read_text(encoding="utf-8")
+        start_ps1 = (bundle_dir / "start_project.ps1").read_text(encoding="utf-8")
+        assert "-WindowStyle Hidden" in start_bat
+        assert "scripts\\start_app.ps1" in start_bat
+        assert "-WindowStyle Hidden" in start_ps1
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_desktop_frontend_without_windows_launcher_keeps_existing_start_app_script():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"bundle_non_windows_launcher_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        bundle_dir = temp_dir / "bundle"
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        package_unified.write_desktop_bundle_scripts(
+            bundle_dir=bundle_dir,
+            binary_name="ultimate_backend_linux",
+            frontend_binary_name="ultimate_frontend_linux",
+            runtime_env={"BACKEND_RUNTIME_PROFILE": "full"},
+        )
+
+        ps1_text = (bundle_dir / "start_app.ps1").read_text(encoding="utf-8")
+        assert "ultimate_frontend_linux" not in ps1_text
+        assert "start_backend.ps1" in ps1_text
+        assert "$appPort = 5173" in ps1_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_prepare_desktop_release_bundle_copies_ffmpeg_runtime_tool_and_launchers_add_path(monkeypatch):
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
