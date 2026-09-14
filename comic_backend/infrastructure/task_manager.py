@@ -223,6 +223,7 @@ class TaskManager:
     
     def _process_task(self, task: ImportTask):
         """处理单个任务"""
+        started_at = time.monotonic()
         app_logger.info(f"开始处理任务: {task.task_id}, 类型: {task.content_type}, 标题: {task.title}")
         
         # 更新任务状态
@@ -234,6 +235,13 @@ class TaskManager:
         
         try:
             # 执行导入
+            app_logger.info(
+                "[task] execute task_id=%s type=%s content_type=%s item_id=%s",
+                task.task_id,
+                task.import_type,
+                task.content_type,
+                task.comic_id or "",
+            )
             result = self._execute_import(task)
 
             if result.get('cancelled'):
@@ -241,27 +249,44 @@ class TaskManager:
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.result = result
                 task.message = result.get('message', '任务已取消')
-                app_logger.info(f"任务取消完成: {task.task_id}")
+                app_logger.info("任务取消完成: task_id=%s elapsed_ms=%.3f", task.task_id, (time.monotonic() - started_at) * 1000)
             elif result.get('success'):
                 task.status = TaskStatus.COMPLETED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.progress = 100
                 task.message = result.get('message', "任务完成" if self._is_batch_task_type(task.import_type) else "导入完成")
                 task.result = result
-                app_logger.info(f"任务完成: {task.task_id}")
+                app_logger.info(
+                    "任务完成: task_id=%s elapsed_ms=%.3f success=%s failed=%s skipped=%s",
+                    task.task_id,
+                    (time.monotonic() - started_at) * 1000,
+                    (result or {}).get("success_count", "-"),
+                    (result or {}).get("failed_count", "-"),
+                    (result or {}).get("skipped_count", "-"),
+                )
             else:
                 task.status = TaskStatus.FAILED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.error_msg = result.get('error', '导入失败')
                 task.message = f"{'任务失败' if self._is_batch_task_type(task.import_type) else '导入失败'}: {task.error_msg}"
-                error_logger.error(f"任务失败: {task.task_id}, 错误: {task.error_msg}")
+                error_logger.error(
+                    "任务失败: task_id=%s elapsed_ms=%.3f error=%s",
+                    task.task_id,
+                    (time.monotonic() - started_at) * 1000,
+                    task.error_msg,
+                )
                 
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
             task.error_msg = str(e)
             task.message = f"导入异常: {str(e)}"
-            error_logger.error(f"任务异常: {task.task_id}, 错误: {e}")
+            error_logger.exception(
+                "任务异常: task_id=%s elapsed_ms=%.3f error=%s",
+                task.task_id,
+                (time.monotonic() - started_at) * 1000,
+                e,
+            )
         
         self._save_tasks()
     

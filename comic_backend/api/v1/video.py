@@ -1054,10 +1054,16 @@ def import_video():
         data = request.json
         if not data:
             return error_response(400, "缺少参数")
+        app_logger.info(
+            "[video-import] start platform=%s target=%s",
+            str(data.get("platform") or "").strip() or "local",
+            str(data.get("target") or "home").strip(),
+        )
         
         result = video_service.import_video(data)
         if result.success:
             video_id = result.data.get("id") if isinstance(result.data, dict) else None
+            app_logger.info("[video-import] success video_id=%s", video_id or "")
             if video_id:
                 _schedule_video_asset_cache(
                     video_id=video_id,
@@ -1080,7 +1086,7 @@ def import_video():
         else:
             return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"导入视频失败: {e}")
+        error_logger.exception(f"导入视频失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -1092,10 +1098,13 @@ def batch_import():
         
         if not videos:
             return error_response(400, "缺少视频数据")
+
+        app_logger.info("[video-import] batch start count=%s", len(videos))
         
         result = video_service.batch_import_videos(videos)
         if result.success:
             imported_ids = result.data.get("imported_ids", []) if isinstance(result.data, dict) else []
+            app_logger.info("[video-import] batch success requested=%s imported=%s", len(videos), len(imported_ids))
             if imported_ids:
                 imported_id_set = {str(item_id) for item_id in imported_ids if item_id}
                 for video_item in videos:
@@ -1126,7 +1135,7 @@ def batch_import():
         else:
             return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"批量导入失败: {e}")
+        error_logger.exception(f"批量导入失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -3772,6 +3781,7 @@ def get_video_recommendation_play_urls(video_id):
     try:
         playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
         remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
+        app_logger.info("[video-play] start scope=recommendation video_id=%s source=%s provider=%s", video_id, playback_source, remote_provider or "auto")
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
@@ -3790,11 +3800,13 @@ def get_video_recommendation_play_urls(video_id):
 
         remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
         if remote_result.success:
+            app_logger.info("[video-play] success scope=recommendation video_id=%s provider=%s", video_id, remote_provider or "auto")
             return success_response(remote_result.data)
+        app_logger.warning("[video-play] unavailable scope=recommendation video_id=%s reason=%s", video_id, remote_result.message)
         return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
-        error_logger.error(f"获取播放链接失败: {e}")
+        error_logger.exception("获取推荐视频播放链接失败: video_id=%s error=%s", video_id, e)
         return error_response(500, "服务器内部错误")
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
@@ -3804,6 +3816,7 @@ def get_video_play_urls(video_id):
         playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
         remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
         platform = str(request.args.get("platform") or "").strip()
+        app_logger.info("[video-play] start scope=local_or_remote video_id=%s source=%s provider=%s platform=%s", video_id, playback_source, remote_provider or "auto", platform or "local")
         result = video_service.get_video_detail(video_id)
         if not result.success or not result.data:
             # 如果本地找不到视频但有 platform 参数，尝试第三方渠道
@@ -3823,6 +3836,7 @@ def get_video_play_urls(video_id):
         if playback_source == "local":
             local_sources = _build_local_video_sources(video)
             if local_sources:
+                app_logger.info("[video-play] success scope=local video_id=%s episodes=%s", video_id, len(local_sources))
                 local_provider_groups = [
                     _build_provider_group(
                         key="local",
@@ -3847,11 +3861,14 @@ def get_video_play_urls(video_id):
         if playback_source == "remote":
             remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
             if remote_result.success:
+                app_logger.info("[video-play] success scope=remote video_id=%s provider=%s", video_id, remote_provider or "auto")
                 return success_response(remote_result.data)
+            app_logger.warning("[video-play] unavailable scope=remote video_id=%s reason=%s", video_id, remote_result.message)
             return error_response(400, remote_result.message or "远程播放源不可用")
 
         local_sources = _build_local_video_sources(video)
         if local_sources:
+            app_logger.info("[video-play] success scope=local_fallback video_id=%s episodes=%s", video_id, len(local_sources))
             local_provider_groups = [
                 _build_provider_group(
                     key="local",
@@ -3883,11 +3900,13 @@ def get_video_play_urls(video_id):
 
         remote_result = _resolve_remote_video_sources(video_id, video, remote_provider="")
         if remote_result.success:
+            app_logger.info("[video-play] success scope=third_party video_id=%s provider=%s", video_id, remote_provider or "auto")
             return success_response(remote_result.data)
+        app_logger.warning("[video-play] unavailable scope=third_party video_id=%s reason=%s", video_id, remote_result.message)
         return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
-        error_logger.error(f"获取播放链接失败: {e}")
+        error_logger.exception("获取视频播放链接失败: video_id=%s error=%s", video_id, e)
         return error_response(500, "服务器内部错误")
 
 

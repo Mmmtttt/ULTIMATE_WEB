@@ -1584,6 +1584,12 @@ def import_online():
         import_type = data.get('import_type')
         target = data.get('target', 'home')
         requested_platform = str(data.get('platform', '') or '').strip() or _get_default_platform_name("comic")
+        app_logger.info(
+            "[comic-import] start type=%s target=%s platform=%s",
+            import_type,
+            target,
+            requested_platform,
+        )
         
         if import_type not in ['by_id', 'by_search', 'by_favorite']:
             return error_response(400, "无效的导入方式")
@@ -1948,6 +1954,8 @@ def organize_database():
 @comic_bp.route('/cover/repair', methods=['POST'])
 def repair_comic_cover():
     """Repair cover for one local or preview-library comic."""
+    comic_id = ""
+    source = "local"
     try:
         data = request.json or {}
         comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
@@ -1955,12 +1963,21 @@ def repair_comic_cover():
         if not comic_id:
             return error_response(400, "missing parameter: comic_id")
 
+        app_logger.info("[comic-cover-repair] start comic_id=%s source=%s", comic_id, source)
         result = comic_service.repair_single_cover(comic_id, source=source)
         if result.success:
+            app_logger.info(
+                "[comic-cover-repair] success comic_id=%s source=%s changed=%s downloaded=%s",
+                comic_id,
+                source,
+                bool((result.data or {}).get("changed")),
+                bool((result.data or {}).get("downloaded_cover")),
+            )
             return success_response(result.data, result.message)
+        app_logger.warning("[comic-cover-repair] rejected comic_id=%s source=%s reason=%s", comic_id, source, result.message)
         return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"repair comic cover api failed: {e}")
+        error_logger.exception("repair comic cover api failed: comic_id=%s source=%s error=%s", comic_id, source, e)
         return error_response(500, "internal server error")
 
 
@@ -2234,6 +2251,13 @@ def import_async():
             content_type=content_type,
             extra_data=extra_data
         )
+        app_logger.info(
+            "[comic-import] async task created task_id=%s type=%s target=%s platform=%s",
+            task_id,
+            import_type,
+            target,
+            platform_name,
+        )
         
         app_logger.info(
             f"创建异步导入任务: {task_id}, 内容类型={content_type}, 平台={platform_name}, 类型={import_type}, 目标={target}"
@@ -2246,7 +2270,7 @@ def import_async():
         }, "导入任务已创建，请通过任务ID查询进度")
         
     except Exception as e:
-        error_logger.error(f"创建异步导入任务失败: {e}")
+        error_logger.exception(f"创建异步导入任务失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
