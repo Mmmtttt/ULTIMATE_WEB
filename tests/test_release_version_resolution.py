@@ -48,22 +48,21 @@ def test_release_workflow_uses_shared_versioning_script():
     assert "python scripts/versioning.py" in workflow_text
 
 
-def test_release_workflow_exposes_plugin_package_mode_and_tags_default_to_bundled():
+def test_release_workflow_uses_external_plugin_packaging_only():
     workflow_path = ROOT_DIR / ".github" / "workflows" / "release-three-platforms.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
 
-    assert "plugin_package_mode:" in workflow_text
-    assert "default: bundled" in workflow_text
-    assert "RAW_MODE=\"${{ github.event.inputs.plugin_package_mode || '' }}\"" in workflow_text
-    assert "RAW_MODE=\"bundled\"" in workflow_text
-    assert "--plugin-package-mode \"$PLUGIN_PACKAGE_MODE\"" in workflow_text
+    assert "plugin_package_mode:" not in workflow_text
+    assert "bundled" not in workflow_text
+    assert "--plugin-package-mode" not in workflow_text
 
 
 def test_release_script_maps_plugin_package_mode_to_android_mode():
     release_script = (SCRIPTS_DIR / "release_unified.py").read_text(encoding="utf-8")
 
     assert "--android-third-party-mode" in release_script
-    assert '"external" if args.plugin_package_mode == "external" else "supported"' in release_script
+    assert '"external" if args.plugin_package_mode == "external" else "supported"' not in release_script
+    assert '"--android-third-party-mode",\n        "external"' in release_script
 
 
 def test_test_gate_workflow_checks_out_recursive_submodules():

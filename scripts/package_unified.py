@@ -45,11 +45,7 @@ HOST_OVERLAY_FILENAME = "ultimate-host.json"
 MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
 PLUGIN_PACKAGE_MODE_EXTERNAL = "external"
-PLUGIN_PACKAGE_MODE_BUNDLED = "bundled"
-PLUGIN_PACKAGE_MODES = (
-    PLUGIN_PACKAGE_MODE_EXTERNAL,
-    PLUGIN_PACKAGE_MODE_BUNDLED,
-)
+PLUGIN_PACKAGE_MODES = (PLUGIN_PACKAGE_MODE_EXTERNAL,)
 DEFAULT_PLUGIN_PACKAGE_MODE = PLUGIN_PACKAGE_MODE_EXTERNAL
 PLUGIN_PACKAGE_EXCLUDES_ENV = "ULTIMATE_PACKAGE_THIRD_PARTY_EXCLUDES"
 PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
@@ -170,9 +166,6 @@ def normalize_plugin_package_mode(raw: str, default: str = DEFAULT_PLUGIN_PACKAG
         "external_plugins": PLUGIN_PACKAGE_MODE_EXTERNAL,
         "hotplug": PLUGIN_PACKAGE_MODE_EXTERNAL,
         "dynamic": PLUGIN_PACKAGE_MODE_EXTERNAL,
-        "compiled": PLUGIN_PACKAGE_MODE_BUNDLED,
-        "embedded": PLUGIN_PACKAGE_MODE_BUNDLED,
-        "builtin": PLUGIN_PACKAGE_MODE_BUNDLED,
     }
     mode = aliases.get(mode, mode)
     if mode not in PLUGIN_PACKAGE_MODES:
@@ -3169,22 +3162,13 @@ def prepare_desktop_release_bundle(
 
     plugins_dir = bundle_dir / "plugins"
     plugins_dir.mkdir(parents=True, exist_ok=True)
-    if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL:
-        external_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
-        remove_default_plugins_from_bundle_backend_source(bundle_dir, external_plugin_roots)
-        write_text(
-            plugins_dir / "README.md",
-            "Drop local protocol plugin zip packages or extracted plugin directories here. "
-            "Default repository plugin code is not bundled in external mode.\n",
-        )
-    else:
-        write_text(
-            plugins_dir / "README.md",
-            "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
-        )
-        dependency_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
-        project_plugin_roots = copy_project_plugins_to_bundle(bundle_dir)
-        external_plugin_roots = dependency_plugin_roots + project_plugin_roots
+    external_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
+    remove_default_plugins_from_bundle_backend_source(bundle_dir, external_plugin_roots)
+    write_text(
+        plugins_dir / "README.md",
+        "Drop local protocol plugin zip packages or extracted plugin directories here. "
+        "Default repository plugin code is installed as an external extension.\n",
+    )
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
@@ -3196,18 +3180,15 @@ def prepare_desktop_release_bundle(
         f"- target: `{target}`",
         "- `backend_source/`: fallback Python source runtime",
         "- `frontend_dist/`: frontend static assets",
-        f"- plugin package mode: `{plugin_mode}`",
+        "- plugin package mode: `external` (the only supported desktop mode)",
         "- `plugins/`: external hot-pluggable protocol plugins",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
     ]
     if has_frontend:
         notes.insert(3, "- `frontend_source/`: fallback frontend server source")
         notes.append("- `bin/` also contains frontend server executable")
-    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
-        notes.append("- default repository plugins are bundled into the executable; `plugins/` is reserved for extra plugins")
-    else:
-        notes.append("- default repository plugin dependencies are prebuilt under `runtime_deps/`; plugin code is installed locally into `plugins/`")
-        notes.append("- local extension packages must be installed from the third-party config page, then restart the app")
+    notes.append("- default repository plugin dependencies are prebuilt under `runtime_deps/`; plugin code is installed locally into `plugins/`")
+    notes.append("- local extension packages must be installed from the third-party config page, then restart the app")
     if archive_tools_dir is not None:
         notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
     if ffmpeg_tools_dir is not None:
@@ -3433,24 +3414,6 @@ def remove_default_plugins_from_bundle_backend_source(bundle_dir: Path, plugin_r
         target = backend_third_party / plugin_root.name
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-
-
-def copy_project_plugins_to_bundle(bundle_dir: Path, project_plugins_dir: Optional[Path] = None) -> List[Path]:
-    plugin_roots = discover_project_plugin_roots(project_plugins_dir)
-    if not plugin_roots:
-        return []
-
-    plugins_dir = bundle_dir / "plugins"
-    plugins_dir.mkdir(parents=True, exist_ok=True)
-
-    copied_roots: List[Path] = []
-    for plugin_root in plugin_roots:
-        target_root = plugins_dir / plugin_root.name
-        if target_root.exists():
-            shutil.rmtree(target_root)
-        shutil.copytree(plugin_root, target_root)
-        copied_roots.append(target_root)
-    return copied_roots
 
 
 def _serialize_external_plugin_dependency_state(metadata: Dict[str, Any]) -> str:
@@ -3928,25 +3891,6 @@ def write_pyinstaller_scripts(
     ]
     append_repeated_cli_option(cmd, "--collect-submodules", DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES)
     append_repeated_cli_option(cmd, "--hidden-import", DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS)
-    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
-        plugin_metadata = collect_pyinstaller_plugin_metadata(staged_backend)
-        append_repeated_cli_option(cmd, "--collect-all", list(plugin_metadata.get("collect_all") or []))
-        append_repeated_cli_option(cmd, "--hidden-import", list(plugin_metadata.get("hidden_imports") or []))
-        for plugin_root in plugin_metadata.get("plugin_roots") or []:
-            plugin_path = Path(str(plugin_root))
-            cmd.extend(
-                [
-                    "--add-data",
-                    f"{plugin_path}{sep}comic_backend/third_party/{plugin_path.name}",
-                ]
-            )
-        for plugin_root in discover_project_plugin_roots():
-            cmd.extend(
-                [
-                    "--add-data",
-                    f"{plugin_root}{sep}plugins/{plugin_root.name}",
-                ]
-            )
     cmd.append(entry)
     
     if server_config_src.exists():
@@ -4025,7 +3969,7 @@ def package_pyinstaller(
         frontend_entry=frontend_entry,
     )
     staged_backend = staged_target_dir / "comic_backend"
-    external_plugin_roots = collect_desktop_dependency_plugin_roots(staged_backend) if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL else []
+    external_plugin_roots = collect_desktop_dependency_plugin_roots(staged_backend)
 
     if not execute:
         extra_msg = ""
@@ -4585,7 +4529,7 @@ def parse_args() -> argparse.Namespace:
         "--plugin-package-mode",
         default=os.environ.get("ULTIMATE_PLUGIN_PACKAGE_MODE", DEFAULT_PLUGIN_PACKAGE_MODE),
         choices=PLUGIN_PACKAGE_MODES,
-        help="Desktop plugin packaging mode: external keeps default plugins outside the executable; bundled compiles default plugins into the executable while keeping external plugin discovery enabled.",
+        help="Desktop plugin packaging mode. External extensions are the only supported mode.",
     )
     parser.add_argument(
         "--third-party-excludes",

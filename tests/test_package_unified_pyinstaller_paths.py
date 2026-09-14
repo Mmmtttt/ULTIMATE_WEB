@@ -184,7 +184,7 @@ def test_desktop_plugin_runtime_hidden_imports_are_importable_stdlib_modules():
         importlib.import_module(module_name)
 
 
-def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_keeps_hotplug_root():
+def test_write_pyinstaller_scripts_external_mode_keeps_plugins_outside_executable():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
@@ -226,20 +226,20 @@ def test_write_pyinstaller_scripts_bundled_mode_compiles_default_plugins_and_kee
                 "BACKEND_RUNTIME_PROFILE": "full",
                 "BACKEND_ENABLE_THIRD_PARTY": "true",
             },
-            plugin_package_mode="bundled",
+            plugin_package_mode="external",
         )
 
         collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
         hidden_import_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--hidden-import"]
         add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
 
-        assert "common" in collect_all_args
-        assert "Crypto" in collect_all_args
-        assert "curl_cffi" in collect_all_args
-        assert "cffi" in collect_all_args
-        assert "curl_cffi._wrapper" in hidden_import_args
-        assert any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
-        assert any("comic_backend/third_party/plugin_beta" in item for item in add_data_args)
+        assert "common" not in collect_all_args
+        assert "Crypto" not in collect_all_args
+        assert "curl_cffi" not in collect_all_args
+        assert "cffi" not in collect_all_args
+        assert "curl_cffi._wrapper" not in hidden_import_args
+        assert not any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
+        assert not any("comic_backend/third_party/plugin_beta" in item for item in add_data_args)
         assert cmd[-1] == "comic_backend/app.py"
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -337,18 +337,18 @@ def test_third_party_excludes_skip_bundle_source_external_copy_and_pyinstaller_a
             binary_name="ultimate_backend_test",
             entry="comic_backend/app.py",
             runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
-            plugin_package_mode="bundled",
+            plugin_package_mode="external",
         )
         collect_all_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--collect-all"]
         add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
         assert "curl_cffi" not in collect_all_args
         assert not any("comic_backend/third_party/plugin_beta" in item for item in add_data_args)
-        assert any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
+        assert not any("comic_backend/third_party/plugin_alpha" in item for item in add_data_args)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def test_bundled_pyinstaller_adds_project_plugin_host_overlays(monkeypatch):
+def test_external_pyinstaller_does_not_embed_project_plugin_host_overlays(monkeypatch):
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
@@ -376,17 +376,17 @@ def test_bundled_pyinstaller_adds_project_plugin_host_overlays(monkeypatch):
             binary_name="ultimate_backend_test",
             entry="comic_backend/app.py",
             runtime_env={"BACKEND_RUNTIME_PROFILE": "full", "BACKEND_ENABLE_THIRD_PARTY": "true"},
-            plugin_package_mode="bundled",
+            plugin_package_mode="external",
         )
 
         add_data_args = [cmd[index + 1] for index, item in enumerate(cmd[:-1]) if item == "--add-data"]
-        assert any("plugins/normal_plugin" in item for item in add_data_args)
-        assert any("plugins/host_overlay_only" in item for item in add_data_args)
+        assert not any("plugins/normal_plugin" in item for item in add_data_args)
+        assert not any("plugins/host_overlay_only" in item for item in add_data_args)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_source_and_reserves_plugin_root():
+def test_prepare_desktop_release_bundle_external_mode_moves_defaults_to_extension_root():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
@@ -417,18 +417,18 @@ def test_prepare_desktop_release_bundle_bundled_mode_keeps_defaults_in_backend_s
                 "BACKEND_RUNTIME_PROFILE": "full",
                 "BACKEND_ENABLE_THIRD_PARTY": "true",
             },
-            plugin_package_mode="bundled",
+            plugin_package_mode="external",
         )
 
-        assert (bundle_dir / "backend_source" / "third_party" / "plugin_alpha").exists()
+        assert not (bundle_dir / "backend_source" / "third_party" / "plugin_alpha").exists()
         assert not (bundle_dir / "plugins" / "plugin_alpha").exists()
         assert (bundle_dir / "plugins" / "README.md").exists()
         dep_manifest = bundle_dir / "runtime_deps" / "dependency_pool_manifest.json"
         assert dep_manifest.exists()
         assert "commonx>=0.6.38" in dep_manifest.read_text(encoding="utf-8")
         readme_text = (bundle_dir / "README.md").read_text(encoding="utf-8")
-        assert "plugin package mode: `bundled`" in readme_text
-        assert "additional protocol plugin directories" in (bundle_dir / "plugins" / "README.md").read_text(encoding="utf-8")
+        assert "plugin package mode: `external`" in readme_text
+        assert "external extension" in (bundle_dir / "plugins" / "README.md").read_text(encoding="utf-8")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
