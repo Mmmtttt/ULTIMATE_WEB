@@ -443,7 +443,11 @@ async function loadMore() {
       const nextPage = currentPage.value + 1
       const res = await videoStore.thirdPartySearch(normalizedKeyword, platform, nextPage, 40)
       if (res.results) {
-        searchStore.appendResults(res.results, res.page, res.has_more, res.platform_info)
+        searchStore.appendResults(res.results, res.page, res.has_more, {
+          platform: res.platform || 'all',
+          page: res.page || nextPage,
+          total_pages: res.total_pages || 1,
+        })
       }
       return
     }
