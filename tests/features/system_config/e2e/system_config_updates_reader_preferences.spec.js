@@ -11,7 +11,7 @@ test("system config updates reader preferences including single-page mode", asyn
   await page.goto("/config");
   await expect(page).toHaveURL(/\/config$/);
 
-  await page.getByText("上下翻页").click();
+  await page.locator(".select-row", { hasText: "默认翻页模式" }).getByText("上下翻页", { exact: true }).click();
   // 背景色改为下拉选择器，需要先点击打开
   await page.locator(".select-row", { hasText: "默认背景色" }).click();
   await page.getByText("深色背景").click();
