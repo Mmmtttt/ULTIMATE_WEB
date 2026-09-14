@@ -4165,6 +4165,8 @@ def _write_launcher_pyinstaller_script(
     work_dir = out_dir / "build"
     spec_dir = out_dir / "spec"
     source = ROOT_DIR / "scripts" / "windows_launcher.py"
+    brand_image = ROOT_DIR / "comic_frontend" / "public" / "vite.jpg"
+    sep = ";" if target == "windows" else ":"
     cmd = [
         "python",
         "-m",
@@ -4181,6 +4183,12 @@ def _write_launcher_pyinstaller_script(
         str(work_dir),
         "--specpath",
         str(spec_dir),
+        "--hidden-import",
+        "PIL.ImageTk",
+        "--collect-data",
+        "PIL",
+        "--add-data",
+        f"{brand_image}{sep}assets",
         str(source),
     ]
     ps1 = (

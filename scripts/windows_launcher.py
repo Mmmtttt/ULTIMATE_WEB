@@ -1,8 +1,8 @@
 """Small Windows-only desktop launcher for the development and packaged app.
 
 The launcher owns the backend and frontend processes so closing this window
-also stops the services started by it. It intentionally uses only the Python
-standard library so the Windows package does not need a desktop UI framework.
+also stops the services started by it. Its UI mirrors the web application's
+blue-gray surfaces and uses the web brand image when Pillow is available.
 """
 
 from __future__ import annotations
@@ -28,6 +28,24 @@ from typing import Dict, Iterable, Optional
 APP_TITLE = "Ultimate Web 控制中心"
 MAX_LOG_LINES = 4000
 STARTUP_TIMEOUT_SECONDS = 45
+
+COLORS = {
+    "page": "#eef2f8",
+    "surface": "#ffffff",
+    "surface_soft": "#f7faff",
+    "text": "#111b2d",
+    "text_muted": "#5e6d85",
+    "text_faint": "#8b98ad",
+    "brand": "#3f84ea",
+    "brand_hover": "#2b6fd5",
+    "brand_soft": "#eaf2ff",
+    "border": "#dce5f3",
+    "log": "#0a1220",
+    "log_text": "#bcd0e6",
+    "success": "#00a875",
+    "warning": "#f59a22",
+    "danger": "#de5b6d",
+}
 
 
 @dataclass
@@ -79,6 +97,18 @@ def _frontend_url(root: Path) -> str:
 def _service_port(url: str) -> tuple[str, int]:
     parsed = urllib.parse.urlparse(url)
     return parsed.hostname or "127.0.0.1", int(parsed.port or (443 if parsed.scheme == "https" else 80))
+
+
+def _brand_image_path(root: Path) -> Optional[Path]:
+    """Find the web brand image in both development and PyInstaller layouts."""
+    bundled_root = Path(getattr(sys, "_MEIPASS", ""))
+    candidates = (
+        root / "comic_frontend" / "public" / "vite.jpg",
+        root / "assets" / "vite.jpg",
+        bundled_root / "assets" / "vite.jpg",
+        Path(__file__).resolve().parents[1] / "comic_frontend" / "public" / "vite.jpg",
+    )
+    return next((path for path in candidates if path.is_file()), None)
 
 
 def _hidden_popen_kwargs() -> dict:
@@ -177,42 +207,85 @@ class LauncherApp:
         self.stopping = False
         self.browser_opened = False
         self.log_lines = 0
+        self.brand_image = None
+        self.status_indicators = {}
 
         self.window = tk.Tk()
         self.window.title(APP_TITLE)
-        self.window.geometry("900x620")
-        self.window.minsize(700, 480)
-        self.window.configure(bg="#0b1424")
+        self.window.geometry("940x660")
+        self.window.minsize(760, 520)
+        self.window.configure(bg=COLORS["page"])
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.status_vars = {spec.key: tk.StringVar(self.window, value="未启动") for spec in self.specs}
         self.status_labels = {}
 
+        image_path = _brand_image_path(self.root)
+        if image_path:
+            try:
+                from PIL import Image, ImageTk
+
+                image = Image.open(image_path).convert("RGB")
+                resampling = getattr(Image, "Resampling", Image)
+                image.thumbnail((52, 52), resampling.LANCZOS)
+                self.brand_image = ImageTk.PhotoImage(image, master=self.window)
+                self.window.iconphoto(True, self.brand_image)
+            except (ImportError, OSError, AttributeError):
+                # The launcher remains usable if an optional image dependency is absent.
+                self.brand_image = None
+
         style = ttk.Style(self.window)
         style.theme_use("clam")
-        style.configure("Launcher.TFrame", background="#0b1424")
-        style.configure("Panel.TFrame", background="#111e32")
-        style.configure("Title.TLabel", background="#0b1424", foreground="#f4f7fb", font=("Segoe UI", 18, "bold"))
-        style.configure("SubTitle.TLabel", background="#0b1424", foreground="#8ea3bd", font=("Segoe UI", 9))
-        style.configure("PanelTitle.TLabel", background="#111e32", foreground="#dbe7f5", font=("Segoe UI", 10, "bold"))
-        style.configure("Status.TLabel", background="#111e32", foreground="#8ea3bd", font=("Segoe UI", 9))
-        style.configure("Accent.TButton", background="#2f80ed", foreground="#ffffff", padding=(14, 8), borderwidth=0)
-        style.map("Accent.TButton", background=[("active", "#4c9aff")])
-        style.configure("Ghost.TButton", background="#1b2a43", foreground="#dbe7f5", padding=(12, 8), borderwidth=0)
-        style.map("Ghost.TButton", background=[("active", "#263b5b")])
+        style.configure("Launcher.TFrame", background=COLORS["page"])
+        style.configure("Header.TFrame", background=COLORS["surface"])
+        style.configure("Panel.TFrame", background=COLORS["surface"], borderwidth=1, relief="solid")
+        style.configure("Header.TLabel", background=COLORS["surface"])
+        style.configure("Title.TLabel", background=COLORS["surface"], foreground=COLORS["text"], font=("Microsoft YaHei UI", 18, "bold"))
+        style.configure("SubTitle.TLabel", background=COLORS["surface"], foreground=COLORS["text_muted"], font=("Microsoft YaHei UI", 9))
+        style.configure("Brand.TLabel", background=COLORS["surface"], foreground=COLORS["brand"], font=("Segoe UI", 10, "bold"))
+        style.configure("PanelTitle.TLabel", background=COLORS["surface"], foreground=COLORS["text"], font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("Status.TLabel", background=COLORS["surface"], foreground=COLORS["text_muted"], font=("Microsoft YaHei UI", 9))
+        style.configure("Address.TLabel", background=COLORS["surface"], foreground=COLORS["text_faint"], font=("Cascadia Mono", 8))
+        style.configure("Accent.TButton", background=COLORS["brand"], foreground="#ffffff", padding=(16, 9), borderwidth=0, font=("Microsoft YaHei UI", 9, "bold"))
+        style.map("Accent.TButton", background=[("active", COLORS["brand_hover"]), ("disabled", "#b8c9e6")])
+        style.configure("Ghost.TButton", background=COLORS["surface"], foreground=COLORS["text_muted"], padding=(13, 9), borderwidth=1, relief="solid", bordercolor=COLORS["border"], font=("Microsoft YaHei UI", 9))
+        style.map("Ghost.TButton", background=[("active", COLORS["brand_soft"])], foreground=[("active", COLORS["brand"])])
 
         outer = ttk.Frame(self.window, style="Launcher.TFrame", padding=22)
         outer.pack(fill="both", expand=True)
-        header = ttk.Frame(outer, style="Launcher.TFrame")
-        header.pack(fill="x", pady=(0, 18))
-        ttk.Label(header, text="Ultimate Web", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="本地服务控制中心  ·  关闭窗口将同时停止服务", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
+        header = ttk.Frame(outer, style="Header.TFrame", padding=(16, 14, 16, 12))
+        header.pack(fill="x", pady=(0, 16))
+        brand_row = ttk.Frame(header, style="Header.TFrame")
+        brand_row.pack(fill="x")
+        if self.brand_image is not None:
+            ttk.Label(brand_row, image=self.brand_image, style="Header.TLabel").pack(side="left", padx=(0, 12))
+        title_box = ttk.Frame(brand_row, style="Header.TFrame")
+        title_box.pack(side="left", fill="x", expand=True)
+        ttk.Label(title_box, text="Ultimate Web", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="本地服务控制中心  ·  关闭窗口将同时停止服务", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Label(brand_row, text="LOCAL DESKTOP", style="Brand.TLabel").pack(side="right", anchor="n", pady=5)
+        accent = tk.Canvas(header, height=4, background=COLORS["surface"], highlightthickness=0, bd=0)
+        accent.pack(fill="x", pady=(13, 0))
+
+        def draw_brand_accent(event=None):
+            width = max(accent.winfo_width(), 1)
+            accent.delete("all")
+            accent.create_rectangle(0, 0, width * 0.38, 4, fill="#ff8d16", outline="")
+            accent.create_rectangle(width * 0.38, 0, width, 4, fill="#2f74ff", outline="")
+
+        accent.bind("<Configure>", draw_brand_accent)
 
         cards = ttk.Frame(outer, style="Launcher.TFrame")
         cards.pack(fill="x", pady=(0, 16))
         for spec in self.specs:
-            card = ttk.Frame(cards, style="Panel.TFrame", padding=14)
+            card = ttk.Frame(cards, style="Panel.TFrame", padding=(15, 13))
             card.pack(side="left", fill="x", expand=True, padx=(0, 10 if spec is self.specs[0] else 0))
-            ttk.Label(card, text=spec.title, style="PanelTitle.TLabel").pack(anchor="w")
+            card_header = ttk.Frame(card, style="Panel.TFrame")
+            card_header.pack(fill="x")
+            indicator = tk.Canvas(card_header, width=11, height=11, background=COLORS["surface"], highlightthickness=0, bd=0)
+            indicator.pack(side="left", padx=(0, 7), pady=2)
+            indicator.create_oval(2, 2, 9, 9, fill=COLORS["text_faint"], outline="")
+            self.status_indicators[spec.key] = indicator
+            ttk.Label(card_header, text=spec.title, style="PanelTitle.TLabel").pack(side="left")
             status_label = ttk.Label(card, textvariable=self.status_vars[spec.key], style="Status.TLabel")
             status_label.pack(anchor="w", pady=(6, 0))
             self.status_labels[spec.key] = status_label
@@ -222,11 +295,12 @@ class LauncherApp:
         log_header = ttk.Frame(log_panel, style="Panel.TFrame")
         log_header.pack(fill="x", pady=(0, 8))
         ttk.Label(log_header, text="运行日志", style="PanelTitle.TLabel").pack(side="left")
-        ttk.Label(log_header, text=self.url, style="Status.TLabel").pack(side="right")
+        self.address_label = ttk.Label(log_header, text=self.url, style="Address.TLabel")
+        self.address_label.pack(side="right")
         self.log = scrolledtext.ScrolledText(
             log_panel,
-            background="#0a1220",
-            foreground="#bcd0e6",
+            background=COLORS["log"],
+            foreground=COLORS["log_text"],
             insertbackground="#ffffff",
             relief="flat",
             borderwidth=0,
@@ -268,6 +342,17 @@ class LauncherApp:
 
     def set_status(self, key: str, value: str) -> None:
         self.status_vars[key].set(value)
+        indicator = self.status_indicators.get(key)
+        if indicator is None:
+            return
+        color = COLORS["text_faint"]
+        if value == "运行中":
+            color = COLORS["success"]
+        elif value == "启动中":
+            color = COLORS["warning"]
+        elif value in {"启动失败", "已退出"}:
+            color = COLORS["danger"]
+        indicator.itemconfigure(1, fill=color)
 
     def start_services(self) -> None:
         if self.starting or self.stopping:
@@ -349,6 +434,7 @@ class LauncherApp:
                         self.open_browser_page()
                 elif kind == "url":
                     self.url = event[1]
+                    self.address_label.configure(text=self.url)
                     self.log_line(f"前端实际地址: {self.url}")
                 elif kind == "timeout":
                     self.log_line("等待前端服务超时，请查看上方日志")
