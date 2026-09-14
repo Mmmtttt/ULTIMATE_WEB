@@ -13,7 +13,23 @@ error_logger = logging.getLogger('error')
 error_logger.setLevel(logging.ERROR)
 
 access_logger = logging.getLogger('access')
-access_logger.setLevel(logging.INFO)
+access_logger.setLevel(logging.WARNING)
+
+_debug_mode = False
+
+
+def configure_debug_mode(enabled: bool) -> bool:
+    """Switch verbose diagnostic logging without restarting the process."""
+    global _debug_mode
+    _debug_mode = bool(enabled)
+    app_logger.setLevel(logging.DEBUG if _debug_mode else logging.INFO)
+    access_logger.setLevel(logging.DEBUG if _debug_mode else logging.WARNING)
+    app_logger.info("日志模式已切换: %s", "debug" if _debug_mode else "normal")
+    return _debug_mode
+
+
+def is_debug_mode() -> bool:
+    return _debug_mode
 
 formatter = logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s')
 
@@ -79,3 +95,6 @@ error_handler.setFormatter(formatter)
 app_logger.addHandler(app_handler)
 error_logger.addHandler(error_handler)
 access_logger.addHandler(access_handler)
+
+if str(os.environ.get("BACKEND_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}:
+    configure_debug_mode(True)

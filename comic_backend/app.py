@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import uuid
 
 # Ultimate Web - Mmmtttt
 
@@ -39,10 +40,11 @@ from core.storage_layout import (
 from core.ssl_cert import get_ssl_context_tuple
 from infrastructure.archive import ensure_rar_backend_configured, probe_7z_encryption_capability
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
-from infrastructure.logger import app_logger
+from infrastructure.logger import app_logger, access_logger, configure_debug_mode
 from infrastructure.performance.timing import request_elapsed_ms, start_request_timer
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
+from infrastructure.persistence.repositories.config_repository_impl import ConfigJsonRepository
 
 
 def load_server_config():
@@ -56,6 +58,11 @@ def load_server_config():
 
 
 SERVER_CONFIG = load_server_config()
+
+try:
+    configure_debug_mode(ConfigJsonRepository().get().debug_mode)
+except Exception as exc:
+    app_logger.warning("读取日志模式配置失败，使用默认日志模式: %s", exc)
 
 
 def _as_bool(value, default=False):
@@ -330,6 +337,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     @app.before_request
     def set_space_mode_on_request():
         start_request_timer()
+        g.request_id = uuid.uuid4().hex[:12]
         set_current_space_mode(space_mode)
         g.space_mode = space_mode
 
@@ -360,6 +368,14 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
         if elapsed_ms is not None:
             response.headers["X-Ultimate-Elapsed-Ms"] = f"{elapsed_ms:.3f}"
             response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.3f}"
+            log_message = (
+                "request_id=%s method=%s path=%s status=%s elapsed_ms=%.3f"
+                % (getattr(g, "request_id", "-"), request.method, request.path, response.status_code, elapsed_ms)
+            )
+            if response.status_code >= 400:
+                access_logger.warning(log_message)
+            else:
+                access_logger.debug(log_message)
         return response
 
     # ========== 路由 ==========

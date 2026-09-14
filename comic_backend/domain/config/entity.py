@@ -46,6 +46,7 @@ class UserConfig:
     show_page_number: bool = True
     auto_download_preview_assets_for_preview_import: bool = False
     single_page_browsing: bool = False
+    debug_mode: bool = False
     cache_config: CacheConfig = None
     
     def __post_init__(self):
@@ -73,6 +74,7 @@ class UserConfig:
                 False
             ),
             single_page_browsing=data.get("single_page_browsing", False),
+            debug_mode=bool(data.get("debug_mode", False)),
             cache_config=cache_config
         )
     
@@ -84,6 +86,7 @@ class UserConfig:
             "show_page_number": self.show_page_number,
             "auto_download_preview_assets_for_preview_import": self.auto_download_preview_assets_for_preview_import,
             "single_page_browsing": self.single_page_browsing,
+            "debug_mode": self.debug_mode,
             "cache_config": self.cache_config.to_dict() if self.cache_config else CacheConfig().to_dict()
         }
     
@@ -113,6 +116,9 @@ class UserConfig:
 
         if 'single_page_browsing' in kwargs:
             self.single_page_browsing = bool(kwargs['single_page_browsing'])
+
+        if 'debug_mode' in kwargs:
+            self.debug_mode = bool(kwargs['debug_mode'])
         
         if 'cache_config' in kwargs:
             cache_config_data = kwargs['cache_config']
@@ -131,6 +137,7 @@ class UserConfig:
         self.show_page_number = True
         self.auto_download_preview_assets_for_preview_import = False
         self.single_page_browsing = False
+        self.debug_mode = False
         self.cache_config = CacheConfig()
 
 

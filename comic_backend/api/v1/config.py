@@ -27,7 +27,7 @@ from core.constants import (
     set_app_config_dir,
 )
 from core.runtime_profile import is_third_party_enabled, runtime_capabilities
-from infrastructure.logger import app_logger, error_logger
+from infrastructure.logger import app_logger, error_logger, configure_debug_mode
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from protocol.config_service import get_plugin_config_service
@@ -517,6 +517,8 @@ def update_config():
 
         result = config_service.update_config(**data)
         if result.success:
+            if "debug_mode" in data:
+                configure_debug_mode(bool(result.data.get("debug_mode", False)))
             cache_config = data.get('cache_config', {})
             if cache_config:
                 max_size_mb = cache_config.get('recommendation_cache_max_size_mb')
@@ -524,7 +526,7 @@ def update_config():
                     recommendation_cache_manager.update_max_size(max_size_mb)
                     app_logger.info(f"更新推荐缓存最大容量: {max_size_mb}MB")
 
-            app_logger.info(f"更新配置成功: {data}")
+            app_logger.info("更新配置成功: keys=%s, debug_mode=%s", sorted(data.keys()), result.data.get("debug_mode", False))
             return success_response(result.data)
         return error_response(400, result.message)
     except Exception as e:
@@ -537,6 +539,7 @@ def reset_config():
     try:
         result = config_service.reset_config()
         if result.success:
+            configure_debug_mode(False)
             recommendation_cache_manager.update_max_size(5120)
             app_logger.info("重置配置成功")
             return success_response(result.data)

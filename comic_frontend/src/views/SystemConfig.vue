@@ -61,6 +61,17 @@
     </van-cell-group>
 
     <van-cell-group inset class="config-group">
+      <van-cell
+        title="Debug 日志模式"
+        label="开启后记录更完整的诊断日志；关闭时保留错误和重要操作日志。"
+      >
+        <template #right-icon>
+          <van-switch v-model="debugModeValue" @change="updateDebugMode" />
+        </template>
+      </van-cell>
+    </van-cell-group>
+
+    <van-cell-group inset class="config-group">
       <van-cell title="第三方平台配置" is-link to="/config/third-party" />
     </van-cell-group>
 
@@ -226,6 +237,7 @@ const backgroundValue = ref('white')
 const autoDownloadPreviewImportAssets = ref(true)
 const pageSizeValue = ref(20)
 const leftRightReadingReversedValue = ref(false)
+const debugModeValue = ref(false)
 const pageSizeOptions = [20, 40, 60]
 
 const activeDropdown = ref('')
@@ -303,6 +315,7 @@ function initValues() {
   autoDownloadPreviewImportAssets.value = configStore.autoDownloadPreviewImportAssets
   pageSizeValue.value = configStore.listPageSize
   leftRightReadingReversedValue.value = configStore.leftRightReadingReversed
+  debugModeValue.value = configStore.debugMode
 }
 
 function closeAllDropdowns() {
@@ -414,6 +427,16 @@ async function updatePreviewImportAssetDownload() {
     return
   }
   showSuccessToast('设置已保存')
+}
+
+async function updateDebugMode() {
+  configStore.updateConfig({ debugMode: debugModeValue.value })
+  const ok = await configStore.saveConfigToServer()
+  if (!ok) {
+    showFailToast('Debug 日志模式保存失败')
+    return
+  }
+  showSuccessToast(debugModeValue.value ? 'Debug 日志已开启' : 'Debug 日志已关闭')
 }
 
 async function saveSystemDataDir({ migrateData }) {
