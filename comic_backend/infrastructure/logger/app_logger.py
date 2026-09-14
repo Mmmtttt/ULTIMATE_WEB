@@ -8,12 +8,15 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 
 app_logger = logging.getLogger('app')
 app_logger.setLevel(logging.INFO)
+app_logger.propagate = False
 
 error_logger = logging.getLogger('error')
 error_logger.setLevel(logging.ERROR)
+error_logger.propagate = False
 
 access_logger = logging.getLogger('access')
 access_logger.setLevel(logging.WARNING)
+access_logger.propagate = False
 
 _debug_mode = False
 

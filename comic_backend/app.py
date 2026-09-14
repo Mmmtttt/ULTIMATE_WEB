@@ -60,7 +60,11 @@ def load_server_config():
 SERVER_CONFIG = load_server_config()
 
 try:
-    configure_debug_mode(ConfigJsonRepository().get().debug_mode)
+    env_debug = os.environ.get("BACKEND_DEBUG")
+    if env_debug is not None:
+        configure_debug_mode(str(env_debug).strip().lower() in {"1", "true", "yes", "on"})
+    else:
+        configure_debug_mode(ConfigJsonRepository().get().debug_mode)
 except Exception as exc:
     app_logger.warning("读取日志模式配置失败，使用默认日志模式: %s", exc)
 

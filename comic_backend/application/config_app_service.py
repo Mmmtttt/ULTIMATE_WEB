@@ -14,7 +14,7 @@ class ConfigAppService:
             app_logger.info("获取配置成功")
             return ServiceResult.ok(config.to_dict())
         except Exception as e:
-            error_logger.error(f"获取配置失败: {e}")
+            error_logger.exception(f"获取配置失败: {e}")
             return ServiceResult.error("获取配置失败")
     
     def update_config(self, **kwargs) -> ServiceResult:
@@ -27,10 +27,10 @@ class ConfigAppService:
             if not self._config_repo.save(config):
                 return ServiceResult.error("保存配置失败")
             
-            app_logger.info(f"更新配置成功: {kwargs}")
+            app_logger.info("更新配置成功: keys=%s", sorted(kwargs.keys()))
             return ServiceResult.ok(config.to_dict(), "配置保存成功")
         except Exception as e:
-            error_logger.error(f"更新配置失败: {e}")
+            error_logger.exception(f"更新配置失败: {e}")
             return ServiceResult.error("更新配置失败")
     
     def reset_config(self) -> ServiceResult:
@@ -44,7 +44,7 @@ class ConfigAppService:
             app_logger.info("重置配置成功")
             return ServiceResult.ok(config.to_dict(), "配置已重置为默认值")
         except Exception as e:
-            error_logger.error(f"重置配置失败: {e}")
+            error_logger.exception(f"重置配置失败: {e}")
             return ServiceResult.error("重置配置失败")
     
     def update_page_mode(self, page_mode: str) -> ServiceResult:
