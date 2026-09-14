@@ -10,6 +10,7 @@ import uuid
 
 from flask import Flask, make_response, send_from_directory, g, request, session, jsonify
 from flask_cors import CORS
+from werkzeug.serving import WSGIRequestHandler
 
 from api import register_blueprints
 from application.list_app_service import ListAppService
@@ -58,6 +59,16 @@ def load_server_config():
 
 
 SERVER_CONFIG = load_server_config()
+
+
+class _QuietHealthRequestHandler(WSGIRequestHandler):
+    """Keep launcher health probes out of the development server console."""
+
+    def log_request(self, code="-", size="-"):
+        path = str(getattr(self, "path", "")).split("?", 1)[0]
+        if path == "/health":
+            return
+        super().log_request(code, size)
 
 try:
     env_debug = os.environ.get("BACKEND_DEBUG")
@@ -635,6 +646,7 @@ def _run_app_in_thread(app_instance, port: int, ssl_context):
         use_reloader=False,
         threaded=True,
         ssl_context=ssl_context,
+        request_handler=_QuietHealthRequestHandler,
     )
 
 
@@ -677,6 +689,7 @@ def run_backend_server(host=None, port=None, debug=None):
             use_reloader=False,
             threaded=True,
             ssl_context=ssl_context,
+            request_handler=_QuietHealthRequestHandler,
         )
         return
 

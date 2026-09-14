@@ -4166,6 +4166,7 @@ def _write_launcher_pyinstaller_script(
     spec_dir = out_dir / "spec"
     source = ROOT_DIR / "scripts" / "windows_launcher.py"
     brand_image = ROOT_DIR / "comic_frontend" / "public" / "vite.jpg"
+    launcher_icon = ROOT_DIR / "comic_frontend" / "public" / "ultimate_web.ico"
     sep = ";" if target == "windows" else ":"
     cmd = [
         "python",
@@ -4175,6 +4176,8 @@ def _write_launcher_pyinstaller_script(
         "--clean",
         "--onefile",
         "--windowed",
+        "--icon",
+        str(launcher_icon),
         "--name",
         binary_name,
         "--distpath",
@@ -4189,6 +4192,8 @@ def _write_launcher_pyinstaller_script(
         "PIL",
         "--add-data",
         f"{brand_image}{sep}assets",
+        "--add-data",
+        f"{launcher_icon}{sep}assets",
         str(source),
     ]
     ps1 = (

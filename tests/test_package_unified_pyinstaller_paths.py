@@ -616,7 +616,7 @@ def test_windows_control_center_launcher_is_the_packaged_entrypoint():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def test_windows_launcher_pyinstaller_command_bundles_web_brand_image():
+def test_windows_launcher_pyinstaller_command_bundles_web_brand_and_taskbar_icons():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
     workspace_tmp_root.mkdir(parents=True, exist_ok=True)
@@ -632,9 +632,11 @@ def test_windows_launcher_pyinstaller_command_bundles_web_brand_image():
         assert ["--hidden-import", "PIL.ImageTk"] == command[command.index("--hidden-import") : command.index("--hidden-import") + 2]
         assert "--collect-data" in command
         assert "PIL" in command
-        add_data = command[command.index("--add-data") + 1]
-        assert add_data.endswith(";assets")
-        assert str(ROOT_DIR / "comic_frontend" / "public" / "vite.jpg") in add_data
+        assert command[command.index("--icon") + 1] == str(ROOT_DIR / "comic_frontend" / "public" / "ultimate_web.ico")
+        add_data = [command[index + 1] for index, value in enumerate(command) if value == "--add-data"]
+        assert all(value.endswith(";assets") for value in add_data)
+        assert any(str(ROOT_DIR / "comic_frontend" / "public" / "vite.jpg") in value for value in add_data)
+        assert any(str(ROOT_DIR / "comic_frontend" / "public" / "ultimate_web.ico") in value for value in add_data)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
