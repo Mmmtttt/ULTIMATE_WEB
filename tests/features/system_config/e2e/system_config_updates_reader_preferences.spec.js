@@ -16,6 +16,10 @@ test("system config updates reader preferences including single-page mode", asyn
   await page.locator(".select-row", { hasText: "默认背景色" }).click();
   await page.getByText("深色背景").click();
 
+  await page.locator(".select-row", { hasText: "默认背景色" }).click();
+  await page.getByText("护眼色背景").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "sepia");
+
   const singlePageSwitch = page
     .locator(".van-cell", { hasText: "单页浏览" })
     .locator(".van-switch");
@@ -47,6 +51,16 @@ test("system config updates reader preferences including single-page mode", asyn
         item.method === "PUT" &&
         item.url.includes("/api/v1/config") &&
         item.body.includes('"default_background":"dark"'),
+    ),
+  ).toBeTruthy();
+
+  expect(
+    hasApiCall(
+      apiRequests,
+      (item) =>
+        item.method === "PUT" &&
+        item.url.includes("/api/v1/config") &&
+        item.body.includes('"default_background":"sepia"'),
     ),
   ).toBeTruthy();
 

@@ -158,6 +158,68 @@ html[data-theme='dark'] {
   --plain-success-border: rgba(0, 168, 117, 0.48);
 }
 
+html[data-theme='sepia'] {
+  --text-strong: #3b3026;
+  --text-primary: #5a493c;
+  --text-secondary: #796656;
+  --text-tertiary: #a08d7b;
+
+  --surface-0: #f1eadb;
+  --surface-1: #faf5e9;
+  --surface-2: rgba(255, 251, 241, 0.9);
+  --surface-3: #fffaf0;
+  --surface-dark: #46382d;
+  --border-soft: rgba(124, 99, 69, 0.18);
+  --border-strong: rgba(124, 99, 69, 0.34);
+
+  --body-grad-1: rgba(192, 145, 77, 0.17);
+  --body-grad-2: rgba(177, 157, 102, 0.14);
+  --body-grad-3: rgba(215, 157, 87, 0.12);
+  --body-grad-base: linear-gradient(160deg, #f6efdf 0%, #eee3ce 54%, #f4ead8 100%);
+  --body-overlay-1: rgba(188, 139, 72, 0.15);
+  --body-overlay-2: rgba(145, 119, 70, 0.1);
+  --body-overlay-line: rgba(111, 83, 50, 0.12);
+  --body-overlay-opacity: 0.16;
+
+  --action-hover-bg: #fffaf0;
+  --plain-btn-bg: rgba(255, 251, 241, 0.9);
+  --nav-bg: rgba(255, 250, 240, 0.92);
+  --popup-bg: rgba(255, 250, 240, 0.97);
+  --sheet-bg: rgba(255, 249, 237, 0.97);
+  --dialog-bg: linear-gradient(160deg, rgba(255, 252, 244, 0.98) 0%, rgba(248, 239, 222, 0.98) 100%);
+  --picker-mask-top: rgba(255, 250, 240, 0.95);
+  --picker-mask-bottom: rgba(255, 250, 240, 0.56);
+  --picker-frame-bg: rgba(224, 204, 167, 0.42);
+  --overlay-bg: rgba(65, 47, 31, 0.34);
+  --toast-bg: rgba(255, 250, 240, 0.97);
+  --toast-text: #5a493c;
+  --notify-bg: #7a6041;
+  --notify-text: #fff8ea;
+
+  --layout-sidebar-bg: rgba(255, 249, 237, 0.82);
+  --layout-sidebar-shadow: 6px 0 24px rgba(102, 77, 45, 0.1);
+  --layout-nav-hover-bg: rgba(255, 252, 245, 0.96);
+  --layout-nav-hover-text: #3b3026;
+  --layout-nav-hover-shadow: 0 8px 18px rgba(102, 77, 45, 0.12);
+  --layout-nav-active-bg: linear-gradient(135deg, rgba(194, 145, 77, 0.18), rgba(177, 157, 102, 0.1));
+  --layout-nav-active-text: #8a6534;
+  --layout-nav-active-border: rgba(179, 132, 67, 0.34);
+  --layout-search-btn-bg: rgba(255, 251, 242, 0.92);
+  --layout-search-btn-border: rgba(124, 99, 69, 0.24);
+  --layout-header-bg: rgba(255, 250, 240, 0.9);
+  --layout-header-shadow: 0 10px 20px rgba(102, 77, 45, 0.12);
+  --layout-tabbar-bg: rgba(255, 250, 240, 0.94);
+
+  --plain-primary-text: #8a6534;
+  --plain-primary-border: rgba(179, 132, 67, 0.48);
+  --plain-danger-text: #b84f50;
+  --plain-danger-border: rgba(184, 79, 80, 0.42);
+  --plain-warning-text: #a56e29;
+  --plain-warning-border: rgba(165, 110, 41, 0.44);
+  --plain-success-text: #4f8763;
+  --plain-success-border: rgba(79, 135, 99, 0.42);
+}
+
 *,
 *::before,
 *::after {

@@ -54,7 +54,9 @@ export const useConfigStore = defineStore('config', () => {
 
   const resolveTheme = (background) => {
     const normalized = normalizeBackground(background)
-    return normalized === BACKGROUND.DARK ? 'dark' : 'light'
+    if (normalized === BACKGROUND.DARK) return 'dark'
+    if (normalized === BACKGROUND.SEPIA) return 'sepia'
+    return 'light'
   }
 
   const applyAppTheme = (background = defaultBackground.value) => {
