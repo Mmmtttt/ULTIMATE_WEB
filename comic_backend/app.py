@@ -422,7 +422,50 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     @app.route('/static/cover/<path:filename>')
     def serve_cover(filename):
         cover_dir = get_cover_dir(space_mode)
+        target_path = os.path.abspath(os.path.join(cover_dir, str(filename).replace('/', os.sep)))
+        try:
+            is_in_root = os.path.commonpath([os.path.abspath(cover_dir), target_path]) == os.path.abspath(cover_dir)
+        except Exception:
+            is_in_root = False
+        try:
+            exists = os.path.exists(target_path)
+            is_file = os.path.isfile(target_path)
+            size = os.path.getsize(target_path) if is_file else 0
+            stat_error = ""
+        except OSError as exc:
+            exists = False
+            is_file = False
+            size = 0
+            stat_error = repr(exc)
+        app_logger.debug(
+            "[cover-debug] serve request filename=%r root=%r target=%r in_root=%s exists=%s is_file=%s size=%s suffix=%r stat_error=%r",
+            filename,
+            cover_dir,
+            target_path,
+            is_in_root,
+            exists,
+            is_file,
+            size,
+            os.path.splitext(target_path)[1].lower(),
+            stat_error,
+        )
+        if not is_in_root or not is_file:
+            app_logger.warning(
+                "[cover-debug] cover unavailable filename=%r target=%r in_root=%s exists=%s is_file=%s",
+                filename,
+                target_path,
+                is_in_root,
+                exists,
+                is_file,
+            )
         response = make_response(send_from_directory(cover_dir, filename))
+        app_logger.debug(
+            "[cover-debug] serve response filename=%r status=%s content_type=%r content_length=%r",
+            filename,
+            response.status_code,
+            response.content_type,
+            response.content_length,
+        )
         if filename.endswith('.jpg') or filename.endswith('.jpeg'):
             response.headers['Content-Type'] = 'image/jpeg'
         elif filename.endswith('.png'):

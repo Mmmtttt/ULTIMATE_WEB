@@ -52,6 +52,32 @@ FAVORITES_LIST_ID = "list_favorites_comic"
 
 
 class ComicAppService:
+    @staticmethod
+    def _debug_cover_file_state(path: str) -> dict:
+        """Collect cover diagnostics without allowing logging to affect repair."""
+        state = {"path": path, "exists": False, "is_file": False, "size": 0}
+        try:
+            state["exists"] = os.path.exists(path)
+            state["is_file"] = os.path.isfile(path)
+            if state["is_file"]:
+                state["size"] = os.path.getsize(path)
+        except OSError as exc:
+            state["stat_error"] = repr(exc)
+            return state
+
+        if state["is_file"] and state["size"] > 0:
+            try:
+                from infrastructure.logger.app_logger import is_debug_mode
+                if is_debug_mode():
+                    from PIL import Image
+                    with Image.open(path) as image:
+                        image.verify()
+                    state["decodable"] = True
+            except Exception as exc:
+                state["decodable"] = False
+                state["decode_error"] = repr(exc)
+        return state
+
     def __init__(
         self,
         comic_repo: ComicRepository = None,
@@ -946,25 +972,50 @@ class ComicAppService:
 
         comic_id = str(comic_data.get("id") or "").strip()
         if not comic_id:
+            app_logger.debug("[comic-cover-repair] soft-ref branch skipped: missing comic id")
             return False, False, False
 
         current_cover = str(comic_data.get("cover_path") or "").strip()
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref inspect comic_id=%s current_cover=%r",
+            comic_id,
+            current_cover,
+        )
         if current_cover.startswith("/static/cover/"):
             from core.constants import COVER_DIR
 
             relative_cover = current_cover[len("/static/cover/") :].replace("/", os.sep)
             local_cover_path = os.path.join(COVER_DIR, relative_cover)
-            if os.path.exists(local_cover_path):
+            file_state = self._debug_cover_file_state(local_cover_path)
+            app_logger.debug(
+                "[comic-cover-repair] soft-ref static cover state comic_id=%s state=%s",
+                comic_id,
+                file_state,
+            )
+            if file_state["is_file"] and file_state["size"] > 0:
+                app_logger.debug("[comic-cover-repair] soft-ref accepted existing static cover comic_id=%s", comic_id)
                 return False, False, False
 
         static_cover = self._generate_static_cover_from_soft_ref(comic_id)
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref generated candidate comic_id=%s candidate=%r",
+            comic_id,
+            static_cover,
+        )
         if static_cover:
             if current_cover == static_cover:
+                app_logger.debug("[comic-cover-repair] soft-ref candidate equals current path comic_id=%s", comic_id)
                 return False, False, False
             comic_data["cover_path"] = static_cover
             return True, True, False
 
         fallback_cover = self._build_page1_cover_url(comic_id)
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref fallback evaluation comic_id=%s current_missing=%s fallback=%r",
+            comic_id,
+            self._is_missing_cover_path(current_cover),
+            fallback_cover,
+        )
         if self._is_missing_cover_path(current_cover) and current_cover != fallback_cover:
             comic_data["cover_path"] = fallback_cover
             return True, False, True
@@ -977,6 +1028,7 @@ class ComicAppService:
 
         comic_id = str(comic_data.get("id") or "").strip()
         if not comic_id or not self._is_local_import_comic_id(comic_id):
+            app_logger.debug("[comic-cover-repair] local-import branch skipped comic_id=%s", comic_id)
             return False, False
 
         from utils.file_parser import file_parser
@@ -984,7 +1036,14 @@ class ComicAppService:
 
         try:
             image_paths = file_parser.parse_comic_images(comic_id)
-        except Exception:
+            app_logger.debug(
+                "[comic-cover-repair] local-import pages comic_id=%s count=%s first=%r",
+                comic_id,
+                len(image_paths),
+                image_paths[0] if image_paths else "",
+            )
+        except Exception as exc:
+            app_logger.debug("[comic-cover-repair] local-import page scan failed comic_id=%s error=%r", comic_id, exc)
             image_paths = []
 
         next_cover = ""
@@ -999,8 +1058,14 @@ class ComicAppService:
             next_cover = self._build_page1_cover_url(comic_id)
 
         if not next_cover:
+            app_logger.debug(
+                "[comic-cover-repair] local-import no candidate comic_id=%s current_cover=%r",
+                comic_id,
+                comic_data.get("cover_path"),
+            )
             return False, False
         if str(comic_data.get("cover_path") or "").strip() == next_cover:
+            app_logger.debug("[comic-cover-repair] local-import candidate equals current path comic_id=%s", comic_id)
             return False, False
 
         comic_data["cover_path"] = next_cover
@@ -1207,15 +1272,21 @@ class ComicAppService:
         from core.constants import COVER_DIR
 
         if self._is_soft_ref_storage_mode(comic_data.get("storage_mode", "")):
+            app_logger.debug("[comic-cover-repair] remote sync skipped for soft-ref comic_id=%s", comic_data.get("id"))
             return False, False
 
         if self._is_local_import_comic_id(comic_data.get("id", "")):
+            app_logger.debug("[comic-cover-repair] remote sync redirected to local-import comic_id=%s", comic_data.get("id"))
             updated, _ = self._repair_local_import_cover_for_record(comic_data)
             return False, updated
 
         comic_id = comic_data.get("id")
         platform_key, original_id, _manifest, host_prefix = self._resolve_comic_platform_context(comic_id)
         if not platform_key or not original_id:
+            app_logger.warning(
+                "[comic-cover-repair] remote sync cannot resolve platform comic_id=%s",
+                comic_id,
+            )
             return False, False
 
         cover_dir = os.path.join(COVER_DIR, host_prefix)
@@ -1225,6 +1296,16 @@ class ComicAppService:
 
         downloaded = False
         updated = False
+        app_logger.debug(
+            "[comic-cover-repair] remote sync inspect comic_id=%s platform=%s original_id=%s cover_file=%r exists=%s current_cover=%r expected_url=%r",
+            comic_id,
+            platform_key,
+            original_id,
+            cover_file,
+            os.path.isfile(cover_file),
+            comic_data.get("cover_path"),
+            cover_url,
+        )
 
         if not os.path.exists(cover_file):
             _, success = platform_service.download_cover(
@@ -1234,6 +1315,15 @@ class ComicAppService:
                 show_progress=False
             )
             downloaded = bool(success and os.path.exists(cover_file))
+            download_state = self._debug_cover_file_state(cover_file)
+            app_logger.debug(
+                "[comic-cover-repair] remote cover download result comic_id=%s success=%s state=%s",
+                comic_id,
+                success,
+                download_state,
+            )
+        else:
+            app_logger.debug("[comic-cover-repair] remote cover download skipped existing file comic_id=%s", comic_id)
 
         if os.path.exists(cover_file) and comic_data.get("cover_path") != cover_url:
             comic_data["cover_path"] = cover_url
@@ -1246,44 +1336,94 @@ class ComicAppService:
         normalized_id = str(comic_id or "").strip()
         source_key = str(source or "local").strip().lower()
         is_recommendation = source_key in {"preview", "recommendation", "recommendation_library"}
+        app_logger.debug(
+            "[comic-cover-repair] normalized request raw_id=%r comic_id=%s source=%s recommendation=%s",
+            comic_id,
+            normalized_id,
+            source_key,
+            is_recommendation,
+        )
         if not normalized_id:
             return ServiceResult.error("missing parameter: comic_id")
 
         try:
             repo = self._recommendation_repo if is_recommendation else self._comic_repo
             record = repo.get_by_id(normalized_id)
+            app_logger.debug(
+                "[comic-cover-repair] record lookup comic_id=%s source=%s found=%s deleted=%s repo=%s",
+                normalized_id,
+                source_key,
+                bool(record),
+                bool(getattr(record, "is_deleted", False)) if record else False,
+                type(repo).__name__,
+            )
             if not record or getattr(record, "is_deleted", False):
                 return ServiceResult.error("漫画不存在")
 
             before_cover_path = str(getattr(record, "cover_path", "") or "").strip()
             payload = record.to_dict()
+            app_logger.debug(
+                "[comic-cover-repair] before state comic_id=%s storage_mode=%r cover_path=%r cover_url=%r cover_path_local=%r",
+                normalized_id,
+                payload.get("storage_mode"),
+                before_cover_path,
+                payload.get("cover_url"),
+                payload.get("cover_path_local"),
+            )
             soft_ref_updated = False
             soft_ref_generated = False
             soft_ref_fallback = False
 
             if not is_recommendation:
                 soft_ref_updated, soft_ref_generated, soft_ref_fallback = self._repair_soft_ref_cover_for_record(payload)
+            else:
+                app_logger.debug("[comic-cover-repair] soft-ref branch skipped for recommendation comic_id=%s", normalized_id)
 
             if not soft_ref_updated:
                 if not is_recommendation and self._is_local_import_comic_id(normalized_id):
+                    app_logger.debug("[comic-cover-repair] selecting local-import repair branch comic_id=%s", normalized_id)
                     cover_updated, _ = self._repair_local_import_cover_for_record(payload)
                     downloaded = False
                 else:
+                    app_logger.debug("[comic-cover-repair] selecting remote cover sync branch comic_id=%s", normalized_id)
                     from protocol.platform_service import get_platform_service
 
                     platform_service = get_platform_service()
                     downloaded, cover_updated = self._sync_cover_for_record(payload, platform_service)
             else:
+                app_logger.debug(
+                    "[comic-cover-repair] selecting soft-ref result branch comic_id=%s generated=%s fallback=%s",
+                    normalized_id,
+                    soft_ref_generated,
+                    soft_ref_fallback,
+                )
                 downloaded = soft_ref_generated
                 cover_updated = True
 
             after_cover_path = str(payload.get("cover_path") or "").strip()
             changed = after_cover_path != before_cover_path
+            app_logger.debug(
+                "[comic-cover-repair] after state comic_id=%s before=%r after=%r changed=%s downloaded=%s updated=%s",
+                normalized_id,
+                before_cover_path,
+                after_cover_path,
+                changed,
+                downloaded,
+                cover_updated,
+            )
             if changed:
                 record.cover_path = after_cover_path
-                if not repo.save(record):
+                saved = repo.save(record)
+                app_logger.debug("[comic-cover-repair] persistence result comic_id=%s saved=%s", normalized_id, saved)
+                if not saved:
                     return ServiceResult.error("封面修复结果保存失败")
 
+            app_logger.debug(
+                "[comic-cover-repair] final decision comic_id=%s needs_repair=%s message=%s",
+                normalized_id,
+                bool(changed or cover_updated),
+                "封面修复完成" if changed or cover_updated else "封面无需修复",
+            )
             return ServiceResult.ok(
                 {
                     "comic_id": normalized_id,
@@ -1299,7 +1439,7 @@ class ComicAppService:
                 "封面修复完成" if changed or cover_updated else "封面无需修复",
             )
         except Exception as e:
-            error_logger.error(f"Repair single comic cover failed: {normalized_id}, source={source_key}, {e}")
+            error_logger.exception("Repair single comic cover failed: %s, source=%s, %s", normalized_id, source_key, e)
             return ServiceResult.error("封面修复失败")
 
     @staticmethod
