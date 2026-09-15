@@ -142,7 +142,7 @@ jobs:
 
       - name: setup android sdk (android only)
         if: ${{ matrix.build_android }}
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4.0.1
 
       - name: install android platforms (android only)
         if: ${{ matrix.build_android }}
