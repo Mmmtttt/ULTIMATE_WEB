@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from infrastructure.logger import app_logger, error_logger
 
 from .base import PluginManifest
+from .space_access import is_plugin_available_in_current_space
 from core.constants import BACKEND_ROOT, PROJECT_ROOT
 
 _HOST_OVERLAY_FILENAME = "ultimate-host.json"
@@ -304,7 +305,11 @@ class PluginRegistry:
 
     def list_manifests(self, media_type: Optional[str] = None, capability: Optional[str] = None) -> List[PluginManifest]:
         self._ensure_loaded()
-        manifests = list(self._manifests.values())
+        manifests = [
+            item
+            for item in self._manifests.values()
+            if is_plugin_available_in_current_space(item.plugin_id)
+        ]
         if media_type:
             media_key = str(media_type or "").strip().lower()
             manifests = [
@@ -321,6 +326,8 @@ class PluginRegistry:
         manifest = self._manifests.get(plugin_key)
         if manifest is None:
             raise KeyError(f"unknown plugin: {plugin_key}")
+        if not is_plugin_available_in_current_space(plugin_key):
+            raise KeyError(f"plugin unavailable in current space: {plugin_key}")
         return manifest
 
     def find_by_config_key(self, config_key: str) -> Optional[PluginManifest]:

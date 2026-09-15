@@ -29,7 +29,7 @@ from core.utils import normalize_total_page
 from protocol.compatibility import get_query_status_for_adapter_name
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items, annotate_item
-from .runtime_guard import require_third_party
+from .runtime_guard import require_normal_space, require_third_party
 from application.teledrive_app_service import (
     TeleDriveBridgeError,
     get_teledrive_app_service,
@@ -272,6 +272,7 @@ def comic_init():
 
 
 @comic_bp.route('/third-party/config', methods=['GET'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def get_third_party_config():
     try:
@@ -284,6 +285,7 @@ def get_third_party_config():
 
 
 @comic_bp.route('/third-party/config', methods=['POST'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def save_third_party_config():
     try:
@@ -304,6 +306,7 @@ def save_third_party_config():
 
 
 @comic_bp.route('/third-party/extensions/install', methods=['POST'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def install_third_party_extension():
     try:
@@ -324,6 +327,7 @@ def install_third_party_extension():
 
 
 @comic_bp.route('/third-party/extensions/install-github', methods=['POST'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def install_third_party_extension_from_github():
     try:
@@ -345,6 +349,7 @@ def install_third_party_extension_from_github():
 
 
 @comic_bp.route('/third-party/extensions/<path:plugin_id>/reinstall', methods=['POST'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def reinstall_third_party_extension(plugin_id):
     try:
@@ -361,6 +366,7 @@ def reinstall_third_party_extension(plugin_id):
 
 
 @comic_bp.route('/third-party/extensions/<path:plugin_id>', methods=['DELETE'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def delete_third_party_extension(plugin_id):
     try:

@@ -105,7 +105,7 @@ const routes = [
         path: 'config/third-party',
         name: 'ThirdPartyConfig',
         component: () => import('@/views/ThirdPartyConfig.vue'),
-        meta: { title: '第三方平台配置' }
+        meta: { title: '第三方平台配置', requiresNormalSpace: true }
       },
       {
         path: 'sync',
@@ -268,6 +268,11 @@ router.beforeEach(async (to, from, next) => {
       name: 'Login',
       query: { redirect: to.fullPath }
     })
+    return
+  }
+
+  if (to.meta.requiresNormalSpace && authStore.enabled && authStore.mode !== 'normal') {
+    next('/library')
     return
   }
 

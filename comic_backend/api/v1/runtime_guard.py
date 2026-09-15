@@ -1,5 +1,8 @@
 from functools import wraps
 
+from flask import current_app
+
+from core.storage_layout import SPACE_MODE_NORMAL
 from core.runtime_profile import get_runtime_profile, is_third_party_enabled
 
 
@@ -20,6 +23,19 @@ def require_third_party(error_response, status_code: int = 503):
         def wrapped(*args, **kwargs):
             if not is_third_party_enabled():
                 return third_party_unavailable_response(error_response, status_code=status_code)
+            return view_func(*args, **kwargs)
+
+        return wrapped
+
+    return decorator
+
+
+def require_normal_space(error_response, status_code: int = 403):
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(*args, **kwargs):
+            if str(current_app.config.get("SPACE_MODE") or "").strip() != SPACE_MODE_NORMAL:
+                return error_response(status_code, "第三方库管理仅可在正常空间使用")
             return view_func(*args, **kwargs)
 
         return wrapped

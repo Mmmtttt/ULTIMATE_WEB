@@ -82,7 +82,13 @@
             <van-switch v-model="debugModeValue" @change="updateDebugMode" />
           </template>
         </van-cell>
-        <van-cell title="第三方平台配置" label="管理搜索、导入和补全信息使用的平台" is-link to="/config/third-party" />
+        <van-cell
+          v-if="isNormalSpace"
+          title="第三方平台配置"
+          label="管理搜索、导入和补全信息使用的平台"
+          is-link
+          to="/config/third-party"
+        />
       </van-cell-group>
     </section>
 
@@ -348,6 +354,7 @@ const projectPassword = ref('')
 const projectPasswordConfirm = ref('')
 const savingProjectPassword = ref(false)
 const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
+const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
 const canChangeProjectPassword = computed(() => (
   authStore.authenticated && (authStore.mode === 'normal' || !authStore.enabled)
 ))

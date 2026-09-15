@@ -9,6 +9,11 @@ from core.constants import (
     THIRD_PARTY_CONFIG_PATH,
     normalize_to_data_dir,
 )
+from .space_access import (
+    PRIVATE_ENABLED_PLUGIN_IDS_KEY,
+    invalidate_private_access_cache,
+    normalize_private_enabled_plugin_ids,
+)
 
 
 class ProtocolConfigStore:
@@ -157,6 +162,18 @@ class ProtocolConfigStore:
             self._config = {}
             changed = True
 
+        space_access = self._config.get("space_access")
+        if not isinstance(space_access, dict):
+            space_access = {}
+            self._config["space_access"] = space_access
+            changed = True
+        normalized_private_ids = normalize_private_enabled_plugin_ids(
+            space_access.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+        )
+        if space_access.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) != normalized_private_ids:
+            space_access[PRIVATE_ENABLED_PLUGIN_IDS_KEY] = normalized_private_ids
+            changed = True
+
         adapters = self._config.get("adapters")
         if not isinstance(adapters, dict):
             adapters = {}
@@ -248,6 +265,9 @@ class ProtocolConfigStore:
         self._config = {
             "default_adapter": "",
             "adapters": {},
+            "space_access": {
+                PRIVATE_ENABLED_PLUGIN_IDS_KEY: [],
+            },
         }
         self._merge_protocol_defaults()
         return dict(self._config)
@@ -269,6 +289,28 @@ class ProtocolConfigStore:
             self._config = self._get_default_config()
             self._save_config()
         self._loaded = True
+
+    def get_space_access(self) -> Dict[str, object]:
+        self._ensure_loaded()
+        raw = self._config.get("space_access")
+        if not isinstance(raw, dict):
+            return {PRIVATE_ENABLED_PLUGIN_IDS_KEY: []}
+        return {
+            PRIVATE_ENABLED_PLUGIN_IDS_KEY: normalize_private_enabled_plugin_ids(
+                raw.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+            ),
+        }
+
+    def set_space_access(self, payload: Dict[str, object]) -> None:
+        self._ensure_loaded()
+        raw = payload if isinstance(payload, dict) else {}
+        self._config["space_access"] = {
+            PRIVATE_ENABLED_PLUGIN_IDS_KEY: normalize_private_enabled_plugin_ids(
+                raw.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+            ),
+        }
+        self._save_config()
+        invalidate_private_access_cache()
 
     def _ensure_loaded(self) -> None:
         if not self._loaded:

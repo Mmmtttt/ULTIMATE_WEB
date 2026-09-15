@@ -81,6 +81,40 @@
       />
     </div>
 
+    <div class="space-access-panel">
+      <van-cell-group inset>
+        <van-cell
+          title="隐私空间可用范围"
+          label="插件代码和配置仍由正常空间统一管理；这里只控制哪些插件允许在隐私空间参与搜索、导入和播放。"
+        />
+        <van-cell
+          v-for="plugin in privateAccessPlugins"
+          :key="plugin.plugin_id"
+          :title="plugin.name || plugin.plugin_id"
+          :label="plugin.plugin_id"
+        >
+          <template #right-icon>
+            <van-switch
+              :model-value="isPrivatePluginEnabled(plugin.plugin_id)"
+              @update:model-value="setPrivatePluginEnabled(plugin.plugin_id, $event)"
+            />
+          </template>
+        </van-cell>
+        <div class="space-access-save">
+          <van-button
+            type="primary"
+            block
+            round
+            :loading="savingSpaceAccess"
+            :disabled="privateAccessPlugins.length === 0"
+            @click="saveSpaceAccess"
+          >
+            保存隐私空间授权
+          </van-button>
+        </div>
+      </van-cell-group>
+    </div>
+
     <div v-if="displayAdapters.length === 0" class="empty-hint">
       <van-empty description="暂无可配置的第三方平台" />
     </div>
@@ -171,6 +205,9 @@ const installingGithubExtension = ref(false)
 const githubExtensionUrl = ref('')
 const extensionState = ref({ installed: [] })
 const extensionActionMap = ref({})
+const privateAccessPlugins = ref([])
+const privateEnabledPluginIds = ref([])
+const savingSpaceAccess = ref(false)
 
 const installedExtensions = computed(() => {
   return Array.isArray(extensionState.value?.installed) ? extensionState.value.installed : []
@@ -237,9 +274,48 @@ async function loadThirdPartyConfig() {
     thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
     thirdPartyAdapters.value = data.adapters || {}
     extensionState.value = data.extensions || { installed: [] }
+    privateAccessPlugins.value = Array.isArray(data.plugins) ? data.plugins : []
+    privateEnabledPluginIds.value = Array.isArray(data.space_access?.private_enabled_plugin_ids)
+      ? [...data.space_access.private_enabled_plugin_ids]
+      : []
     ensureAdapterFormShape()
   } catch (error) {
     showFailToast(error?.message || '加载第三方配置失败')
+  }
+}
+
+function isPrivatePluginEnabled(pluginId) {
+  return privateEnabledPluginIds.value.includes(pluginId)
+}
+
+function setPrivatePluginEnabled(pluginId, enabled) {
+  const current = new Set(privateEnabledPluginIds.value)
+  if (enabled) {
+    current.add(pluginId)
+  } else {
+    current.delete(pluginId)
+  }
+  privateEnabledPluginIds.value = Array.from(current)
+}
+
+async function saveSpaceAccess() {
+  savingSpaceAccess.value = true
+  try {
+    const response = await comicApi.saveThirdPartyConfig({
+      space_access: {
+        private_enabled_plugin_ids: privateEnabledPluginIds.value,
+      },
+    })
+    if (response.code === 200) {
+      showSuccessToast('隐私空间授权已保存')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '隐私空间授权保存失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '隐私空间授权保存失败')
+  } finally {
+    savingSpaceAccess.value = false
   }
 }
 
@@ -418,6 +494,23 @@ onMounted(() => {
 
 .extension-panel {
   padding: 12px 0 4px;
+}
+
+.space-access-panel {
+  padding: 8px 0 4px;
+}
+
+.space-access-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.space-access-save {
+  padding: 12px 16px 16px;
 }
 
 .extension-panel :deep(.van-cell-group) {

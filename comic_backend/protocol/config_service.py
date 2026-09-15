@@ -6,6 +6,7 @@ from infrastructure.logger import app_logger
 
 from .gateway import get_protocol_gateway
 from .runtime_config import ProtocolConfigStore
+from .space_access import PRIVATE_ENABLED_PLUGIN_IDS_KEY, normalize_private_enabled_plugin_ids
 
 
 class PluginConfigService:
@@ -107,6 +108,7 @@ class PluginConfigService:
                     helper_urls[helper_key] = helper_value
 
         response = {
+            "space_mode": "normal",
             "default_adapter": self._config_store.get_default_config_key(),
             "adapter_order": adapter_order,
             "config_order": config_order,
@@ -115,6 +117,7 @@ class PluginConfigService:
             "helper_urls": helper_urls,
             "plugins": [manifest.to_public_descriptor() for manifest in manifests],
             "configurable_plugins": [manifest.to_public_descriptor() for manifest in configurable],
+            "space_access": self._config_store.get_space_access(),
         }
         try:
             from .extension_service import list_extensions
@@ -145,7 +148,31 @@ class PluginConfigService:
         return resolved
 
     def save_updates(self, payload: dict) -> dict:
-        updates = self._resolve_updates(payload)
+        raw = dict(payload or {})
+        space_access = raw.get("space_access")
+        updated_space_access = False
+        if space_access is not None:
+            if not isinstance(space_access, dict):
+                raise ValueError("space_access 必须是对象")
+            known_plugin_ids = {
+                str(getattr(manifest, "plugin_id", "") or "").strip()
+                for manifest in self._gateway.registry.list_manifests()
+                if str(getattr(manifest, "plugin_id", "") or "").strip()
+            }
+            private_ids = [
+                plugin_id
+                for plugin_id in normalize_private_enabled_plugin_ids(
+                    space_access.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+                )
+                if plugin_id in known_plugin_ids
+            ]
+            self._config_store.set_space_access({PRIVATE_ENABLED_PLUGIN_IDS_KEY: private_ids})
+            updated_space_access = True
+
+        if isinstance(raw.get("adapters"), dict) or str(raw.get("adapter") or "").strip():
+            updates = self._resolve_updates(raw)
+        else:
+            updates = []
         updated_keys: List[str] = []
 
         for plugin_id, adapter_payload in updates:
@@ -156,9 +183,14 @@ class PluginConfigService:
             updated_keys.append(config_key)
 
         self._config_store.reset_runtime_caches(updated_keys)
-        app_logger.info(f"protocol config saved: {updated_keys}")
+        app_logger.info(
+            "protocol config saved: adapters=%s space_access_updated=%s",
+            updated_keys,
+            updated_space_access,
+        )
         return {
             "updated_adapters": updated_keys,
+            "updated_space_access": updated_space_access,
             "message": "配置保存成功",
         }
 
