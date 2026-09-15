@@ -275,6 +275,10 @@ def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir()
             app_version="1.2.3",
         )
 
+        runtime_api_text = (workspace_dir / "web" / "runtime-api-base.js").read_text(encoding="utf-8")
+        assert '"private": "http://127.0.0.1:5035/api"' in runtime_api_text
+        assert '"normal": "http://127.0.0.1:5036/api"' in runtime_api_text
+        assert 'window.__ULTIMATE_API_BASE_URL = "http://127.0.0.1:5035/api";' in runtime_api_text
         assert (workspace_dir / "web" / "index.html").exists()
         assert not (workspace_dir / "web" / "backend_source").exists()
         assert not (workspace_dir / "web" / "backend_bootstrap.json").exists()
@@ -581,7 +585,7 @@ def test_ensure_android_project_chaquopy_app_packages_selected_android_plugin_on
         assert 'extractPackages("third_party")' in gradle_text
         assert 'options("--no-deps")' in gradle_text
         assert 'install("demo-extra==1.0")' in gradle_text
-        assert 'module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "true", internalFilesDir)' in (
+        assert 'module.callAttr("start_backend", filesDir, "127.0.0.1", privateBackendPort, "true", internalFilesDir, normalBackendPort)' in (
             android_project_dir / "app" / "src" / "main" / "java" / "com" / "ultimate" / "web" / "MainActivity.java"
         ).read_text(encoding="utf-8")
         bootstrap_text = (
@@ -592,6 +596,8 @@ def test_ensure_android_project_chaquopy_app_packages_selected_android_plugin_on
         assert 'os.path.join(module_dir, "third_party")' in bootstrap_text
         assert "imported_root" in bootstrap_text
         assert 'os.environ["ULTIMATE_PLUGIN_ROOTS"]' in bootstrap_text
+        assert 'os.environ["BACKEND_PRIVATE_PORT"]' in bootstrap_text
+        assert 'os.environ["BACKEND_NORMAL_PORT"]' in bootstrap_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

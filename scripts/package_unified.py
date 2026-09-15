@@ -1279,6 +1279,10 @@ def ensure_android_project_chaquopy_app(
 
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip() or "com.ultimate.web"
     backend_port = int(packager_cfg.get("backend_port", 5035))
+    android_private_port = int(packager_cfg.get("android_private_port", backend_port))
+    android_normal_port = int(packager_cfg.get("android_normal_port", android_private_port + 1))
+    if android_private_port == android_normal_port:
+        raise ValueError("android private and normal ports must be different")
     third_party_enabled = str(packager_cfg.get("android_backend_enable_third_party", "false")).strip().lower()
     java_rel = Path(*app_id.split(".")) / "MainActivity.java"
     java_path = android_project_dir / "app" / "src" / "main" / "java" / java_rel
@@ -1536,15 +1540,16 @@ public class MainActivity extends BridgeActivity {{
         }}
         final String filesDir = dataRoot;
         final String internalFilesDir = getApplicationContext().getFilesDir().getAbsolutePath();
-        final int backendPort = {backend_port};
+        final int privateBackendPort = {android_private_port};
+        final int normalBackendPort = {android_normal_port};
         new Thread(() -> {{
             try {{
                 if (!Python.isStarted()) {{
                     Python.start(new AndroidPlatform(getApplicationContext()));
                 }}
                 PyObject module = Python.getInstance().getModule("ultimate_android_backend");
-                module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "{third_party_enabled}", internalFilesDir);
-                Log.i(TAG, "Embedded backend startup invoked on port " + backendPort);
+                module.callAttr("start_backend", filesDir, "127.0.0.1", privateBackendPort, "{third_party_enabled}", internalFilesDir, normalBackendPort);
+                Log.i(TAG, "Embedded backend startup invoked on private port " + privateBackendPort + " and normal port " + normalBackendPort);
             }} catch (Throwable ex) {{
                 Log.e(TAG, "Failed to start embedded backend", ex);
             }}
@@ -2369,7 +2374,7 @@ def _configure_android_plugin_roots(files_dir):
         _write_boot_log(files_dir, f"android plugin root config failed: {ex!r}")
 
 
-def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="false", internal_exec_dir=""):
+def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="false", internal_exec_dir="", normal_port=None):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
     with _lock:
@@ -2381,6 +2386,8 @@ def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="f
     os.environ["ANDROID_APP_FILES_DIR"] = str(files_dir or "")
     os.environ["BACKEND_HOST"] = str(host or "127.0.0.1")
     os.environ["BACKEND_PORT"] = str(int(port or 5035))
+    os.environ["BACKEND_PRIVATE_PORT"] = str(int(port or 5035))
+    os.environ["BACKEND_NORMAL_PORT"] = str(int(normal_port or (int(port or 5035) + 1)))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
@@ -4288,6 +4295,10 @@ def write_android_capacitor_plan(
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
     embed_backend = bool(packager_cfg.get("embed_backend", False))
     backend_port = int(packager_cfg.get("backend_port", 5035))
+    android_private_port = int(packager_cfg.get("android_private_port", backend_port))
+    android_normal_port = int(packager_cfg.get("android_normal_port", android_private_port + 1))
+    if android_private_port == android_normal_port:
+        raise ValueError("android private and normal ports must be different")
     staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
     workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     workspace_backend_dir_name = get_android_workspace_backend_dir(packager_cfg)
@@ -4310,14 +4321,20 @@ def write_android_capacitor_plan(
     api_base_url = str(packager_cfg.get("api_base_url", "")).strip()
     if embed_backend and not api_base_url:
         api_base_url = f"http://127.0.0.1:{backend_port}/api"
-    if api_base_url:
+    if api_base_url or embed_backend:
         runtime_js_path = workspace_dir / workspace_web_dir_name / "runtime-api-base.js"
-        write_text(
-            runtime_js_path,
-            "window.__ULTIMATE_API_BASE_URL = "
-            + json.dumps(api_base_url, ensure_ascii=False)
-            + ";\n",
-        )
+        if embed_backend:
+            space_api_bases = {
+                "private": str(packager_cfg.get("android_private_api_base_url", "")).strip()
+                or f"http://127.0.0.1:{android_private_port}/api",
+                "normal": str(packager_cfg.get("android_normal_api_base_url", "")).strip()
+                or f"http://127.0.0.1:{android_normal_port}/api",
+            }
+            runtime_config = "window.__ULTIMATE_SPACE_API_BASES = " + json.dumps(space_api_bases, ensure_ascii=False) + ";\n"
+            runtime_config += "window.__ULTIMATE_API_BASE_URL = " + json.dumps(space_api_bases["private"], ensure_ascii=False) + ";\n"
+        else:
+            runtime_config = "window.__ULTIMATE_API_BASE_URL = " + json.dumps(api_base_url, ensure_ascii=False) + ";\n"
+        write_text(runtime_js_path, runtime_config)
         index_html = workspace_dir / workspace_web_dir_name / "index.html"
         if index_html.exists():
             raw = index_html.read_text(encoding="utf-8")
@@ -4399,7 +4416,10 @@ def write_android_capacitor_plan(
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
     if embed_backend:
         plan.append(f"- backend build input dir: `{workspace_backend_dir_name}`")
-        plan.append(f"- embedded backend api base: `http://127.0.0.1:{backend_port}/api`")
+        plan.append(
+            f"- embedded backend api bases: private=`http://127.0.0.1:{android_private_port}/api`, "
+            f"normal=`http://127.0.0.1:{android_normal_port}/api`"
+        )
         plan.append("- embedded backend injection: enabled (Chaquopy consumes build-only backend input, not web assets)")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")

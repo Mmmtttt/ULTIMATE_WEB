@@ -25,6 +25,9 @@ request.interceptors.request.use(
   config => {
     console.log('[request]', config.method?.toUpperCase(), config.url)
 
+    // Runtime space switching changes the endpoint after this module loads.
+    config.baseURL = resolveApiBaseUrl()
+
     const authStore = _getAuthStore()
     if (authStore?.mode) {
       config.headers['X-Space-Mode'] = authStore.mode

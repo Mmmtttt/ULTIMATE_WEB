@@ -29,6 +29,13 @@ function getRuntimeApiBase() {
   }
 }
 
+function getRuntimeSpaceApiBase(mode) {
+  if (typeof window === 'undefined') return ''
+  const endpoints = window.__ULTIMATE_SPACE_API_BASES
+  if (!endpoints || typeof endpoints !== 'object') return ''
+  return trimTrailingSlash(String(endpoints[mode] || '').trim())
+}
+
 function getDevBackendOrigin() {
   const location = getLocation()
   if (!location) return ''
@@ -50,6 +57,14 @@ export function resolveApiBaseUrl() {
   // 开发环境和生产环境都走相对路径 /api
   // 开发环境走 Vite 代理，生产环境走前端服务器代理
   return '/api'
+}
+
+export function resolveSpaceApiBaseUrl(mode) {
+  return getRuntimeSpaceApiBase(mode) || resolveApiBaseUrl()
+}
+
+export function getConfiguredSpaceApiBaseUrl(mode) {
+  return getRuntimeSpaceApiBase(mode)
 }
 
 export function resolveBackendOrigin() {

@@ -1,7 +1,10 @@
 import { defineStore } from 'pinia'
 import { login as loginApi, getAuthStatus, logout as logoutApi, updateProjectPassword } from '@/api/auth'
+import { getConfiguredSpaceApiBaseUrl } from '@/runtime/endpoint'
 
 function getPrivateApiBase() {
+  const runtimeBase = getConfiguredSpaceApiBaseUrl('private')
+  if (runtimeBase) return runtimeBase
   const privatePort = import.meta.env.VITE_PRIVATE_PORT || 5000
   const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
   const protocol = sslEnabled ? 'https' : 'http'
@@ -10,6 +13,8 @@ function getPrivateApiBase() {
 }
 
 function getNormalApiBase() {
+  const runtimeBase = getConfiguredSpaceApiBaseUrl('normal')
+  if (runtimeBase) return runtimeBase
   const normalPort = import.meta.env.VITE_NORMAL_PORT || 5001
   const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
   const protocol = sslEnabled ? 'https' : 'http'
@@ -31,6 +36,15 @@ function setRuntimeApiBase(url) {
   }
 }
 
+function applySpaceApiBase(mode) {
+  const configured = mode === 'normal' ? getNormalApiBase() : getPrivateApiBase()
+  if (configured) {
+    setRuntimeApiBase(configured)
+  } else if (import.meta.env.DEV) {
+    setRuntimeApiBase(mode === 'normal' ? '' : getPrivateApiBase())
+  }
+}
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     enabled: false,
@@ -48,6 +62,9 @@ export const useAuthStore = defineStore('auth', {
           this.enabled = res.data.enabled
           this.authenticated = res.data.authenticated
           this.mode = res.data.mode
+          if (this.enabled) {
+            applySpaceApiBase(this.authenticated ? 'normal' : 'private')
+          }
           if (res.data.authenticated) {
             this.hasAttemptedLogin = true
           }
@@ -68,16 +85,9 @@ export const useAuthStore = defineStore('auth', {
           this.mode = res.data.mode
           this.hasAttemptedLogin = true
 
-          if (import.meta.env.DEV) {
-            // 开发模式：通过切换端口来切换空间
-            if (!res.data.authenticated) {
-              setRuntimeApiBase(getPrivateApiBase())
-            } else {
-              // 开发环境走 Vite 代理（相对路径），不需要切换绝对 URL
-              setRuntimeApiBase('')
-            }
+          if (this.enabled) {
+            applySpaceApiBase(res.data.authenticated ? 'normal' : 'private')
           }
-          // 生产模式：始终走相对路径 /api，通过 X-Space-Mode header 由前端服务器路由
         }
         return res.data
       } finally {
@@ -102,26 +112,19 @@ export const useAuthStore = defineStore('auth', {
         // ignore
       }
 
-      if (import.meta.env.DEV) {
-        // 开发模式：退出后切到 private 端口
-        setRuntimeApiBase(getPrivateApiBase())
-      }
+      if (this.enabled) applySpaceApiBase('private')
     },
 
     switchToPrivateMode() {
       this.authenticated = false
       this.mode = 'private'
-      if (import.meta.env.DEV) {
-        setRuntimeApiBase(getPrivateApiBase())
-      }
+      if (this.enabled) applySpaceApiBase('private')
     },
 
     switchToNormalMode() {
       this.authenticated = true
       this.mode = 'normal'
-      if (import.meta.env.DEV) {
-        setRuntimeApiBase('')
-      }
+      if (this.enabled) applySpaceApiBase('normal')
     },
 
     async changePassword(password) {
