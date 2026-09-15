@@ -897,7 +897,7 @@ async function openBatchTaskSheet() {
   if (selectedCount.value === 0) {
     return
   }
-  await runtimeStore.fetchRuntime()
+  await runtimeStore.fetchRuntime(true)
   showBatchTaskSheet.value = true
 }
 
