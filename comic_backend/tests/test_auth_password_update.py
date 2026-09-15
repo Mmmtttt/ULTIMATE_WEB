@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import werkzeug
 from flask import Flask
@@ -105,6 +106,23 @@ def test_normal_auth_token_authorizes_normal_space_without_cookie(tmp_path, monk
     assert token
     assert status_response.status_code == 200
     assert status_response.get_json()["data"]["authenticated"] is True
+
+    query_status_response = normal_app.test_client().get(
+        f"/api/v1/auth/status?normal_auth_token={quote(token, safe='')}"
+    )
+
+    assert query_status_response.status_code == 200
+    assert query_status_response.get_json()["data"]["authenticated"] is True
+
+    unauthenticated_cover_response = normal_app.test_client().get(
+        "/static/cover/missing.jpg"
+    )
+    authenticated_cover_response = normal_app.test_client().get(
+        f"/static/cover/missing.jpg?normal_auth_token={quote(token, safe='')}"
+    )
+
+    assert unauthenticated_cover_response.status_code == 401
+    assert authenticated_cover_response.status_code != 401
 
 
 def test_update_project_password_saves_plaintext_in_normal_space(tmp_path, monkeypatch):

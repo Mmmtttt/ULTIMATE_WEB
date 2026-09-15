@@ -373,6 +373,9 @@ def _proxy_to_backend(backend_base: str, path: str):
     url = f"{backend_base.rstrip('/')}/{path.lstrip('/')}"
     headers = _build_proxy_headers()
     params = request.args.to_dict(flat=False)
+    normal_tokens = params.pop("normal_auth_token", [])
+    if normal_tokens and not headers.get("x-ultimate-normal-token"):
+        headers["x-ultimate-normal-token"] = str(normal_tokens[0] or "")
     timeout = 300
 
     method = request.method.lower()

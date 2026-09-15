@@ -349,11 +349,13 @@ function toDisplayUrl(rawUrl) {
   if (!text) return ''
   if (
     text.startsWith('http://') ||
-    text.startsWith('https://') ||
     text.startsWith('data:') ||
     text.startsWith('blob:')
   ) {
-    return text
+    return text.startsWith('http://') ? toBackendUrl(text) : text
+  }
+  if (text.startsWith('https://')) {
+    return toBackendUrl(text)
   }
   if (text.startsWith('/')) {
     return toBackendUrl(text)

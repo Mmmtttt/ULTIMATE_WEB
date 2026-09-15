@@ -898,10 +898,18 @@ async function mountPreviewVideoSource() {
         enableWorker: true,
         xhrSetup: (xhr) => {
           xhr.withCredentials = true
+          const token = window.__ULTIMATE_NORMAL_AUTH_TOKEN
+          if (token) xhr.setRequestHeader('X-Ultimate-Normal-Token', token)
         },
         fetchSetup: (context, initParams) => ({
           ...(initParams || {}),
-          credentials: 'include'
+          credentials: 'include',
+          headers: {
+            ...((initParams || {}).headers || {}),
+            ...(window.__ULTIMATE_NORMAL_AUTH_TOKEN
+              ? { 'X-Ultimate-Normal-Token': window.__ULTIMATE_NORMAL_AUTH_TOKEN }
+              : {})
+          }
         })
       })
 
@@ -1645,10 +1653,18 @@ async function playStream(stream) {
         enableWorker: true,
         xhrSetup: (xhr) => {
           xhr.withCredentials = true
+          const token = window.__ULTIMATE_NORMAL_AUTH_TOKEN
+          if (token) xhr.setRequestHeader('X-Ultimate-Normal-Token', token)
         },
         fetchSetup: (context, initParams) => ({
           ...(initParams || {}),
-          credentials: 'include'
+          credentials: 'include',
+          headers: {
+            ...((initParams || {}).headers || {}),
+            ...(window.__ULTIMATE_NORMAL_AUTH_TOKEN
+              ? { 'X-Ultimate-Normal-Token': window.__ULTIMATE_NORMAL_AUTH_TOKEN }
+              : {})
+          }
         })
       })
       

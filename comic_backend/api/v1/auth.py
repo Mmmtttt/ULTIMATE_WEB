@@ -27,7 +27,11 @@ def _issue_normal_auth_token() -> str:
 
 
 def _is_normal_auth_token_valid() -> bool:
-    token = str(request.headers.get(NORMAL_AUTH_TOKEN_HEADER, "") or "").strip()
+    token = str(
+        request.headers.get(NORMAL_AUTH_TOKEN_HEADER)
+        or request.args.get("normal_auth_token", "")
+        or ""
+    ).strip()
     if not token:
         return False
     try:

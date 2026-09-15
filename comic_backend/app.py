@@ -389,7 +389,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
 
         # 认证检查（仅 normal 空间需要）
         if require_auth:
-            # 白名单：登录接口、健康检查、静态资源不需要认证
+            # 白名单：认证接口和健康检查不需要正常空间登录。
             path = request.path
             public_paths = (
                 '/api/v1/auth/login',

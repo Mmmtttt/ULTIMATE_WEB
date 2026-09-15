@@ -29,6 +29,28 @@ function getRuntimeApiBase() {
   }
 }
 
+function appendRuntimeAuthToken(url) {
+  if (typeof window === 'undefined') return url
+  const token = String(window.__ULTIMATE_NORMAL_AUTH_TOKEN || '').trim()
+  if (!token || url.includes('normal_auth_token=')) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}normal_auth_token=${encodeURIComponent(token)}`
+}
+
+function appendTokenToRuntimeBackendUrl(url) {
+  if (typeof window === 'undefined') return url
+  const backendOrigin = resolveBackendOrigin()
+  if (!backendOrigin) return url
+  try {
+    const parsed = new URL(url)
+    const configured = new URL(backendOrigin)
+    if (parsed.origin !== configured.origin) return url
+  } catch (_) {
+    return url
+  }
+  return appendRuntimeAuthToken(url)
+}
+
 function getRuntimeSpaceApiBase(mode) {
   if (typeof window === 'undefined') return ''
   const endpoints = window.__ULTIMATE_SPACE_API_BASES
@@ -99,13 +121,18 @@ export function resolveBackendUrl(path) {
   const raw = String(path).trim()
   if (!raw) return raw
 
-  if (/^(https?:)?\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('blob:')) {
+  if (/^(https?:)?\/\//i.test(raw)) {
+    return appendTokenToRuntimeBackendUrl(raw)
+  }
+
+  if (raw.startsWith('data:') || raw.startsWith('blob:')) {
     return raw
   }
 
   const normalizedPath = ensureLeadingSlash(raw)
   const backendOrigin = resolveBackendOrigin()
-  return backendOrigin ? `${backendOrigin}${normalizedPath}` : normalizedPath
+  const resolvedUrl = backendOrigin ? `${backendOrigin}${normalizedPath}` : normalizedPath
+  return appendRuntimeAuthToken(resolvedUrl)
 }
 
 export function resolveBackendApiUrl(path) {
