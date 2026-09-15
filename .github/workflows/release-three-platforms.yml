@@ -143,6 +143,10 @@ jobs:
       - name: setup android sdk (android only)
         if: ${{ matrix.build_android }}
         uses: android-actions/setup-android@v4.0.1
+        with:
+          # Pin a known stable command-line tools build instead of the action's moving latest default.
+          cmdline-tools-version: 12266719
+          packages: ''
 
       - name: install android platforms (android only)
         if: ${{ matrix.build_android }}
