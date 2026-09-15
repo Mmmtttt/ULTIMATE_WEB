@@ -339,6 +339,9 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     app.config['SECRET_KEY'] = _resolve_secret_key()
     app.config['SPACE_MODE'] = space_mode
     app.config['REQUIRE_AUTH'] = require_auth
+    # Ports do not isolate browser cookies. Keep normal/private sessions separate
+    # so a previous normal login cannot authenticate the private bootstrap app.
+    app.config['SESSION_COOKIE_NAME'] = f'ultimate_web_{space_mode}_session'
 
     CORS(app, supports_credentials=True)
 

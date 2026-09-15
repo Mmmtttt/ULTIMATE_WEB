@@ -50,6 +50,14 @@ function applySpaceApiBase(mode) {
   }
 }
 
+function prepareAuthStatusProbe() {
+  // A restarted dual-space client must always probe the private listener first.
+  const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
+    && window.__ULTIMATE_SPACE_API_BASES
+    && typeof window.__ULTIMATE_SPACE_API_BASES === 'object'
+  if (hasRuntimeSpaceEndpoints) applySpaceApiBase('private')
+}
+
 const AUTH_STATUS_RETRY_DELAYS_MS = [0, 250, 500, 750, 1000, 1500]
 
 function waitForAuthStatusRetry(delayMs) {
@@ -63,11 +71,17 @@ export const useAuthStore = defineStore('auth', {
     authenticated: false,
     mode: 'private',
     loading: false,
-    hasAttemptedLogin: false
+    hasAttemptedLogin: false,
+    authStatusError: null,
+    authStatusProbePrepared: false
   }),
 
   actions: {
     async checkStatus() {
+      if (!this.authStatusProbePrepared) {
+        prepareAuthStatusProbe()
+        this.authStatusProbePrepared = true
+      }
       let lastError = null
       for (const delayMs of AUTH_STATUS_RETRY_DELAYS_MS) {
         await waitForAuthStatusRetry(delayMs)
@@ -77,6 +91,7 @@ export const useAuthStore = defineStore('auth', {
             this.enabled = res.data.enabled
             this.authenticated = res.data.authenticated
             this.mode = res.data.mode
+            this.authStatusError = null
             if (this.enabled) {
               applySpaceApiBase(this.authenticated ? 'normal' : 'private')
             }
@@ -92,6 +107,7 @@ export const useAuthStore = defineStore('auth', {
       }
 
       console.error('[auth] check status failed after retries:', lastError)
+      this.authStatusError = lastError || new Error('认证状态检查失败')
       throw lastError || new Error('认证状态检查失败')
     },
 
@@ -100,9 +116,13 @@ export const useAuthStore = defineStore('auth', {
       try {
         const res = await loginApi(password)
         if (res.code === 200) {
+          if (typeof res.data.enabled === 'boolean') {
+            this.enabled = res.data.enabled
+          }
           this.authenticated = res.data.authenticated
           this.mode = res.data.mode
           this.hasAttemptedLogin = true
+          this.authStatusError = null
 
           if (this.enabled) {
             applySpaceApiBase(res.data.authenticated ? 'normal' : 'private')
@@ -150,9 +170,9 @@ export const useAuthStore = defineStore('auth', {
       const res = await updateProjectPassword(password)
       if (res.code === 200) {
         this.enabled = true
-      this.authenticated = true
-      this.mode = 'normal'
-      this.hasAttemptedLogin = true
+        this.authenticated = true
+        this.mode = 'normal'
+        this.hasAttemptedLogin = true
       }
       return res
     }

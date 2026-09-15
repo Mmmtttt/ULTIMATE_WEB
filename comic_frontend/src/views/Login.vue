@@ -26,6 +26,7 @@
           <span v-if="loading">登录中...</span>
           <span v-else>进入</span>
         </button>
+        <p v-if="errorMessage" class="error-tip" role="alert">{{ errorMessage }}</p>
       </form>
 
       <div class="login-footer">
@@ -46,6 +47,7 @@ const authStore = useAuthStore()
 
 const password = ref('')
 const loading = ref(false)
+const errorMessage = ref('')
 const passwordInput = ref(null)
 
 onMounted(() => {
@@ -58,6 +60,7 @@ async function handleLogin() {
   if (!password.value || loading.value) return
 
   loading.value = true
+  errorMessage.value = ''
 
   try {
     // 无论密码正确与否，都进入应用
@@ -67,10 +70,8 @@ async function handleLogin() {
     const redirect = route.query.redirect || '/library'
     router.replace(redirect)
   } catch (e) {
-    // 网络错误等异常情况也直接进入隐私模式
-    authStore.switchToPrivateMode()
-    const redirect = route.query.redirect || '/library'
-    router.replace(redirect)
+    // 网络异常不能等同于密码错误，否则后端未就绪时会绕过登录页。
+    errorMessage.value = '登录服务暂不可用，请稍后重试'
   } finally {
     loading.value = false
   }

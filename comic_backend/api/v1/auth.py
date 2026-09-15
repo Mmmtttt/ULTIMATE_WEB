@@ -51,7 +51,7 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"authenticated": True, "mode": "normal"}
+            "data": {"enabled": False, "authenticated": True, "mode": "normal"}
         })
 
     try:
@@ -69,7 +69,7 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"authenticated": True, "mode": "normal"}
+            "data": {"enabled": True, "authenticated": True, "mode": "normal"}
         })
     else:
         # 密码错误 - 静默失败，返回 "private" 模式
@@ -78,7 +78,7 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"authenticated": False, "mode": "private"}
+            "data": {"enabled": True, "authenticated": False, "mode": "private"}
         })
 
 

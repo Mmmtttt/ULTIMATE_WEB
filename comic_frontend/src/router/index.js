@@ -229,8 +229,21 @@ router.beforeEach(async (to, from, next) => {
       await authStore.checkStatus()
       authChecked = true
     } catch (e) {
-      // 检查失败也继续，可能是网络问题
+      // 未确认认证状态前禁止进入业务页，避免启动慢时绕过登录。
+      authChecked = true
     }
+  }
+
+  if (authStore.authStatusError) {
+    if (to.name !== 'Login') {
+      next({
+        name: 'Login',
+        query: { redirect: to.fullPath }
+      })
+    } else {
+      next()
+    }
+    return
   }
 
   // 未启用认证 → 直接通过

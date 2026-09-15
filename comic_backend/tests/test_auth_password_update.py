@@ -25,6 +25,25 @@ def _make_app(space_mode: str) -> Flask:
     return app
 
 
+def test_runtime_space_apps_use_isolated_session_cookies(monkeypatch):
+    import app as backend_app
+
+    monkeypatch.setattr(backend_app, "ensure_storage_layout", lambda _space_mode: None)
+
+    private_app = backend_app.create_app(
+        space_mode=SPACE_MODE_PRIVATE,
+        require_auth=False,
+    )
+    normal_app = backend_app.create_app(
+        space_mode=SPACE_MODE_NORMAL,
+        require_auth=True,
+    )
+
+    assert private_app.config["SESSION_COOKIE_NAME"] == "ultimate_web_private_session"
+    assert normal_app.config["SESSION_COOKIE_NAME"] == "ultimate_web_normal_session"
+    assert private_app.config["SESSION_COOKIE_NAME"] != normal_app.config["SESSION_COOKIE_NAME"]
+
+
 def test_update_project_password_saves_plaintext_in_normal_space(tmp_path, monkeypatch):
     config_path = tmp_path / "server_config.json"
     config_path.write_text(json.dumps({"auth": {"enabled": False, "password": ""}}), encoding="utf-8")
