@@ -231,6 +231,7 @@ _PROXY_HEADERS_PASS = (
     "if-none-match",
     "range",
     "x-sync-token",
+    "x-ultimate-normal-token",
 )
 
 _RESPONSE_HEADERS_PASS = (

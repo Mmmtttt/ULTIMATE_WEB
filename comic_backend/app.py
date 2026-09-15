@@ -14,6 +14,7 @@ from flask_cors import CORS
 from werkzeug.serving import WSGIRequestHandler
 
 from api import register_blueprints
+from api.v1.auth import is_authenticated
 from application.list_app_service import ListAppService
 from core.constants import (
     CACHE_MAX_AGE,
@@ -400,7 +401,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
                 return
             if _is_sync_request_allowed_without_session(path):
                 return
-            if not session.get('authenticated', False):
+            if not is_authenticated():
                 message = (
                     "auth rejected "
                     f"space={space_mode!r} path={request.path!r} "

@@ -35,6 +35,11 @@ request.interceptors.request.use(
     if (authStore?.mode) {
       config.headers['X-Space-Mode'] = authStore.mode
     }
+    const normalAuthToken = authStore?.normalAuthToken
+      || (typeof window !== 'undefined' ? window.__ULTIMATE_NORMAL_AUTH_TOKEN : '')
+    if (authStore?.mode === 'normal' && normalAuthToken) {
+      config.headers['X-Ultimate-Normal-Token'] = normalAuthToken
+    }
 
     return config
   },

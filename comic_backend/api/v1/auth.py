@@ -1,5 +1,6 @@
 import json
 import os
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from flask import Blueprint, current_app, request, session, jsonify
 
@@ -9,6 +10,34 @@ from infrastructure.logger import app_logger
 
 
 auth_bp = Blueprint("auth", __name__)
+NORMAL_AUTH_TOKEN_HEADER = "X-Ultimate-Normal-Token"
+NORMAL_AUTH_TOKEN_SALT = "ultimate-web-normal-space"
+NORMAL_AUTH_TOKEN_MAX_AGE = 24 * 60 * 60
+
+
+def _normal_auth_token_serializer():
+    return URLSafeTimedSerializer(
+        current_app.secret_key,
+        salt=NORMAL_AUTH_TOKEN_SALT,
+    )
+
+
+def _issue_normal_auth_token() -> str:
+    return _normal_auth_token_serializer().dumps({"authenticated": True})
+
+
+def _is_normal_auth_token_valid() -> bool:
+    token = str(request.headers.get(NORMAL_AUTH_TOKEN_HEADER, "") or "").strip()
+    if not token:
+        return False
+    try:
+        payload = _normal_auth_token_serializer().loads(
+            token,
+            max_age=NORMAL_AUTH_TOKEN_MAX_AGE,
+        )
+        return bool(isinstance(payload, dict) and payload.get("authenticated"))
+    except (BadSignature, SignatureExpired):
+        return False
 
 
 def _get_auth_config():
@@ -37,7 +66,9 @@ def get_correct_password() -> str:
 def is_authenticated() -> bool:
     if not is_auth_enabled():
         return True
-    return bool(session.get("authenticated", False))
+    return bool(session.get("authenticated", False)) or (
+        _is_normal_space() and _is_normal_auth_token_valid()
+    )
 
 
 def _is_normal_space() -> bool:
@@ -53,7 +84,7 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"enabled": False, "authenticated": True, "mode": "normal"}
+            "data": {"enabled": False, "authenticated": True, "mode": "normal", "normal_auth_token": ""}
         })
 
     try:
@@ -71,7 +102,12 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"enabled": True, "authenticated": True, "mode": "normal"}
+            "data": {
+                "enabled": True,
+                "authenticated": True,
+                "mode": "normal",
+                "normal_auth_token": _issue_normal_auth_token(),
+            }
         })
     else:
         # 密码错误 - 静默失败，返回 "private" 模式
@@ -80,7 +116,7 @@ def login():
         return jsonify({
             "code": 200,
             "msg": "success",
-            "data": {"enabled": True, "authenticated": False, "mode": "private"}
+            "data": {"enabled": True, "authenticated": False, "mode": "private", "normal_auth_token": ""}
         })
 
 
@@ -96,7 +132,7 @@ def status():
             "data": {"enabled": False, "authenticated": True, "mode": "normal"}
         })
 
-    authenticated = bool(session.get("authenticated", False))
+    authenticated = is_authenticated()
     mode = "normal" if authenticated else "private"
     app_logger.info(
         "[auth] status space=%s enabled=true authenticated=%s mode=%s",
@@ -120,7 +156,7 @@ def update_password():
     """在 normal 空间更新项目密码；密码按项目当前约定明文保存。"""
     if not _is_normal_space():
         return jsonify({"code": 403, "msg": "当前空间不能修改项目密码", "data": None}), 403
-    if is_auth_enabled() and not bool(session.get("authenticated", False)):
+    if is_auth_enabled() and not is_authenticated():
         return jsonify({"code": 401, "msg": "请先登录正常空间", "data": None}), 401
 
     payload = request.get_json(silent=True) or {}

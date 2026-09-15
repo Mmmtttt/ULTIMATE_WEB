@@ -36,6 +36,16 @@ function setRuntimeApiBase(url) {
   }
 }
 
+function setNormalAuthToken(token) {
+  const normalized = String(token || '')
+  try {
+    window.__ULTIMATE_NORMAL_AUTH_TOKEN = normalized
+  } catch (_) {
+    // The in-memory Pinia state remains the source of truth in non-browser tests.
+  }
+  return normalized
+}
+
 function applySpaceApiBase(mode) {
   const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
     && window.__ULTIMATE_SPACE_API_BASES
@@ -72,6 +82,7 @@ export const useAuthStore = defineStore('auth', {
     mode: 'private',
     loading: false,
     hasAttemptedLogin: false,
+    normalAuthToken: '',
     authStatusError: null,
     authStatusProbePrepared: false
   }),
@@ -122,19 +133,14 @@ export const useAuthStore = defineStore('auth', {
           this.authenticated = res.data.authenticated
           this.mode = res.data.mode
           this.hasAttemptedLogin = true
+          this.normalAuthToken = setNormalAuthToken(res.data.normal_auth_token || '')
           this.authStatusError = null
 
-          if (this.enabled && res.data.authenticated) {
-            // The password check starts on the private listener. Establish a
-            // separate normal-space session before switching all API traffic.
-            applySpaceApiBase('normal')
-            const normalSession = await loginApi(password)
-            if (normalSession.code !== 200 || !normalSession.data?.authenticated) {
-              applySpaceApiBase('private')
-              throw new Error('正常空间会话建立失败')
-            }
-          } else if (this.enabled) {
-            applySpaceApiBase('private')
+          if (this.enabled) {
+            applySpaceApiBase(res.data.authenticated ? 'normal' : 'private')
+          }
+          if (!res.data.authenticated) {
+            this.normalAuthToken = setNormalAuthToken('')
           }
         }
         return res.data
@@ -152,6 +158,7 @@ export const useAuthStore = defineStore('auth', {
       this.authenticated = false
       this.mode = 'private'
       this.hasAttemptedLogin = false
+      this.normalAuthToken = setNormalAuthToken('')
 
       try {
         window.localStorage.removeItem('ULTIMATE_API_BASE_URL')
@@ -166,6 +173,7 @@ export const useAuthStore = defineStore('auth', {
     switchToPrivateMode() {
       this.authenticated = false
       this.mode = 'private'
+      this.normalAuthToken = setNormalAuthToken('')
       if (this.enabled) applySpaceApiBase('private')
     },
 

@@ -65,6 +65,48 @@ def test_normal_space_allows_cors_preflight_without_session(monkeypatch):
     assert response.status_code != 401
 
 
+def test_normal_auth_token_authorizes_normal_space_without_cookie(tmp_path, monkeypatch):
+    import app as backend_app
+
+    config_path = tmp_path / "server_config.json"
+    config_path.write_text(
+        json.dumps({"auth": {"enabled": True, "password": "correct"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(auth_api, "SERVER_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        auth_api,
+        "_load_server_config",
+        lambda: json.loads(config_path.read_text(encoding="utf-8")),
+    )
+    monkeypatch.setattr(backend_app, "ensure_storage_layout", lambda _space_mode: None)
+
+    private_app = backend_app.create_app(
+        space_mode=SPACE_MODE_PRIVATE,
+        require_auth=False,
+    )
+    normal_app = backend_app.create_app(
+        space_mode=SPACE_MODE_NORMAL,
+        require_auth=True,
+    )
+
+    login_response = private_app.test_client().post(
+        "/api/v1/auth/login",
+        json={"password": "correct"},
+    )
+    token = login_response.get_json()["data"]["normal_auth_token"]
+
+    status_response = normal_app.test_client().get(
+        "/api/v1/auth/status",
+        headers={auth_api.NORMAL_AUTH_TOKEN_HEADER: token},
+    )
+
+    assert login_response.status_code == 200
+    assert token
+    assert status_response.status_code == 200
+    assert status_response.get_json()["data"]["authenticated"] is True
+
+
 def test_update_project_password_saves_plaintext_in_normal_space(tmp_path, monkeypatch):
     config_path = tmp_path / "server_config.json"
     config_path.write_text(json.dumps({"auth": {"enabled": False, "password": ""}}), encoding="utf-8")
