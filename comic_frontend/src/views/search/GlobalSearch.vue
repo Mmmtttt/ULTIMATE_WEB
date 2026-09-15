@@ -87,9 +87,9 @@
         <div v-if="hasMore" class="load-more">
           <div v-if="paginationInfo" class="pagination-info">
             <template v-if="isVideoMode">
-              <span class="platform-info">平台: {{ paginationInfo.platform.toUpperCase() }}</span>
-              <span class="page-info">第 {{ paginationInfo.page }} 页</span>
-              <span v-if="paginationInfo.total_pages" class="total-pages">/ {{ paginationInfo.total_pages }} 页</span>
+              <span v-if="paginationInfo?.platform" class="platform-info">平台: {{ String(paginationInfo.platform).toUpperCase() }}</span>
+              <span class="page-info">第 {{ paginationInfo?.page || 1 }} 页</span>
+              <span v-if="paginationInfo?.total_pages" class="total-pages">/ {{ paginationInfo.total_pages }} 页</span>
             </template>
             <template v-else>
               <div v-for="(info, plat) in paginationInfo" :key="plat" class="platform-item">
@@ -481,9 +481,11 @@ async function loadPlatformOptions(mediaType) {
 // 监听视频/漫画模式切换：模式变化时清空数据、刷新平台列表
 watch(isVideoMode, async (newMode, oldMode) => {
   const modeChanged = oldMode !== undefined && newMode !== oldMode
-  if (modeChanged) {
+  const searchStateBelongsToCurrentMode = searchStore.videoMode === newMode
+  if (modeChanged || !searchStateBelongsToCurrentMode) {
     // 模式真正切换了 → 清空结果和平台选择
     searchStore.clearResults()
+    searchStore.setSearchState({ videoMode: newMode })
     selectedPlatforms.value = []
     platformOptions.value = []
     await loadPlatformOptions(newMode ? 'video' : 'comic')

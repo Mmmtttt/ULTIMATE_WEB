@@ -89,3 +89,52 @@ test("global search resets previous keyword and stays remote-only", async ({ pag
   await expect(page.getByText("开始全网搜索")).toBeVisible();
   expect(remoteSearchCalls.length).toBe(1);
 });
+
+test("global search clears comic state before entering video mode", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("app_mode", "comic");
+  });
+
+  await page.route("**/api/v1/comic/search-third-party**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: 200,
+        msg: "ok",
+        data: {
+          results: [
+            {
+              id: "COMIC_STATE_1",
+              title: "State Transition Comic",
+              cover_path: "/static/default/default_cover.jpg",
+              platform: "comic_alpha",
+            },
+          ],
+          page: 1,
+          has_more: true,
+          platform_info: {
+            comic_alpha: {
+              page: 1,
+              total_pages: 2,
+            },
+          },
+        },
+      }),
+    });
+  });
+
+  await page.goto("/search");
+  const searchInput = page.locator("input[type='search']").first();
+  await searchInput.fill("state-transition");
+  await searchInput.press("Enter");
+  await expect(page.locator(".remote-result-card")).toHaveCount(1);
+
+  await page.goto("/library");
+  await page.locator(".mode-switch").first().click();
+  await page.goto("/search");
+
+  await expect(page.locator(".search-page")).toBeVisible();
+  await expect(page.getByText("开始全网搜索")).toBeVisible();
+  await expect(page.locator(".remote-result-card")).toHaveCount(0);
+});
