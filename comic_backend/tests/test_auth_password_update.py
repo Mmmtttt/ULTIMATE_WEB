@@ -44,6 +44,27 @@ def test_runtime_space_apps_use_isolated_session_cookies(monkeypatch):
     assert private_app.config["SESSION_COOKIE_NAME"] != normal_app.config["SESSION_COOKIE_NAME"]
 
 
+def test_normal_space_allows_cors_preflight_without_session(monkeypatch):
+    import app as backend_app
+
+    monkeypatch.setattr(backend_app, "ensure_storage_layout", lambda _space_mode: None)
+    normal_app = backend_app.create_app(
+        space_mode=SPACE_MODE_NORMAL,
+        require_auth=True,
+    )
+
+    response = normal_app.test_client().options(
+        "/api/v1/ui-state",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code != 401
+
+
 def test_update_project_password_saves_plaintext_in_normal_space(tmp_path, monkeypatch):
     config_path = tmp_path / "server_config.json"
     config_path.write_text(json.dumps({"auth": {"enabled": False, "password": ""}}), encoding="utf-8")

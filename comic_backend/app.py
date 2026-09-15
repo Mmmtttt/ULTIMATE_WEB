@@ -372,6 +372,20 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
         set_current_space_mode(space_mode)
         g.space_mode = space_mode
 
+        # CORS preflight requests intentionally do not carry session cookies.
+        # Let Flask-CORS answer them before the normal-space auth guard runs.
+        if request.method == 'OPTIONS':
+            message = (
+                "cors preflight allowed "
+                f"space={space_mode!r} path={request.path!r} "
+                f"origin={request.headers.get('Origin')!r} "
+                f"requested_method={request.headers.get('Access-Control-Request-Method')!r} "
+                f"requested_headers={request.headers.get('Access-Control-Request-Headers')!r}"
+            )
+            app_logger.info(message)
+            _write_runtime_boot_log(message)
+            return
+
         # 认证检查（仅 normal 空间需要）
         if require_auth:
             # 白名单：登录接口、健康检查、静态资源不需要认证

@@ -421,10 +421,19 @@ def _proxy_to_backend(backend_base: str, path: str):
     if _is_stream_proxy_response(path, resp):
         response = _build_streaming_flask_response(resp)
         if int(getattr(resp, "status_code", 0) or 0) == 401:
+            print(
+                f"[frontend proxy] backend rejected stream method={request.method} "
+                f"path={path} target={url} status=401"
+            )
             _set_space_mode_cookie(response, SPACE_MODE_PRIVATE)
         return response
 
     response = _build_flask_response(resp)
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        print(
+            f"[frontend proxy] backend response method={request.method} "
+            f"path={path} target={url} status={resp.status_code}"
+        )
     close_response = getattr(resp, "close", None)
     if callable(close_response):
         close_response()
