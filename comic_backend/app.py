@@ -326,6 +326,27 @@ def _apply_static_asset_cache_headers(response):
     return response
 
 
+def _detect_image_content_type(path: str, fallback: str = "application/octet-stream") -> str:
+    """Use the file signature when a provider used a misleading extension."""
+    try:
+        with open(path, "rb") as asset:
+            header = asset.read(16)
+    except OSError:
+        return fallback
+
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if header.startswith(b"BM"):
+        return "image/bmp"
+    return fallback
+
+
 def success_response(data=None):
     return {
         "code": 200,
@@ -509,19 +530,17 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
                 is_file,
             )
         response = make_response(send_from_directory(cover_dir, filename))
+        extension_content_type = response.content_type or 'application/octet-stream'
+        detected_content_type = _detect_image_content_type(target_path, extension_content_type)
         app_logger.debug(
-            "[cover-debug] serve response filename=%r status=%s content_type=%r content_length=%r",
+            "[cover-debug] serve response filename=%r status=%s content_type=%r detected_content_type=%r content_length=%r",
             filename,
             response.status_code,
             response.content_type,
+            detected_content_type,
             response.content_length,
         )
-        if filename.endswith('.jpg') or filename.endswith('.jpeg'):
-            response.headers['Content-Type'] = 'image/jpeg'
-        elif filename.endswith('.png'):
-            response.headers['Content-Type'] = 'image/png'
-        elif filename.endswith('.webp'):
-            response.headers['Content-Type'] = 'image/webp'
+        response.headers['Content-Type'] = detected_content_type
         _apply_static_asset_cache_headers(response)
         return response
 

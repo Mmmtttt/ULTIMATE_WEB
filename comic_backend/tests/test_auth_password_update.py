@@ -125,6 +125,27 @@ def test_normal_auth_token_authorizes_normal_space_without_cookie(tmp_path, monk
     assert authenticated_cover_response.status_code != 401
 
 
+def test_static_cover_uses_content_signature_when_extension_is_wrong(tmp_path, monkeypatch):
+    import app as backend_app
+    import core.storage_layout as storage_layout
+
+    data_dir = tmp_path / "data"
+    cover_dir = data_dir / "static" / "cover" / "NH"
+    cover_dir.mkdir(parents=True)
+    # A provider may return WebP bytes while the host keeps its legacy .jpg path.
+    (cover_dir / "662556.jpg").write_bytes(
+        b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 32
+    )
+    monkeypatch.setattr(storage_layout, "_NORMAL_DATA_DIR", str(data_dir))
+    monkeypatch.setattr(backend_app, "ensure_storage_layout", lambda _space_mode: None)
+
+    app = backend_app.create_app(space_mode=SPACE_MODE_NORMAL, require_auth=False)
+    response = app.test_client().get("/static/cover/NH/662556.jpg")
+
+    assert response.status_code == 200
+    assert response.headers["Content-Type"] == "image/webp"
+
+
 def test_update_project_password_saves_plaintext_in_normal_space(tmp_path, monkeypatch):
     config_path = tmp_path / "server_config.json"
     config_path.write_text(json.dumps({"auth": {"enabled": False, "password": ""}}), encoding="utf-8")
