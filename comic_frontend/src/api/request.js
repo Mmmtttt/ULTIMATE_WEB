@@ -23,10 +23,13 @@ const request = axios.create({
 
 request.interceptors.request.use(
   config => {
-    console.log('[request]', config.method?.toUpperCase(), config.url)
-
     // Runtime space switching changes the endpoint after this module loads.
     config.baseURL = resolveApiBaseUrl()
+
+    console.log('[request]', config.method?.toUpperCase(), {
+      baseURL: config.baseURL,
+      url: config.url
+    })
 
     const authStore = _getAuthStore()
     if (authStore?.mode) {
@@ -55,7 +58,21 @@ request.interceptors.response.use(
   error => {
     const status = error.response?.status
     const url = error.config?.url || ''
-    console.error('[request error]', url, 'status:', status, 'message:', error.message)
+    const diagnostics = {
+      at: new Date().toISOString(),
+      method: error.config?.method?.toUpperCase() || '',
+      baseURL: error.config?.baseURL || '',
+      url,
+      status: status ?? null,
+      code: error.code || '',
+      message: error.message || ''
+    }
+    console.error('[request error]', diagnostics)
+    try {
+      window.localStorage.setItem('ULTIMATE_LAST_NETWORK_ERROR', JSON.stringify(diagnostics))
+    } catch (_) {
+      // Diagnostics must never replace the original request error.
+    }
 
     if (status === 401) {
       console.warn('[request] 401 Unauthorized - 未认证或 session 已过期')

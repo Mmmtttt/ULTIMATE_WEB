@@ -124,8 +124,17 @@ export const useAuthStore = defineStore('auth', {
           this.hasAttemptedLogin = true
           this.authStatusError = null
 
-          if (this.enabled) {
-            applySpaceApiBase(res.data.authenticated ? 'normal' : 'private')
+          if (this.enabled && res.data.authenticated) {
+            // The password check starts on the private listener. Establish a
+            // separate normal-space session before switching all API traffic.
+            applySpaceApiBase('normal')
+            const normalSession = await loginApi(password)
+            if (normalSession.code !== 200 || !normalSession.data?.authenticated) {
+              applySpaceApiBase('private')
+              throw new Error('正常空间会话建立失败')
+            }
+          } else if (this.enabled) {
+            applySpaceApiBase('private')
           }
         }
         return res.data

@@ -47,7 +47,9 @@ def _is_normal_space() -> bool:
 @auth_bp.route("/login", methods=["POST"])
 def login():
     """登录接口 - 校验密码，设置 session"""
+    space_mode = current_app.config.get("SPACE_MODE", "unknown")
     if not is_auth_enabled():
+        app_logger.info("[auth] login bypass auth_disabled space=%s", space_mode)
         return jsonify({
             "code": 200,
             "msg": "success",
@@ -65,7 +67,7 @@ def login():
 
     if authenticated:
         session["authenticated"] = True
-        app_logger.info("[auth] login success from %s", request.remote_addr)
+        app_logger.info("[auth] login success space=%s from %s", space_mode, request.remote_addr)
         return jsonify({
             "code": 200,
             "msg": "success",
@@ -74,7 +76,7 @@ def login():
     else:
         # 密码错误 - 静默失败，返回 "private" 模式
         session["authenticated"] = False
-        app_logger.info("[auth] login failed from %s", request.remote_addr)
+        app_logger.info("[auth] login failed space=%s from %s", space_mode, request.remote_addr)
         return jsonify({
             "code": 200,
             "msg": "success",
@@ -85,7 +87,9 @@ def login():
 @auth_bp.route("/status", methods=["GET"])
 def status():
     """查询当前认证状态"""
+    space_mode = current_app.config.get("SPACE_MODE", "unknown")
     if not is_auth_enabled():
+        app_logger.info("[auth] status auth_disabled space=%s", space_mode)
         return jsonify({
             "code": 200,
             "msg": "success",
@@ -94,6 +98,12 @@ def status():
 
     authenticated = bool(session.get("authenticated", False))
     mode = "normal" if authenticated else "private"
+    app_logger.info(
+        "[auth] status space=%s enabled=true authenticated=%s mode=%s",
+        space_mode,
+        authenticated,
+        mode,
+    )
     return jsonify({
         "code": 200,
         "msg": "success",

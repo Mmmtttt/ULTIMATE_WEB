@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import uuid
+from datetime import datetime, timezone
 
 # Ultimate Web - Mmmtttt
 
@@ -69,6 +70,18 @@ class _QuietHealthRequestHandler(WSGIRequestHandler):
         if path == "/health":
             return
         super().log_request(code, size)
+
+
+def _write_runtime_boot_log(message: str) -> None:
+    """Write startup/runtime diagnostics to the packaged bootstrap log when configured."""
+    log_path = str(os.environ.get("ULTIMATE_PROTOCOL_BOOT_LOG", "") or "").strip()
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fp:
+            fp.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+    except Exception:
+        pass
 
 try:
     env_debug = os.environ.get("BACKEND_DEBUG")
@@ -374,6 +387,14 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             if _is_sync_request_allowed_without_session(path):
                 return
             if not session.get('authenticated', False):
+                message = (
+                    "auth rejected "
+                    f"space={space_mode!r} path={request.path!r} "
+                    f"remote={request.remote_addr!r} "
+                    f"session_cookie={app.config.get('SESSION_COOKIE_NAME')!r}"
+                )
+                app_logger.warning(message)
+                _write_runtime_boot_log(message)
                 return jsonify({
                     "code": 401,
                     "msg": "Authentication required",
@@ -641,16 +662,29 @@ def _run_app_in_thread(app_instance, port: int, ssl_context):
     """在当前线程运行 app（用于子线程）"""
     protocol = "https" if ssl_context else "http"
     mode = app_instance.config.get('SPACE_MODE', 'unknown')
-    app_logger.info(f"Starting {mode} backend at {protocol}://{HOST}:{port}")
-    app_instance.run(
-        host=HOST,
-        port=port,
-        debug=False,
-        use_reloader=False,
-        threaded=True,
-        ssl_context=ssl_context,
-        request_handler=_QuietHealthRequestHandler,
+    message = (
+        f"space listener starting mode={mode!r} protocol={protocol!r} "
+        f"host={HOST!r} port={port} "
+        f"require_auth={bool(app_instance.config.get('REQUIRE_AUTH'))} "
+        f"session_cookie={app_instance.config.get('SESSION_COOKIE_NAME')!r}"
     )
+    app_logger.info(message)
+    _write_runtime_boot_log(message)
+    try:
+        app_instance.run(
+            host=HOST,
+            port=port,
+            debug=False,
+            use_reloader=False,
+            threaded=True,
+            ssl_context=ssl_context,
+            request_handler=_QuietHealthRequestHandler,
+        )
+    except BaseException as exc:
+        message = f"space listener stopped mode={mode!r} port={port} error={exc!r}"
+        app_logger.exception(message)
+        _write_runtime_boot_log(message)
+        raise
 
 
 def run_backend_server(host=None, port=None, debug=None):
@@ -691,6 +725,10 @@ def run_backend_server(host=None, port=None, debug=None):
         if auth_enabled and not password:
             app_logger.warning("Auth enabled but password is empty, falling back to single mode")
         run_space_init(SPACE_MODE_NORMAL)
+        _write_runtime_boot_log(
+            f"single-space listener mode='normal' protocol={protocol!r} "
+            f"host={resolved_host!r} port={resolved_port}"
+        )
         app_logger.info(f"Starting backend service at {protocol}://{resolved_host}:{resolved_port}")
         app.run(
             host=resolved_host,
@@ -729,6 +767,10 @@ def run_backend_server(host=None, port=None, debug=None):
         name="private-backend",
     )
     private_thread.start()
+    _write_runtime_boot_log(
+        f"space listener thread started mode='private' port={private_port} "
+        f"alive={private_thread.is_alive()}"
+    )
 
     # 在主线程运行 normal app
     _run_app_in_thread(normal_app, normal_port, ssl_context)
