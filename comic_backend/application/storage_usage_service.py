@@ -550,6 +550,64 @@ def _unknown_data_root_paths(covered_roots: Sequence[str]) -> List[str]:
     return paths
 
 
+def _build_other_file_ranking(covered_roots: Sequence[str], limit: int) -> Tuple[List[Dict[str, Any]], int]:
+    """Rank unmanaged data files without following symlinks."""
+    candidates: List[Tuple[str, int]] = []
+    total = 0
+    for root in _unknown_data_root_paths(covered_roots):
+        if os.path.islink(root):
+            continue
+        if os.path.isfile(root):
+            file_paths = [root]
+        elif os.path.isdir(root):
+            file_paths = []
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                dirnames[:] = [
+                    dirname for dirname in dirnames
+                    if not os.path.islink(os.path.join(dirpath, dirname))
+                ]
+                file_paths.extend(
+                    os.path.join(dirpath, filename)
+                    for filename in filenames
+                    if not os.path.islink(os.path.join(dirpath, filename))
+                )
+        else:
+            continue
+
+        for file_path in file_paths:
+            if not os.path.isfile(file_path) or os.path.islink(file_path):
+                continue
+            try:
+                size_bytes = int(os.path.getsize(file_path))
+            except OSError:
+                continue
+            total += 1
+            candidates.append((file_path, size_bytes))
+
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    results = []
+    for file_path, size_bytes in candidates[: max(1, int(limit or 10))]:
+        relative_path = os.path.relpath(file_path, DATA_DIR).replace(os.sep, "/")
+        results.append(
+            {
+                "id": relative_path,
+                "title": os.path.basename(file_path),
+                "size_bytes": size_bytes,
+                "size_label": format_storage_size(size_bytes),
+                "file_count": 1,
+                "content_type": "file",
+                "source": "other",
+                "path_kind": "other_file",
+                "relative_path": relative_path,
+                "excluded_reason": "",
+                "is_soft_ref": False,
+                "platform": "",
+                "cover_path": "",
+            }
+        )
+    return results, total
+
+
 def _item_title(payload: Dict[str, Any]) -> str:
     return str(
         payload.get("title")
@@ -615,6 +673,20 @@ def _load_storage_overview_items() -> Tuple[List[Any], List[Any], List[Any], Lis
 
 def build_storage_ranking(category: str, limit: int = 12) -> Dict[str, Any]:
     normalized_category = str(category or "").strip().lower()
+    covered_roots = [
+        COMIC_DIR,
+        VIDEO_DIR,
+        COMIC_RECOMMENDATION_CACHE_DIR,
+        VIDEO_RECOMMENDATION_CACHE_DIR,
+        CACHE_ROOT_DIR,
+        META_DIR,
+        STATIC_DIR,
+        LOGS_DIR,
+    ]
+    if normalized_category == "other":
+        items, total = _build_other_file_ranking(covered_roots, limit)
+        return {"category": "other", "items": items, "total": total}
+
     local_comics, preview_comics, local_videos, preview_videos = _load_storage_overview_items()
     category_map = {
         "local_comics": (local_comics, "comic", "local"),

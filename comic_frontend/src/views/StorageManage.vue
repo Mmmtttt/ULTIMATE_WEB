@@ -150,13 +150,18 @@
               <span class="rank-main">
                 <strong>{{ item.title || item.id }}</strong>
                 <small>
-                  {{ item.file_count || 0 }} 文件
+                  <template v-if="item.content_type === 'file'">
+                    {{ item.relative_path || item.id }}
+                  </template>
+                  <template v-else>
+                    {{ item.file_count || 0 }} 文件
+                  </template>
                   <template v-if="item.path_kind"> · {{ item.path_kind }}</template>
                   <template v-if="item.is_soft_ref"> · 软连接</template>
                 </small>
               </span>
               <span class="rank-size">{{ item.size_label }}</span>
-              <van-icon name="arrow" />
+              <van-icon v-if="item.content_type !== 'file'" name="arrow" />
             </button>
           </template>
         </div>
@@ -199,6 +204,7 @@ const rankingTabs = computed(() => [
   { key: 'local_videos', label: '本地视频', count: rankingTotalLabel('local_videos') },
   { key: 'preview_comics', label: '预览漫画', count: rankingTotalLabel('preview_comics') },
   { key: 'preview_videos', label: '预览视频', count: rankingTotalLabel('preview_videos') },
+  { key: 'other', label: '其他文件', count: rankingTotalLabel('other') },
 ])
 
 const activeRankingItems = computed(() => {
@@ -288,6 +294,9 @@ function goModule(module) {
 
 function goRankingItem(item) {
   const contentType = String(item?.content_type || '').toLowerCase()
+  if (!['comic', 'video'].includes(contentType)) {
+    return
+  }
   const source = String(item?.source || '').toLowerCase()
   const id = String(item?.id || '').trim()
   if (!id) {

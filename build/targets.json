@@ -16,8 +16,8 @@
     {
       "id": "android",
       "runtime_profile": "mobile_core",
-      "third_party_enabled": false,
-      "notes": "Android staging keeps mobile_core; packager config controls selected third-party bundling"
+      "third_party_enabled": true,
+      "notes": "Android mobile_core supports the bundled third-party plugins"
     }
   ]
 }

@@ -50,3 +50,61 @@ def test_sort_content_items_supports_storage_size_and_page_count():
 
     assert [item["id"] for item in by_size] == ["b", "c", "a"]
     assert [item["id"] for item in by_pages] == ["b", "a", "c"]
+
+
+def test_other_storage_ranking_lists_real_files_only(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "misc").mkdir()
+    (data_dir / "misc" / "small.txt").write_bytes(b"1")
+    (data_dir / "misc" / "large.bin").write_bytes(b"2" * 32)
+
+    managed_roots = []
+    for name in (
+        "comic",
+        "video",
+        "comic_recommendation_cache",
+        "video_recommendation_cache",
+        "cache",
+        "meta",
+        "static",
+        "logs",
+    ):
+        root = data_dir / name
+        root.mkdir()
+        managed_roots.append(root)
+
+    monkeypatch.setattr(storage_usage_service, "DATA_DIR", str(data_dir))
+    for attribute, root in zip(
+        (
+            "COMIC_DIR",
+            "VIDEO_DIR",
+            "COMIC_RECOMMENDATION_CACHE_DIR",
+            "VIDEO_RECOMMENDATION_CACHE_DIR",
+            "CACHE_ROOT_DIR",
+            "META_DIR",
+            "STATIC_DIR",
+            "LOGS_DIR",
+        ),
+        managed_roots,
+    ):
+        monkeypatch.setattr(storage_usage_service, attribute, str(root))
+
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "ignored.bin").write_bytes(b"x" * 128)
+    symlink_created = False
+    try:
+        (data_dir / "external_link").symlink_to(external_dir, target_is_directory=True)
+        symlink_created = True
+    except (OSError, NotImplementedError):
+        pass
+
+    result = storage_usage_service.build_storage_ranking("other", limit=1)
+
+    assert result["total"] == 2
+    assert [item["title"] for item in result["items"]] == ["large.bin"]
+    assert result["items"][0]["content_type"] == "file"
+    assert result["items"][0]["relative_path"] == "misc/large.bin"
+    if symlink_created:
+        assert all("ignored.bin" not in item["id"] for item in result["items"])

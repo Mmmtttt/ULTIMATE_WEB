@@ -278,17 +278,6 @@
           <van-button size="small" type="primary" icon="records-o" @click="openListManager">
             加入清单
           </van-button>
-          <van-button
-            v-if="isLocalImportedComic"
-            size="small"
-            type="primary"
-            plain
-            icon="replay"
-            :loading="refreshingLocalMetadata"
-            @click="refreshLocalMetadata"
-          >
-            补全信息
-          </van-button>
           <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
             删除
           </van-button>
@@ -507,6 +496,13 @@ const actions = computed(() => {
     { name: '检查更新', value: 'check_update' },
     { name: '修复封面', value: 'repair_cover', loading: repairCoverLoading.value }
   ]
+  if (isLocalImportedComic.value) {
+    menuActions.push({
+      name: '补全信息',
+      value: 'refresh_local_metadata',
+      loading: refreshingLocalMetadata.value
+    })
+  }
   menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
   return menuActions
 })
@@ -897,6 +893,8 @@ function onActionSelect(action) {
     handleCheckAndDownloadUpdate()
   } else if (action.value === 'repair_cover') {
     handleRepairCover()
+  } else if (action.value === 'refresh_local_metadata') {
+    refreshLocalMetadata()
   } else if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {

@@ -98,10 +98,19 @@
               <span class="selected-count" v-if="selectedContentIds.length > 0">
                 已选 {{ selectedContentIds.length }} 项
               </span>
+              <van-button size="mini" plain type="primary" icon="filter-o" @click="showBatchFilterPanel = true">
+                筛选
+              </van-button>
               <van-button size="mini" plain type="primary" @click="toggleSelectAllContent">
                 {{ isAllContentSelected ? '取消全选' : '全选' }}
               </van-button>
             </div>
+          </div>
+
+          <div v-if="hasBatchFilter" class="active-batch-filter-bar">
+            <span class="active-batch-filter-label">已应用筛选</span>
+            <van-tag type="primary" round>{{ filteredContentList.length }} 项结果</van-tag>
+            <van-button size="mini" plain type="primary" @click="clearBatchFilters">清除</van-button>
           </div>
           
           <div class="content-select-grid">
@@ -249,6 +258,33 @@
         </div>
       </div>
     </van-popup>
+
+    <van-popup
+      v-model:show="showBatchFilterPanel"
+      position="bottom"
+      round
+      :style="{ height: '70%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="筛选" left-text="关闭" @click-left="showBatchFilterPanel = false">
+          <template #right>
+            <van-button type="primary" size="small" @click="applyBatchFilterAndClose">确定</van-button>
+          </template>
+        </van-nav-bar>
+        <AdvancedFilter
+          v-model:include-tags="tempBatchIncludeTags"
+          v-model:exclude-tags="tempBatchExcludeTags"
+          v-model:selected-authors="tempBatchSelectedAuthors"
+          v-model:selected-list-ids="tempBatchSelectedListIds"
+          v-model:min-score="tempBatchMinScore"
+          v-model:unread-only="tempBatchUnreadOnly"
+          :tags="allTags"
+          :authors="availableBatchAuthors"
+          :lists="availableBatchLists"
+          :is-video-mode="isVideo"
+        />
+      </div>
+    </van-popup>
     
     <van-action-sheet
       v-model:show="showBatchTaskSheet"
@@ -264,12 +300,16 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { useImportTaskStore, useModeStore, useRuntimeStore } from '@/stores'
+import { useImportTaskStore, useListStore, useModeStore, useRuntimeStore } from '@/stores'
+import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import {
   buildBatchTaskActions,
   clearBrowseState,
+  extractAuthors,
+  extractItemAuthors,
   getCoverUrl,
   isAllSelected,
+  isUnreadByProgress,
   keepSelectionWithinItems,
   loadBrowseState,
   saveBrowseState,
@@ -303,6 +343,7 @@ const emit = defineEmits(['tab-change'])
 
 const router = useRouter()
 const importTaskStore = useImportTaskStore()
+const listStore = useListStore()
 const modeStore = useModeStore()
 const runtimeStore = useRuntimeStore()
 const { isDesktop } = useDevice()
@@ -320,6 +361,19 @@ const batchTagKeyword = ref('')
 const selectedContentIds = ref([])
 const selectedTagIds = ref([])
 const showBatchTaskSheet = ref(false)
+const showBatchFilterPanel = ref(false)
+const batchMinScore = ref(null)
+const batchIncludeTags = ref([])
+const batchExcludeTags = ref([])
+const batchSelectedAuthors = ref([])
+const batchSelectedListIds = ref([])
+const batchUnreadOnly = ref(false)
+const tempBatchMinScore = ref(0)
+const tempBatchIncludeTags = ref([])
+const tempBatchExcludeTags = ref([])
+const tempBatchSelectedAuthors = ref([])
+const tempBatchSelectedListIds = ref([])
+const tempBatchUnreadOnly = ref(false)
 
 const currentContentType = computed(() => (modeStore.isVideoMode ? 'video' : 'comic'))
 const isVideo = computed(() => currentContentType.value === 'video')
@@ -344,14 +398,57 @@ const allTags = computed(() => {
 })
 
 const filteredBatchTags = computed(() => filterTagsByKeyword(allTags.value, batchTagKeyword.value))
+const availableBatchAuthors = computed(() => extractAuthors(contentList.value))
+const availableBatchLists = computed(() => listStore.lists
+  .filter((list) => list.content_type === currentContentType.value)
+  .map((list) => ({ ...list, item_count: list.item_ids?.length || 0 })))
+
+const hasBatchFilter = computed(() => (
+  (batchMinScore.value !== null && batchMinScore.value > 0)
+  || batchIncludeTags.value.length > 0
+  || batchExcludeTags.value.length > 0
+  || batchSelectedAuthors.value.length > 0
+  || batchSelectedListIds.value.length > 0
+  || (isVideo.value === false && batchUnreadOnly.value)
+))
+
+function itemMatchesBatchAuthors(item) {
+  if (batchSelectedAuthors.value.length === 0) return true
+  const authors = extractItemAuthors(item)
+  return batchSelectedAuthors.value.some((author) => authors.includes(author))
+}
+
+function itemMatchesBatchLists(item) {
+  if (batchSelectedListIds.value.length === 0) return true
+  const ids = new Set((item?.list_ids || []).map((id) => String(id)))
+  return batchSelectedListIds.value.some((id) => ids.has(String(id)))
+}
+
+const filteredContentList = computed(() => contentList.value.filter((item) => {
+  if (batchMinScore.value !== null && batchMinScore.value > 0 && Number(item.score || 0) < batchMinScore.value) {
+    return false
+  }
+  const tagIds = Array.isArray(item.tag_ids) ? item.tag_ids : []
+  if (batchIncludeTags.value.length > 0 && !batchIncludeTags.value.every((id) => tagIds.includes(id))) {
+    return false
+  }
+  if (batchExcludeTags.value.length > 0 && batchExcludeTags.value.some((id) => tagIds.includes(id))) {
+    return false
+  }
+  if (!isVideo.value && batchUnreadOnly.value && !isUnreadByProgress(item.current_page)) {
+    return false
+  }
+  return itemMatchesBatchAuthors(item) && itemMatchesBatchLists(item)
+}))
 
 const paginationStorageKey = computed(() => `tag_manage_batch_${currentContentType.value}`)
 const {
   pageSize,
   currentPage,
   totalItems,
-  pagedItems
-} = useClientPagination(contentList, paginationStorageKey)
+  pagedItems,
+  goFirst
+} = useClientPagination(filteredContentList, paginationStorageKey)
 const pagedContentList = computed(() => pagedItems.value)
 
 function getBrowseStateKey() {
@@ -372,6 +469,12 @@ function persistBrowseState() {
   if (String(batchTagKeyword.value || '').trim()) {
     payload.batchTagKeyword = String(batchTagKeyword.value || '').trim()
   }
+  if (batchMinScore.value !== null && batchMinScore.value > 0) payload.batchMinScore = batchMinScore.value
+  if (batchIncludeTags.value.length > 0) payload.batchIncludeTags = [...batchIncludeTags.value]
+  if (batchExcludeTags.value.length > 0) payload.batchExcludeTags = [...batchExcludeTags.value]
+  if (batchSelectedAuthors.value.length > 0) payload.batchSelectedAuthors = [...batchSelectedAuthors.value]
+  if (batchSelectedListIds.value.length > 0) payload.batchSelectedListIds = [...batchSelectedListIds.value]
+  if (batchUnreadOnly.value) payload.batchUnreadOnly = true
 
   if (Object.keys(payload).length === 0) {
     clearBrowseState(getBrowseStateKey())
@@ -394,6 +497,18 @@ function restoreBrowseState() {
   }
   tagListKeyword.value = String(parsed.tagListKeyword || '').trim()
   batchTagKeyword.value = String(parsed.batchTagKeyword || '').trim()
+  batchMinScore.value = parsed.batchMinScore ?? null
+  batchIncludeTags.value = Array.isArray(parsed.batchIncludeTags) ? [...parsed.batchIncludeTags] : []
+  batchExcludeTags.value = Array.isArray(parsed.batchExcludeTags) ? [...parsed.batchExcludeTags] : []
+  batchSelectedAuthors.value = Array.isArray(parsed.batchSelectedAuthors) ? [...parsed.batchSelectedAuthors] : []
+  batchSelectedListIds.value = Array.isArray(parsed.batchSelectedListIds) ? [...parsed.batchSelectedListIds] : []
+  batchUnreadOnly.value = Boolean(parsed.batchUnreadOnly)
+  tempBatchMinScore.value = batchMinScore.value || 0
+  tempBatchIncludeTags.value = [...batchIncludeTags.value]
+  tempBatchExcludeTags.value = [...batchExcludeTags.value]
+  tempBatchSelectedAuthors.value = [...batchSelectedAuthors.value]
+  tempBatchSelectedListIds.value = [...batchSelectedListIds.value]
+  tempBatchUnreadOnly.value = batchUnreadOnly.value
 }
 
 const canBatchAdd = computed(() => {
@@ -410,7 +525,7 @@ const selectedContentItems = computed(() => {
 })
 
 const isAllContentSelected = computed(() => {
-  return isAllSelected(selectedContentIds.value, contentList.value, (item) => item.id)
+  return isAllSelected(selectedContentIds.value, filteredContentList.value, (item) => item.id)
 })
 
 const batchTaskActions = computed(() => {
@@ -595,7 +710,39 @@ function toggleSelectAllContent() {
     selectedContentIds.value = []
     return
   }
-  selectedContentIds.value = contentList.value.map(item => item.id)
+  const selected = new Set(selectedContentIds.value)
+  filteredContentList.value.forEach((item) => selected.add(item.id))
+  selectedContentIds.value = [...selected]
+}
+
+function applyBatchFilterAndClose() {
+  batchMinScore.value = tempBatchMinScore.value > 0 ? tempBatchMinScore.value : null
+  batchIncludeTags.value = [...tempBatchIncludeTags.value]
+  batchExcludeTags.value = [...tempBatchExcludeTags.value]
+  batchSelectedAuthors.value = [...tempBatchSelectedAuthors.value]
+  batchSelectedListIds.value = [...tempBatchSelectedListIds.value]
+  batchUnreadOnly.value = Boolean(tempBatchUnreadOnly.value)
+  goFirst()
+  persistBrowseState()
+  showBatchFilterPanel.value = false
+}
+
+function clearBatchFilters() {
+  batchMinScore.value = null
+  batchIncludeTags.value = []
+  batchExcludeTags.value = []
+  batchSelectedAuthors.value = []
+  batchSelectedListIds.value = []
+  batchUnreadOnly.value = false
+  tempBatchMinScore.value = 0
+  tempBatchIncludeTags.value = []
+  tempBatchExcludeTags.value = []
+  tempBatchSelectedAuthors.value = []
+  tempBatchSelectedListIds.value = []
+  tempBatchUnreadOnly.value = false
+  selectedContentIds.value = []
+  goFirst()
+  persistBrowseState()
 }
 
 function toggleTagSelection(id) {
@@ -705,6 +852,7 @@ onMounted(async () => {
   restoreBrowseState()
   await fetchTagList()
   await fetchContentList()
+  await listStore.fetchLists()
 })
 
 watch(contentList, (nextItems) => {
@@ -715,11 +863,38 @@ watch(contentList, (nextItems) => {
   )
 })
 
+watch(filteredContentList, (nextItems) => {
+  selectedContentIds.value = keepSelectionWithinItems(
+    selectedContentIds.value,
+    contentList.value,
+    (item) => item.id
+  )
+  if (nextItems.length === 0) {
+    goFirst()
+  }
+})
+
+watch(showBatchFilterPanel, (visible) => {
+  if (!visible) return
+  tempBatchMinScore.value = batchMinScore.value || 0
+  tempBatchIncludeTags.value = [...batchIncludeTags.value]
+  tempBatchExcludeTags.value = [...batchExcludeTags.value]
+  tempBatchSelectedAuthors.value = [...batchSelectedAuthors.value]
+  tempBatchSelectedListIds.value = [...batchSelectedListIds.value]
+  tempBatchUnreadOnly.value = batchUnreadOnly.value
+})
+
 watch(() => modeStore.currentMode, async () => {
   activeTab.value = 0
   currentPage.value = 1
   tagListKeyword.value = ''
   batchTagKeyword.value = ''
+  batchMinScore.value = null
+  batchIncludeTags.value = []
+  batchExcludeTags.value = []
+  batchSelectedAuthors.value = []
+  batchSelectedListIds.value = []
+  batchUnreadOnly.value = false
   selectedContentIds.value = []
   selectedTagIds.value = []
   contentList.value = []
@@ -727,9 +902,20 @@ watch(() => modeStore.currentMode, async () => {
   await fetchContentList()
 })
 
-watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
+watch([
+  activeTab,
+  currentPage,
+  tagListKeyword,
+  batchTagKeyword,
+  batchMinScore,
+  batchIncludeTags,
+  batchExcludeTags,
+  batchSelectedAuthors,
+  batchSelectedListIds,
+  batchUnreadOnly
+], () => {
   persistBrowseState()
-})
+}, { deep: true })
 </script>
 
 <style scoped>
@@ -911,6 +1097,35 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
+}
+
+.filter-panel {
+  height: 100%;
+  overflow: auto;
+  background: var(--surface-2);
+}
+
+.filter-panel :deep(.van-nav-bar) {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.active-batch-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -2px 0 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.active-batch-filter-label {
+  font-weight: 700;
+  color: var(--text-strong);
 }
 
 .batch-section {
