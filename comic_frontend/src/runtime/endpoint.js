@@ -1,5 +1,3 @@
-import { getLocation } from './browser'
-
 function trimTrailingSlash(value = '') {
   return String(value || '').replace(/\/+$/, '')
 }
@@ -19,6 +17,9 @@ function getEnvApiBase() {
 
 function getRuntimeApiBase() {
   if (typeof window === 'undefined') return ''
+  // Development requests must stay same-origin so the Vite proxy can route
+  // them to the configured backend without exposing loopback-only ports.
+  if (import.meta.env.DEV) return ''
   const injected = String(window.__ULTIMATE_API_BASE_URL || '').trim()
   if (injected) return injected
   try {
@@ -56,13 +57,6 @@ function getRuntimeSpaceApiBase(mode) {
   const endpoints = window.__ULTIMATE_SPACE_API_BASES
   if (!endpoints || typeof endpoints !== 'object') return ''
   return trimTrailingSlash(String(endpoints[mode] || '').trim())
-}
-
-function getDevBackendOrigin() {
-  const location = getLocation()
-  if (!location) return ''
-  const backendPort = import.meta.env.VITE_BACKEND_PORT || 5000
-  return `${location.protocol}//${location.hostname}:${backendPort}`
 }
 
 export function resolveApiBaseUrl() {
@@ -106,10 +100,6 @@ export function resolveBackendOrigin() {
       const matched = candidateBase.match(/^(https?:\/\/[^/]+)/i)
       return matched ? matched[1] : ''
     }
-  }
-
-  if (import.meta.env.DEV) {
-    return getDevBackendOrigin()
   }
 
   return ''

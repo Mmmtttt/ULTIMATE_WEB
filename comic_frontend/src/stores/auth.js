@@ -2,26 +2,6 @@ import { defineStore } from 'pinia'
 import { login as loginApi, getAuthStatus, logout as logoutApi, updateProjectPassword } from '@/api/auth'
 import { getConfiguredSpaceApiBaseUrl } from '@/runtime/endpoint'
 
-function getPrivateApiBase() {
-  const runtimeBase = getConfiguredSpaceApiBaseUrl('private')
-  if (runtimeBase) return runtimeBase
-  const privatePort = import.meta.env.VITE_PRIVATE_PORT || 5000
-  const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
-  const protocol = sslEnabled ? 'https' : 'http'
-  const hostname = window.location.hostname
-  return `${protocol}://${hostname}:${privatePort}/api`
-}
-
-function getNormalApiBase() {
-  const runtimeBase = getConfiguredSpaceApiBaseUrl('normal')
-  if (runtimeBase) return runtimeBase
-  const normalPort = import.meta.env.VITE_NORMAL_PORT || 5001
-  const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
-  const protocol = sslEnabled ? 'https' : 'http'
-  const hostname = window.location.hostname
-  return `${protocol}://${hostname}:${normalPort}/api`
-}
-
 function setRuntimeApiBase(url) {
   try {
     if (url) {
@@ -50,14 +30,10 @@ function applySpaceApiBase(mode) {
   const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
     && window.__ULTIMATE_SPACE_API_BASES
     && typeof window.__ULTIMATE_SPACE_API_BASES === 'object'
-  if (!hasRuntimeSpaceEndpoints && !import.meta.env.DEV) return
-
-  const configured = mode === 'normal' ? getNormalApiBase() : getPrivateApiBase()
-  if (configured) {
-    setRuntimeApiBase(configured)
-  } else if (import.meta.env.DEV) {
-    setRuntimeApiBase(mode === 'normal' ? '' : getPrivateApiBase())
-  }
+  const configured = hasRuntimeSpaceEndpoints ? getConfiguredSpaceApiBaseUrl(mode) : ''
+  // Only packaged runtimes inject per-space absolute endpoints. Development
+  // uses the same-origin Vite proxy and must not connect to LAN backend ports.
+  setRuntimeApiBase(configured)
 }
 
 function prepareAuthStatusProbe() {
