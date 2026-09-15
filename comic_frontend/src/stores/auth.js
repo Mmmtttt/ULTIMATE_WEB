@@ -37,12 +37,24 @@ function setRuntimeApiBase(url) {
 }
 
 function applySpaceApiBase(mode) {
+  const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
+    && window.__ULTIMATE_SPACE_API_BASES
+    && typeof window.__ULTIMATE_SPACE_API_BASES === 'object'
+  if (!hasRuntimeSpaceEndpoints && !import.meta.env.DEV) return
+
   const configured = mode === 'normal' ? getNormalApiBase() : getPrivateApiBase()
   if (configured) {
     setRuntimeApiBase(configured)
   } else if (import.meta.env.DEV) {
     setRuntimeApiBase(mode === 'normal' ? '' : getPrivateApiBase())
   }
+}
+
+const AUTH_STATUS_RETRY_DELAYS_MS = [0, 250, 500, 750, 1000, 1500]
+
+function waitForAuthStatusRetry(delayMs) {
+  if (!delayMs) return Promise.resolve()
+  return new Promise(resolve => setTimeout(resolve, delayMs))
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -56,24 +68,31 @@ export const useAuthStore = defineStore('auth', {
 
   actions: {
     async checkStatus() {
-      try {
-        const res = await getAuthStatus()
-        if (res.code === 200) {
-          this.enabled = res.data.enabled
-          this.authenticated = res.data.authenticated
-          this.mode = res.data.mode
-          if (this.enabled) {
-            applySpaceApiBase(this.authenticated ? 'normal' : 'private')
+      let lastError = null
+      for (const delayMs of AUTH_STATUS_RETRY_DELAYS_MS) {
+        await waitForAuthStatusRetry(delayMs)
+        try {
+          const res = await getAuthStatus()
+          if (res.code === 200) {
+            this.enabled = res.data.enabled
+            this.authenticated = res.data.authenticated
+            this.mode = res.data.mode
+            if (this.enabled) {
+              applySpaceApiBase(this.authenticated ? 'normal' : 'private')
+            }
+            if (res.data.authenticated) {
+              this.hasAttemptedLogin = true
+            }
+            return res.data
           }
-          if (res.data.authenticated) {
-            this.hasAttemptedLogin = true
-          }
+          lastError = new Error(res.msg || '认证状态响应无效')
+        } catch (e) {
+          lastError = e
         }
-        return res.data
-      } catch (e) {
-        console.error('[auth] check status failed:', e)
-        throw e
       }
+
+      console.error('[auth] check status failed after retries:', lastError)
+      throw lastError || new Error('认证状态检查失败')
     },
 
     async login(password) {
@@ -131,9 +150,9 @@ export const useAuthStore = defineStore('auth', {
       const res = await updateProjectPassword(password)
       if (res.code === 200) {
         this.enabled = true
-        this.authenticated = true
-        this.mode = 'normal'
-        this.hasAttemptedLogin = true
+      this.authenticated = true
+      this.mode = 'normal'
+      this.hasAttemptedLogin = true
       }
       return res
     }

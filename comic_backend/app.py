@@ -675,6 +675,13 @@ def run_backend_server(host=None, port=None, debug=None):
 
     auth_enabled = _resolve_auth_enabled()
     password = _resolve_auth_password()
+    app_logger.info(
+        "Backend auth startup: enabled=%s password_configured=%s private_port=%s normal_port=%s",
+        auth_enabled,
+        bool(password),
+        _resolve_private_port(),
+        _resolve_normal_port(),
+    )
 
     if not auth_enabled or not password:
         # 旧模式：单 app 启动

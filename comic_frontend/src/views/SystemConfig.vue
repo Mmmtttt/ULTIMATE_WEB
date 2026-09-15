@@ -348,7 +348,9 @@ const projectPassword = ref('')
 const projectPasswordConfirm = ref('')
 const savingProjectPassword = ref(false)
 const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
-const canChangeProjectPassword = computed(() => authStore.mode === 'normal' && authStore.authenticated)
+const canChangeProjectPassword = computed(() => (
+  authStore.authenticated && (authStore.mode === 'normal' || !authStore.enabled)
+))
 
 const configDirSourceLabel = computed(() => {
   const source = String(configDirSource.value || '').toLowerCase()
@@ -622,7 +624,7 @@ async function saveProjectPassword() {
     }
     projectPassword.value = ''
     projectPasswordConfirm.value = ''
-    showSuccessToast('项目密码已更新')
+    showSuccessToast('项目密码已更新，请重启应用以启用双空间')
   } catch (error) {
     showFailToast(error?.message || '密码保存失败')
   } finally {
@@ -666,6 +668,11 @@ async function organizeDatabase() {
 }
 
 onMounted(async () => {
+  try {
+    await authStore.checkStatus()
+  } catch {
+    // The router already handles unavailable startup status; keep settings usable when it recovers.
+  }
   await configStore.loadConfigFromServer()
   initValues()
   await Promise.all([loadSystemConfig(), loadConfigDirInfo()])

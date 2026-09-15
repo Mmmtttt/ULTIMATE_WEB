@@ -227,10 +227,10 @@ router.beforeEach(async (to, from, next) => {
   if (!authChecked) {
     try {
       await authStore.checkStatus()
+      authChecked = true
     } catch (e) {
       // 检查失败也继续，可能是网络问题
     }
-    authChecked = true
   }
 
   // 未启用认证 → 直接通过
