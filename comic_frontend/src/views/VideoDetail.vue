@@ -1134,7 +1134,11 @@ async function mountPreviewVideoSource() {
     return
   }
 
-  if (isM3u8Url(src)) {
+  // In the packaged Android WebView, relative media URLs resolve against
+  // https://localhost instead of the embedded backend listener.
+  const playableSrc = toBackendUrl(src) || src
+
+  if (isM3u8Url(playableSrc)) {
     if (Hls.isSupported()) {
       const instance = new Hls({
         debug: false,
@@ -1157,7 +1161,7 @@ async function mountPreviewVideoSource() {
       })
 
       previewHls.value = instance
-      instance.loadSource(src)
+      instance.loadSource(playableSrc)
       instance.attachMedia(videoEl)
       instance.on(Hls.Events.ERROR, (event, data) => {
         console.error('预览视频 HLS 错误:', event, data)
@@ -1170,7 +1174,7 @@ async function mountPreviewVideoSource() {
     }
 
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = src
+      videoEl.src = playableSrc
       return
     }
 
@@ -1178,7 +1182,7 @@ async function mountPreviewVideoSource() {
     return
   }
 
-  videoEl.src = src
+  videoEl.src = playableSrc
 }
 
 async function refreshPreviewVideo() {
