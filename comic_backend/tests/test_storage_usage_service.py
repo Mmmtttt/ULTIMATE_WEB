@@ -108,3 +108,49 @@ def test_other_storage_ranking_lists_real_files_only(tmp_path, monkeypatch):
     assert result["items"][0]["relative_path"] == "misc/large.bin"
     if symlink_created:
         assert all("ignored.bin" not in item["id"] for item in result["items"])
+
+
+def test_storage_overview_does_not_count_recommendation_cache_parent_twice(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    roots = {
+        "COMIC_DIR": data_dir / "comic",
+        "VIDEO_DIR": data_dir / "video",
+        "RECOMMENDATION_CACHE_DIR": data_dir / "recommendation_cache",
+        "COMIC_RECOMMENDATION_CACHE_DIR": data_dir / "recommendation_cache" / "comic",
+        "VIDEO_RECOMMENDATION_CACHE_DIR": data_dir / "recommendation_cache" / "video",
+        "CACHE_ROOT_DIR": data_dir / "cache",
+        "META_DIR": data_dir / "meta_data",
+        "STATIC_DIR": data_dir / "static",
+        "LOGS_DIR": data_dir / "logs",
+    }
+    for root in roots.values():
+        root.mkdir(parents=True, exist_ok=True)
+
+    files = {
+        roots["COMIC_DIR"] / "comic.bin": 10,
+        roots["VIDEO_DIR"] / "video.bin": 20,
+        roots["COMIC_RECOMMENDATION_CACHE_DIR"] / "comic-cache.bin": 30,
+        roots["VIDEO_RECOMMENDATION_CACHE_DIR"] / "video-cache.bin": 40,
+        roots["CACHE_ROOT_DIR"] / "cache.bin": 50,
+        roots["META_DIR"] / "meta.bin": 60,
+        roots["STATIC_DIR"] / "static.bin": 70,
+        roots["LOGS_DIR"] / "log.bin": 80,
+        data_dir / "unmanaged" / "other.bin": 90,
+    }
+    for path, size in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size)
+
+    monkeypatch.setattr(storage_usage_service, "DATA_DIR", str(data_dir))
+    for name, root in roots.items():
+        monkeypatch.setattr(storage_usage_service, name, str(root))
+    monkeypatch.setattr(storage_usage_service, "_load_storage_overview_items", lambda: ([], [], [], []))
+    storage_usage_service.invalidate_storage_usage_cache()
+
+    overview = storage_usage_service.build_storage_overview()
+
+    assert overview["total"]["size_bytes"] == sum(files.values())
+    other = next(item for item in overview["modules"] if item["key"] == "other")
+    assert other["size_bytes"] == 90

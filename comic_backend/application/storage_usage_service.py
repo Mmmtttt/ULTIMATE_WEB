@@ -14,6 +14,7 @@ from core.constants import (
     LOCAL_PICTURES_DIR,
     LOGS_DIR,
     META_DIR,
+    RECOMMENDATION_CACHE_DIR,
     STATIC_DIR,
     VIDEO_DIR,
     VIDEO_RECOMMENDATION_CACHE_DIR,
@@ -676,6 +677,7 @@ def build_storage_ranking(category: str, limit: int = 12) -> Dict[str, Any]:
     covered_roots = [
         COMIC_DIR,
         VIDEO_DIR,
+        RECOMMENDATION_CACHE_DIR,
         COMIC_RECOMMENDATION_CACHE_DIR,
         VIDEO_RECOMMENDATION_CACHE_DIR,
         CACHE_ROOT_DIR,
@@ -757,6 +759,7 @@ def build_storage_overview() -> Dict[str, Any]:
     covered_roots = [
         COMIC_DIR,
         VIDEO_DIR,
+        RECOMMENDATION_CACHE_DIR,
         COMIC_RECOMMENDATION_CACHE_DIR,
         VIDEO_RECOMMENDATION_CACHE_DIR,
         CACHE_ROOT_DIR,
