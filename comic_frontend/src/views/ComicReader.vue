@@ -1,5 +1,5 @@
 <template>
-  <div class="comic-reader" :class="{ 'reader-fullscreen': !isMobile }" :style="{ background: background }" ref="readerRoot">
+  <div class="comic-reader" :class="{ 'reader-fullscreen': !isMobile, 'no-reader-animation': noReaderAnimation }" :style="{ background: background, '--reader-side-padding': `${readerSidePadding}%` }" ref="readerRoot">
     <van-nav-bar 
       class="reader-nav"
       v-show="showMenu"
@@ -15,6 +15,11 @@
         </span>
       </template>
     </van-nav-bar>
+    <ReaderSettingsPanel
+      v-model:show="settingsOpen"
+      :auto-read-active="autoReadActive"
+      @toggle-auto-read="toggleAutoRead"
+    />
     
     <div v-if="loading" class="loading">
       <van-loading type="spinner" color="#fff" />
@@ -30,7 +35,7 @@
       <div 
         v-if="pageMode === 'left_right'" 
         class="left-right-mode" 
-        :class="{ 'single-page-mode': isSinglePageBrowsing }"
+        :class="{ 'single-page-mode': isSinglePageBrowsing, 'double-page-mode': doublePageMode }"
         ref="leftRightContainer"
         :style="getContainerStyle"
         @scroll="handleScroll"
@@ -41,25 +46,55 @@
         @touchcancel="handleReaderTouchEnd"
       >
         <div class="page-track page-track-horizontal" :style="getContentStyle">
+          <div
+            v-if="doublePageMode && doublePageLeadingBlank && !isLeftRightReadingReversed && displayedPageNumbers[0] === 1"
+            class="page page-leading-blank"
+            aria-hidden="true"
+          />
+          <div
+            v-if="virtualBeforeCount > 0"
+            class="reader-spacer reader-spacer-horizontal"
+            :style="{ width: `${virtualBeforeExtent}px` }"
+            aria-hidden="true"
+          />
           <div 
-            v-for="(pageNum, index) in displayedPageNumbers" 
+            v-for="(pageNum, index) in displayedPageNumbers"
             :key="`lr-${pageNum}-${index}`"
             class="page"
+            :class="{ 'page-load-error': isPageFailed(pageNum) }"
+            :data-page="pageNum"
+            :style="getPageStyle(pageNum)"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(pageNum)"
+              @load="handlePageImageLoad(pageNum, $event)"
+              @error="handlePageImageError(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
+            <button
+              v-if="isPageFailed(pageNum)"
+              type="button"
+              class="page-retry"
+              @click.stop="retryPage(pageNum)"
+            >
+              <van-icon name="replay" />
+              <span>本页加载失败，点击重试</span>
+            </button>
           </div>
+          <div
+            v-if="virtualAfterCount > 0"
+            class="reader-spacer reader-spacer-horizontal"
+            :style="{ width: `${virtualAfterExtent}px` }"
+            aria-hidden="true"
+          />
         </div>
       </div>
-      
+
       <!-- 上下翻页模式 -->
       <div 
         v-else 
@@ -74,25 +109,52 @@
         @touchend="handleReaderTouchEnd"
         @touchcancel="handleReaderTouchEnd"
       >
-        <div class="page-track page-track-vertical" :style="getContentStyle">
+          <div class="page-track page-track-vertical" :style="getContentStyle">
+          <div
+            v-if="virtualBeforeCount > 0"
+            class="reader-spacer reader-spacer-vertical"
+            :style="{ height: `${virtualBeforeExtent}px` }"
+            aria-hidden="true"
+          />
           <div 
-            v-for="(pageNum, index) in displayedPageNumbers" 
+            v-for="(pageNum, index) in displayedPageNumbers"
             :key="`ud-${pageNum}-${index}`" 
             class="up-down-page"
+            :class="{ 'page-load-error': isPageFailed(pageNum) }"
+            :data-page="pageNum"
+            :style="getPageStyle(pageNum)"
           >
             <img 
-              :src="getImageSrc(pageNum)" 
+              :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
-              @load="handlePageImageLoad(pageNum)"
+              @load="handlePageImageLoad(pageNum, $event)"
+              @error="handlePageImageError(pageNum)"
               @click="handleImageClick"
               @mousedown="startDrag($event, index)"
             />
+            <button
+              v-if="isPageFailed(pageNum)"
+              type="button"
+              class="page-retry"
+              @click.stop="retryPage(pageNum)"
+            >
+              <van-icon name="replay" />
+              <span>本页加载失败，点击重试</span>
+            </button>
           </div>
+          <div
+            v-if="virtualAfterCount > 0"
+            class="reader-spacer reader-spacer-vertical"
+            :style="{ height: `${virtualAfterExtent}px` }"
+            aria-hidden="true"
+          />
         </div>
       </div>
+
+      <div v-if="readFilterOpacity > 0" class="reader-filter" :style="{ opacity: readFilterOpacity }" aria-hidden="true" />
       
       <!-- 缩放覆盖层 -->
       <div 
@@ -152,6 +214,8 @@
         </van-button>
         <van-button size="small" @click="nextPage">下一页</van-button>
         <van-button size="small" @click="toggleFullscreen">全屏</van-button>
+        <van-button size="small" data-testid="reader-settings-button" @click="settingsOpen = true">设置</van-button>
+        <van-button size="small" data-testid="reader-auto-read-button" @click="toggleAutoRead">{{ autoReadActive ? '停止自动' : '自动阅读' }}</van-button>
       </div>
     </div>
   </div>
@@ -164,13 +228,18 @@ import { useComicStore, useConfigStore } from '@/stores'
 import { comicApi } from '@/api'
 import { buildImageUrl } from '@/api/image'
 import {
-  calculateLoadSequence,
   clampPage,
-  getAdaptiveMaxConcurrent,
-  isLikelyLanHost,
+  createReaderLoadController,
+  estimateReaderPageExtent,
+  estimateReaderRangeExtent,
+  loadReaderImageMetrics,
+  READER_LOAD_WINDOW,
+  saveReaderImageMetric,
   nextAnimationFrame,
   updateViewportHeightCssVar
 } from '@/composables/readerShared'
+import ReaderSettingsPanel from '@/components/reader/ReaderSettingsPanel.vue'
+import { resolveTapPageAction, useReaderPreferences } from '@/composables/useReaderPreferences'
 import {
   addDocumentListener,
   addWindowListener,
@@ -182,6 +251,7 @@ import {
   getNavigator,
   getScrollX,
   getScrollY,
+  getViewportHeight,
   getViewportWidth,
   getVisibilityState,
   getWindow,
@@ -209,7 +279,11 @@ const loading = ref(true)
 const error = ref(false)
 const showMenu = ref(false)
 const pageMode = ref(resolvePageMode(configStore.defaultPageMode))
-const background = ref('#000')
+const background = computed(() => ({
+  white: '#ffffff',
+  dark: '#1a1a1a',
+  sepia: '#c7edcc'
+}[configStore.defaultBackground] || '#000000'))
 const readerRoot = ref(null)
 const leftRightContainer = ref(null)
 const upDownContainer = ref(null)
@@ -219,6 +293,8 @@ const sliderPage = ref(1)
 const loadedPages = ref(new Set())
 const loadingPages = ref(new Set())
 const loadQueue = ref([])
+const pageMetrics = ref({})
+const failedPages = ref(new Set())
 
 const zoomLevel = ref(1)
 const panX = ref(0)
@@ -283,6 +359,9 @@ const lastCommittedPage = ref(1)
 const lastSavedPage = ref(0)
 const pendingRestorePage = ref(null)
 const isRestoreBootstrap = ref(false)
+const isJumpBootstrap = ref(false)
+const jumpPriorityPage = ref(null)
+const jumpAnchorPage = ref(null)
 const singlePageSwipeActive = ref(false)
 const singlePageSwipeStartX = ref(0)
 const singlePageSwipeStartY = ref(0)
@@ -300,6 +379,10 @@ let inertiaRafId = 0
 let programmaticScrollAnimationRafId = 0
 let programmaticScrollAnimationToken = 0
 let restoreBootstrapTimer = null
+let jumpBootstrapTimer = null
+let jumpAnchorTimer = null
+let jumpAnchorCorrectionRafId = 0
+let jumpAnchorOffset = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
 let mobileSingleTapTimer = null
@@ -317,22 +400,137 @@ let lastSinglePageDirection = 0
 
 const comicId = computed(() => route.params.id)
 
+const imageMetricsCacheKey = computed(() => (
+  `comic:${comicId.value}:${isThirdPartyMode.value ? `third-party:${platform.value || 'unknown'}` : 'local'}`
+))
+
+const {
+  settingsOpen,
+  autoReadActive,
+  doublePageMode,
+  doublePageLeadingBlank,
+  tapPageTurnMode,
+  tapPageTurnInWebtoon,
+  doubleTapAction,
+  noReaderAnimation,
+  readFilterOpacity,
+  readerSidePadding,
+  toggleAutoRead
+} = useReaderPreferences(configStore, {
+  nextPage: () => nextPage(),
+  isAtEnd: () => currentPage.value >= totalPage.value
+})
+
 const activeContainer = computed(() =>
   pageMode.value === 'left_right' ? leftRightContainer.value : upDownContainer.value
 )
 
 const currentZoomImage = computed(() => {
   const pageIndex = clampPage(currentPage.value, totalPage.value) - 1
-  return images.value[pageIndex] || ''
+  return isThirdPartyMode.value
+    ? images.value[pageIndex] || ''
+    : comicId.value && totalPage.value > 0
+      ? buildImageUrl(comicId.value, pageIndex + 1)
+      : ''
 })
+
+const getReaderLoadWindow = () => {
+  if (isJumpBootstrap.value) return { before: 1, after: 4 }
+  if (isRestoreBootstrap.value) {
+    return {
+      before: READER_LOAD_WINDOW.restoreBefore,
+      after: READER_LOAD_WINDOW.restoreAfter
+    }
+  }
+  return {
+    before: READER_LOAD_WINDOW.normalBefore,
+    after: READER_LOAD_WINDOW.normalAfter
+  }
+}
 
 const displayedPageNumbers = computed(() => {
   if (totalPage.value <= 0) return []
-  if (isLeftRightReadingReversed.value) {
-    return Array.from({ length: totalPage.value }, (_, index) => totalPage.value - index)
-  }
-  return Array.from({ length: totalPage.value }, (_, index) => index + 1)
+  const total = totalPage.value
+  const focus = clampPage(pendingRestorePage.value ?? currentPage.value, total)
+  const isVirtualized = total > 120
+  const { before, after } = getReaderLoadWindow()
+  const minPage = isVirtualized ? Math.max(1, focus - before) : 1
+  const maxPage = isVirtualized ? Math.min(total, focus + after) : total
+  const pages = Array.from({ length: maxPage - minPage + 1 }, (_, index) => minPage + index)
+  return isLeftRightReadingReversed.value ? pages.reverse() : pages
 })
+
+const isVirtualized = computed(() => totalPage.value > 120)
+const getPageExtentOptions = () => ({
+  pageMode: pageMode.value,
+  viewportWidth: getViewportWidth(),
+  viewportHeight: getViewportHeightCssSafe(),
+  sidePadding: readerSidePadding.value,
+  doublePageMode: doublePageMode.value,
+  singlePageBrowsing: isSinglePageBrowsing.value
+})
+const getViewportHeightCssSafe = () => {
+  const height = getViewportHeight()
+  return Number.isFinite(height) && height > 0 ? height : 720
+}
+const getPageStyle = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  const metric = pageMetrics.value[safePage]
+  if (loadedPages.value.has(safePage) && !metric) return {}
+  const extent = estimateReaderPageExtent(metric, getPageExtentOptions())
+  return pageMode.value === 'left_right'
+    ? { width: `${Math.max(1, Math.round(extent))}px` }
+    : { minHeight: `${Math.max(1, Math.round(extent))}px` }
+}
+const getEstimatedRangeExtent = (startPage, endPage) => estimateReaderRangeExtent(
+  pageMetrics.value,
+  startPage,
+  endPage,
+  getPageExtentOptions()
+)
+const virtualBeforeCount = computed(() => {
+  if (!isVirtualized.value) return 0
+  const focus = clampPage(pendingRestorePage.value ?? currentPage.value, totalPage.value)
+  const { before, after } = getReaderLoadWindow()
+  const minPage = Math.max(1, focus - before)
+  const maxPage = Math.min(totalPage.value, focus + after)
+  return isLeftRightReadingReversed.value ? totalPage.value - maxPage : minPage - 1
+})
+const virtualAfterCount = computed(() => {
+  if (!isVirtualized.value) return 0
+  const focus = clampPage(pendingRestorePage.value ?? currentPage.value, totalPage.value)
+  const { before, after } = getReaderLoadWindow()
+  const minPage = Math.max(1, focus - before)
+  const maxPage = Math.min(totalPage.value, focus + after)
+  return isLeftRightReadingReversed.value ? minPage - 1 : totalPage.value - maxPage
+})
+const virtualBeforeExtent = computed(() => {
+  if (!isVirtualized.value) return 0
+  const focus = clampPage(pendingRestorePage.value ?? currentPage.value, totalPage.value)
+  const { before, after } = getReaderLoadWindow()
+  const minPage = Math.max(1, focus - before)
+  const maxPage = Math.min(totalPage.value, focus + after)
+  return isLeftRightReadingReversed.value
+    ? getEstimatedRangeExtent(maxPage + 1, totalPage.value)
+    : getEstimatedRangeExtent(1, minPage - 1)
+})
+const virtualAfterExtent = computed(() => {
+  if (!isVirtualized.value) return 0
+  const focus = clampPage(pendingRestorePage.value ?? currentPage.value, totalPage.value)
+  const { before, after } = getReaderLoadWindow()
+  const minPage = Math.max(1, focus - before)
+  const maxPage = Math.min(totalPage.value, focus + after)
+  return isLeftRightReadingReversed.value
+    ? getEstimatedRangeExtent(1, minPage - 1)
+    : getEstimatedRangeExtent(maxPage + 1, totalPage.value)
+})
+
+const isPageFailed = (pageNum) => failedPages.value.has(clampPage(pageNum, totalPage.value))
+const retryPage = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  failedPages.value = new Set([...failedPages.value].filter((page) => page !== safePage))
+  readerLoadController.retry(safePage)
+}
 
 const getDisplayIndexFromPage = (page, total = totalPage.value) => {
   if (total <= 0) return 0
@@ -635,8 +833,17 @@ const getRectAxisCenter = (rect) => {
 const getPageElementByNumber = (container, page) => {
   const pages = getPageElements(container)
   if (!pages.length) return null
+  const exact = pages.find((element) => Number(element.dataset?.page) === Number(page))
+  if (exact) return exact
   const index = getDisplayIndexFromPage(page, pages.length)
   return pages[index] || null
+}
+
+const getPageNumberFromElement = (element, fallbackIndex) => {
+  const page = Number(element?.dataset?.page)
+  return Number.isFinite(page) && page > 0
+    ? page
+    : getPageFromDisplayIndex(fallbackIndex, totalPage.value)
 }
 
 const getViewportExtent = (container) => {
@@ -734,10 +941,8 @@ const animateSinglePageScroll = (container, position) => {
 }
 
 const getPageScrollOffset = (container, page) => {
-  const pages = getPageElements(container)
-  if (!pages.length) return 0
-  const targetIndex = getDisplayIndexFromPage(page, pages.length)
-  return getAxisStart(pages[targetIndex])
+  const target = getPageElementByNumber(container, page)
+  return target ? getAxisStart(target) : 0
 }
 
 const shouldHoldRestoreLock = (targetPage) =>
@@ -781,7 +986,7 @@ const estimatePageFromScroll = (container) => {
       const start = getAxisStart(pages[index])
       const end = start + extent
       if (probePosition >= start - epsilon && probePosition < end - epsilon) {
-        return getPageFromDisplayIndex(index, totalPage.value)
+        return getPageNumberFromElement(pages[index], index)
       }
     }
 
@@ -812,7 +1017,7 @@ const estimatePageFromScroll = (container) => {
       visibleExtent > bestVisible + epsilon ||
       (Math.abs(visibleExtent - bestVisible) <= epsilon && centerDistance < bestDistance - epsilon)
     ) {
-      bestPage = getPageFromDisplayIndex(index, totalPage.value)
+      bestPage = getPageNumberFromElement(pages[index], index)
       bestVisible = visibleExtent
       bestDistance = centerDistance
     }
@@ -917,95 +1122,37 @@ const scheduleScrollCommit = (observationToken = scrollObservationToken) => {
   }, settleDelay)
 }
 
-const rebuildLoadQueue = (centerPage) => {
-  if (totalPage.value <= 0) {
-    loadQueue.value = []
-    return
-  }
+const readerLoadController = createReaderLoadController({
+  getTotalPages: () => totalPage.value,
+  getFocusPage: () => pendingRestorePage.value ?? currentPage.value,
+  getImageUrl: (pageNum) => isThirdPartyMode.value
+    ? images.value[pageNum - 1]
+    : buildImageUrl(comicId.value, pageNum),
+  getIsMobileViewport: () => isMobile.value,
+  getRestoreMode: () => isRestoreBootstrap.value || isJumpBootstrap.value,
+  getLoadWindow: () => getReaderLoadWindow(),
+  loadedPages,
+  loadingPages,
+  loadQueue,
+  onPageLoaded: (pageNum, image) => recordPageMetric(pageNum, image?.naturalWidth, image?.naturalHeight),
+  onPageLoadFailed: (pageNum) => handlePreloadFailure(pageNum)
+})
 
-  const focusPage =
-    pendingRestorePage.value != null
-      ? clampPage(pendingRestorePage.value, totalPage.value)
-      : clampPage(centerPage, totalPage.value)
-  const baseSequence = calculateLoadSequence(focusPage, totalPage.value)
-  const sequence = isRestoreBootstrap.value
-    ? baseSequence.filter((pageNum) => {
-        const minPage = Math.max(1, focusPage - 1)
-        const maxPage = Math.min(totalPage.value, focusPage + 24)
-        return pageNum >= minPage && pageNum <= maxPage
-      })
-    : baseSequence
-
-  const nextQueue = []
-  for (const pageNum of sequence) {
-    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
-      continue
-    }
-    nextQueue.push(pageNum)
-  }
-  loadQueue.value = nextQueue
-}
-
-const queueProcessNextTick = () => {
-  if (typeof queueMicrotask === 'function') {
-    queueMicrotask(() => processLoadQueue())
-  } else {
-    setTimeout(() => processLoadQueue(), 0)
-  }
-}
-
-const processLoadQueue = () => {
-  const adaptiveMaxConcurrent = getAdaptiveMaxConcurrent({
-    isMobileViewport: isMobile.value,
-    lanHost: isLikelyLanHost()
-  })
-  const maxConcurrent = isRestoreBootstrap.value
-    ? Math.max(2, Math.min(adaptiveMaxConcurrent, 4))
-    : pendingRestorePage.value != null
-      ? Math.max(3, Math.min(adaptiveMaxConcurrent, 6))
-      : adaptiveMaxConcurrent
-
-  while (loadQueue.value.length > 0 && loadingPages.value.size < maxConcurrent) {
-    const pageNum = loadQueue.value.shift()
-    if (loadedPages.value.has(pageNum) || loadingPages.value.has(pageNum)) {
-      continue
-    }
-
-    loadingPages.value.add(pageNum)
-
-    const img = new Image()
-    const imageUrl = buildImageUrl(comicId.value, pageNum)
-
-    img.onload = () => {
-      loadedPages.value.add(pageNum)
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
-    }
-
-    img.onerror = () => {
-      loadingPages.value.delete(pageNum)
-      queueProcessNextTick()
-    }
-
-    img.src = imageUrl
-  }
-}
-
-const preloadImages = (startPage) => {
-  rebuildLoadQueue(startPage)
-  processLoadQueue()
+const preloadImages = () => {
+  readerLoadController.preload()
 }
 
 const getImageSrc = (pageNum) => {
   const safePage = clampPage(pageNum, totalPage.value)
-  // 第三方模式：图片 URL 已全部可用，直接返回
-  if (isThirdPartyMode.value) {
-    return images.value[safePage - 1] || ''
-  }
-  if (!loadedPages.value.has(safePage)) {
+  if (!readerLoadController.isPageInWindow(safePage)) {
     return ''
   }
-  return images.value[safePage - 1] || ''
+  if (!loadedPages.value.has(safePage) && jumpPriorityPage.value !== safePage) {
+    return ''
+  }
+  return isThirdPartyMode.value
+    ? images.value[safePage - 1] || ''
+    : buildImageUrl(comicId.value, safePage)
 }
 
 const getLoadFocusPage = () => {
@@ -1035,6 +1182,95 @@ const clearRestoreBootstrap = () => {
     restoreBootstrapTimer = null
   }
   isRestoreBootstrap.value = false
+}
+
+const clearJumpAnchor = () => {
+  if (jumpAnchorTimer) {
+    clearTimeout(jumpAnchorTimer)
+    jumpAnchorTimer = null
+  }
+  if (jumpAnchorCorrectionRafId && Boolean(getWindow())) {
+    cancelFrame(jumpAnchorCorrectionRafId)
+  }
+  jumpAnchorCorrectionRafId = 0
+  jumpAnchorPage.value = null
+  jumpAnchorOffset = null
+}
+
+const correctJumpAnchor = () => {
+  const anchorPage = jumpAnchorPage.value
+  const anchorOffset = jumpAnchorOffset
+  if (anchorPage == null || anchorOffset == null) return
+
+  const container = activeContainer.value
+  const target = container && getPageElementByNumber(container, anchorPage)
+  if (!container || !target) return
+
+  const containerRect = container.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const currentOffset = getRectAxisStart(targetRect) - getRectAxisStart(containerRect)
+  const correction = currentOffset - anchorOffset
+  if (Math.abs(correction) <= 1) return
+
+  if (pageMode.value === 'left_right') {
+    container.scrollLeft += correction
+  } else {
+    container.scrollTop += correction
+  }
+  lastObservedScrollPosition = getContainerScrollPosition(container)
+  markProgrammaticScroll(180)
+}
+
+const scheduleJumpAnchorCorrection = () => {
+  if (jumpAnchorPage.value == null || jumpAnchorCorrectionRafId) return
+  jumpAnchorCorrectionRafId = requestNextFrame(() => {
+    jumpAnchorCorrectionRafId = 0
+    correctJumpAnchor()
+  })
+}
+
+const beginJumpAnchor = (page) => {
+  clearJumpAnchor()
+  jumpAnchorPage.value = clampPage(page, totalPage.value)
+  jumpAnchorTimer = setTimeout(() => {
+    clearJumpAnchor()
+  }, 2400)
+}
+
+const captureJumpAnchor = (page) => {
+  const container = activeContainer.value
+  const target = container && getPageElementByNumber(container, page)
+  if (!container || !target) return
+
+  const containerRect = container.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  jumpAnchorOffset = getRectAxisStart(targetRect) - getRectAxisStart(containerRect)
+  scheduleJumpAnchorCorrection()
+}
+
+const clearJumpBootstrap = () => {
+  if (jumpBootstrapTimer) {
+    clearTimeout(jumpBootstrapTimer)
+    jumpBootstrapTimer = null
+  }
+  isJumpBootstrap.value = false
+  jumpPriorityPage.value = null
+  clearJumpAnchor()
+}
+
+const startJumpBootstrap = (page) => {
+  clearJumpBootstrap()
+  jumpPriorityPage.value = clampPage(page, totalPage.value)
+  isJumpBootstrap.value = true
+  jumpBootstrapTimer = setTimeout(() => {
+    isJumpBootstrap.value = false
+    jumpBootstrapTimer = null
+    preloadImages()
+    scheduleJumpAnchorCorrection()
+    if (jumpPriorityPage.value != null && loadedPages.value.has(jumpPriorityPage.value)) {
+      jumpPriorityPage.value = null
+    }
+  }, 900)
 }
 
 const startRestoreBootstrap = (duration = 2200) => {
@@ -1108,7 +1344,15 @@ const tryRestorePendingPage = async (restoreSession = restoreSessionToken) => {
   scheduleRestoreRetry(undefined, restoreSession)
 }
 
-const handlePageImageLoad = (pageNum) => {
+const handlePageImageLoad = (pageNum, event) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  loadedPages.value.add(safePage)
+  if (jumpPriorityPage.value === safePage) {
+    jumpPriorityPage.value = null
+  }
+  recordPageMetric(pageNum, event?.target?.naturalWidth, event?.target?.naturalHeight)
+  scheduleJumpAnchorCorrection()
+  failedPages.value = new Set([...failedPages.value].filter((page) => page !== pageNum))
   const pendingPage = pendingRestorePage.value
   if (pendingPage == null) return
 
@@ -1117,6 +1361,36 @@ const handlePageImageLoad = (pageNum) => {
     clearRestoreRetry()
     void tryRestorePendingPage(restoreSessionToken)
   }
+}
+
+const recordPageMetric = (pageNum, width, height) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  const metric = {
+    width: Math.round(Number(width) || 0),
+    height: Math.round(Number(height) || 0),
+    updatedAt: Date.now()
+  }
+  if (metric.width <= 0 || metric.height <= 0) return
+  pageMetrics.value = { ...pageMetrics.value, [safePage]: metric }
+  saveReaderImageMetric(imageMetricsCacheKey.value, safePage, metric.width, metric.height)
+  scheduleJumpAnchorCorrection()
+}
+
+const handlePageImageError = (pageNum) => {
+  const safePage = clampPage(pageNum, totalPage.value)
+  failedPages.value = new Set([...failedPages.value, safePage])
+}
+
+const handlePreloadFailure = (pageNum) => {
+  failedPages.value = new Set([...failedPages.value, pageNum])
+}
+
+const shouldProbeSoftRefPassword = (comic) => {
+  const locator = String(comic?.soft_ref_locator || comic?.import_source || '').trim()
+  if (!locator || locator.startsWith('softref://')) return true
+
+  const normalized = locator.split(/[?#]/, 1)[0].toLowerCase()
+  return ['.zip', '.rar', '.7z', '.cbz', '.cbr'].some((extension) => normalized.endsWith(extension))
 }
 
 const fetchImagesWithSoftRefPasswordFallback = async () => {
@@ -1154,6 +1428,7 @@ const fetchImagesWithSoftRefPasswordFallback = async () => {
 }
 
 const loadImages = async () => {
+  readerLoadController.cancelAll()
   loading.value = true
   error.value = false
   clearMobileSingleTapTimer()
@@ -1171,10 +1446,13 @@ const loadImages = async () => {
   restoreRetryCount = 0
   clearRestoreRetry()
   clearRestoreBootstrap()
+  clearJumpBootstrap()
   const restoreSession = nextRestoreSessionToken()
   loadedPages.value = new Set()
   loadingPages.value = new Set()
   loadQueue.value = []
+  failedPages.value = new Set()
+  pageMetrics.value = loadReaderImageMetrics(imageMetricsCacheKey.value)
 
   try {
     if (isThirdPartyMode.value) {
@@ -1206,15 +1484,28 @@ const loadImages = async () => {
       }
     } else {
       // 本地模式：从 store 加载
-      const comic = await comicStore.fetchComicDetail(comicId.value)
-      const imageData = await fetchImagesWithSoftRefPasswordFallback()
+      const comic = await comicStore.fetchComicDetail(
+        comicId.value,
+        false,
+        { includeChapters: false }
+      )
+      const storedTotalPage = Number(comic?.total_page)
+      const isSoftRef = String(comic?.storage_mode || '').trim().toLowerCase() === 'soft_ref'
+      const shouldProbePassword = isSoftRef && shouldProbeSoftRefPassword(comic)
 
-      if (!imageData || imageData.length === 0) {
-        throw new Error('empty images')
+      // 普通本地漫画的详情已经保存了总页数，按页生成地址即可，避免进入阅读页前递归扫描并返回整部图片列表。
+      // 软引用目录没有压缩包密码风险，也直接按页读取；压缩包和无法识别的软引用仍需提前探测密码。
+      if (!shouldProbePassword && Number.isFinite(storedTotalPage) && storedTotalPage > 0) {
+        images.value = []
+        totalPage.value = Math.floor(storedTotalPage)
+      } else {
+        const imageData = await fetchImagesWithSoftRefPasswordFallback()
+        if (!imageData || imageData.length === 0) {
+          throw new Error('empty images')
+        }
+        images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
+        totalPage.value = images.value.length
       }
-
-      images.value = imageData.map((_, index) => buildImageUrl(comicId.value, index + 1))
-      totalPage.value = images.value.length
 
       const routePage = Number(route.query.page)
       const hasExplicitPage = Number.isFinite(routePage) && routePage > 0
@@ -1261,7 +1552,7 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
   if (totalPage.value <= 0) return
   const reason = options.reason || 'navigation'
   const targetPage = clampPage(page, totalPage.value)
-  const behavior = smooth ? 'smooth' : 'auto'
+  const behavior = smooth && !noReaderAnimation.value ? 'smooth' : 'auto'
 
   if (reason !== 'restore' && pendingRestorePage.value != null) {
     pendingRestorePage.value = null
@@ -1269,13 +1560,20 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
     clearRestoreRetry()
     nextRestoreSessionToken()
   }
+  const isLargeJump = Math.abs(targetPage - currentPage.value) > 8 ||
+    reason === 'slider' ||
+    reason === 'keyboard'
+  if (reason !== 'restore' && isLargeJump) {
+    startJumpBootstrap(targetPage)
+  }
+  if (reason === 'restore' || isLargeJump) {
+    beginJumpAnchor(targetPage)
+  }
   invalidateScrollObservation()
   commitReadingPage(targetPage, !smooth)
 
-  if (!activeContainer.value) {
-    await nextTick()
-    await nextAnimationFrame()
-  }
+  await nextTick()
+  await nextAnimationFrame()
 
   const container = activeContainer.value
   if (container) {
@@ -1284,7 +1582,7 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
     const hasPreferredElement = Boolean(getPageElementByNumber(container, targetPage))
     const scrollPosition =
       hasPreferredElement ? preferredOffset : fallbackOffset
-    const shouldAnimateSinglePage = smooth && isSinglePageBrowsing.value && zoomLevel.value <= 1
+    const shouldAnimateSinglePage = smooth && !noReaderAnimation.value && isSinglePageBrowsing.value && zoomLevel.value <= 1
     const programmaticGuardDuration = smooth
       ? shouldAnimateSinglePage
         ? SINGLE_PAGE_PROGRAMMATIC_GUARD_MS
@@ -1300,16 +1598,21 @@ const jumpToPage = async (page, smooth = true, options = {}) => {
       clearProgrammaticScrollAnimation()
       scrollToPosition(container, scrollPosition, behavior)
     }
+    if (reason === 'restore' || isLargeJump) {
+      captureJumpAnchor(targetPage)
+    }
   }
 }
 
 const prevPage = () => {
-  const targetPage = Math.max(1, clampPage(currentPage.value, totalPage.value) - 1)
+  const step = doublePageMode.value && pageMode.value === 'left_right' ? 2 : 1
+  const targetPage = Math.max(1, clampPage(currentPage.value, totalPage.value) - step)
   void jumpToPage(targetPage, true, { reason: 'step' })
 }
 
 const nextPage = () => {
-  const targetPage = Math.min(totalPage.value, clampPage(currentPage.value, totalPage.value) + 1)
+  const step = doublePageMode.value && pageMode.value === 'left_right' ? 2 : 1
+  const targetPage = Math.min(totalPage.value, clampPage(currentPage.value, totalPage.value) + step)
   void jumpToPage(targetPage, true, { reason: 'step' })
 }
 
@@ -1369,6 +1672,10 @@ const clearMobileSingleTapTimer = () => {
 }
 
 const triggerDoubleTapZoom = (clientX, clientY) => {
+  if (doubleTapAction.value === 'menu') {
+    showMenu.value = !showMenu.value
+    return
+  }
   const container = getZoomContainer()
   if (zoomLevel.value > 1) {
     resetZoomState()
@@ -1406,7 +1713,16 @@ const handleMobileTapGesture = (clientX, clientY) => {
   mobileSingleTapTimer = setTimeout(() => {
     mobileSingleTapTimer = null
     if (Date.now() - touchTapLastTime.value >= DOUBLE_TAP_INTERVAL_MS - 8) {
-      toggleMenuVisibility()
+      const action = resolveTapPageAction({
+        mode: tapPageTurnMode.value,
+        x: clientX,
+        width: getViewportWidth(),
+        isWebtoon: pageMode.value === 'up_down',
+        webtoonEnabled: tapPageTurnInWebtoon.value
+      })
+      if (action === 'previous') prevPage()
+      else if (action === 'next') nextPage()
+      else if (action === 'menu') toggleMenuVisibility()
       touchTapLastTime.value = 0
     }
   }, DOUBLE_TAP_INTERVAL_MS)
@@ -1545,6 +1861,7 @@ const startPanInertia = () => {
 
 const handleWheel = (event) => {
   if (isZoomMode.value) return
+  clearJumpAnchor()
 
   if (event.ctrlKey) {
     event.preventDefault()
@@ -1579,6 +1896,7 @@ const handleWheel = (event) => {
 
 const handleReaderTouchStart = (event) => {
   if (!supportsTouch.value || isZoomMode.value) return
+  clearJumpAnchor()
 
   if (event.touches.length === 1) {
     const touch = event.touches[0]
@@ -1739,6 +2057,7 @@ const handleReaderTouchEnd = (event) => {
 
 const startDrag = (event) => {
   if (event.button !== 0) return
+  clearJumpAnchor()
 
   const container = activeContainer.value
   if (!container) return
@@ -1960,6 +2279,10 @@ const handleZoomWheel = (event) => {
 }
 
 const handleDoubleClick = () => {
+  if (doubleTapAction.value === 'menu') {
+    showMenu.value = !showMenu.value
+    return
+  }
   if (!isMobile.value && zoomLevel.value > 1) {
     resetZoomState()
   }
@@ -2076,6 +2399,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  readerLoadController.cancelAll()
   removeDocumentListener('mousemove', handleZoomDrag)
   removeDocumentListener('mouseup', endZoomDrag)
   removeDocumentListener('fullscreenchange', handleFullscreenChange)
@@ -2103,6 +2427,7 @@ onUnmounted(() => {
   }
   clearRestoreRetry()
   clearRestoreBootstrap()
+  clearJumpBootstrap()
   clearPanInertia()
   if (scrollRafId && Boolean(getWindow())) {
     cancelFrame(scrollRafId)
@@ -2205,11 +2530,25 @@ onUnmounted(() => {
   will-change: transform;
 }
 
+.reader-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.reader-spacer-horizontal {
+  height: 1px;
+}
+
+.reader-spacer-vertical {
+  width: 1px;
+}
+
 .page-track-horizontal {
   display: flex;
   align-items: center;
   min-height: 100%;
   width: max-content;
+  padding-inline: var(--reader-side-padding, 0%);
 }
 
 .page-track-vertical {
@@ -2218,6 +2557,7 @@ onUnmounted(() => {
   align-items: center;
   width: 100%;
   min-height: 100%;
+  padding-inline: var(--reader-side-padding, 0%);
 }
 
 .page {
@@ -2231,10 +2571,25 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   flex-shrink: 0;
+  position: relative;
 }
 
 .page + .page {
   margin-left: -1px;
+}
+
+.double-page-mode:not(.single-page-mode) .page {
+  width: 50vw;
+  height: 100%;
+}
+
+.double-page-mode:not(.single-page-mode) .page-leading-blank {
+  background: transparent;
+}
+
+.double-page-mode:not(.single-page-mode) .comic-image {
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .comic-image {
@@ -2313,6 +2668,34 @@ onUnmounted(() => {
   font-size: 0;
   border: none;
   outline: none;
+  position: relative;
+}
+
+.page-load-error {
+  min-height: 96px;
+}
+
+.page-retry {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 9px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(30, 38, 52, 0.88);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.page-retry:hover {
+  background: rgba(58, 75, 101, 0.94);
 }
 
 .up-down-page + .up-down-page {
@@ -2417,6 +2800,14 @@ onUnmounted(() => {
   z-index: 1000;
 }
 
+.reader-filter {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  pointer-events: none;
+  background: #000;
+}
+
 .progress-section {
   display: flex;
   flex-direction: column;
@@ -2495,7 +2886,14 @@ onUnmounted(() => {
 .actions {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.no-reader-animation,
+.no-reader-animation * {
+  scroll-behavior: auto !important;
+  transition-duration: 0s !important;
 }
 
 .mode-btn {

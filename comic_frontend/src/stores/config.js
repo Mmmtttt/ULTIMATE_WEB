@@ -12,6 +12,24 @@ import { getItem, setItem } from '@/utils/storage'
 import { configApi } from '@/api'
 
 export const useConfigStore = defineStore('config', () => {
+  const normalizeReaderInterval = (value) => {
+    const normalized = Number(value)
+    if (!Number.isFinite(normalized)) return DEFAULT_CONFIG.AUTO_READ_INTERVAL
+    return Math.min(30000, Math.max(1000, Math.round(normalized)))
+  }
+
+  const normalizeReaderOpacity = (value) => {
+    const normalized = Number(value)
+    if (!Number.isFinite(normalized)) return DEFAULT_CONFIG.READ_FILTER_OPACITY
+    return Math.min(0.8, Math.max(0, Number(normalized.toFixed(2))))
+  }
+
+  const normalizeReaderPadding = (value) => {
+    const normalized = Number(value)
+    if (!Number.isFinite(normalized)) return DEFAULT_CONFIG.READER_SIDE_PADDING
+    return Math.min(30, Math.max(0, Math.round(normalized)))
+  }
+
   const defaultPageMode = ref(DEFAULT_CONFIG.PAGE_MODE)
   const defaultBackground = ref(DEFAULT_CONFIG.BACKGROUND)
   const autoHideToolbar = ref(DEFAULT_CONFIG.AUTO_HIDE_TOOLBAR)
@@ -20,6 +38,16 @@ export const useConfigStore = defineStore('config', () => {
   const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
   const listPageSize = ref(DEFAULT_CONFIG.LIST_PAGE_SIZE)
   const leftRightReadingReversed = ref(DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED)
+  const doublePageMode = ref(DEFAULT_CONFIG.DOUBLE_PAGE_MODE)
+  const doublePageLeadingBlank = ref(DEFAULT_CONFIG.DOUBLE_PAGE_LEADING_BLANK)
+  const tapPageTurnMode = ref(DEFAULT_CONFIG.TAP_PAGE_TURN_MODE)
+  const tapPageTurnInWebtoon = ref(DEFAULT_CONFIG.TAP_PAGE_TURN_IN_WEBTOON)
+  const doubleTapAction = ref(DEFAULT_CONFIG.DOUBLE_TAP_ACTION)
+  const autoRead = ref(DEFAULT_CONFIG.AUTO_READ)
+  const autoReadInterval = ref(DEFAULT_CONFIG.AUTO_READ_INTERVAL)
+  const noReaderAnimation = ref(DEFAULT_CONFIG.NO_READER_ANIMATION)
+  const readFilterOpacity = ref(DEFAULT_CONFIG.READ_FILTER_OPACITY)
+  const readerSidePadding = ref(DEFAULT_CONFIG.READER_SIDE_PADDING)
   const debugMode = ref(DEFAULT_CONFIG.DEBUG_MODE)
   const loading = ref(false)
 
@@ -75,6 +103,16 @@ export const useConfigStore = defineStore('config', () => {
     singlePageBrowsing: singlePageBrowsing.value,
     listPageSize: listPageSize.value,
     leftRightReadingReversed: leftRightReadingReversed.value,
+    doublePageMode: doublePageMode.value,
+    doublePageLeadingBlank: doublePageLeadingBlank.value,
+    tapPageTurnMode: tapPageTurnMode.value,
+    tapPageTurnInWebtoon: tapPageTurnInWebtoon.value,
+    doubleTapAction: doubleTapAction.value,
+    autoRead: autoRead.value,
+    autoReadInterval: autoReadInterval.value,
+    noReaderAnimation: noReaderAnimation.value,
+    readFilterOpacity: readFilterOpacity.value,
+    readerSidePadding: readerSidePadding.value,
     debugMode: debugMode.value
   }))
 
@@ -130,6 +168,20 @@ export const useConfigStore = defineStore('config', () => {
       saved.left_right_reading_reversed ??
       DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
     )
+    doublePageMode.value = Boolean(saved.doublePageMode ?? DEFAULT_CONFIG.DOUBLE_PAGE_MODE)
+    doublePageLeadingBlank.value = saved.doublePageLeadingBlank ?? DEFAULT_CONFIG.DOUBLE_PAGE_LEADING_BLANK
+    tapPageTurnMode.value = ['full', 'left', 'right'].includes(saved.tapPageTurnMode)
+      ? saved.tapPageTurnMode
+      : DEFAULT_CONFIG.TAP_PAGE_TURN_MODE
+    tapPageTurnInWebtoon.value = saved.tapPageTurnInWebtoon ?? DEFAULT_CONFIG.TAP_PAGE_TURN_IN_WEBTOON
+    doubleTapAction.value = ['zoom', 'menu'].includes(saved.doubleTapAction)
+      ? saved.doubleTapAction
+      : DEFAULT_CONFIG.DOUBLE_TAP_ACTION
+    autoRead.value = Boolean(saved.autoRead ?? DEFAULT_CONFIG.AUTO_READ)
+    autoReadInterval.value = normalizeReaderInterval(saved.autoReadInterval)
+    noReaderAnimation.value = Boolean(saved.noReaderAnimation ?? DEFAULT_CONFIG.NO_READER_ANIMATION)
+    readFilterOpacity.value = normalizeReaderOpacity(saved.readFilterOpacity)
+    readerSidePadding.value = normalizeReaderPadding(saved.readerSidePadding)
     applyAppTheme(defaultBackground.value)
   }
 
@@ -164,6 +216,20 @@ export const useConfigStore = defineStore('config', () => {
         serverConfig.leftRightReadingReversed ??
         leftRightReadingReversed.value
       )
+      doublePageMode.value = Boolean(serverConfig.double_page_mode ?? serverConfig.doublePageMode ?? DEFAULT_CONFIG.DOUBLE_PAGE_MODE)
+      doublePageLeadingBlank.value = serverConfig.double_page_leading_blank ?? serverConfig.doublePageLeadingBlank ?? DEFAULT_CONFIG.DOUBLE_PAGE_LEADING_BLANK
+      tapPageTurnMode.value = ['full', 'left', 'right'].includes(serverConfig.tap_page_turn_mode ?? serverConfig.tapPageTurnMode)
+        ? (serverConfig.tap_page_turn_mode ?? serverConfig.tapPageTurnMode)
+        : DEFAULT_CONFIG.TAP_PAGE_TURN_MODE
+      tapPageTurnInWebtoon.value = serverConfig.tap_page_turn_in_webtoon ?? serverConfig.tapPageTurnInWebtoon ?? DEFAULT_CONFIG.TAP_PAGE_TURN_IN_WEBTOON
+      doubleTapAction.value = ['zoom', 'menu'].includes(serverConfig.double_tap_action ?? serverConfig.doubleTapAction)
+        ? (serverConfig.double_tap_action ?? serverConfig.doubleTapAction)
+        : DEFAULT_CONFIG.DOUBLE_TAP_ACTION
+      autoRead.value = Boolean(serverConfig.auto_read ?? serverConfig.autoRead ?? DEFAULT_CONFIG.AUTO_READ)
+      autoReadInterval.value = normalizeReaderInterval(serverConfig.auto_read_interval ?? serverConfig.autoReadInterval)
+      noReaderAnimation.value = Boolean(serverConfig.no_reader_animation ?? serverConfig.noReaderAnimation ?? DEFAULT_CONFIG.NO_READER_ANIMATION)
+      readFilterOpacity.value = normalizeReaderOpacity(serverConfig.read_filter_opacity ?? serverConfig.readFilterOpacity)
+      readerSidePadding.value = normalizeReaderPadding(serverConfig.reader_side_padding ?? serverConfig.readerSidePadding)
       debugMode.value = Boolean(serverConfig.debug_mode ?? DEFAULT_CONFIG.DEBUG_MODE)
       saveConfig()
       applyAppTheme(defaultBackground.value)
@@ -189,6 +255,16 @@ export const useConfigStore = defineStore('config', () => {
         show_page_number: showPageNumber.value,
         auto_download_preview_assets_for_preview_import: autoDownloadPreviewImportAssets.value,
         single_page_browsing: singlePageBrowsing.value,
+        double_page_mode: doublePageMode.value,
+        double_page_leading_blank: doublePageLeadingBlank.value,
+        tap_page_turn_mode: tapPageTurnMode.value,
+        tap_page_turn_in_webtoon: tapPageTurnInWebtoon.value,
+        double_tap_action: doubleTapAction.value,
+        auto_read: autoRead.value,
+        auto_read_interval: autoReadInterval.value,
+        no_reader_animation: noReaderAnimation.value,
+        read_filter_opacity: readFilterOpacity.value,
+        reader_side_padding: readerSidePadding.value,
         debug_mode: debugMode.value
       }
       const res = await configApi.update(payload)
@@ -252,6 +328,24 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setReaderPreference(name, value) {
+    const setters = {
+      doublePageMode: (next) => { doublePageMode.value = Boolean(next) },
+      doublePageLeadingBlank: (next) => { doublePageLeadingBlank.value = Boolean(next) },
+      tapPageTurnMode: (next) => { if (['full', 'left', 'right'].includes(next)) tapPageTurnMode.value = next },
+      tapPageTurnInWebtoon: (next) => { tapPageTurnInWebtoon.value = Boolean(next) },
+      doubleTapAction: (next) => { if (['zoom', 'menu'].includes(next)) doubleTapAction.value = next },
+      autoRead: (next) => { autoRead.value = Boolean(next) },
+      autoReadInterval: (next) => { autoReadInterval.value = normalizeReaderInterval(next) },
+      noReaderAnimation: (next) => { noReaderAnimation.value = Boolean(next) },
+      readFilterOpacity: (next) => { readFilterOpacity.value = normalizeReaderOpacity(next) },
+      readerSidePadding: (next) => { readerSidePadding.value = normalizeReaderPadding(next) }
+    }
+    if (!setters[name]) return
+    setters[name](value)
+    saveConfig()
+  }
+
   async function resetConfig() {
     defaultPageMode.value = DEFAULT_CONFIG.PAGE_MODE
     defaultBackground.value = DEFAULT_CONFIG.BACKGROUND
@@ -261,6 +355,16 @@ export const useConfigStore = defineStore('config', () => {
     singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
     listPageSize.value = DEFAULT_CONFIG.LIST_PAGE_SIZE
     leftRightReadingReversed.value = DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
+    doublePageMode.value = DEFAULT_CONFIG.DOUBLE_PAGE_MODE
+    doublePageLeadingBlank.value = DEFAULT_CONFIG.DOUBLE_PAGE_LEADING_BLANK
+    tapPageTurnMode.value = DEFAULT_CONFIG.TAP_PAGE_TURN_MODE
+    tapPageTurnInWebtoon.value = DEFAULT_CONFIG.TAP_PAGE_TURN_IN_WEBTOON
+    doubleTapAction.value = DEFAULT_CONFIG.DOUBLE_TAP_ACTION
+    autoRead.value = DEFAULT_CONFIG.AUTO_READ
+    autoReadInterval.value = DEFAULT_CONFIG.AUTO_READ_INTERVAL
+    noReaderAnimation.value = DEFAULT_CONFIG.NO_READER_ANIMATION
+    readFilterOpacity.value = DEFAULT_CONFIG.READ_FILTER_OPACITY
+    readerSidePadding.value = DEFAULT_CONFIG.READER_SIDE_PADDING
     debugMode.value = DEFAULT_CONFIG.DEBUG_MODE
     saveConfig()
     applyAppTheme(defaultBackground.value)
@@ -296,6 +400,13 @@ export const useConfigStore = defineStore('config', () => {
       debugMode.value = Boolean(newConfig.debugMode)
       saveConfig()
     }
+    for (const name of [
+      'doublePageMode', 'doublePageLeadingBlank', 'tapPageTurnMode', 'tapPageTurnInWebtoon',
+      'doubleTapAction', 'autoRead', 'autoReadInterval', 'noReaderAnimation',
+      'readFilterOpacity', 'readerSidePadding'
+    ]) {
+      if (newConfig[name] !== undefined) setReaderPreference(name, newConfig[name])
+    }
   }
 
   loadConfig()
@@ -309,6 +420,16 @@ export const useConfigStore = defineStore('config', () => {
     singlePageBrowsing,
     listPageSize,
     leftRightReadingReversed,
+    doublePageMode,
+    doublePageLeadingBlank,
+    tapPageTurnMode,
+    tapPageTurnInWebtoon,
+    doubleTapAction,
+    autoRead,
+    autoReadInterval,
+    noReaderAnimation,
+    readFilterOpacity,
+    readerSidePadding,
     debugMode,
     loading,
 
@@ -334,6 +455,7 @@ export const useConfigStore = defineStore('config', () => {
     setSinglePageBrowsing,
     setListPageSize,
     setLeftRightReadingReversed,
+    setReaderPreference,
     resetConfig,
     updateConfig
   }

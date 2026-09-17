@@ -447,6 +447,10 @@ test("preview reader progressively renders cached pages before download call fin
   await page.keyboard.press("m");
   await expect(page.locator(".control-bar")).toBeVisible();
 
+  // The seed task is deterministic and finishes before the delayed download response.
+  // Wait for it before asserting the polling result to avoid racing the filesystem update.
+  await seedTask;
+
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -461,7 +465,6 @@ test("preview reader progressively renders cached pages before download call fin
   expect(downloadResponded).toBeFalsy();
   await expect(page.locator(".download-progress-inline")).toBeVisible();
 
-  await seedTask;
   await expect
     .poll(() => downloadResponded, { timeout: 10000 })
     .toBeTruthy();

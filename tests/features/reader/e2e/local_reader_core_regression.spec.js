@@ -93,16 +93,24 @@ test("local reader restores route page and loads backend images", async ({ page 
         item.url.includes(`comic_id=${COMIC_ID}`),
     ),
   ).toBeTruthy();
-  // reader 通过 fetchImagesWithSoftRefPasswordFallback 获取图片列表
   expect(
     hasApiCall(
       apiRequests,
       (item) =>
         item.method === "GET" &&
+        item.url.includes("/api/v1/comic/detail") &&
+        item.url.includes("include_chapters=false"),
+    ),
+  ).toBeTruthy();
+  // 普通本地漫画使用详情中的 total_page，并按页生成图片地址。
+  expect(
+    apiRequests.some(
+      (item) =>
+        item.method === "GET" &&
         item.url.includes("/api/v1/comic/images") &&
         item.url.includes(`comic_id=${COMIC_ID}`),
     ),
-  ).toBeTruthy();
+  ).toBeFalsy();
 });
 
 /**

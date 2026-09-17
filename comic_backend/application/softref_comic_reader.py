@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import tempfile
+import threading
 import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -69,6 +70,9 @@ class SoftRefComicReader:
         ensure_rar_backend_configured()
         self._db_storage = JsonDocumentRepository(JSON_FILE, "comics", "total_comics")
         self._index_cache: Dict[str, Dict[str, Any]] = {}
+        self._index_cache_lock = threading.RLock()
+        self._comic_record_cache: Dict[str, Tuple[str, int, Optional[Dict[str, Any]]]] = {}
+        self._comic_record_cache_lock = threading.RLock()
         self._nested_archive_cache: "OrderedDict[str, bytes]" = OrderedDict()
         self._nested_archive_cache_total_bytes = 0
         self._nested_archive_cache_max_bytes = self._resolve_positive_int_env(
@@ -344,12 +348,41 @@ class SoftRefComicReader:
         return password or None
 
     def _get_raw_comic_record(self, comic_id: str) -> Optional[Dict[str, Any]]:
+        normalized_id = str(comic_id or "").strip()
+        if not normalized_id:
+            return None
+
+        try:
+            database_path = str(self._db_storage._storage.json_file)
+            database_mtime_ns = int(os.stat(database_path).st_mtime_ns)
+        except (OSError, AttributeError):
+            database_path = ""
+            database_mtime_ns = 0
+
+        with self._comic_record_cache_lock:
+            cached = self._comic_record_cache.get(normalized_id)
+            if (
+                cached
+                and cached[0] == database_path
+                and cached[1] == database_mtime_ns
+            ):
+                return dict(cached[2]) if cached[2] is not None else None
+
         data = self._db_storage.read_document()
         comics = data.get("comics", []) if isinstance(data, dict) else []
+        found = None
         for item in comics:
-            if str((item or {}).get("id", "")) == str(comic_id):
-                return item if isinstance(item, dict) else None
-        return None
+            if str((item or {}).get("id", "")) == normalized_id:
+                found = dict(item) if isinstance(item, dict) else None
+                break
+
+        with self._comic_record_cache_lock:
+            self._comic_record_cache[normalized_id] = (
+                database_path,
+                database_mtime_ns,
+                found,
+            )
+        return dict(found) if found is not None else None
 
     def is_soft_ref_comic(self, comic_id: str) -> bool:
         item = self._get_raw_comic_record(comic_id)
@@ -381,7 +414,8 @@ class SoftRefComicReader:
             "updated_at": self._timestamp(),
         }
         self._save_password_store(store)
-        self._index_cache.pop(comic_id, None)
+        with self._index_cache_lock:
+            self._index_cache.pop(comic_id, None)
         return {"archive_fingerprint": fp, "saved": True}
 
     def _resolve_context(self, comic_id: str) -> _SoftRefContext:
@@ -403,23 +437,24 @@ class SoftRefComicReader:
         if signature == "missing":
             raise SoftRefSourceMissingError("源文件不存在或不可访问")
 
-        cached = self._index_cache.get(context.comic_id)
-        if (
-            cached
-            and str(cached.get("locator", "")) == context.locator
-            and str(cached.get("signature", "")) == signature
-            and isinstance(cached.get("entries"), list)
-        ):
-            return cached["entries"]
+        with self._index_cache_lock:
+            cached = self._index_cache.get(context.comic_id)
+            if (
+                cached
+                and str(cached.get("locator", "")) == context.locator
+                and str(cached.get("signature", "")) == signature
+                and isinstance(cached.get("entries"), list)
+            ):
+                return cached["entries"]
 
-        entries = self._build_page_entries(context, locator_payload)
-        self._index_cache[context.comic_id] = {
-            "locator": context.locator,
-            "signature": signature,
-            "entries": entries,
-            "updated_at": self._timestamp(),
-        }
-        return entries
+            entries = self._build_page_entries(context, locator_payload)
+            self._index_cache[context.comic_id] = {
+                "locator": context.locator,
+                "signature": signature,
+                "entries": entries,
+                "updated_at": self._timestamp(),
+            }
+            return entries
 
     def get_page_count(self, comic_id: str) -> int:
         context = self._resolve_context(comic_id)

@@ -60,9 +60,13 @@ export const comicApi = {
    * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
-  getDetail: (comicId) => {
+  getDetail: (comicId, options = {}) => {
+    const params = { comic_id: comicId }
+    if (options && options.includeChapters === false) {
+      params.include_chapters = 'false'
+    }
     return request.get('/v1/comic/detail', {
-      params: { comic_id: comicId }
+      params
     })
   },
   
