@@ -74,6 +74,7 @@
             <img 
               :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :style="getImageStyle(pageNum)"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -133,6 +134,7 @@
             <img 
               :src="getImageSrc(pageNum) || undefined"
               class="comic-image"
+              :style="getImageStyle(pageNum)"
               decoding="async"
               :loading="getImageLoading(pageNum)"
               draggable="false"
@@ -318,6 +320,8 @@ const lastTouchDistance = ref(0)
 const touchPanActive = ref(false)
 const touchPanStartX = ref(0)
 const touchPanStartY = ref(0)
+const touchPanStartScrollX = ref(0)
+const touchPanStartScrollY = ref(0)
 const touchPanStartPanX = ref(0)
 const touchPanStartPanY = ref(0)
 const touchPanLastX = ref(0)
@@ -358,6 +362,7 @@ const detectTouchSupport = () => {
 }
 
 const isProgrammaticScroll = ref(false)
+const isZoomLayoutSyncing = ref(false)
 const isMobile = ref(detectMobileDevice())
 const supportsTouch = ref(detectTouchSupport())
 const isSinglePageBrowsing = computed(() => Boolean(configStore.singlePageBrowsing))
@@ -392,6 +397,7 @@ let jumpBootstrapTimer = null
 let jumpAnchorTimer = null
 let jumpAnchorCorrectionRafId = 0
 let jumpAnchorOffset = null
+let zoomLayoutToken = 0
 let cacheStatusPollTimer = null
 let scrollObservationToken = 0
 let restoreSessionToken = 0
@@ -480,18 +486,43 @@ const getPageExtentOptions = () => ({
 const getPageStyle = (pageNum) => {
   const safePage = clampPage(pageNum, totalPage.value)
   const metric = pageMetrics.value[safePage]
-  if (loadedPages.value.has(safePage) && !metric) return {}
-  const extent = estimateReaderPageExtent(metric, getPageExtentOptions())
+  const zoomScale = Math.max(1, Number(zoomLevel.value) || 1)
+  if (loadedPages.value.has(safePage) && !metric && zoomScale <= 1) return {}
+  const extent = estimateReaderPageExtent(metric, getPageExtentOptions()) * zoomScale
   return pageMode.value === 'left_right'
     ? { width: `${Math.max(1, Math.round(extent))}px` }
     : { minHeight: `${Math.max(1, Math.round(extent))}px` }
+}
+const getImageStyle = (pageNum) => {
+  const zoomScale = Math.max(1, Number(zoomLevel.value) || 1)
+  if (zoomScale <= 1) return {}
+
+  const safePage = clampPage(pageNum, totalPage.value)
+  const extent = estimateReaderPageExtent(
+    pageMetrics.value[safePage],
+    getPageExtentOptions()
+  ) * zoomScale
+
+  return pageMode.value === 'left_right'
+    ? {
+        width: `${Math.max(1, Math.round(extent))}px`,
+        maxWidth: 'none',
+        maxHeight: 'none',
+        height: 'auto'
+      }
+    : {
+        height: `${Math.max(1, Math.round(extent))}px`,
+        maxWidth: 'none',
+        maxHeight: 'none',
+        width: 'auto'
+      }
 }
 const getEstimatedRangeExtent = (startPage, endPage) => estimateReaderRangeExtent(
   pageMetrics.value,
   startPage,
   endPage,
   getPageExtentOptions()
-)
+) * Math.max(1, Number(zoomLevel.value) || 1)
 const virtualBeforeCount = computed(() => {
   if (!isVirtualized.value) return 0
   const focus = clampPage(pendingRestorePage.value ?? currentPage.value, totalPage.value)
@@ -570,7 +601,7 @@ const getContentStyle = computed(() => {
   }
 
   return {
-    transform: `translate3d(${panX.value}px, ${panY.value}px, 0) scale(${zoomLevel.value})`,
+    transform: `translate3d(${panX.value}px, ${panY.value}px, 0)`,
     transformOrigin: 'left top'
   }
 })
@@ -617,13 +648,14 @@ const applyPinchAtPoint = (distance, centerX, centerY) => {
 
   const scaleDelta = distance / touchPinchLastDistance.value
   const nextZoom = Math.max(1, Math.min(5, Number((prevZoom * scaleDelta).toFixed(3))))
-  const appliedScale = nextZoom / prevZoom
-  const centerDeltaX = centerX - touchPinchLastCenterX.value
-  const centerDeltaY = centerY - touchPinchLastCenterY.value
-
-  panX.value = centerX - (centerX - panX.value) * appliedScale + centerDeltaX
-  panY.value = centerY - (centerY - panY.value) * appliedScale + centerDeltaY
-  applyZoomLevel(nextZoom)
+  const container = activeContainer.value
+  const anchorPoint = container
+    ? {
+        x: centerX - (container.scrollLeft || 0),
+        y: centerY - (container.scrollTop || 0)
+      }
+    : { x: centerX, y: centerY }
+  zoomAtPoint(nextZoom, anchorPoint, container)
 
   touchPinchLastDistance.value = distance
   touchPinchLastCenterX.value = centerX
@@ -643,25 +675,30 @@ const syncScrollFromZoomState = () => {
   const container = activeContainer.value
   if (!container) return
 
-  const currentZoom = zoomLevel.value
-  if (!Number.isFinite(currentZoom) || currentZoom <= 0) return
+  const currentZoom = Math.max(1, Number(zoomLevel.value) || 1)
 
   const currentLeft = typeof container.scrollLeft === 'number' ? container.scrollLeft : 0
   const currentTop = typeof container.scrollTop === 'number' ? container.scrollTop : 0
-  const nextLeftRaw = (currentLeft - panX.value) / currentZoom
-  const nextTopRaw = (currentTop - panY.value) / currentZoom
-
-  const maxLeft = Math.max(0, (container.scrollWidth || 0) - (container.clientWidth || 0))
-  const maxTop = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0))
-  const nextLeft = Math.min(maxLeft, Math.max(0, nextLeftRaw))
-  const nextTop = Math.min(maxTop, Math.max(0, nextTopRaw))
-
+  const logicalLeft = (currentLeft - panX.value) / currentZoom
+  const logicalTop = (currentTop - panY.value) / currentZoom
   invalidateScrollObservation()
   markProgrammaticScroll(120)
-  container.scrollTo({
-    left: nextLeft,
-    top: nextTop,
-    behavior: 'auto'
+  isZoomLayoutSyncing.value = true
+  zoomLevel.value = 1
+  panX.value = 0
+  panY.value = 0
+  const token = ++zoomLayoutToken
+  void nextTick().then(nextAnimationFrame).then(() => {
+    if (token !== zoomLayoutToken || activeContainer.value !== container) return
+    const maxLeft = Math.max(0, (container.scrollWidth || 0) - (container.clientWidth || 0))
+    const maxTop = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0))
+    container.scrollTo({
+      left: Math.min(maxLeft, Math.max(0, logicalLeft)),
+      top: Math.min(maxTop, Math.max(0, logicalTop)),
+      behavior: 'auto'
+    })
+    isZoomLayoutSyncing.value = false
+    updatePageFromScroll()
   })
 }
 
@@ -869,11 +906,6 @@ const resetZoomState = () => {
 const applyZoomLevel = (nextLevel) => {
   const clamped = Math.max(1, Math.min(5, Number(nextLevel.toFixed(3))))
 
-  if (clamped <= 1 && zoomLevel.value > 1) {
-    clearPanInertia()
-    syncScrollFromZoomState()
-  }
-
   zoomLevel.value = clamped
   if (clamped <= 1) {
     panX.value = 0
@@ -882,9 +914,6 @@ const applyZoomLevel = (nextLevel) => {
     touchPanVelocityX.value = 0
     touchPanVelocityY.value = 0
     touchPanLastTime.value = 0
-    if (activeContainer.value) {
-      updatePageFromScroll()
-    }
   }
 }
 
@@ -915,28 +944,40 @@ const zoomAtPoint = (nextLevel, anchorPoint, container) => {
 
   if (Math.abs(clamped - prevZoom) < 0.0001) return
 
-  if (!container || !anchorPoint || clamped <= 1) {
+  if (!container || !anchorPoint) {
     applyZoomLevel(clamped)
     return
   }
 
   const scrollX = typeof container.scrollLeft === 'number' ? container.scrollLeft : 0
   const scrollY = typeof container.scrollTop === 'number' ? container.scrollTop : 0
+  const logicalX = (scrollX + anchorPoint.x - panX.value) / prevZoom
+  const logicalY = (scrollY + anchorPoint.y - panY.value) / prevZoom
   const scaleRatio = clamped / prevZoom
-
-  panX.value =
-    anchorPoint.x +
-    scrollX -
-    (anchorPoint.x + scrollX - panX.value) * scaleRatio
-  panY.value =
-    anchorPoint.y +
-    scrollY -
-    (anchorPoint.y + scrollY - panY.value) * scaleRatio
+  const nextPanX = clamped > 1 ? panX.value * scaleRatio : 0
+  const nextPanY = clamped > 1 ? panY.value * scaleRatio : 0
 
   applyZoomLevel(clamped)
-  if (activeContainer.value) {
+  panX.value = nextPanX
+  panY.value = nextPanY
+  invalidateScrollObservation()
+  markProgrammaticScroll(120)
+  isZoomLayoutSyncing.value = true
+  const token = ++zoomLayoutToken
+  void nextTick().then(nextAnimationFrame).then(() => {
+    if (token !== zoomLayoutToken || activeContainer.value !== container) return
+    const maxLeft = Math.max(0, (container.scrollWidth || 0) - (container.clientWidth || 0))
+    const maxTop = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0))
+    const nextLeft = logicalX * clamped + nextPanX - anchorPoint.x
+    const nextTop = logicalY * clamped + nextPanY - anchorPoint.y
+    container.scrollTo({
+      left: Math.min(maxLeft, Math.max(0, nextLeft)),
+      top: Math.min(maxTop, Math.max(0, nextTop)),
+      behavior: 'auto'
+    })
+    isZoomLayoutSyncing.value = false
     updatePageFromScroll()
-  }
+  })
 }
 
 const updateDeviceState = () => {
@@ -1595,6 +1636,8 @@ const loadImages = async () => {
   touchTapSuppressImageClickUntil.value = 0
   downloadProgress.value = ''
   resetZoomState()
+  zoomLayoutToken += 1
+  isZoomLayoutSyncing.value = false
   clearProgrammaticScrollAnimation()
   singlePageSwipeActive.value = false
   singlePageSwipeStartAt.value = 0
@@ -1756,6 +1799,7 @@ const handleSliderChange = () => {
 const updatePageFromScroll = () => {
   const container = activeContainer.value
   if (!container || totalPage.value <= 0) return
+  if (isZoomLayoutSyncing.value) return
   const observationToken = nextScrollObservation()
 
   if (pendingRestorePage.value != null) {
@@ -1949,6 +1993,9 @@ const queuePageUpdate = () => {
 const startPanInertia = () => {
   if (!getWindow() || zoomLevel.value <= 1 || isZoomMode.value) return
 
+  const container = activeContainer.value
+  if (!container) return
+
   let velocityX = touchPanVelocityX.value
   let velocityY = touchPanVelocityY.value
   if (Math.hypot(velocityX, velocityY) < 0.05) return
@@ -1966,8 +2013,11 @@ const startPanInertia = () => {
     lastTime = now
     elapsed += dt
 
-    panX.value += velocityX * dt
-    panY.value += velocityY * dt
+    if (pageMode.value === 'left_right') {
+      container.scrollLeft -= velocityX * dt
+    } else {
+      container.scrollTop -= velocityY * dt
+    }
 
     const decay = Math.pow(frictionPerFrame, dt / 16.667)
     velocityX *= decay
@@ -2006,9 +2056,11 @@ const handleWheel = (event) => {
   if (zoomLevel.value > 1) {
     event.preventDefault()
     clearPanInertia()
-    panX.value -= event.deltaX
-    panY.value -= event.deltaY
-    queuePageUpdate()
+    const container = getZoomContainer()
+    if (container) {
+      container.scrollLeft += event.deltaX
+      container.scrollTop += event.deltaY
+    }
     return
   }
 
@@ -2056,6 +2108,9 @@ const handleReaderTouchStart = (event) => {
     touchPanActive.value = true
     touchPanStartX.value = touch.clientX
     touchPanStartY.value = touch.clientY
+    const container = activeContainer.value
+    touchPanStartScrollX.value = container?.scrollLeft || 0
+    touchPanStartScrollY.value = container?.scrollTop || 0
     touchPanStartPanX.value = panX.value
     touchPanStartPanY.value = panY.value
     touchPanLastX.value = touch.clientX
@@ -2092,6 +2147,9 @@ const handleReaderTouchMove = (event) => {
       touchPanActive.value = true
       touchPanStartX.value = touch.clientX
       touchPanStartY.value = touch.clientY
+      const container = activeContainer.value
+      touchPanStartScrollX.value = container?.scrollLeft || 0
+      touchPanStartScrollY.value = container?.scrollTop || 0
       touchPanStartPanX.value = panX.value
       touchPanStartPanY.value = panY.value
       touchPanLastX.value = touch.clientX
@@ -2113,8 +2171,16 @@ const handleReaderTouchMove = (event) => {
     touchPanLastY.value = touch.clientY
     touchPanLastTime.value = now
 
-    panX.value = touchPanStartPanX.value + (touch.clientX - touchPanStartX.value)
-    panY.value = touchPanStartPanY.value + (touch.clientY - touchPanStartY.value)
+    const container = activeContainer.value
+    if (container) {
+      const deltaX = touch.clientX - touchPanStartX.value
+      const deltaY = touch.clientY - touchPanStartY.value
+      if (pageMode.value === 'left_right') {
+        container.scrollLeft = touchPanStartScrollX.value - deltaX
+      } else {
+        container.scrollTop = touchPanStartScrollY.value - deltaY
+      }
+    }
     queuePageUpdate()
   }
 }
@@ -2152,6 +2218,9 @@ const handleReaderTouchEnd = (event) => {
     touchPanActive.value = true
     touchPanStartX.value = touch.clientX
     touchPanStartY.value = touch.clientY
+    const container = activeContainer.value
+    touchPanStartScrollX.value = container?.scrollLeft || 0
+    touchPanStartScrollY.value = container?.scrollTop || 0
     touchPanStartPanX.value = panX.value
     touchPanStartPanY.value = panY.value
     touchPanLastX.value = touch.clientX
@@ -2200,11 +2269,6 @@ const startDrag = (event) => {
   dragStartScrollY.value = container.scrollTop
   const dragZoomedContent = zoomLevel.value > 1 && !isZoomMode.value
 
-  if (dragZoomedContent) {
-    zoomDragStartPanX.value = panX.value
-    zoomDragStartPanY.value = panY.value
-  }
-
   const handleDragMove = (moveEvent) => {
     const deltaX = Math.abs(moveEvent.clientX - dragStartX.value)
     const deltaY = Math.abs(moveEvent.clientY - dragStartY.value)
@@ -2215,9 +2279,13 @@ const startDrag = (event) => {
 
     if (dragZoomedContent) {
       clearPanInertia()
-      panX.value = zoomDragStartPanX.value + (moveEvent.clientX - dragStartX.value)
-      panY.value = zoomDragStartPanY.value + (moveEvent.clientY - dragStartY.value)
-      queuePageUpdate()
+      const deltaX = moveEvent.clientX - dragStartX.value
+      const deltaY = moveEvent.clientY - dragStartY.value
+      if (pageMode.value === 'left_right') {
+        container.scrollLeft = dragStartScrollX.value - deltaX
+      } else {
+        container.scrollTop = dragStartScrollY.value - deltaY
+      }
       return
     }
 
@@ -2236,9 +2304,7 @@ const startDrag = (event) => {
 
     removeDocumentListener('mousemove', handleDragMove)
     removeDocumentListener('mouseup', handleDragEnd)
-    if (!dragZoomedContent) {
-      scheduleScrollCommit()
-    }
+    scheduleScrollCommit()
   }
 
   addDocumentListener('mousemove', handleDragMove)
