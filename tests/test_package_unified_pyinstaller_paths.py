@@ -63,8 +63,10 @@ def _write_manifest(plugin_dir: Path, plugin_id: str, packaging: dict | None = N
 def test_resident_dependency_pool_is_available_without_plugin_sources():
     package_unified = _load_package_unified_module()
 
+    external_requirements = package_unified.load_resident_dependency_requirements({}, "external")
     requirements = package_unified.load_resident_dependency_requirements({}, "android")
 
+    assert "pycryptodome>=3.20.0" in external_requirements
     assert "commonx>=0.6.38" in requirements
     assert "curl-cffi==0.16.3" in requirements
     assert "chaquopy-libffi>=3.3" in requirements
