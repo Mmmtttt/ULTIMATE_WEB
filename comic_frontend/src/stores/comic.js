@@ -185,9 +185,9 @@ export const useComicStore = defineStore('comic', () => {
     const includeChapters = options?.includeChapters !== false
 
     // 检查缓存
-    if (!forceRefresh && includeChapters) {
+    if (!forceRefresh) {
       const cached = cacheStore.getDetailCache(id)
-      if (cached) {
+      if (cached && (includeChapters || Array.isArray(cached.chapters))) {
         currentComic.value = cached
         return cached
       }
@@ -396,6 +396,18 @@ export const useComicStore = defineStore('comic', () => {
     } catch (err) {
       console.error('[Comic] 搜索漫画失败:', err)
       return []
+    }
+  }
+
+  function mergeDetailChapters(id, chapters) {
+    const current = currentComic.value?.id === id ? currentComic.value : null
+    const cached = cacheStore.getDetailCache(id)
+    const merged = { ...(cached || current || {}), chapters }
+    if (current) {
+      currentComic.value = merged
+    }
+    if (current || cached) {
+      cacheStore.setDetailCache(id, merged)
     }
   }
   
@@ -719,6 +731,7 @@ export const useComicStore = defineStore('comic', () => {
     // Actions
     fetchComics,
     fetchComicDetail,
+    mergeDetailChapters,
     fetchImages,
     updateScore,
     saveProgress,

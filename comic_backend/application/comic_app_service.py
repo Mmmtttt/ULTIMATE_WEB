@@ -415,6 +415,20 @@ class ComicAppService:
         except Exception as e:
             error_logger.error(f"获取漫画详情失败: {e}")
             return ServiceResult.error("获取漫画详情失败")
+
+    def get_comic_chapters(self, comic_id: str) -> ServiceResult:
+        try:
+            comic = self._comic_repo.get_by_id(comic_id)
+            if not comic:
+                return ServiceResult.error("漫画不存在")
+
+            return ServiceResult.ok({
+                "comic_id": comic_id,
+                "chapters": self._resolve_comic_chapters(comic),
+            })
+        except Exception as e:
+            error_logger.error(f"获取漫画章节失败: {comic_id}, {e}")
+            return ServiceResult.error("获取漫画章节失败")
     
     def update_score(self, comic_id: str, score: float) -> ServiceResult:
         try:

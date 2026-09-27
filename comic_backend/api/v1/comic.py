@@ -465,6 +465,22 @@ def comic_detail():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/chapters', methods=['GET'])
+def comic_chapters():
+    try:
+        comic_id = request.args.get('comic_id')
+        if not comic_id:
+            return error_response(400, "缺少参数")
+
+        result = comic_service.get_comic_chapters(comic_id)
+        if result.success:
+            return success_response(result.data)
+        return error_response(404, result.message)
+    except Exception as e:
+        error_logger.error(f"获取漫画章节失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
 @comic_bp.route('/third-party/detail', methods=['GET'])
 def third_party_comic_detail():
     from protocol.adapter_api import ProtocolAdapterAPI

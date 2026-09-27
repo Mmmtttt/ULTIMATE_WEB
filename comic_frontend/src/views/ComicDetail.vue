@@ -246,7 +246,7 @@
       <!-- 图片预览 -->
       <van-image-preview
         v-model:show="showPreview"
-        :images="previewImages"
+        :images="previewViewerImages"
         :start-position="previewIndex"
         :closeable="true"
         close-icon="close"
@@ -483,6 +483,8 @@ const isLocalImportedComic = computed(() => {
 })
 const importing = ref(false)
 const thirdPartyError = ref('')
+let subscriptionCheckTimer = null
+let chapterLoadTimer = null
 
 const editForm = ref({
   title: '',
@@ -541,8 +543,8 @@ function updatePreviewColumns() {
 }
 
 const displayedPreviews = computed(() => {
-  if (previewLimit.value <= 0) return previewImages.value
-  return previewImages.value.slice(0, previewLimit.value)
+  const limit = previewLimit.value > 0 ? previewLimit.value : previewColumns.value
+  return previewImages.value.slice(0, limit)
 })
 
 const previewItems = computed(() => {
@@ -556,16 +558,21 @@ const previewItems = computed(() => {
 })
 
 const displayedPreviewItems = computed(() => {
-  if (previewLimit.value <= 0) return previewItems.value
-  return previewItems.value.slice(0, previewLimit.value)
+  const limit = previewLimit.value > 0 ? previewLimit.value : previewColumns.value
+  return previewItems.value.slice(0, limit)
 })
 
 const hasMorePreviews = computed(() => {
   return previewImages.value.length > previewColumns.value
 })
 
+const previewViewerImages = computed(() => {
+  return isPreviewLimited.value ? displayedPreviews.value : previewImages.value
+})
+
 const isPreviewLimited = computed(() => {
-  return previewLimit.value > 0 && previewLimit.value < previewImages.value.length
+  const limit = previewLimit.value > 0 ? previewLimit.value : previewColumns.value
+  return limit < previewImages.value.length
 })
 
 function expandPreview() {
@@ -672,10 +679,11 @@ async function fetchComicDetail() {
   }
 
   try {
-    const detail = await comicStore.fetchComicDetail(comicId)
+    const detail = await comicStore.fetchComicDetail(comicId, false, { includeChapters: false })
     if (detail) {
       comic.value = detail
       recordReadingHistory(detail)
+      isSubscribed.value = false
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
       editForm.value = {
@@ -683,12 +691,44 @@ async function fetchComicDetail() {
         author: detail.author || '',
         desc: detail.desc || ''
       }
-      await checkSubscriptionStatus()
+      scheduleSubscriptionStatusCheck()
+      if (!Array.isArray(detail.chapters)) {
+        scheduleChapterLoad(comicId)
+      }
     }
   } catch (error) {
     console.error('获取漫画详情失败:', error)
   } finally {
     isLoading.value = false
+  }
+}
+
+function scheduleSubscriptionStatusCheck() {
+  if (subscriptionCheckTimer) clearTimeout(subscriptionCheckTimer)
+  subscriptionCheckTimer = setTimeout(() => {
+    subscriptionCheckTimer = null
+    void checkSubscriptionStatus()
+  }, 250)
+}
+
+function scheduleChapterLoad(comicId) {
+  if (isThirdPartyMode.value) return
+  if (chapterLoadTimer) clearTimeout(chapterLoadTimer)
+  chapterLoadTimer = setTimeout(() => {
+    chapterLoadTimer = null
+    void fetchComicChapters(comicId)
+  }, 150)
+}
+
+async function fetchComicChapters(comicId) {
+  try {
+    const response = await comicApi.getChapters(comicId)
+    if (response?.code !== 200 || comic.value?.id !== comicId) return
+    const chapters = response.data?.chapters || []
+    comic.value = { ...comic.value, chapters }
+    comicStore.mergeDetailChapters(comicId, chapters)
+  } catch (error) {
+    console.warn('获取漫画章节失败:', error)
   }
 }
 
@@ -1263,14 +1303,14 @@ onMounted(async () => {
     startReading()
     return
   }
-  await fetchAllTags()
-  await listStore.fetchLists('comic')
   updatePreviewColumns()
   previewLimit.value = previewColumns.value
   window.addEventListener('resize', onWindowResize)
 })
 
 onUnmounted(() => {
+  if (subscriptionCheckTimer) clearTimeout(subscriptionCheckTimer)
+  if (chapterLoadTimer) clearTimeout(chapterLoadTimer)
   window.removeEventListener('resize', onWindowResize)
 })
 
@@ -1283,15 +1323,17 @@ watch(() => route.params.id, async (newId) => {
   await fetchComicDetail()
 })
 
+watch(showTagPopup, async (val) => {
+  if (val && allTags.value.length === 0) {
+    await fetchAllTags()
+  }
+})
+
 watch(showListPopup, async (val) => {
-  console.log('[Detail] showListPopup changed:', val)
   if (val) {
     await listStore.fetchLists('comic')
-    console.log('[Detail] listStore.lists:', listStore.lists)
-    console.log('[Detail] customLists:', customLists.value)
     if (comic.value) {
       selectedListIds.value = [...(comic.value.list_ids || [])]
-      console.log('[Detail] selectedListIds initialized:', selectedListIds.value)
     }
   }
 })

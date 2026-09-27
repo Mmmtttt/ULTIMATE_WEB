@@ -8,6 +8,8 @@ const updateDownloadRequestOptions = {
   timeout: 0
 }
 
+let thirdPartyConfigRequest = null
+
 /**
  * 列出服务端目录下的文件夹/文件
  * @param {string} path - 目录路径（空字符串则返回驱动器列表）
@@ -67,6 +69,12 @@ export const comicApi = {
     }
     return request.get('/v1/comic/detail', {
       params
+    })
+  },
+
+  getChapters: (comicId) => {
+    return request.get('/v1/comic/chapters', {
+      params: { comic_id: comicId }
     })
   },
   
@@ -445,7 +453,14 @@ export const comicApi = {
    * @returns {Promise}
    */
   getThirdPartyConfig: () => {
-    return request.get('/v1/comic/third-party/config')
+    if (!thirdPartyConfigRequest) {
+      thirdPartyConfigRequest = request
+        .get('/v1/comic/third-party/config')
+        .finally(() => {
+          thirdPartyConfigRequest = null
+        })
+    }
+    return thirdPartyConfigRequest
   },
   
   /**
