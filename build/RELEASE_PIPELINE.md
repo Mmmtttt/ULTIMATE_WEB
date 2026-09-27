@@ -30,6 +30,12 @@ Use GitHub Actions workflow:
 
 The Docker publish step uses the same `APP_VERSION` as Windows/Linux/Android packages.
 
+Docker follows the desktop `external` plugin model: the image contains the main
+application and the external resident dependency pool, while plugin code is
+installed into `/app/plugins`. The Compose example persists that directory with
+`./plugins:/app/plugins`, so rebuilding or upgrading the image does not remove
+installed plugins. Docker builds do not fetch or embed third-party submodules.
+
 Example:
 
 - Git tag `v1.2.3`

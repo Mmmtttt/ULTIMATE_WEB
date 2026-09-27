@@ -26,6 +26,7 @@ services:
       - ./server_config.json:/app/server_config.json:rw
       - ./comic_backend/third_party_config.json:/app/comic_backend/third_party_config.json:rw
       - ./data:/app/comic_backend/data
+      - ./plugins:/app/plugins
       # 在 NAS 上挂载媒体目录后，服务端路径导入要填写容器内路径，例如:
       # - /volume1/library/comics:/library/comics:rw
       # - /volume1/library/videos:/library/videos:rw

@@ -7,9 +7,12 @@
 node_modules
 output
 build
+!build/
+!build/resident_dependency_pools.json
 data
 tests
 **/__pycache__/
 **/*.pyc
 **/*.pyo
 **/*.log
+comic_backend/third_party/

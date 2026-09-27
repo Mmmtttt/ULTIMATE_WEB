@@ -425,7 +425,6 @@ jobs:
       - name: checkout code
         uses: actions/checkout@v4.2.1
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: set up QEMU

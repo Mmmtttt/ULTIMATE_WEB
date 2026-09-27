@@ -23,10 +23,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ULTIMATE_APP_VERSION=${APP_VERSION} \
     SERVER_CONFIG_PATH=/app/server_config.json \
+    THIRD_PARTY_CONFIG_PATH=/app/comic_backend/third_party_config.json \
+    BACKEND_RUNTIME_PROFILE=full \
+    BACKEND_ENABLE_THIRD_PARTY=true \
     RAR_BACKEND_MODE=auto \
     BACKEND_HOST=0.0.0.0 \
     BACKEND_PORT=5000 \
-    BACKEND_DEBUG=0
+    BACKEND_DEBUG=0 \
+    ULTIMATE_PLUGIN_ROOTS=/app/plugins \
+    ULTIMATE_USER_PLUGIN_ROOT=/app/plugins \
+    ULTIMATE_PLUGIN_ROOTS_ONLY=1 \
+    BACKEND_PLUGIN_ROOTS_ONLY=1 \
+    ULTIMATE_PLUGIN_DEP_ROOTS=/app/runtime_deps/python \
+    BACKEND_PLUGIN_DEP_ROOTS=/app/runtime_deps/python \
+    ULTIMATE_PLUGIN_DEP_MANIFEST=/app/runtime_deps/dependency_pool_manifest.json
 
 WORKDIR /app
 
@@ -44,9 +54,20 @@ COPY comic_backend/requirements.txt /tmp/requirements.txt
 RUN python -m pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
+COPY build/resident_dependency_pools.json /tmp/resident_dependency_pools.json
+COPY scripts/docker_materialize_dependency_pool.py /tmp/docker_materialize_dependency_pool.py
+RUN mkdir -p /app/plugins \
+    && python /tmp/docker_materialize_dependency_pool.py \
+        /tmp/resident_dependency_pools.json \
+        /app/runtime_deps/python \
+        /app/runtime_deps/dependency_pool_manifest.json \
+    && rm -f /tmp/resident_dependency_pools.json /tmp/docker_materialize_dependency_pool.py
+
 COPY comic_backend/ /app/comic_backend/
 COPY config_templates/ /app/config_templates/
 COPY --from=frontend-builder /build/comic_frontend/dist /app/comic_frontend/dist
+
+VOLUME ["/app/plugins", "/app/comic_backend/data"]
 
 EXPOSE 5000
 
