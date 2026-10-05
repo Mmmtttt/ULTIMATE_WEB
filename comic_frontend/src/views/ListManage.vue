@@ -1,5 +1,5 @@
 <template>
-  <div class="list-manage desktop-page-shell">
+  <div class="list-manage desktop-page-shell manage-page-shell">
     <van-nav-bar
       title="清单管理"
       left-text="返回"
@@ -45,6 +45,28 @@
               </van-button>
               <span v-if="list.content_type === 'comic'" class="count-pill">漫画 {{ list.comic_count }}</span>
               <span v-if="list.content_type === 'video'" class="count-pill">视频 {{ list.video_count }}</span>
+              <template v-if="isDesktop && !list.is_default">
+                <van-button
+                  size="mini"
+                  type="primary"
+                  plain
+                  round
+                  class="sync-btn-inline"
+                  @click.stop="openEditDialog(list)"
+                >
+                  编辑
+                </van-button>
+                <van-button
+                  size="mini"
+                  type="danger"
+                  plain
+                  round
+                  class="sync-btn-inline"
+                  @click.stop="confirmDelete(list)"
+                >
+                  删除
+                </van-button>
+              </template>
             </div>
           </template>
           <template #icon>
@@ -54,14 +76,14 @@
             </div>
           </template>
         </van-cell>
-        <template #right v-if="!list.is_default">
+        <template #right v-if="!list.is_default && !isDesktop">
           <van-button square type="primary" text="编辑" class="edit-btn" @click="openEditDialog(list)" />
           <van-button square type="danger" text="删除" @click="confirmDelete(list)" />
         </template>
       </van-swipe-cell>
     </van-cell-group>
     
-    <van-popup v-model:show="showCreateDialog" round position="center">
+    <van-popup v-model:show="showCreateDialog" round position="center" teleport="body">
       <div class="dialog-content">
         <h3>新建清单</h3>
         <van-field v-model="newListName" label="清单名称" placeholder="请输入清单名称" />
@@ -73,7 +95,7 @@
       </div>
     </van-popup>
     
-    <van-popup v-model:show="showEditDialog" round position="center">
+    <van-popup v-model:show="showEditDialog" round position="center" teleport="body">
       <div class="dialog-content">
         <h3>编辑清单</h3>
         <van-field v-model="editListName" label="清单名称" placeholder="请输入清单名称" />
@@ -196,11 +218,13 @@ import { useListStore, useModeStore, useImportTaskStore } from '@/stores'
 import { showConfirmDialog, showSuccessToast, showFailToast } from 'vant'
 import listApi from '@/api/list'
 import { fetchProtocolPlatformOptions } from '@/utils'
+import { useDevice } from '@/composables/useDevice'
 
 const router = useRouter()
 const listStore = useListStore()
 const modeStore = useModeStore()
 const importTaskStore = useImportTaskStore()
+const { isDesktop } = useDevice()
 
 const loading = ref(false)
 const creating = ref(false)
@@ -495,6 +519,7 @@ watch(currentContentType, () => {
 .list-manage {
   min-height: 95vh;
   background: transparent;
+  padding-bottom: 18px;
 }
 
 .loading-center {
@@ -504,7 +529,17 @@ watch(currentContentType, () => {
 }
 
 .list-group {
-  margin-top: 12px;
+  margin: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.list-group :deep(.van-cell) {
+  background: transparent;
+  min-height: 76px;
 }
 
 .list-icon {
@@ -523,6 +558,7 @@ watch(currentContentType, () => {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+  max-width: min(54vw, 520px);
 }
 
 .count-pill {
@@ -576,7 +612,7 @@ watch(currentContentType, () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--surface-0);
+  background: var(--popup-bg);
 }
 
 .import-header {
@@ -648,16 +684,26 @@ watch(currentContentType, () => {
 }
 
 .list-section .selected {
-  background-color: #e8f9ef;
+  background: rgba(0, 168, 117, 0.12);
 }
 
 .list-section .selected .van-cell__title {
-  color: #07c160;
+  color: var(--success-500);
   font-weight: 500;
 }
 
 @media (max-width: 767px) {
+  .list-group {
+    margin-inline: 10px;
+    border-radius: 16px;
+  }
+
+  .list-group :deep(.van-cell) {
+    align-items: flex-start;
+  }
+
   .list-counts {
+    max-width: 100%;
     gap: 6px;
   }
 

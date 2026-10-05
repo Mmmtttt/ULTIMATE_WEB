@@ -525,6 +525,7 @@ class ActorAppService(BaseCreatorAppService):
             
             updated_actors = []
             total_new_works = 0
+            actors_to_save = []
             
             for actor in actors:
                 try:
@@ -560,7 +561,7 @@ class ActorAppService(BaseCreatorAppService):
                         latest_work_title,
                         new_count
                     )
-                    self._actor_repo.save(actor)
+                    actors_to_save.append(actor)
                     
                     if has_update:
                         updated_actors.append({
@@ -573,6 +574,14 @@ class ActorAppService(BaseCreatorAppService):
                     error_logger.error(f"检查演员 {actor.name} 更新失败: {e}")
                     continue
             
+            if actors_to_save:
+                # 批量刷新合并为一次整库写，避免逐个订阅者重复写回
+                if hasattr(self._actor_repo, "save_many"):
+                    self._actor_repo.save_many(actors_to_save)
+                else:
+                    for actor in actors_to_save:
+                        self._actor_repo.save(actor)
+
             app_logger.info(f"检查演员更新完成，{len(updated_actors)} 个演员有更新，共 {total_new_works} 个新作品")
             return ServiceResult.ok({
                 "updated_actors": updated_actors,

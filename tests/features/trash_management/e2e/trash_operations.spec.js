@@ -8,6 +8,12 @@ const {
 
 const TRASH_COMIC_TITLE = "E2E Comic Epsilon";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("app_mode", JSON.stringify("comic"));
+  });
+});
+
 /**
  * 打开漫画详情页：点击卡片并等待详情页加载完成，"移入回收站"按钮可见。
  */
@@ -22,7 +28,7 @@ async function openComicDetail(page, title) {
   await page.waitForURL(/\/comic\//);
   await page.waitForLoadState("networkidle");
 
-  const moveToTrashBtn = page.locator('[title="移入回收站"]');
+  const moveToTrashBtn = page.getByRole("button", { name: "删除" });
   await expect(moveToTrashBtn).toBeVisible({ timeout: 10000 });
   return moveToTrashBtn;
 }
@@ -40,6 +46,30 @@ async function waitForMoveToTrashApi(apiRequests) {
       { timeout: 5000 }
     )
     .toBeTruthy();
+}
+
+async function waitForRestoreApi(apiRequests) {
+  await expect
+    .poll(
+      () =>
+        hasApiCall(apiRequests, (item) =>
+          item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
+        ),
+      { timeout: 5000 }
+    )
+    .toBeTruthy();
+}
+
+async function restoreComicFromTrashIfNeeded(page, apiRequests) {
+  await page.goto("/trash");
+  await page.waitForLoadState("networkidle");
+
+  const trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
+  if (await trashItem.isVisible()) {
+    await trashItem.getByRole("button", { name: "恢复" }).click();
+    await waitForRestoreApi(apiRequests);
+    await expect(trashItem).toBeHidden({ timeout: 10000 });
+  }
 }
 
 /**
@@ -64,21 +94,7 @@ async function waitForMoveToTrashApi(apiRequests) {
 test("trash page complete lifecycle: move to trash, list, and restore", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
 
-  await page.goto("/trash");
-  await page.waitForLoadState("networkidle");
-  const trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
-  if (await trashItem.isVisible()) {
-    await trashItem.getByRole("button", { name: "恢复" }).click();
-    await expect
-      .poll(
-        () =>
-          hasApiCall(apiRequests, (item) =>
-            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-          ),
-        { timeout: 5000 }
-      )
-      .toBeTruthy();
-  }
+  await restoreComicFromTrashIfNeeded(page, apiRequests);
 
   const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
   await moveToTrashBtn.click();
@@ -101,16 +117,8 @@ test("trash page complete lifecycle: move to trash, list, and restore", async ({
   const trashItemAfter = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   await expect(trashItemAfter).toBeVisible();
   await trashItemAfter.getByRole("button", { name: "恢复" }).click();
-
-  await expect
-    .poll(
-      () =>
-        hasApiCall(apiRequests, (item) =>
-          item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-        ),
-      { timeout: 5000 }
-    )
-    .toBeTruthy();
+  await waitForRestoreApi(apiRequests);
+  await expect(trashItemAfter).toBeHidden({ timeout: 10000 });
 
   await page.goto("/library");
   await page.waitForLoadState("networkidle");
@@ -137,45 +145,25 @@ test("trash page complete lifecycle: move to trash, list, and restore", async ({
 test("trash page shows delete button for trashed item", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
 
-  await page.goto("/trash");
-  await page.waitForLoadState("networkidle");
-  let trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
-  if (await trashItem.isVisible()) {
-    await trashItem.getByRole("button", { name: "恢复" }).click();
-    await expect
-      .poll(
-        () =>
-          hasApiCall(apiRequests, (item) =>
-            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-          ),
-        { timeout: 5000 }
-      )
-      .toBeTruthy();
-  }
+  await restoreComicFromTrashIfNeeded(page, apiRequests);
 
   const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
   await moveToTrashBtn.click();
   await confirmDialog(page);
+  await expect(page).toHaveURL(/\/library/, { timeout: 10000 });
   await waitForMoveToTrashApi(apiRequests);
 
   await page.goto("/trash");
   await page.waitForLoadState("networkidle");
 
-  trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
+  const trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   await expect(trashItem).toBeVisible({ timeout: 10000 });
   const deleteButton = trashItem.getByRole("button", { name: /永久删除|删除/ });
   await expect(deleteButton).toBeVisible();
 
   await trashItem.getByRole("button", { name: "恢复" }).click();
-  await expect
-    .poll(
-      () =>
-        hasApiCall(apiRequests, (item) =>
-          item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-        ),
-      { timeout: 5000 }
-    )
-    .toBeTruthy();
+  await waitForRestoreApi(apiRequests);
+  await expect(trashItem).toBeHidden({ timeout: 10000 });
 });
 
 /**
@@ -199,44 +187,24 @@ test("trash page shows delete button for trashed item", async ({ page }) => {
 test("trash page shows restore button when items exist", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
 
-  await page.goto("/trash");
-  await page.waitForLoadState("networkidle");
-  let trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
-  if (await trashItem.isVisible()) {
-    await trashItem.getByRole("button", { name: "恢复" }).click();
-    await expect
-      .poll(
-        () =>
-          hasApiCall(apiRequests, (item) =>
-            item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-          ),
-        { timeout: 5000 }
-      )
-      .toBeTruthy();
-  }
+  await restoreComicFromTrashIfNeeded(page, apiRequests);
 
   const moveToTrashBtn = await openComicDetail(page, TRASH_COMIC_TITLE);
   await moveToTrashBtn.click();
   await confirmDialog(page);
+  await expect(page).toHaveURL(/\/library/, { timeout: 10000 });
   await waitForMoveToTrashApi(apiRequests);
 
   await page.goto("/trash");
   await page.waitForLoadState("networkidle");
 
-  trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
+  const trashItem = page.locator(".media-item", { hasText: TRASH_COMIC_TITLE }).first();
   await expect(trashItem).toBeVisible({ timeout: 10000 });
 
   const restoreButton = trashItem.getByRole("button", { name: "恢复" });
   await expect(restoreButton).toBeVisible();
 
   await restoreButton.click();
-  await expect
-    .poll(
-      () =>
-        hasApiCall(apiRequests, (item) =>
-          item.url.includes("/api/v1/comic/trash/restore") && item.method === "PUT"
-        ),
-      { timeout: 5000 }
-    )
-    .toBeTruthy();
+  await waitForRestoreApi(apiRequests);
+  await expect(trashItem).toBeHidden({ timeout: 10000 });
 });

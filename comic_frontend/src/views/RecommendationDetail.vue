@@ -10,10 +10,10 @@
           :title="isFavorited ? '取消收藏' : '收藏'"
         />
         <van-icon
-          name="delete-o"
+          name="ellipsis"
           class="nav-icon"
-          @click="handleMoveToTrash"
-          title="移入回收站"
+          @click="showActionSheet = true"
+          title="更多操作"
         />
       </template>
     </van-nav-bar>
@@ -110,7 +110,7 @@
             size="medium"
             type="primary"
             class="tag tag-add"
-            @click="showAddTag = true"
+            @click="openAddTagPopup"
           >
             <van-icon name="plus" size="12" />
           </van-tag>
@@ -171,6 +171,23 @@
         <van-button type="primary" size="large" @click="startReading" class="read-button">
           {{ recommendation.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
+        <div class="detail-action-strip">
+          <van-button
+            size="small"
+            type="warning"
+            :icon="isFavorited ? 'star' : 'star-o'"
+            :loading="favoriteLoading"
+            @click="handleToggleFavorite"
+          >
+            {{ isFavorited ? '已收藏' : '收藏' }}
+          </van-button>
+          <van-button size="small" type="primary" icon="records-o" @click="openListManager">
+            加入清单
+          </van-button>
+          <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
+            删除
+          </van-button>
+        </div>
       </div>
     </div>
 
@@ -282,7 +299,28 @@
       <div class="edit-popup">
         <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
         <div class="tag-add-content">
-          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-search
+            v-model="newTagName"
+            shape="round"
+            placeholder="搜索已有标签，或输入新标签"
+            clearable
+            @search="handleAddTag"
+          />
+          <div v-if="filteredAddTagOptions.length > 0" class="tag-option-list">
+            <button
+              v-for="tag in filteredAddTagOptions"
+              :key="tag.id"
+              type="button"
+              class="tag-option"
+              @click="bindExistingTag(tag)"
+            >
+              <span class="tag-option-name">{{ tag.name }}</span>
+              <span class="tag-option-count">{{ tag.comic_count || 0 }} 项</span>
+            </button>
+          </div>
+          <div v-else class="tag-option-empty">
+            {{ newTagName.trim() ? '没有匹配的已有标签，可直接新建。' : '输入关键词后会实时显示可选标签。' }}
+          </div>
           <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
             添加
           </van-button>
@@ -296,10 +334,10 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRecommendationStore, useTagStore, useListStore } from '@/stores'
-import { authorApi } from '@/api'
+import { authorApi, historyApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl, isReadByProgress } from '@/utils'
+import { applyListMembershipChanges, buildListChangeMessage, getCoverUrl } from '@/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -326,6 +364,9 @@ const showAddTag = ref(false)
 const showTagRemove = ref(false)
 const newTagName = ref('')
 const tagAdding = ref(false)
+const updateLoading = ref(false)
+const migratingToLocal = ref(false)
+const repairCoverLoading = ref(false)
 
 const showEditPopup = ref(false)
 
@@ -335,10 +376,12 @@ const editForm = ref({
   desc: ''
 })
 
-const actions = [
-  { name: '绑定标签', value: 'tags' },
+const actions = computed(() => [
+  { name: '检查更新', value: 'check_update', loading: updateLoading.value },
+  { name: '修复封面', value: 'repair_cover', loading: repairCoverLoading.value },
+  { name: '导入本地库', value: 'migrate_to_local', loading: migratingToLocal.value },
   { name: '移入回收站', value: 'trash', color: '#ee0a24' }
-]
+])
 
 // ============ Computed ============
 const recommendationId = computed(() => route.params.id)
@@ -355,7 +398,7 @@ const previewImages = computed(() => {
 
 const recommendationCoverUrl = computed(() => {
   if (!recommendation.value) return ''
-  return getCoverUrl(recommendation.value.cover_path)
+  return getCoverUrl(recommendation.value.cover_url || recommendation.value.cover_path)
 })
 
 const isFavorited = computed(() => {
@@ -363,10 +406,33 @@ const isFavorited = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
+const currentTagIdSet = computed(() => {
+  const ids = [
+    ...(recommendation.value?.tag_ids || []),
+    ...((recommendation.value?.tags || []).map(tag => tag?.id))
+  ]
+  return new Set(ids.filter(Boolean).map(id => String(id)))
+})
 
-const isRead = computed(() => {
-  if (!recommendation.value) return false
-  return isReadByProgress(recommendation.value.current_page)
+const filteredAddTagOptions = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  return allTags.value
+    .filter(tag => tag?.id && !currentTagIdSet.value.has(String(tag.id)))
+    .filter(tag => {
+      if (!keyword) return true
+      return String(tag.name || '').toLowerCase().includes(keyword)
+    })
+    .slice(0, 32)
+})
+
+const exactExistingAddTag = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  if (!keyword) return null
+  return allTags.value.find(tag => {
+    return tag?.id &&
+      !currentTagIdSet.value.has(String(tag.id)) &&
+      String(tag.name || '').trim().toLowerCase() === keyword
+  }) || null
 })
 
 // ============ Methods ============
@@ -417,6 +483,7 @@ async function fetchDetail() {
     const detail = await recommendationStore.fetchRecommendationDetail(id)
     if (detail) {
       recommendation.value = detail
+      recordReadingHistory(detail)
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
       await checkSubscriptionStatus()
@@ -426,6 +493,18 @@ async function fetchDetail() {
   } finally {
     isLoading.value = false
   }
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || recommendationId.value
+  if (!contentId) return
+  historyApi.recordVisit({
+    contentType: 'comic',
+    contentId,
+    source: 'preview'
+  }).catch((error) => {
+    console.warn('写入预览漫画阅读记录失败:', error)
+  })
 }
 
 /**
@@ -511,11 +590,59 @@ function openEdit() {
 
 function onActionSelect(action) {
   showActionSheet.value = false
-  if (action.value === 'tags') {
-    showTagPopup.value = true
+  if (action.value === 'check_update') {
+    handleCheckAndDownloadUpdate()
+  } else if (action.value === 'repair_cover') {
+    handleRepairCover()
+  } else if (action.value === 'migrate_to_local') {
+    handleMigrateToLocal()
   } else if (action.value === 'trash') {
     handleMoveToTrash()
   }
+}
+
+async function handleRepairCover() {
+  if (!recommendation.value?.id || repairCoverLoading.value) return
+
+  try {
+    await showConfirmDialog({
+      title: '修复封面',
+      message: '将只修复当前预览漫画的封面，可能会联网重新下载封面，是否继续？'
+    })
+  } catch (error) {
+    if (error === 'cancel') return
+    showFailToast(error?.message || '修复封面失败')
+    return
+  }
+
+  repairCoverLoading.value = true
+  try {
+    const response = await recommendationStore.repairCover(recommendation.value.id)
+    if (response.code !== 200) {
+      showFailToast(response.msg || '修复封面失败')
+      return
+    }
+    await fetchDetail()
+    showSuccessToast(response.msg || '封面修复完成')
+  } catch (error) {
+    console.error('修复封面失败:', error)
+    showFailToast(error?.message || '修复封面失败')
+  } finally {
+    repairCoverLoading.value = false
+  }
+}
+
+function openListManager() {
+  selectedListIds.value = [...(recommendation.value?.list_ids || [])]
+  showListPopup.value = true
+}
+
+async function openAddTagPopup() {
+  newTagName.value = ''
+  if (allTags.value.length === 0) {
+    await fetchAllTags()
+  }
+  showAddTag.value = true
 }
 
 async function saveEdit() {
@@ -556,6 +683,73 @@ async function handleMoveToTrash() {
     if (e !== 'cancel') {
       showFailToast('操作失败')
     }
+  }
+}
+
+async function handleCheckAndDownloadUpdate() {
+  if (!recommendation.value || updateLoading.value) return
+
+  updateLoading.value = true
+  try {
+    const checkResponse = await recommendationStore.checkUpdate(recommendation.value.id)
+    const checkData = checkResponse?.data || {}
+
+    if (!checkData.can_update) {
+      showFailToast(checkData.reason || '当前平台暂不支持在线更新')
+      return
+    }
+
+    const localPages = checkData.cached_page_count || checkData.db_total_page || 0
+    const remotePages = checkData.remote_total_page || localPages
+    if (!checkData.has_update) {
+      showSuccessToast(`暂无更新（当前 ${localPages} 页 / 远程 ${remotePages} 页）`)
+      return
+    }
+
+    await showConfirmDialog({
+      title: '发现更新',
+      message: checkData.update_reason === 'missing_cached_pages'
+        ? `当前预览缓存不完整，已缓存 ${localPages}/${checkData.expected_cached_page_count || remotePages} 页，是否立即继续补齐？`
+        : `检测到远程页数 ${remotePages} 大于当前 ${localPages}，是否立即下载更新到预览缓存？`
+    })
+
+    const downloadResponse = await recommendationStore.downloadUpdate(recommendation.value.id)
+    if (downloadResponse.code !== 200) {
+      showFailToast(downloadResponse.msg || '下载更新失败')
+      return
+    }
+
+    recommendationStore.clearCache('detail', recommendation.value.id)
+    recommendationStore.clearCache('list')
+    await fetchDetail()
+
+    const latestPages = downloadResponse?.data?.cached_page_count ?? recommendation.value?.total_page ?? 0
+    showSuccessToast(`更新完成，当前缓存 ${latestPages} 页`)
+  } catch (error) {
+    if (error === 'cancel') return
+    console.error('检查更新失败:', error)
+    showFailToast(error?.message || '检查更新失败')
+  } finally {
+    updateLoading.value = false
+  }
+}
+
+async function handleMigrateToLocal() {
+  if (!recommendation.value || migratingToLocal.value) return
+
+  migratingToLocal.value = true
+  try {
+    const res = await recommendationStore.migrateToLocal([recommendation.value.id])
+    if (res.code === 200) {
+      showSuccessToast(res.msg || res.data?.message || '导入任务已创建')
+    } else {
+      showFailToast(res.msg || '创建导入任务失败')
+    }
+  } catch (error) {
+    console.error('导入本地库失败:', error)
+    showFailToast(error?.message || '创建导入任务失败')
+  } finally {
+    migratingToLocal.value = false
   }
 }
 
@@ -668,40 +862,48 @@ async function addToLists() {
   }
 }
 
-/**
- * 标记已读
- */
-async function markAsRead() {
-  try {
-    if (isRead.value) {
-      await recommendationStore.saveProgress(recommendation.value.id, 1)
-      recommendation.value.current_page = 1
-      showSuccessToast('已标记为未读')
-    } else {
-      await recommendationStore.saveProgress(recommendation.value.id, recommendation.value.total_page)
-      recommendation.value.current_page = recommendation.value.total_page
-      showSuccessToast('已标记为已读')
-    }
-  } catch (error) {
-    showFailToast('标记失败')
-  }
-}
-
 async function handleAddTag() {
   const name = newTagName.value.trim()
   if (!name) { showFailToast('请输入标签名称'); return }
+  if ((recommendation.value?.tags || []).some(tag => String(tag.name || '').trim().toLowerCase() === name.toLowerCase())) {
+    showFailToast('标签已存在')
+    return
+  }
+  const existing = exactExistingAddTag.value
+  if (existing) {
+    await bindExistingTag(existing)
+    return
+  }
   tagAdding.value = true
   try {
     const res = await tagApi.add(name, 'comic')
-    if (res.code === 200 && res.data?.tag_id) {
-      await tagApi.batchAddTags([{ id: recommendation.value.id, source: 'preview' }], [res.data.tag_id])
+    const tagId = res.data?.tag_id || res.data?.id
+    if (res.code === 200 && tagId) {
+      await tagApi.batchAddTags([{ id: recommendation.value.id, source: 'preview' }], [tagId])
       await fetchDetail()
+      await fetchAllTags()
       newTagName.value = ''
       showAddTag.value = false
       showSuccessToast('标签已添加')
     } else {
       showFailToast('添加失败')
     }
+  } catch (e) {
+    showFailToast('添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function bindExistingTag(tag) {
+  if (!tag?.id || currentTagIdSet.value.has(String(tag.id))) return
+  tagAdding.value = true
+  try {
+    await tagApi.batchAddTags([{ id: recommendation.value.id, source: 'preview' }], [tag.id])
+    await fetchDetail()
+    newTagName.value = ''
+    showAddTag.value = false
+    showSuccessToast('标签已添加')
   } catch (e) {
     showFailToast('添加失败')
   } finally {
@@ -772,6 +974,59 @@ watch(showListPopup, async (val) => {
 
 .tag-add-content {
   padding: 16px;
+}
+
+.tag-add-content :deep(.van-search) {
+  padding: 0;
+  background: transparent;
+}
+
+.tag-add-content :deep(.van-search__content) {
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+}
+
+.tag-option-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.tag-option {
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tag-option-name {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-option-count,
+.tag-option-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.tag-option-empty {
+  padding: 16px 2px 4px;
+  text-align: center;
 }
 
 .empty {
@@ -846,6 +1101,7 @@ watch(showListPopup, async (val) => {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
+  padding-right: 34px;
 }
 
 .author-row {
@@ -885,6 +1141,21 @@ watch(showListPopup, async (val) => {
   border: 1px solid rgba(255, 255, 255, 0.24);
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+.detail-action-strip {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px auto 0;
+}
+
+.detail-action-strip :deep(.van-button) {
+  min-width: 112px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 10px 20px rgba(17, 27, 45, 0.12);
 }
 
 .score-section {
@@ -1089,6 +1360,19 @@ watch(showListPopup, async (val) => {
 
   .score-section {
     padding: 8px 10px;
+  }
+
+  .detail-action-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+
+  .detail-action-strip :deep(.van-button) {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 6px;
   }
 }
 

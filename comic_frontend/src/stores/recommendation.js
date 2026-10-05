@@ -41,6 +41,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
   // 是否正在筛选
   const isFiltering = ref(false)
+  let listFetchSeq = 0
 
   // ============ Getters ============
 
@@ -114,6 +115,7 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       }
     }
 
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
 
@@ -136,6 +138,9 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
       console.log('[Recommendation] 调用 API 获取列表, params:', params)
       const response = await recommendationApi.getList(params)
+      if (requestSeq !== listFetchSeq) {
+        return recommendations.value
+      }
       console.log('[Recommendation] API 返回数据:', response)
 
       if (response.code === 200) {
@@ -146,7 +151,11 @@ export const useRecommendationStore = defineStore('recommendation', () => {
           currentPageState.value = Number(payload.page) || 1
           pageSizeState.value = Number(payload.page_size) || recommendations.value.length || 0
           totalPagesState.value = Number(payload.total_pages) || 1
-          availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(recommendations.value)
+          if (Array.isArray(payload.available_authors)) {
+            availableAuthors.value = payload.available_authors
+          } else if (availableAuthors.value.length === 0) {
+            availableAuthors.value = extractAuthors(recommendations.value)
+          }
         } else {
           recommendations.value = Array.isArray(payload) ? payload : []
           totalCountState.value = recommendations.value.length
@@ -168,10 +177,14 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       }
     } catch (err) {
       console.error('[Recommendation] 获取推荐列表失败:', err)
-      error.value = '获取推荐列表失败'
+      if (requestSeq === listFetchSeq) {
+        error.value = '获取推荐列表失败'
+      }
       return []
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
 
@@ -317,26 +330,23 @@ export const useRecommendationStore = defineStore('recommendation', () => {
   async function searchRecommendations(keyword) {
     console.log('[Recommendation] searchRecommendations called, keyword:', keyword)
 
-    loading.value = true
-    error.value = null
-
     try {
-      const response = await recommendationApi.search(keyword)
-
-      if (response.code === 200) {
-        filteredRecommendations.value = response.data || []
-        isFiltering.value = true
-        return response.data
-      } else {
-        error.value = response.msg || '搜索失败'
-        return []
+      const normalizedKeyword = String(keyword || '').trim()
+      if (!normalizedKeyword) {
+        isFiltering.value = false
+        return recommendations.value
       }
+      return await fetchRecommendations(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        keyword: normalizedKeyword
+      })
     } catch (err) {
       console.error('[Recommendation] 搜索失败:', err)
       error.value = '搜索失败'
       return []
-    } finally {
-      loading.value = false
     }
   }
 
@@ -348,26 +358,23 @@ export const useRecommendationStore = defineStore('recommendation', () => {
   async function filterByTags(includeTagIds = [], excludeTagIds = []) {
     console.log('[Recommendation] filterByTags called, include:', includeTagIds, 'exclude:', excludeTagIds)
 
-    loading.value = true
-    error.value = null
-
     try {
-      const response = await recommendationApi.filterByTags(includeTagIds, excludeTagIds)
-
-      if (response.code === 200) {
-        filteredRecommendations.value = response.data || []
-        isFiltering.value = true
-        return response.data
-      } else {
-        error.value = response.msg || '筛选失败'
-        return []
+      if (includeTagIds.length === 0 && excludeTagIds.length === 0) {
+        isFiltering.value = false
+        return recommendations.value
       }
+      return await fetchRecommendations(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        include_tag_ids: [...includeTagIds],
+        exclude_tag_ids: [...excludeTagIds]
+      })
     } catch (err) {
       console.error('[Recommendation] 筛选失败:', err)
       error.value = '筛选失败'
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -394,37 +401,40 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       return recommendations.value
     }
     
-    loading.value = true
-    error.value = null
-    
     try {
-      let result = []
-
-      if (hasMultiFilter) {
-        const response = await recommendationApi.filter(includeTags, excludeTags, authors, listIds)
-        if (response.code !== 200) {
-          error.value = response.msg || '筛选失败'
-          return []
-        }
-        result = response.data || []
-      } else {
-        result = recommendations.value
+      const params = {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120
       }
-      
-      result = filterItemsByMinScore(result, scoreThreshold)
-      filteredRecommendations.value = sortContentItems(
-        filterItemsByUnread(result, hasUnreadFilter),
-        sortType,
-        sortOrder
-      )
-      isFiltering.value = true
-      return filteredRecommendations.value
+      if (includeTags.length > 0) {
+        params.include_tag_ids = [...includeTags]
+      }
+      if (excludeTags.length > 0) {
+        params.exclude_tag_ids = [...excludeTags]
+      }
+      if (authors.length > 0) {
+        params.authors = [...authors]
+      }
+      if (listIds.length > 0) {
+        params.list_ids = [...listIds]
+      }
+      if (scoreThreshold > 0) {
+        params.min_score = scoreThreshold
+      }
+      if (hasUnreadFilter) {
+        params.unread_only = 1
+      }
+      if (sortType) {
+        params.sort_type = sortType
+        params.sort_order = sortOrder
+      }
+      return await fetchRecommendations(true, params)
     } catch (err) {
       console.error('[Recommendation] 综合筛选失败:', err)
       error.value = '筛选失败'
       return []
-    } finally {
-      loading.value = false
     }
   }
 
@@ -446,6 +456,9 @@ export const useRecommendationStore = defineStore('recommendation', () => {
       ...options,
       summary: 1
     })
+    if (response.data && typeof response.data === 'object' && Array.isArray(response.data.items)) {
+      return response.data.items
+    }
     return Array.isArray(response.data) ? response.data : []
   }
 
@@ -504,6 +517,27 @@ export const useRecommendationStore = defineStore('recommendation', () => {
 
   async function migrateToLocal(recommendationIds) {
     return recommendationApi.migrateToLocal(recommendationIds)
+  }
+
+  async function downloadToCache(recommendationId) {
+    return recommendationApi.downloadToCache(recommendationId)
+  }
+
+  async function checkUpdate(recommendationId) {
+    return recommendationApi.checkUpdate(recommendationId)
+  }
+
+  async function downloadUpdate(recommendationId, force = false) {
+    return recommendationApi.downloadUpdate(recommendationId, force)
+  }
+
+  async function repairCover(recommendationId) {
+    const response = await recommendationApi.repairCover(recommendationId)
+    if (response.code === 200) {
+      cacheStore.clearRecommendationDetailCache(recommendationId)
+      cacheStore.clearCache('list')
+    }
+    return response
   }
 
   /**
@@ -622,6 +656,10 @@ export const useRecommendationStore = defineStore('recommendation', () => {
     moveToTrash,
     batchMoveToTrash,
     migrateToLocal,
+    downloadToCache,
+    checkUpdate,
+    downloadUpdate,
+    repairCover,
     searchRecommendations,
     filterByTags,
     filterMulti,

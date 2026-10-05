@@ -292,9 +292,12 @@ class BackupManagerFactory:
     
     def get_manager(self, json_file: str) -> TieredBackupManager:
         """获取或创建备份管理器"""
-        if json_file not in self._managers:
-            self._managers[json_file] = TieredBackupManager(json_file)
-        return self._managers[json_file]
+        # 统一用 str 作为键：路径常量现在是动态代理对象，代理对象直接作为
+        # JSON 响应字典的键会导致 jsonify 序列化失败。
+        key = str(json_file)
+        if key not in self._managers:
+            self._managers[key] = TieredBackupManager(key)
+        return self._managers[key]
     
     def start_all(self):
         """启动所有备份管理器"""

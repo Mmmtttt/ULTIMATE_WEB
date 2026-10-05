@@ -9,12 +9,13 @@ from domain.video.entity import Video
 
 
 class VideoJsonRepository(BaseContentJsonRepository[Video]):
+    _data_key = "videos"
+    _total_key = "total_videos"
     
     def __init__(self):
         from core.constants import VIDEO_JSON_FILE as ACTIVE_VIDEO_JSON_FILE
 
         self._storage = JsonStorage(ACTIVE_VIDEO_JSON_FILE)
-        self._data_key = "videos"
     
     def _get_entity_class(self):
         return Video

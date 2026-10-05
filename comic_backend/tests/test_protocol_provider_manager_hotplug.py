@@ -46,6 +46,7 @@ def test_provider_manager_loads_plugin_from_external_runtime_paths():
                         "name": "Demo Hotplug",
                         "version": "1.0.0",
                         "entrypoint": "./ultimate_provider.py:DemoProvider",
+                        "config_key": "demo_hotplug",
                     },
                     "media_types": ["comic"],
                     "capabilities": [{"key": "catalog.search"}],
@@ -77,6 +78,13 @@ def test_provider_manager_loads_plugin_from_external_runtime_paths():
 
         registry = PluginRegistry(search_root=str(plugin_dir.parent))
         manager = ProviderManager(registry=registry)
+
+        # 新版启用守卫要求平台显式启用后才能执行 catalog.* 能力
+        class _EnabledConfigStore:
+            def get_plugin_config(self, config_key, reload=False):
+                return {"enabled": True}
+
+        manager._config_store = _EnabledConfigStore()
         result = manager.execute("comic.demo.hotplug", "catalog.search", params={}, context={})
 
         assert result == {"helper": "helper-ok", "vendor": "vendor-ok"}

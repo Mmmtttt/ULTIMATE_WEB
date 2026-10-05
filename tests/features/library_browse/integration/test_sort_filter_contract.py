@@ -274,7 +274,7 @@ def test_video_list_sort_by_score_matches_seed_file_order(integration_runtime):
 
     actual_ids = [item["id"] for item in payload["data"]]
     assert actual_ids == expected_ids
-    assert {item.get("plugin_id") for item in payload["data"]} == {"video.javdb"}
+    assert {item.get("plugin_id") for item in payload["data"]} == {"video.alpha"}
     assert all(
         ((((item.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
         for item in payload["data"]
@@ -552,9 +552,9 @@ def test_recommendation_list_sort_by_score_honors_ascending_order(integration_ru
         "total_recommendations": 3,
         "last_updated": "2026-05-14",
         "recommendations": [
-            {"id": "JMREC001", "title": "推荐漫画 A", "score": 9.2, "create_time": "2026-05-01T10:00:00", "is_deleted": False},
-            {"id": "JMREC002", "title": "推荐漫画 B", "score": 4.8, "create_time": "2026-05-02T10:00:00", "is_deleted": False},
-            {"id": "JMREC003", "title": "推荐漫画 C", "score": 7.1, "create_time": "2026-05-03T10:00:00", "is_deleted": False},
+            {"id": "CAREC001", "title": "推荐漫画 A", "score": 9.2, "create_time": "2026-05-01T10:00:00", "is_deleted": False},
+            {"id": "CAREC002", "title": "推荐漫画 B", "score": 4.8, "create_time": "2026-05-02T10:00:00", "is_deleted": False},
+            {"id": "CAREC003", "title": "推荐漫画 C", "score": 7.1, "create_time": "2026-05-03T10:00:00", "is_deleted": False},
         ],
     }
 
@@ -570,7 +570,7 @@ def test_recommendation_list_sort_by_score_honors_ascending_order(integration_ru
         assert response.status_code == 200
         body = response.json()
         assert body["code"] == 200
-        assert [item["id"] for item in body["data"]] == ["JMREC002", "JMREC003", "JMREC001"]
+        assert [item["id"] for item in body["data"]] == ["CAREC002", "CAREC003", "CAREC001"]
     finally:
         save_json(rec_path, original)
 
@@ -601,12 +601,12 @@ def test_recommendation_custom_order_persists_after_update(integration_runtime):
         "total_recommendations": 3,
         "last_updated": "2026-06-03",
         "recommendations": [
-            {"id": "JMREC101", "title": "推荐漫画 1", "score": 8.1, "create_time": "2026-05-01T10:00:00", "is_deleted": False},
-            {"id": "JMREC102", "title": "推荐漫画 2", "score": 8.2, "create_time": "2026-05-02T10:00:00", "is_deleted": False},
-            {"id": "JMREC103", "title": "推荐漫画 3", "score": 8.3, "create_time": "2026-05-03T10:00:00", "is_deleted": False},
+            {"id": "CAREC101", "title": "推荐漫画 1", "score": 8.1, "create_time": "2026-05-01T10:00:00", "is_deleted": False},
+            {"id": "CAREC102", "title": "推荐漫画 2", "score": 8.2, "create_time": "2026-05-02T10:00:00", "is_deleted": False},
+            {"id": "CAREC103", "title": "推荐漫画 3", "score": 8.3, "create_time": "2026-05-03T10:00:00", "is_deleted": False},
         ],
     }
-    expected_order = ["JMREC103", "JMREC101", "JMREC102"]
+    expected_order = ["CAREC103", "CAREC101", "CAREC102"]
 
     try:
         save_json(rec_path, payload)
@@ -663,9 +663,9 @@ def test_video_recommendation_list_sort_by_publish_date_honors_ascending_order(i
         "total_video_recommendations": 3,
         "last_updated": "2026-05-14",
         "video_recommendations": [
-            {"id": "JAVDBREC001", "title": "推荐视频 A", "code": "REC-001", "date": "2024-09-01", "create_time": "2026-05-03T10:00:00", "score": 7.2, "tag_ids": [], "list_ids": [], "is_deleted": False},
-            {"id": "JAVDBREC002", "title": "推荐视频 B", "code": "REC-002", "date": "2022-02-14", "create_time": "2026-05-01T10:00:00", "score": 8.5, "tag_ids": [], "list_ids": [], "is_deleted": False},
-            {"id": "JAVDBREC003", "title": "推荐视频 C", "code": "REC-003", "date": "2023-07-20", "create_time": "2026-05-02T10:00:00", "score": 6.8, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC001", "title": "推荐视频 A", "code": "REC-001", "date": "2024-09-01", "create_time": "2026-05-03T10:00:00", "score": 7.2, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC002", "title": "推荐视频 B", "code": "REC-002", "date": "2022-02-14", "create_time": "2026-05-01T10:00:00", "score": 8.5, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC003", "title": "推荐视频 C", "code": "REC-003", "date": "2023-07-20", "create_time": "2026-05-02T10:00:00", "score": 6.8, "tag_ids": [], "list_ids": [], "is_deleted": False},
         ],
     }
 
@@ -681,7 +681,7 @@ def test_video_recommendation_list_sort_by_publish_date_honors_ascending_order(i
         assert response.status_code == 200
         body = response.json()
         assert body["code"] == 200
-        assert [item["id"] for item in body["data"]] == ["JAVDBREC002", "JAVDBREC003", "JAVDBREC001"]
+        assert [item["id"] for item in body["data"]] == ["VAREC002", "VAREC003", "VAREC001"]
     finally:
         save_json(rec_path, original)
 
@@ -712,12 +712,12 @@ def test_video_recommendation_custom_order_persists_after_update(integration_run
         "total_video_recommendations": 3,
         "last_updated": "2026-06-03",
         "video_recommendations": [
-            {"id": "JAVDBREC101", "title": "推荐视频 1", "code": "REC-101", "date": "2024-09-01", "create_time": "2026-05-01T10:00:00", "score": 7.2, "tag_ids": [], "list_ids": [], "is_deleted": False},
-            {"id": "JAVDBREC102", "title": "推荐视频 2", "code": "REC-102", "date": "2024-09-02", "create_time": "2026-05-02T10:00:00", "score": 7.3, "tag_ids": [], "list_ids": [], "is_deleted": False},
-            {"id": "JAVDBREC103", "title": "推荐视频 3", "code": "REC-103", "date": "2024-09-03", "create_time": "2026-05-03T10:00:00", "score": 7.4, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC101", "title": "推荐视频 1", "code": "REC-101", "date": "2024-09-01", "create_time": "2026-05-01T10:00:00", "score": 7.2, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC102", "title": "推荐视频 2", "code": "REC-102", "date": "2024-09-02", "create_time": "2026-05-02T10:00:00", "score": 7.3, "tag_ids": [], "list_ids": [], "is_deleted": False},
+            {"id": "VAREC103", "title": "推荐视频 3", "code": "REC-103", "date": "2024-09-03", "create_time": "2026-05-03T10:00:00", "score": 7.4, "tag_ids": [], "list_ids": [], "is_deleted": False},
         ],
     }
-    expected_order = ["JAVDBREC102", "JAVDBREC103", "JAVDBREC101"]
+    expected_order = ["VAREC102", "VAREC103", "VAREC101"]
 
     try:
         save_json(rec_path, payload)

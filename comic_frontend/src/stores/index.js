@@ -12,6 +12,9 @@ export { useCacheStore } from './cache'
 // 配置管理
 export { useConfigStore } from './config'
 
+// 认证状态
+export { useAuthStore } from './auth'
+
 // 运行时能力
 export { useRuntimeStore } from './runtime'
 
@@ -41,6 +44,9 @@ export { useVideoRecommendationStore } from './videoRecommendation'
 
 // 清单管理
 export { useListStore } from './list'
+
+// 阅读记录
+export { useHistoryStore } from './history'
 
 // 导入任务管理
 export { useImportTaskStore } from './importTask'

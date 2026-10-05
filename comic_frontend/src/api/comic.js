@@ -4,6 +4,18 @@
 import request from './request'
 import { triggerBlobDownload } from '@/runtime/browser'
 
+const updateDownloadRequestOptions = {
+  timeout: 0
+}
+
+/**
+ * 列出服务端目录下的文件夹/文件
+ * @param {string} path - 目录路径（空字符串则返回驱动器列表）
+ */
+export function listDirectory(path = '') {
+  return request.get('/v1/config/list-directory', { params: { path } })
+}
+
 export const comicApi = {
   /**
    * 初始化漫画数据
@@ -273,14 +285,22 @@ export const comicApi = {
     })
   },
 
+  repairCover: (comicId, source = 'local') => {
+    return request.post('/v1/comic/cover/repair', {
+      comic_id: comicId,
+      source
+    }, updateDownloadRequestOptions)
+  },
+
   /**
    * 检查漫画是否有可下载更新
    * @param {string} comicId - 漫画ID
    * @returns {Promise}
    */
-  checkUpdate: (comicId) => {
+  checkUpdate: (comicId, source = 'local') => {
     return request.post('/v1/comic/update/check', {
-      comic_id: comicId
+      comic_id: comicId,
+      source
     })
   },
 
@@ -290,11 +310,12 @@ export const comicApi = {
    * @param {boolean} force - 是否强制下载
    * @returns {Promise}
    */
-  downloadUpdate: (comicId, force = false) => {
+  downloadUpdate: (comicId, force = false, source = 'local') => {
     return request.post('/v1/comic/update/download', {
       comic_id: comicId,
-      force
-    })
+      force,
+      source
+    }, updateDownloadRequestOptions)
   },
   
   batchDownload: async (comicIds) => {
@@ -434,6 +455,33 @@ export const comicApi = {
    */
   saveThirdPartyConfig: (data) => {
     return request.post('/v1/comic/third-party/config', data)
+  },
+
+  installThirdPartyExtension: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request.post('/v1/comic/third-party/extensions/install', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0
+    })
+  },
+
+  installThirdPartyExtensionFromGithub: (url) => {
+    return request.post('/v1/comic/third-party/extensions/install-github', { url }, {
+      timeout: 0
+    })
+  },
+
+  reinstallThirdPartyExtension: (pluginId) => {
+    return request.post(`/v1/comic/third-party/extensions/${encodeURIComponent(pluginId)}/reinstall`, {}, {
+      timeout: 0
+    })
+  },
+
+  deleteThirdPartyExtension: (pluginId) => {
+    return request.delete(`/v1/comic/third-party/extensions/${encodeURIComponent(pluginId)}`, {
+      timeout: 0
+    })
   },
   
   // ==================== 回收站相关 ====================

@@ -38,6 +38,18 @@ class PluginManifest:
         return str(self.plugin.get("config_key") or "").strip()
 
     @property
+    def config_parent_key(self) -> str:
+        for key in ("config_parent_key", "parent_config_key", "inherits_config_key"):
+            value = str(self.plugin.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @property
+    def effective_config_key(self) -> str:
+        return str(self.plugin.get("effective_config_key") or self.config_parent_key or self.config_key).strip()
+
+    @property
     def media_types(self) -> List[str]:
         return [str(item or "").strip() for item in (self.raw.get("media_types") or []) if str(item or "").strip()]
 
@@ -219,6 +231,8 @@ class PluginManifest:
         return {
             "plugin_id": self.plugin_id,
             "config_key": self.config_key,
+            "config_parent_key": self.config_parent_key,
+            "effective_config_key": self.effective_config_key,
             "name": self.name,
             "version": self.version,
             "media_types": self.media_types,

@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.integration
-def test_system_config_update_invokes_third_party_storage_path_rebase_hook(third_party_client, monkeypatch):
+def test_system_config_update_invokes_third_party_storage_path_rebase_hook(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `PUT /api/v1/config/system` third-party hook contract so `data_dir` updates always trigger
@@ -24,8 +24,8 @@ def test_system_config_update_invokes_third_party_storage_path_rebase_hook(third
     - History:
       - 2026-03-23: Added third-party storage-path hook contract test for system config update.
     """
-    client = third_party_client["client"]
-    runtime_root = Path(third_party_client["runtime_root"])
+    client = fake_third_party_client["client"]
+    runtime_root = Path(fake_third_party_client["runtime_root"])
     config_api = importlib.import_module("api.v1.config")
     captured = {"path_hook": [], "restart": 0}
 
@@ -72,8 +72,8 @@ def test_system_config_update_invokes_third_party_storage_path_rebase_hook(third
 
 
 @pytest.mark.integration
-def test_third_party_storage_path_rebase_uses_manifest_bindings(third_party_client, monkeypatch):
-    client = third_party_client["client"]
+def test_third_party_storage_path_rebase_uses_manifest_bindings(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
     config_api = importlib.import_module("api.v1.config")
 
     get_resp = client.get("/api/v1/config/system")
@@ -82,7 +82,7 @@ def test_third_party_storage_path_rebase_uses_manifest_bindings(third_party_clie
     assert get_payload["code"] == 200
 
     old_runtime_dir = str(get_payload["data"]["current_runtime_data_dir"])
-    runtime_root = Path(third_party_client["runtime_root"])
+    runtime_root = Path(fake_third_party_client["runtime_root"])
     new_data_dir = str((runtime_root / "data_manifest_bound").resolve())
     captured = []
 
@@ -90,10 +90,10 @@ def test_third_party_storage_path_rebase_uses_manifest_bindings(third_party_clie
         def build_response(self):
             return {
                 "adapters": {
-                    "jmcomic": {
-                        "download_dir": str(Path(old_runtime_dir) / "comic" / "JM"),
+                    "comic_alpha": {
+                        "download_dir": str(Path(old_runtime_dir) / "comic" / "CA"),
                     },
-                    "picacomic": {
+                    "comic_beta": {
                         "base_dir": "",
                     },
                 }
@@ -110,11 +110,11 @@ def test_third_party_storage_path_rebase_uses_manifest_bindings(third_party_clie
     assert captured == [
         {
             "adapters": {
-                "jmcomic": {
-                    "download_dir": str(Path(new_data_dir) / "comic" / "JM"),
+                "comic_alpha": {
+                    "download_dir": str(Path(new_data_dir) / "comic" / "CA"),
                 },
-                "picacomic": {
-                    "base_dir": str(Path(new_data_dir) / "comic" / "PK"),
+                "comic_beta": {
+                    "base_dir": str(Path(new_data_dir) / "comic" / "CB"),
                 },
             }
         }

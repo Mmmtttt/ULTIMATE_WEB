@@ -2,15 +2,15 @@ const { test, expect, hasApiCall, startApiRequestRecorder } = require("../../../
 
 /**
  * 用例描述:
- * - 用例目的: 看护前端“JAVDB 标签搜索 -> 导入”链路与后端第三方接口契约，防止 tag_ids/page/import body 参数回归。
+ * - 用例目的: 看护前端“VA 标签搜索 -> 导入”链路与后端第三方接口契约，防止 tag_ids/page/import body 参数回归。
  * - 测试步骤:
- *   1. mock JAVDB health-status/tags/search-by-tags/import 接口返回。
+ *   1. mock VA health-status/tags/search-by-tags/import 接口返回。
  *   2. 用户进入 /video-tag-search，必要时切换到视频模式，选择标签并执行搜索。
  *   3. 用户选择搜索结果并执行导入到本地库。
  *   4. 断言 search-by-tags 与 import 请求参数，以及前端结果渲染。
  * - 预期结果:
  *   1. search-by-tags 请求携带重复 tag_ids 和 page=1。
- *   2. import 请求 body 正确包含 video_id/target/platform。
+ *   2. import 请求 body 正确包含 item_ids/target/platform。
  *   3. 页面显示搜索结果卡片并可完成导入动作。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，覆盖前端到第三方后端接口关键契约。
@@ -20,6 +20,14 @@ test("video tag search forwards third-party query and import contracts", async (
   const searchQueries = [];
   const importTaskBodies = [];
 
+  await page.route("**/api/v1/config/system**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ code: 200, msg: "ok", data: { runtime: { third_party_enabled: true, runtime_profile: "full" } } }),
+    });
+  });
+
   await page.route("**/api/v1/comic/third-party/config", async (route) => {
     await route.fulfill({
       status: 200,
@@ -28,22 +36,25 @@ test("video tag search forwards third-party query and import contracts", async (
         code: 200,
         msg: "ok",
         data: {
-          default_adapter: "javdb",
-          adapter_order: ["javdb"],
+          default_adapter: "video_alpha",
+          adapter_order: ["video_alpha"],
+          adapters: {
+            video_alpha: { enabled: true },
+          },
           plugins: [
             {
-              plugin_id: "video.javdb",
-              config_key: "javdb",
-              name: "JAVDB",
+              plugin_id: "video.alpha",
+              config_key: "video_alpha",
+              name: "Video Alpha",
               version: "1.0.0",
               media_types: ["video"],
               capabilities: ["taxonomy.tag_search", "taxonomy.tags", "health.query.status"],
-              lookup_names: ["video.javdb", "javdb", "JAVDB"],
+              lookup_names: ["video.video_alpha", "video_alpha", "VA"],
               identity: {
                 content_type: "video",
-                host_id_prefix: "JAVDB",
-                platform_label: "JAVDB",
-                aliases: ["javdb"],
+                host_id_prefix: "VA",
+                platform_label: "VA",
+                aliases: ["video_alpha"],
               },
               presentation: {
                 media_card: {
@@ -54,7 +65,7 @@ test("video tag search forwards third-party query and import contracts", async (
                   },
                   badge: {
                     show_platform_label: true,
-                    label: "JAVDB",
+                    label: "VA",
                   },
                 },
               },
@@ -66,7 +77,7 @@ test("video tag search forwards third-party query and import contracts", async (
     });
   });
 
-  await page.route("**/api/v1/video/third-party/javdb/health-status", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/health-status", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -78,7 +89,7 @@ test("video tag search forwards third-party query and import contracts", async (
     });
   });
 
-  await page.route("**/api/v1/video/third-party/javdb/tags**", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/tags**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -100,7 +111,7 @@ test("video tag search forwards third-party query and import contracts", async (
     });
   });
 
-  await page.route("**/api/v1/video/third-party/javdb/search-by-tags**", async (route) => {
+  await page.route("**/api/v1/video/third-party/va/search-by-tags**", async (route) => {
     const url = new URL(route.request().url());
     searchQueries.push({
       page: url.searchParams.get("page"),
@@ -118,10 +129,10 @@ test("video tag search forwards third-party query and import contracts", async (
           has_next: false,
           videos: [
             {
-              id: "JVID-1",
+              id: "VIDA-1",
               title: "Third Party Video",
               code: "TP-001",
-              platform: "javdb",
+              platform: "video_alpha",
               cover_url: "/static/default/default_cover.jpg",
             },
           ],
@@ -170,11 +181,11 @@ test("video tag search forwards third-party query and import contracts", async (
   expect(importTaskBodies[0]).toMatchObject({
     import_type: "by_list",
     target: "home",
-    platform: "JAVDB",
+    platform: "VIDEO_ALPHA",
     content_type: "video",
   });
-  expect(importTaskBodies[0].video_ids).toEqual(["JVID-1"]);
+  expect(importTaskBodies[0].item_ids).toEqual(["VIDA-1"]);
 
-  expect(hasApiCall(requests, "/api/v1/video/third-party/javdb/search-by-tags")).toBeTruthy();
+  expect(hasApiCall(requests, "/api/v1/video/third-party/va/search-by-tags")).toBeTruthy();
   expect(hasApiCall(requests, "/api/v1/comic/import/async")).toBeTruthy();
 });

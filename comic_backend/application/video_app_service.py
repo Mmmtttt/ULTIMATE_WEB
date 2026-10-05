@@ -20,6 +20,9 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.catalog_query_service import CatalogQueryService
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -44,6 +47,7 @@ from infrastructure.persistence.repositories.video_recommendation_repository_imp
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
 from infrastructure.persistence.repositories.actor_repository_impl import ActorJsonRepository
 from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.cache import CacheManager
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
@@ -212,6 +216,7 @@ class VideoAppService(BaseContentAppService):
             "video_recommendations",
             "total_video_recommendations",
         )
+        self._catalog_query_service = CatalogQueryService()
 
     def _get_repo_by_source(self, source: str = "local"):
         return self._video_rec_repo if source == "preview" else self._video_repo
@@ -404,7 +409,19 @@ class VideoAppService(BaseContentAppService):
             "source": "local",
         }
         payload.update(cls._storage_fields_from_item(video))
+        annotate_cover_url(payload)
         return cls._annotate_video_record(payload)
+
+    @classmethod
+    def _serialize_video_summary_from_payload(cls, item: Dict[str, Any], tag_map: Dict[str, str]) -> Dict[str, Any]:
+        video = Video.from_dict(item)
+        payload = {
+            **video.to_dict(),
+            **cls._storage_fields_from_item(video),
+            "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+        }
+        annotate_cover_url(payload)
+        return payload
 
     @staticmethod
     def _storage_fields_from_item(item: Any) -> Dict[str, Any]:
@@ -444,23 +461,44 @@ class VideoAppService(BaseContentAppService):
             repo = self._get_repo_by_source(source)
 
             cleared_count = 0
-            if clear_previous:
-                for video in repo.get_all():
-                    if tag_id in (video.tag_ids or []):
-                        video.remove_tags([tag_id])
-                        if repo.save(video):
-                            cleared_count += 1
+            with JsonStorage.defer_catalog_index_sync():
+                if clear_previous:
+                    clearing_ids = [
+                        video.id
+                        for video in repo.get_all()
+                        if tag_id in (video.tag_ids or [])
+                    ]
+                    if hasattr(repo, "update_many_by_ids"):
+                        cleared_count = repo.update_many_by_ids(
+                            clearing_ids,
+                            lambda video: video.remove_tags([tag_id]),
+                        )
+                    else:
+                        for video_id in clearing_ids:
+                            video = repo.get_by_id(video_id)
+                            if video:
+                                video.remove_tags([tag_id])
+                                if repo.save(video):
+                                    cleared_count += 1
 
-            updated_count = 0
-            for video_id in target_ids:
-                video = repo.get_by_id(video_id)
-                if not video:
-                    continue
-                if tag_id in (video.tag_ids or []):
-                    continue
-                video.add_tags([tag_id])
-                if repo.save(video):
-                    updated_count += 1
+                def add_recent_import_tag(video) -> bool | None:
+                    if tag_id in (video.tag_ids or []):
+                        return False
+                    video.add_tags([tag_id])
+                    return None
+
+                if hasattr(repo, "update_many_by_ids"):
+                    updated_count = repo.update_many_by_ids(target_ids, add_recent_import_tag)
+                else:
+                    updated_count = 0
+                    for video_id in target_ids:
+                        video = repo.get_by_id(video_id)
+                        if not video:
+                            continue
+                        if add_recent_import_tag(video) is False:
+                            continue
+                        if repo.save(video):
+                            updated_count += 1
 
             app_logger.info(
                 f"更新视频最近导入标签完成: source={source}, tag_id={tag_id}, "
@@ -512,6 +550,46 @@ class VideoAppService(BaseContentAppService):
         include_storage_usage: bool = False
     ) -> ServiceResult:
         try:
+            if paginate and not include_storage_usage:
+                tags = self._tag_repo.get_all()
+                tag_map = {t.id: t.name for t in tags}
+
+                def indexed_serializer(item: Dict[str, Any]) -> Dict[str, Any]:
+                    video = Video.from_dict(item)
+                    if summary_only:
+                        return self._video_to_card_dict(video)
+                    payload = {
+                        **video.to_dict(),
+                        **self._storage_fields_from_item(video),
+                        "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
+                    }
+                    annotate_cover_url(payload)
+                    return payload
+
+                indexed_payload = self._catalog_query_service.query_local_page(
+                    media_type="video",
+                    serializer=indexed_serializer,
+                    sort_type=sort_type,
+                    sort_order=sort_order,
+                    min_score=min_score,
+                    max_score=max_score,
+                    keyword=keyword,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    authors=authors,
+                    list_ids=list_ids,
+                    page=page,
+                    page_size=page_size,
+                    include_available_authors=include_available_authors,
+                )
+                if indexed_payload is not None:
+                    app_logger.info(
+                        f"通过 SQLite 索引获取视频分页列表成功，页 {indexed_payload['page']}/"
+                        f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个视频"
+                    )
+                    warm_cover_thumbnails_for_items(indexed_payload.get("items", []))
+                    return ServiceResult.ok(indexed_payload)
+
             videos = self._video_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -554,11 +632,13 @@ class VideoAppService(BaseContentAppService):
             def serialize_video_summary(video):
                 if include_storage_usage:
                     annotate_video_storage_usage([video], source="local")
-                return {
+                payload = {
                     **video.to_dict(),
                     **self._storage_fields_from_item(video),
                     "tags": [{"id": tid, "name": tag_map.get(tid, tid)} for tid in video.tag_ids],
                 }
+                annotate_cover_url(payload)
+                return payload
 
             if paginate:
                 payload = build_paginated_payload(
@@ -573,6 +653,7 @@ class VideoAppService(BaseContentAppService):
                 app_logger.info(
                     f"获取视频分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个视频"
                 )
+                warm_cover_thumbnails_for_items(payload.get("items", []))
                 return ServiceResult.ok(payload)
 
             video_list = []
@@ -584,6 +665,7 @@ class VideoAppService(BaseContentAppService):
             if not summary_only:
                 video_list = self._annotate_video_records(video_list)
 
+            warm_cover_thumbnails_for_items(video_list)
             app_logger.info(f"获取视频列表成功，共 {len(video_list)} 个视频")
             return ServiceResult.ok(video_list)
         except Exception as e:
@@ -871,9 +953,23 @@ class VideoAppService(BaseContentAppService):
     
     def search_videos(self, keyword: str) -> ServiceResult:
         try:
-            videos = self._video_repo.search(keyword)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引搜索视频成功: 关键词'{keyword}', 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.search(keyword)
             
             videos = [v for v in videos if not v.is_deleted]
             
@@ -884,6 +980,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"搜索成功: 关键词'{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -1748,6 +1845,7 @@ class VideoAppService(BaseContentAppService):
         normalized_mode: str,
         title_hint: str = "",
         code_hint: str = "",
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
     ) -> Dict[str, Any]:
         sorted_filenames = sorted(
             [str(filename or "").strip() for filename in (filenames or []) if str(filename or "").strip()],
@@ -1762,7 +1860,7 @@ class VideoAppService(BaseContentAppService):
         code = normalized_code_hint or self._extract_or_generate_code(fallback_title)
         bind_existing_video = None
         if not str(code or "").startswith(self.ABNORMAL_CODE_PREFIX):
-            bind_existing_video = self._find_local_video_duplicate_entity("", code)
+            bind_existing_video = self._find_local_video_duplicate_entity("", code, local_video_cache=local_video_cache)
 
         video_id = str(getattr(bind_existing_video, "id", "") or "").strip() or self._generate_local_video_id()
         existing_entries = self._get_local_episode_entries(bind_existing_video)
@@ -1861,6 +1959,7 @@ class VideoAppService(BaseContentAppService):
 
                 if not self._video_repo.save(existing_video):
                     raise RuntimeError("save appended local video episodes failed")
+                self._remember_local_video_in_cache(local_video_cache, existing_video)
 
                 return {
                     "status": "imported",
@@ -1903,7 +2002,7 @@ class VideoAppService(BaseContentAppService):
                 "current_unit": 1,
                 "display": {"local_episodes": merged_entries},
             }
-            result = self.import_video(payload)
+            result = self.import_video(payload, local_video_cache=local_video_cache)
             if not result.success:
                 raise RuntimeError(result.message or "import_failed")
 
@@ -1958,78 +2057,88 @@ class VideoAppService(BaseContentAppService):
             skipped_items: List[Dict[str, str]] = []
             skipped_items.extend(list(import_plan.get("skipped_items") or []))
             failed_items: List[Dict[str, str]] = []
-            for unit in list(import_plan.get("units") or []):
-                unit_root = str(unit.get("root") or source_dir).strip() or source_dir
-                unit_filenames = list(unit.get("filenames") or [])
-                try:
-                    group_result = self._import_local_video_group(
-                        unit_root,
-                        unit_filenames,
-                        normalized_mode=normalized_mode,
-                        title_hint=str(unit.get("title_hint") or "").strip(),
-                        code_hint=str(unit.get("code_hint") or "").strip(),
-                    )
-                    if group_result.get("status") == "imported":
-                        imported_count += 1
-                        imported_video_id = str(group_result.get("video_id") or "").strip()
-                        if imported_video_id and imported_video_id not in seen_imported_ids:
-                            imported_ids.append(imported_video_id)
-                            seen_imported_ids.add(imported_video_id)
-                        if group_result.get("attached"):
-                            attached_source_count += 1
-                        appended_episode_count += int(group_result.get("episode_count") or 0)
-                        duplicate_files = list(group_result.get("duplicate_files") or [])
-                        duplicate_episode_count += len(duplicate_files)
-                        for duplicate_file in duplicate_files:
-                            skipped_count += 1
-                            skipped_items.append(
-                                {
-                                    "file": str(duplicate_file or ""),
-                                    "reason": "duplicate_episode_exists",
-                                    "duplicate_id": str(group_result.get("video_id") or ""),
-                                    "code": str(group_result.get("code") or ""),
-                                }
-                            )
-                        continue
+            sync_started_at = time.perf_counter()
+            local_video_cache = self._build_local_video_duplicate_cache()
+            with JsonStorage.defer_catalog_index_sync():
+                for unit in list(import_plan.get("units") or []):
+                    unit_root = str(unit.get("root") or source_dir).strip() or source_dir
+                    unit_filenames = list(unit.get("filenames") or [])
+                    try:
+                        group_result = self._import_local_video_group(
+                            unit_root,
+                            unit_filenames,
+                            normalized_mode=normalized_mode,
+                            title_hint=str(unit.get("title_hint") or "").strip(),
+                            code_hint=str(unit.get("code_hint") or "").strip(),
+                            local_video_cache=local_video_cache,
+                        )
+                        if group_result.get("status") == "imported":
+                            imported_count += 1
+                            imported_video_id = str(group_result.get("video_id") or "").strip()
+                            if imported_video_id and imported_video_id not in seen_imported_ids:
+                                imported_ids.append(imported_video_id)
+                                seen_imported_ids.add(imported_video_id)
+                            if group_result.get("attached"):
+                                attached_source_count += 1
+                            appended_episode_count += int(group_result.get("episode_count") or 0)
+                            duplicate_files = list(group_result.get("duplicate_files") or [])
+                            duplicate_episode_count += len(duplicate_files)
+                            for duplicate_file in duplicate_files:
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": str(duplicate_file or ""),
+                                        "reason": "duplicate_episode_exists",
+                                        "duplicate_id": str(group_result.get("video_id") or ""),
+                                        "code": str(group_result.get("code") or ""),
+                                    }
+                                )
+                            continue
 
-                    duplicate_files = list(group_result.get("duplicate_files") or [])
-                    if duplicate_files:
-                        duplicate_episode_count += len(duplicate_files)
-                        for duplicate_file in duplicate_files:
+                        duplicate_files = list(group_result.get("duplicate_files") or [])
+                        if duplicate_files:
+                            duplicate_episode_count += len(duplicate_files)
+                            for duplicate_file in duplicate_files:
+                                skipped_count += 1
+                                skipped_items.append(
+                                    {
+                                        "file": str(duplicate_file or ""),
+                                        "reason": str(group_result.get("reason") or "duplicate_episode_exists"),
+                                        "duplicate_id": str(group_result.get("duplicate_id") or ""),
+                                        "code": str(group_result.get("code") or ""),
+                                    }
+                                )
+                        else:
                             skipped_count += 1
                             skipped_items.append(
                                 {
-                                    "file": str(duplicate_file or ""),
-                                    "reason": str(group_result.get("reason") or "duplicate_episode_exists"),
+                                    "file": unit_root,
+                                    "reason": str(group_result.get("reason") or "group_skipped"),
                                     "duplicate_id": str(group_result.get("duplicate_id") or ""),
                                     "code": str(group_result.get("code") or ""),
                                 }
                             )
-                    else:
-                        skipped_count += 1
-                        skipped_items.append(
+                    except Exception as item_error:
+                        failed_count += 1
+                        failed_items.append(
                             {
                                 "file": unit_root,
-                                "reason": str(group_result.get("reason") or "group_skipped"),
-                                "duplicate_id": str(group_result.get("duplicate_id") or ""),
-                                "code": str(group_result.get("code") or ""),
+                                "reason": str(item_error),
                             }
                         )
-                except Exception as item_error:
-                    failed_count += 1
-                    failed_items.append(
-                        {
-                            "file": unit_root,
-                            "reason": str(item_error),
-                        }
-                    )
 
-            if imported_ids:
-                recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
-                if not recent_result.success:
-                    app_logger.warning(
-                        f"update recent import tags failed after local video import: {recent_result.message}"
-                    )
+                if imported_ids:
+                    recent_result = self.apply_recent_import_tags(imported_ids, source="local", clear_previous=True)
+                    if not recent_result.success:
+                        app_logger.warning(
+                            f"update recent import tags failed after local video import: {recent_result.message}"
+                        )
+            sync_elapsed_ms = (time.perf_counter() - sync_started_at) * 1000
+            app_logger.info(
+                "本地视频导入写入与索引同步完成: "
+                f"mode={normalized_mode}, grouping={normalized_grouping_mode}, imported={imported_count}, "
+                f"attached={attached_source_count}, elapsed_ms={sync_elapsed_ms:.2f}"
+            )
 
             mode_label = "软连接（保留源文件）" if normalized_mode == self.LOCAL_IMPORT_MODE_SOFTLINK_REF else "硬链接（移动源文件）"
             grouping_label = "逐文件导入" if normalized_grouping_mode == self.LOCAL_IMPORT_GROUPING_PER_FILE else "叶子目录合并"
@@ -2187,69 +2296,207 @@ class VideoAppService(BaseContentAppService):
 
         return self._apply_persisted_fields(video, updates)
 
-    def import_video(self, video_data: Dict) -> ServiceResult:
+    def import_video(
+        self,
+        video_data: Dict,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> ServiceResult:
         try:
             incoming_id = str(video_data.get("id") or "").strip()
             incoming_code = self._normalize_code_for_storage(video_data.get("code"))
-            duplicate_id = self._find_local_video_duplicate(incoming_id, incoming_code)
+            duplicate_id = self._find_local_video_duplicate(
+                incoming_id,
+                incoming_code,
+                local_video_cache=local_video_cache,
+            )
             if duplicate_id and duplicate_id != incoming_id:
                 return ServiceResult.error("该番号已存在")
 
-            video = Video(
-                id=incoming_id or generate_id("video"),
-                title=video_data.get("title", ""),
-                code=incoming_code,
-                date=video_data.get("date", ""),
-                series=video_data.get("series", ""),
-                creator=video_data.get("creator", ""),
-                desc=video_data.get("desc", ""),
-                score=video_data.get("score"),
-                tag_ids=video_data.get("tag_ids", []),
-                platform=video_data.get("platform", ""),
-                plugin_id=video_data.get("plugin_id", ""),
-                plugin_name=video_data.get("plugin_name", ""),
-                display=dict(video_data.get("display") or {}),
-                storage_path_relative=video_data.get("storage_path_relative", ""),
-                storage_path_kind=video_data.get("storage_path_kind", ""),
-                magnets=video_data.get("magnets", []),
-                thumbnail_images=video_data.get("thumbnail_images", []),
-                preview_video=video_data.get("preview_video", ""),
-                cover_path_local=video_data.get("cover_path_local", ""),
-                thumbnail_images_local=video_data.get("thumbnail_images_local", []),
-                preview_video_local=video_data.get("preview_video_local", ""),
-                local_video_path=video_data.get("local_video_path", ""),
-                local_source_path=video_data.get("local_source_path", ""),
-                local_asset_dir_name=video_data.get("local_asset_dir_name", ""),
-                local_source_filename=video_data.get("local_source_filename", ""),
-                source_origin=video_data.get("source_origin", ""),
-                source_updated_time=video_data.get("source_updated_time", ""),
-                local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
-                actor_refs=[
-                    dict(item or {})
-                    for item in (video_data.get("actor_refs") or [])
-                    if isinstance(item, dict)
-                ],
-                create_time=get_current_time(),
-                last_access_time=get_current_time()
-            )
-            video.actors = video_data.get("actors", [])
-            video.list_ids = video_data.get("list_ids", [])
+            video = self._build_video_entity(video_data)
 
             if not self._video_repo.save(video):
                 return ServiceResult.error("保存视频失败")
-            
+            self._remember_local_video_in_cache(local_video_cache, video)
+
             app_logger.info(f"导入视频成功: {video.code}")
             return ServiceResult.ok(video.to_dict(), "导入成功")
         except Exception as e:
             error_logger.error(f"导入视频失败: {e}")
             return ServiceResult.error("导入失败")
-    
+
+    def _build_video_entity(self, video_data: Dict) -> Video:
+        video = Video(
+            id=str(video_data.get("id") or "").strip() or generate_id("video"),
+            title=video_data.get("title", ""),
+            code=self._normalize_code_for_storage(video_data.get("code")),
+            date=video_data.get("date", ""),
+            series=video_data.get("series", ""),
+            creator=video_data.get("creator", ""),
+            desc=video_data.get("desc", ""),
+            score=video_data.get("score"),
+            tag_ids=video_data.get("tag_ids", []),
+            platform=video_data.get("platform", ""),
+            plugin_id=video_data.get("plugin_id", ""),
+            plugin_name=video_data.get("plugin_name", ""),
+            display=dict(video_data.get("display") or {}),
+            storage_path_relative=video_data.get("storage_path_relative", ""),
+            storage_path_kind=video_data.get("storage_path_kind", ""),
+            magnets=video_data.get("magnets", []),
+            thumbnail_images=video_data.get("thumbnail_images", []),
+            preview_video=video_data.get("preview_video", ""),
+            cover_path_local=video_data.get("cover_path_local", ""),
+            thumbnail_images_local=video_data.get("thumbnail_images_local", []),
+            preview_video_local=video_data.get("preview_video_local", ""),
+            local_video_path=video_data.get("local_video_path", ""),
+            local_source_path=video_data.get("local_source_path", ""),
+            local_asset_dir_name=video_data.get("local_asset_dir_name", ""),
+            local_source_filename=video_data.get("local_source_filename", ""),
+            source_origin=video_data.get("source_origin", ""),
+            source_updated_time=video_data.get("source_updated_time", ""),
+            local_metadata_enriched=bool(video_data.get("local_metadata_enriched", False)),
+            actor_refs=[
+                dict(item or {})
+                for item in (video_data.get("actor_refs") or [])
+                if isinstance(item, dict)
+            ],
+            create_time=video_data.get("create_time") or get_current_time(),
+            last_access_time=video_data.get("last_access_time") or get_current_time()
+        )
+        video.actors = video_data.get("actors", [])
+        video.list_ids = video_data.get("list_ids", [])
+        return video
+
+    def import_videos(
+        self,
+        video_data_list: List[Dict],
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> ServiceResult:
+        """批量导入视频：去重后一次读、一次写、一次索引同步。"""
+        try:
+            items = [item for item in (video_data_list or []) if isinstance(item, dict)]
+            if not items:
+                return ServiceResult.error("没有可导入的视频")
+
+            failed_items = []
+            videos = []
+            seen_ids: set[str] = set()
+            seen_codes: Dict[str, str] = {}
+            for video_data in items:
+                incoming_id = str(video_data.get("id") or "").strip()
+                incoming_code = self._normalize_code_for_storage(video_data.get("code"))
+                normalized_compare_code = self._normalize_code_for_compare(incoming_code)
+
+                if incoming_id and incoming_id in seen_ids:
+                    failed_items.append(
+                        {"lookup": incoming_id, "reason": "批次内视频ID重复"}
+                    )
+                    continue
+
+                if normalized_compare_code:
+                    previous_id = seen_codes.get(normalized_compare_code)
+                    if previous_id is not None and previous_id != incoming_id:
+                        failed_items.append(
+                            {"lookup": incoming_code or incoming_id, "reason": "批次内番号重复"}
+                        )
+                        continue
+
+                duplicate_id = self._find_local_video_duplicate(
+                    incoming_id,
+                    incoming_code,
+                    local_video_cache=local_video_cache,
+                )
+                if duplicate_id and duplicate_id != incoming_id:
+                    failed_items.append(
+                        {"lookup": incoming_code or incoming_id, "reason": "该番号已存在"}
+                    )
+                    continue
+                video = self._build_video_entity(video_data)
+                videos.append(video)
+                if video.id:
+                    seen_ids.add(video.id)
+                if normalized_compare_code:
+                    seen_codes[normalized_compare_code] = video.id
+
+            if not videos:
+                reason = failed_items[0]["reason"] if failed_items else "导入失败"
+                return ServiceResult.error(reason)
+
+            if hasattr(self._video_repo, "save_many"):
+                saved_count = self._video_repo.save_many(videos)
+                saved_videos = videos if saved_count == len(videos) else []
+            else:
+                saved_videos = [video for video in videos if self._video_repo.save(video)]
+                saved_count = len(saved_videos)
+
+            if saved_count == 0:
+                return ServiceResult.error("保存视频失败")
+            if saved_count != len(videos):
+                return ServiceResult.error("部分视频保存失败")
+
+            for video in saved_videos:
+                self._remember_local_video_in_cache(local_video_cache, video)
+
+            app_logger.info(f"批量导入视频成功: {saved_count} 个")
+            return ServiceResult.ok(
+                {
+                    "videos": [video.to_dict() for video in saved_videos],
+                    "imported_count": saved_count,
+                    "failed_items": failed_items,
+                },
+                "导入成功",
+            )
+        except Exception as e:
+            error_logger.error(f"批量导入视频失败: {e}")
+            return ServiceResult.error("导入失败")
+
+
     @staticmethod
     def _normalize_code_for_compare(code: str) -> str:
         raw = str(code or "").upper()
         return "".join(ch for ch in raw if ch.isalnum())
 
-    def _find_local_video_duplicate_entity(self, video_id: str, code: str) -> Optional[Video]:
+    def _build_local_video_duplicate_cache(self) -> Dict[str, Dict[str, Video]]:
+        cache: Dict[str, Dict[str, Video]] = {"by_id": {}, "by_code": {}}
+        for local_video in self._video_repo.get_all():
+            self._remember_local_video_in_cache(cache, local_video)
+        return cache
+
+    def _remember_local_video_in_cache(
+        self,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]],
+        video: Optional[Video],
+    ) -> None:
+        if local_video_cache is None or not isinstance(video, Video):
+            return
+
+        video_id = str(getattr(video, "id", "") or "").strip()
+        if video_id:
+            local_video_cache.setdefault("by_id", {})[video_id] = video
+
+        normalized_code = self._normalize_code_for_compare(getattr(video, "code", ""))
+        if normalized_code:
+            local_video_cache.setdefault("by_code", {})[normalized_code] = video
+
+    def _find_local_video_duplicate_entity(
+        self,
+        video_id: str,
+        code: str,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> Optional[Video]:
+        if local_video_cache is not None:
+            if video_id:
+                existing_by_id = local_video_cache.get("by_id", {}).get(video_id)
+                if existing_by_id:
+                    return existing_by_id
+
+            normalized_code = self._normalize_code_for_compare(code)
+            if not normalized_code:
+                return None
+            return local_video_cache.get("by_code", {}).get(normalized_code)
+
         if video_id:
             existing_by_id = self._video_repo.get_by_id(video_id)
             if existing_by_id:
@@ -2264,8 +2511,18 @@ class VideoAppService(BaseContentAppService):
                 return local_video
         return None
 
-    def _find_local_video_duplicate(self, video_id: str, code: str) -> Optional[str]:
-        duplicate_video = self._find_local_video_duplicate_entity(video_id, code)
+    def _find_local_video_duplicate(
+        self,
+        video_id: str,
+        code: str,
+        *,
+        local_video_cache: Optional[Dict[str, Dict[str, Video]]] = None,
+    ) -> Optional[str]:
+        duplicate_video = self._find_local_video_duplicate_entity(
+            video_id,
+            code,
+            local_video_cache=local_video_cache,
+        )
         if not duplicate_video:
             return None
         return duplicate_video.id
@@ -2755,25 +3012,40 @@ class VideoAppService(BaseContentAppService):
                 "skipped_deleted": 0,
             }
 
-            for video in self._video_repo.get_all():
-                if not isinstance(video, Video):
-                    continue
-                home_stats["total_records"] += 1
-                if bool(video.is_deleted):
-                    home_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_video_persisted_metadata(video, source="local"):
-                    if self._video_repo.save(video):
-                        home_stats["updated_records"] += 1
+            updated_home = []
+            updated_recommendations = []
 
-            for recommendation in self._video_rec_repo.get_all():
-                recommendation_stats["total_records"] += 1
-                if bool(getattr(recommendation, "is_deleted", False)):
-                    recommendation_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_video_persisted_metadata(recommendation, source="preview"):
-                    if self._video_rec_repo.save(recommendation):
-                        recommendation_stats["updated_records"] += 1
+            # 批量补全期间延迟并合并 catalog index 同步；落库合并为每库一次写
+            with JsonStorage.defer_catalog_index_sync():
+                for video in self._video_repo.get_all():
+                    if not isinstance(video, Video):
+                        continue
+                    home_stats["total_records"] += 1
+                    if bool(video.is_deleted):
+                        home_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_video_persisted_metadata(video, source="local"):
+                        updated_home.append(video)
+
+                for recommendation in self._video_rec_repo.get_all():
+                    recommendation_stats["total_records"] += 1
+                    if bool(getattr(recommendation, "is_deleted", False)):
+                        recommendation_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_video_persisted_metadata(recommendation, source="preview"):
+                        updated_recommendations.append(recommendation)
+
+                if hasattr(self._video_repo, "save_many"):
+                    home_stats["updated_records"] = self._video_repo.save_many(updated_home)
+                else:
+                    home_stats["updated_records"] = sum(1 for v in updated_home if self._video_repo.save(v))
+
+                if hasattr(self._video_rec_repo, "save_many"):
+                    recommendation_stats["updated_records"] = self._video_rec_repo.save_many(updated_recommendations)
+                else:
+                    recommendation_stats["updated_records"] = sum(
+                        1 for r in updated_recommendations if self._video_rec_repo.save(r)
+                    )
 
             summary = (
                 f"视频新版元数据补全完成：本地库更新 {home_stats['updated_records']} 条，"
@@ -3613,9 +3885,24 @@ class VideoAppService(BaseContentAppService):
 
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
         try:
-            videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.filter_by_tags(include_tags, exclude_tags)
             
             results = []
             for v in videos:
@@ -3624,6 +3911,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -3633,9 +3921,27 @@ class VideoAppService(BaseContentAppService):
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         try:
-            videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="video",
+                serializer=lambda item: self._serialize_video_summary_from_payload(item, tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                results = self._annotate_video_records(indexed_payload["items"])
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选视频成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            videos = self._video_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             results = []
             for v in videos:
@@ -3644,6 +3950,7 @@ class VideoAppService(BaseContentAppService):
                 results.append(video_info)
             results = self._annotate_video_records(results)
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者{authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -3660,13 +3967,19 @@ class VideoAppService(BaseContentAppService):
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.add_tags(validated_tag_ids)
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.add_tags(validated_tag_ids),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.add_tags(validated_tag_ids)
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -3679,13 +3992,19 @@ class VideoAppService(BaseContentAppService):
     
     def batch_remove_tags(self, video_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.remove_tags(tag_ids)
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.remove_tags(tag_ids),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.remove_tags(tag_ids)
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5010,13 +5329,19 @@ class VideoAppService(BaseContentAppService):
     def batch_move_to_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量移动视频到回收站"""
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.move_to_trash()
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.move_to_trash()
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5030,13 +5355,19 @@ class VideoAppService(BaseContentAppService):
     def batch_restore_from_trash(self, video_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复视频"""
         try:
-            updated_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
-                    video.restore_from_trash()
-                    if self._video_repo.save(video):
-                        updated_count += 1
+            if hasattr(self._video_repo, "update_many_by_ids"):
+                updated_count = self._video_repo.update_many_by_ids(
+                    video_ids,
+                    lambda video: video.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        video.restore_from_trash()
+                        if self._video_repo.save(video):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5050,13 +5381,18 @@ class VideoAppService(BaseContentAppService):
     def batch_delete_permanently(self, video_ids: List[str]) -> ServiceResult:
         """批量永久删除视频"""
         try:
-            deleted_count = 0
-            for video_id in video_ids:
-                video = self._video_repo.get_by_id(video_id)
-                if video:
+            if hasattr(self._video_repo, "get_many_by_ids") and hasattr(self._video_repo, "delete_many_by_ids"):
+                for video in self._video_repo.get_many_by_ids(video_ids):
                     self._cleanup_video_files(video)
-                if self._video_repo.delete(video_id):
-                    deleted_count += 1
+                deleted_count = self._video_repo.delete_many_by_ids(video_ids)
+            else:
+                deleted_count = 0
+                for video_id in video_ids:
+                    video = self._video_repo.get_by_id(video_id)
+                    if video:
+                        self._cleanup_video_files(video)
+                    if self._video_repo.delete(video_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效视频")
@@ -5069,30 +5405,59 @@ class VideoAppService(BaseContentAppService):
     
     def batch_import_videos(self, videos_data: List[Dict]) -> ServiceResult:
         try:
-            imported = []
-            imported_ids = []
+            items = [item for item in (videos_data or []) if isinstance(item, dict)]
+            if not items:
+                return ServiceResult.ok({
+                    "imported": [],
+                    "imported_ids": [],
+                    "skipped": [],
+                    "imported_count": 0,
+                    "skipped_count": 0,
+                    "failed_items": [],
+                    "failed_count": 0,
+                })
+
             skipped = []
-            
-            for video_data in videos_data:
+            import_candidates = []
+
+            local_video_cache = self._build_local_video_duplicate_cache()
+            for video_data in items:
                 code = video_data.get("code", "")
-                if self._video_repo.get_by_code(code):
+                normalized_code = self._normalize_code_for_storage(code)
+                if self._find_local_video_duplicate_entity(
+                    str(video_data.get("id") or "").strip(),
+                    normalized_code,
+                    local_video_cache=local_video_cache,
+                ):
                     skipped.append(code)
                     continue
-                
-                result = self.import_video(video_data)
-                if result.success:
-                    imported.append(code)
-                    if result.data and result.data.get("id"):
-                        imported_ids.append(result.data["id"])
+                import_candidates.append(video_data)
+
+            imported = []
+            imported_ids = []
+            failed_items = []
+            if import_candidates:
+                result = self.import_videos(import_candidates, local_video_cache=local_video_cache)
+                if not result.success:
+                    return result
+                saved_videos = (result.data or {}).get("videos") or []
+                failed_items = (result.data or {}).get("failed_items") or []
+                for video in saved_videos:
+                    if not isinstance(video, dict):
+                        continue
+                    imported.append(video.get("code", ""))
+                    if video.get("id"):
+                        imported_ids.append(video["id"])
             
             return ServiceResult.ok({
                 "imported": imported,
                 "imported_ids": imported_ids,
                 "skipped": skipped,
                 "imported_count": len(imported),
-                "skipped_count": len(skipped)
+                "skipped_count": len(skipped),
+                "failed_items": failed_items,
+                "failed_count": len(failed_items),
             })
         except Exception as e:
             error_logger.error(f"批量导入视频失败: {e}")
             return ServiceResult.error("批量导入失败")
-

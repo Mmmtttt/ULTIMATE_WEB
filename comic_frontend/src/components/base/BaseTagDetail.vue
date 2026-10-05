@@ -36,10 +36,17 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="homeItems" 
+            :items="pagedHomeItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToHomeItem" 
+          />
+          <AppPagination
+            v-if="homeItems.length > 0"
+            v-model="homeCurrentPage"
+            class="tag-pagination"
+            :total-items="homeTotalItems"
+            :page-size="homePageSize"
           />
         </van-tab>
 
@@ -49,10 +56,17 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="recommendationItems" 
+            :items="pagedRecommendationItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToRecommendationItem" 
+          />
+          <AppPagination
+            v-if="recommendationItems.length > 0"
+            v-model="recommendationCurrentPage"
+            class="tag-pagination"
+            :total-items="recommendationTotalItems"
+            :page-size="recommendationPageSize"
           />
         </van-tab>
 
@@ -62,10 +76,17 @@
           </div>
           <MediaGrid 
             v-else 
-            :items="allItems" 
+            :items="pagedAllItems" 
             :content-type="props.contentType"
             :class="{ 'video-mode': isVideo }"
             @click="goToItem" 
+          />
+          <AppPagination
+            v-if="allItems.length > 0"
+            v-model="allCurrentPage"
+            class="tag-pagination"
+            :total-items="allTotalItems"
+            :page-size="allPageSize"
           />
         </van-tab>
       </van-tabs>
@@ -94,6 +115,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast } from 'vant'
 import MediaGrid from '@/components/common/MediaGrid.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
+import { useClientPagination } from '@/composables/useClientPagination'
 import { clearBrowseState, loadBrowseState, saveBrowseState } from '@/utils'
 
 const props = defineProps({
@@ -147,6 +170,27 @@ const allItems = computed(() => {
   const recWithSource = recommendationItems.value.map(item => ({ ...item, source: 'recommendation' }))
   return [...homeWithSource, ...recWithSource]
 })
+
+const {
+  pageSize: homePageSize,
+  currentPage: homeCurrentPage,
+  totalItems: homeTotalItems,
+  pagedItems: pagedHomeItems,
+} = useClientPagination(homeItems, computed(() => `tag_detail_home_${props.contentType}_${route.params.id}`))
+
+const {
+  pageSize: recommendationPageSize,
+  currentPage: recommendationCurrentPage,
+  totalItems: recommendationTotalItems,
+  pagedItems: pagedRecommendationItems,
+} = useClientPagination(recommendationItems, computed(() => `tag_detail_recommendation_${props.contentType}_${route.params.id}`))
+
+const {
+  pageSize: allPageSize,
+  currentPage: allCurrentPage,
+  totalItems: allTotalItems,
+  pagedItems: pagedAllItems,
+} = useClientPagination(allItems, computed(() => `tag_detail_all_${props.contentType}_${route.params.id}`))
 
 function getBrowseStateKey() {
   return `tag_detail_state_${props.contentType}_${route.params.id}`
@@ -308,5 +352,9 @@ watch(activeTab, () => {
 
 .edit-popup {
   padding-bottom: 20px;
+}
+
+.tag-pagination {
+  margin-top: 6px;
 }
 </style>

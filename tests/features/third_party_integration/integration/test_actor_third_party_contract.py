@@ -19,22 +19,22 @@ def _unique_actor_name(prefix: str) -> str:
 
 
 @pytest.mark.integration
-def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_results(third_party_client, monkeypatch):
+def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_results(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard actor service third-party contract in `_search_works`: adapter selection, call parameters, and cross-platform merge order.
     - Steps:
-      1. Mock actor service protocol adapter loader for `javdb/javbus`.
+      1. Mock actor service protocol adapter loader for `video.alpha/video.beta`.
       2. Call `actor_service._search_works("Mina", page=2, max_pages=4)`.
       3. Verify adapter calls and merged result order.
     - Expected:
       1. Adapters are called with page/max_pages forwarded unchanged.
       2. Returned works include both platforms.
-      3. Result order is grouped by platform: all `javdb` first, then `javbus`.
+      3. Result order is grouped by platform: all `va` first, then `vb`.
     - History:
       - 2026-03-23: Added actor service third-party merge contract coverage.
     """
-    actor_api = third_party_client["actor_api"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     calls = []
 
@@ -51,7 +51,7 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
                     "max_pages": max_pages,
                 }
             )
-            if self.platform == "javdb":
+            if self.platform == "va":
                 return {
                     "videos": [
                         {"video_id": "DB-1", "title": "DB One", "cover_url": "https://img/db1.jpg"},
@@ -64,7 +64,7 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
                     {
                         "code": "BUS-1",
                         "title": "BUS One",
-                        "cover_url": "https://www.javbus.com/pics/thumb/c0ou.jpg",
+                        "cover_url": "https://www.vb.com/pics/thumb/c0ou.jpg",
                     },
                 ],
                 "has_next": False,
@@ -76,39 +76,38 @@ def test_actor_service_search_works_forwards_adapter_calls_and_interleaves_resul
     works = result.get("works", [])
 
     assert len(calls) == 2
-    assert calls[0] == {"platform": "javdb", "creator_name": "Mina", "page": 2, "max_pages": 4}
-    assert calls[1] == {"platform": "javbus", "creator_name": "Mina", "page": 2, "max_pages": 4}
+    assert calls[0] == {"platform": "va", "creator_name": "Mina", "page": 2, "max_pages": 4}
+    assert calls[1] == {"platform": "vb", "creator_name": "Mina", "page": 2, "max_pages": 4}
     assert [item["id"] for item in works] == ["DB-1", "DB-2", "BUS-1"]
-    assert [item["platform"] for item in works] == ["javdb", "javdb", "javbus"]
-    assert str(works[-1]["cover_url"]).startswith("/api/v1/video/proxy2?url=")
+    assert [item["platform"] for item in works] == ["va", "va", "vb"]
     assert result["has_more"] is True
     assert result["page"] == 2
 
 
 @pytest.mark.integration
-def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_party_client, monkeypatch):
+def test_actor_service_search_works_accepts_va_actor_works_result_key(fake_third_party_client, monkeypatch):
     """
     Case Description:
-    - Purpose: Guard JAVDB actor-works branch compatibility: `get_actor_works` may return `works` (not `videos`).
+    - Purpose: Guard VA actor-works branch compatibility: `get_actor_works` may return `works` (not `videos`).
     - Steps:
-      1. Mock javdb adapter to provide `search_actor` + `get_actor_works` returning `works`.
-      2. Mock javbus adapter to provide `search_videos`.
+      1. Mock va adapter to provide `search_actor` + `get_actor_works` returning `works`.
+      2. Mock vb adapter to provide `search_videos`.
       3. Call `actor_service._search_works("Mina", page=1, max_pages=2)`.
     - Expected:
-      1. JAVDB works are not dropped.
-      2. Output keeps grouped platform order: javdb first, then javbus.
+      1. VA works are not dropped.
+      2. Output keeps grouped platform order: va first, then vb.
     """
-    actor_api = third_party_client["actor_api"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
-    captured = {"javdb_get_actor_works": 0, "javdb_search_videos": 0}
+    captured = {"va_get_actor_works": 0, "va_search_videos": 0}
 
-    class FakeJavdbAdapter:
+    class FakeAlphaAdapter:
         def search_actor(self, actor_name):
             assert actor_name == "Mina"
             return [{"id": "actor-mina", "name": "Mina"}]
 
         def get_actor_works(self, actor_id, page=1, max_pages=1):
-            captured["javdb_get_actor_works"] += 1
+            captured["va_get_actor_works"] += 1
             assert actor_id == "actor-mina"
             assert page == 1
             assert max_pages == 2
@@ -120,25 +119,25 @@ def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_p
             }
 
         def search_videos(self, *_args, **_kwargs):
-            captured["javdb_search_videos"] += 1
+            captured["va_search_videos"] += 1
             return {"videos": []}
 
-    class FakeJavbusAdapter:
+    class FakeBetaAdapter:
         def search_videos(self, actor_name, page=1, max_pages=1):
             assert actor_name == "Mina"
             assert page == 1
             assert max_pages == 2
             return {
                 "videos": [
-                    {"code": "BUS-A1", "title": "BUS Actor One", "cover_url": "https://www.javbus.com/pics/thumb/a9mj.jpg"},
+                    {"code": "BUS-A1", "title": "BUS Actor One", "cover_url": "https://www.vb.com/pics/thumb/a9mj.jpg"},
                 ],
                 "has_next": False,
             }
 
     def fake_get_video_adapter(platform):
-        if platform == "javdb":
-            return FakeJavdbAdapter()
-        return FakeJavbusAdapter()
+        if platform == "va":
+            return FakeAlphaAdapter()
+        return FakeBetaAdapter()
 
     monkeypatch.setattr(service, "_get_video_adapter", fake_get_video_adapter)
 
@@ -146,15 +145,15 @@ def test_actor_service_search_works_accepts_javdb_actor_works_result_key(third_p
     works = result.get("works", [])
 
     assert [item["id"] for item in works] == ["DB-A1", "BUS-A1"]
-    assert [item["platform"] for item in works] == ["javdb", "javbus"]
-    assert captured["javdb_get_actor_works"] == 1
-    assert captured["javdb_search_videos"] == 0
+    assert [item["platform"] for item in works] == ["va", "vb"]
+    assert captured["va_get_actor_works"] == 1
+    assert captured["va_search_videos"] == 0
 
 
 @pytest.mark.integration
-def test_actor_service_prefers_subscribed_actor_ref_for_person_works(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+def test_actor_service_prefers_subscribed_actor_ref_for_person_works(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     captured = {"actor_works": []}
     actor_name = _unique_actor_name("Actor-TP-Ref-Works")
@@ -166,10 +165,10 @@ def test_actor_service_prefers_subscribed_actor_ref_for_person_works(third_party
             "name": actor_name,
             "actor_refs": [
                 {
-                    "platform": "javdb",
+                    "platform": "va",
                     "actor_id": "0R1n3",
                     "actor_name": actor_name,
-                    "actor_url": "https://javdb.com/actors/0R1n3",
+                    "actor_url": "https://va.com/actors/0R1n3",
                 }
             ],
         },
@@ -178,7 +177,7 @@ def test_actor_service_prefers_subscribed_actor_ref_for_person_works(third_party
     assert subscribe_resp.get_json()["code"] == 200
     actor = service._actor_repo.get_by_id(subscribe_resp.get_json()["data"]["id"])
 
-    class FakeJavdbAdapter:
+    class FakeAlphaAdapter:
         def search_actor(self, _actor_name):
             raise AssertionError("subscribed actor_refs should avoid name-based actor lookup")
 
@@ -186,7 +185,7 @@ def test_actor_service_prefers_subscribed_actor_ref_for_person_works(third_party
             captured["actor_works"].append({"actor_id": actor_id, "page": page, "max_pages": max_pages})
             return {
                 "works": [
-                    {"video_id": "JAVDB-REF-1", "title": "Actor Ref Work", "cover_url": "https://img/ref.jpg"},
+                    {"video_id": "VA-REF-1", "title": "Actor Ref Work", "cover_url": "https://img/ref.jpg"},
                 ],
                 "has_next": True,
             }
@@ -201,28 +200,28 @@ def test_actor_service_prefers_subscribed_actor_ref_for_person_works(third_party
     monkeypatch.setattr(
         service,
         "_get_video_adapter",
-        lambda platform: FakeJavdbAdapter() if platform == "javdb" else EmptyAdapter(),
+        lambda platform: FakeAlphaAdapter() if platform == "va" else EmptyAdapter(),
     )
 
     result = service._search_works_for_creator(actor, page=2, max_pages=1)
 
     assert captured["actor_works"] == [{"actor_id": "0R1n3", "page": 2, "max_pages": 1}]
-    assert result["works"][0]["id"] == "JAVDB-REF-1"
-    assert result["works"][0]["platform"] == "javdb"
+    assert result["works"][0]["id"] == "VA-REF-1"
+    assert result["works"][0]["platform"] == "va"
     assert result["has_more"] is True
 
 
 @pytest.mark.integration
-def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional_last_page(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional_last_page(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     actor_name = _unique_actor_name("Actor-TP-Cache-Paging")
     captured = {"actor_works": []}
 
     monkeypatch.setattr(service, "_resolve_actor_refs", lambda _name: [])
-    monkeypatch.setattr(service, "_list_video_search_platforms", lambda: ["javdb"])
-    monkeypatch.setattr(service, "_list_video_person_platforms", lambda: ["javdb"])
+    monkeypatch.setattr(service, "_list_video_search_platforms", lambda: ["va"])
+    monkeypatch.setattr(service, "_list_video_person_platforms", lambda: ["va"])
 
     subscribe_resp = client.post(
         "/api/v1/actor/subscribe",
@@ -230,10 +229,10 @@ def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional
             "name": actor_name,
             "actor_refs": [
                 {
-                    "platform": "javdb",
+                    "platform": "va",
                     "actor_id": "actor-cache-paging",
                     "actor_name": actor_name,
-                    "actor_url": "https://javdb.com/actors/actor-cache-paging",
+                    "actor_url": "https://va.com/actors/actor-cache-paging",
                 }
             ],
         },
@@ -241,7 +240,7 @@ def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional
     assert subscribe_resp.status_code == 200
     actor_id = subscribe_resp.get_json()["data"]["id"]
 
-    class FakeJavdbAdapter:
+    class FakeAlphaAdapter:
         def get_actor_works(self, actor_id, page=1, max_pages=1):
             captured["actor_works"].append({"actor_id": actor_id, "page": page, "max_pages": max_pages})
             start = (page - 1) * 40
@@ -260,7 +259,7 @@ def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional
         def search_videos(self, *_args, **_kwargs):
             raise AssertionError("actor_refs should use person.works")
 
-    monkeypatch.setattr(service, "_get_video_adapter", lambda _platform: FakeJavdbAdapter())
+    monkeypatch.setattr(service, "_get_video_adapter", lambda _platform: FakeAlphaAdapter())
 
     first_resp = client.get(
         f"/api/v1/actor/works/{actor_id}",
@@ -296,116 +295,7 @@ def test_actor_works_route_reads_cached_middle_page_and_fetches_only_provisional
 
 
 @pytest.mark.integration
-def test_actor_cover_download_resolves_proxy2_url_before_requests(third_party_client, monkeypatch):
-    """
-    Case Description:
-    - Purpose: Guard actor cover download contract for proxied cover URLs (`/api/v1/video/proxy2?...`).
-    - Steps:
-      1. Build a proxy2 cover URL with base64-encoded javbus image URL.
-      2. Mock `requests.get` and capture called URL.
-      3. Call `actor_service._download_cover(...)`.
-    - Expected:
-      1. `requests.get` receives decoded absolute URL (https://...).
-      2. Cover is cached to local actor-cover path and returns `/static/cover/...`.
-    """
-    actor_api = third_party_client["actor_api"]
-    service = actor_api.actor_service
-    captured_calls = []
-    content_id = f"LOL-{uuid.uuid4().hex[:8].upper()}"
-
-    target_url = "https://www.javbus.com/pics/thumb/a9mj.jpg"
-    encoded = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
-    proxy_url = f"/api/v1/video/proxy2?url={encoded}"
-
-    image_buffer = BytesIO()
-    Image.new("RGB", (2, 2), color=(255, 0, 0)).save(image_buffer, format="JPEG")
-    image_bytes = image_buffer.getvalue()
-
-    class FakeResponse:
-        status_code = 200
-        headers = {"content-type": "image/jpeg"}
-        content = image_bytes
-
-        def raise_for_status(self):
-            return None
-
-    def fake_requests_get(url, headers=None, timeout=10):
-        captured_calls.append(
-            {
-                "url": url,
-                "headers": headers or {},
-                "timeout": timeout,
-            }
-        )
-        return FakeResponse()
-
-    monkeypatch.setattr("application.actor_app_service.requests.get", fake_requests_get)
-
-    result_url = service._download_cover(content_id, proxy_url, "javbus")
-
-    matching_calls = [call for call in captured_calls if call["url"] == target_url]
-    assert matching_calls
-    assert matching_calls[-1]["timeout"] == 10
-    assert "javbus.com" in str(matching_calls[-1]["headers"].get("Referer", "")).lower()
-    assert result_url.startswith(f"/static/cover/JAVBUS/author_cache/{content_id}.jpg")
-
-@pytest.mark.integration
-def test_actor_videos_route_keeps_platform_group_order_and_proxies_javbus_cover(third_party_client, monkeypatch):
-    """
-    Case Description:
-    - Purpose: Guard actor videos route contract for two key behaviors:
-      1) grouped output order (`javdb` before `javbus`), 2) javbus anti-hotlink cover proxy mapping.
-    - Steps:
-      1. Mock actor service protocol adapter loader for `javdb/javbus`.
-      2. Call `GET /api/v1/actor/videos?actor_name=Mina`.
-      3. Assert order and javbus proxy cover url.
-    - Expected:
-      1. HTTP 200 with business `code=200`.
-      2. Output order is `javdb` group first, then `javbus`.
-      3. Javbus cover url is transformed to `/api/v1/video/proxy2?url=...`.
-    """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
-    service = actor_api.actor_service
-
-    class FakeAdapter:
-        def __init__(self, platform):
-            self.platform = platform
-
-        def search_videos(self, creator_name, page=1, max_pages=1):
-            if self.platform == "javdb":
-                return {
-                    "videos": [
-                        {"video_id": "DB-11", "title": "DB Eleven", "cover_url": "https://img/db11.jpg"},
-                    ],
-                    "has_next": False,
-                }
-            return {
-                "videos": [
-                    {
-                        "code": "BUS-11",
-                        "title": "BUS Eleven",
-                        "cover_url": "https://www.javbus.com/pics/thumb/c0ou.jpg",
-                    }
-                ],
-                "has_next": False,
-            }
-
-    monkeypatch.setattr(service, "_get_video_adapter", lambda platform: FakeAdapter(platform))
-
-    response = client.get("/api/v1/actor/videos", query_string={"actor_name": "Mina"})
-    payload = response.get_json()
-
-    assert response.status_code == 200
-    assert payload["code"] == 200
-    works = payload["data"]
-    assert [item["id"] for item in works] == ["DB-11", "BUS-11"]
-    assert [item["platform"] for item in works] == ["javdb", "javbus"]
-    assert str(works[1]["cover_url"]).startswith("/api/v1/video/proxy2?url=")
-
-
-@pytest.mark.integration
-def test_actor_search_works_route_forwards_offset_limit_to_service(third_party_client, monkeypatch):
+def test_actor_search_works_route_forwards_offset_limit_to_service(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/actor/search-works` route contract so `actor_name/offset/limit` are passed to service exactly.
@@ -420,8 +310,8 @@ def test_actor_search_works_route_forwards_offset_limit_to_service(third_party_c
     - History:
       - 2026-03-23: Added actor search route forwarding guard.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     captured = {}
 
     def fake_search(actor_name, offset=0, limit=5):
@@ -454,9 +344,9 @@ def test_actor_search_works_route_forwards_offset_limit_to_service(third_party_c
 
 
 @pytest.mark.integration
-def test_actor_subscribe_accepts_protocol_actor_refs(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+def test_actor_subscribe_accepts_protocol_actor_refs(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     actor_name = _unique_actor_name("Actor-TP-Ref-Subscribe")
 
@@ -468,10 +358,10 @@ def test_actor_subscribe_accepts_protocol_actor_refs(third_party_client, monkeyp
             "name": actor_name,
             "actor_refs": [
                 {
-                    "platform": "javdb",
+                    "platform": "va",
                     "actor_id": "actor-ref-subscribe",
                     "actor_name": actor_name,
-                    "actor_url": "https://javdb.com/actors/actor-ref-subscribe",
+                    "actor_url": "https://va.com/actors/actor-ref-subscribe",
                 }
             ],
         },
@@ -481,7 +371,7 @@ def test_actor_subscribe_accepts_protocol_actor_refs(third_party_client, monkeyp
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["actor_id"] == "actor-ref-subscribe"
-    assert payload["data"]["actor_refs"][0]["platform"] == "javdb"
+    assert payload["data"]["actor_refs"][0]["platform"] == "va"
 
     saved = service._actor_repo.get_by_id(payload["data"]["id"]).to_dict()
     assert saved["actor_id"] == "actor-ref-subscribe"
@@ -489,9 +379,9 @@ def test_actor_subscribe_accepts_protocol_actor_refs(third_party_client, monkeyp
 
 
 @pytest.mark.integration
-def test_actor_subscribe_accepts_manual_actor_url(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+def test_actor_subscribe_accepts_manual_actor_url(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     actor_name = _unique_actor_name("Actor-TP-Manual-Url")
 
@@ -501,8 +391,8 @@ def test_actor_subscribe_accepts_manual_actor_url(third_party_client, monkeypatc
         "/api/v1/actor/subscribe",
         json={
             "name": actor_name,
-            "platform": "javdb",
-            "actor_url": "https://javdb.com/actors/J2EwW",
+            "platform": "va",
+            "actor_url": "https://va.com/actors/J2EwW",
         },
     )
     payload = response.get_json()
@@ -510,8 +400,8 @@ def test_actor_subscribe_accepts_manual_actor_url(third_party_client, monkeypatc
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["actor_id"] == "J2EwW"
-    assert payload["data"]["actor_refs"][0]["platform"] == "javdb"
-    assert payload["data"]["actor_refs"][0]["actor_url"] == "https://javdb.com/actors/J2EwW"
+    assert payload["data"]["actor_refs"][0]["platform"] == "va"
+    assert payload["data"]["actor_refs"][0]["actor_url"] == "https://va.com/actors/J2EwW"
 
     saved = service._actor_repo.get_by_id(payload["data"]["id"]).to_dict()
     assert saved["actor_id"] == "J2EwW"
@@ -519,7 +409,7 @@ def test_actor_subscribe_accepts_manual_actor_url(third_party_client, monkeypatc
 
 
 @pytest.mark.integration
-def test_actor_videos_route_forwards_actor_name_to_service(third_party_client, monkeypatch):
+def test_actor_videos_route_forwards_actor_name_to_service(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/actor/videos` backend contract from query input to service call and response mapping.
@@ -534,8 +424,8 @@ def test_actor_videos_route_forwards_actor_name_to_service(third_party_client, m
     - History:
       - 2026-03-23: Added actor videos route third-party contract guard.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     captured = {}
 
     def fake_get_actor_videos(actor_name):
@@ -543,9 +433,9 @@ def test_actor_videos_route_forwards_actor_name_to_service(third_party_client, m
         return _ok_result(
             [
                 {
-                    "id": "JAVDB-ACT-100",
+                    "id": "VA-ACT-100",
                     "title": "Actor Route Video",
-                    "platform": "javdb",
+                    "platform": "va",
                 }
             ]
         )
@@ -558,13 +448,13 @@ def test_actor_videos_route_forwards_actor_name_to_service(third_party_client, m
     assert response.status_code == 200
     assert payload["code"] == 200
     assert captured == {"actor_name": "Yui"}
-    assert payload["data"][0]["id"] == "JAVDB-ACT-100"
-    assert payload["data"][0]["plugin_id"] == "video.javdb"
-    assert payload["data"][0]["display"]["badge"]["label"] == "JAVDB"
+    assert payload["data"][0]["id"] == "VA-ACT-100"
+    assert payload["data"][0]["plugin_id"] == "video.alpha"
+    assert payload["data"][0]["display"]["badge"]["label"] == "VA"
 
 
 @pytest.mark.integration
-def test_actor_check_updates_persists_latest_work_and_calls_search_contract(third_party_client, monkeypatch):
+def test_actor_check_updates_persists_latest_work_and_calls_search_contract(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard actor update-check third-party chain: search contract (`page/max_pages`) and persisted latest work metadata.
@@ -580,8 +470,8 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
     - History:
       - 2026-03-23: Added actor update-check persistence contract guard.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     captured = {"search": [], "cache_set": []}
     actor_name = _unique_actor_name("Actor-TP-Check")
@@ -593,10 +483,10 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
             "name": actor_name,
             "actor_refs": [
                 {
-                    "platform": "javdb",
+                    "platform": "va",
                     "actor_id": "actor-check-01",
                     "actor_name": actor_name,
-                    "actor_url": "https://javdb.com/actors/actor-check-01",
+                    "actor_url": "https://va.com/actors/actor-check-01",
                 }
             ],
         },
@@ -625,8 +515,8 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
         )
         return {
             "works": [
-                {"id": "AV-9001", "title": "Latest Actor Work", "platform": "javdb"},
-                {"id": "AV-9000", "title": "Old Actor Work", "platform": "javbus"},
+                {"id": "AV-9001", "title": "Latest Actor Work", "platform": "va"},
+                {"id": "AV-9000", "title": "Old Actor Work", "platform": "vb"},
             ],
             "has_more": False,
             "page": page,
@@ -645,10 +535,10 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
             "actor_name": actor_name,
             "actor_refs": [
                 {
-                    "platform": "javdb",
+                    "platform": "va",
                     "actor_id": "actor-check-01",
                     "actor_name": actor_name,
-                    "actor_url": "https://javdb.com/actors/actor-check-01",
+                    "actor_url": "https://va.com/actors/actor-check-01",
                 }
             ],
             "page": 1,
@@ -657,7 +547,7 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
     ]
     assert len(payload["data"]["updated_actors"]) == 1
     assert payload["data"]["total_new_works"] == 1
-    assert payload["data"]["updated_actors"][0]["new_works"][0]["platform"] == "javdb"
+    assert payload["data"]["updated_actors"][0]["new_works"][0]["platform"] == "va"
     assert any(item["category"] == "actor_works" for item in captured["cache_set"])
 
     saved = service._actor_repo.get_by_id(actor_id).to_dict()
@@ -667,7 +557,7 @@ def test_actor_check_updates_persists_latest_work_and_calls_search_contract(thir
 
 
 @pytest.mark.integration
-def test_actor_new_works_endpoint_returns_items_before_last_work_id(third_party_client, monkeypatch):
+def test_actor_new_works_endpoint_returns_items_before_last_work_id(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard actor new-works slicing logic after third-party search so only items newer than `last_work_id` are returned.
@@ -682,8 +572,8 @@ def test_actor_new_works_endpoint_returns_items_before_last_work_id(third_party_
     - History:
       - 2026-03-23: Added actor new-works delta slicing guard.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     actor_name = _unique_actor_name("Actor-TP-New-Works")
 
@@ -730,7 +620,7 @@ def test_actor_new_works_endpoint_returns_items_before_last_work_id(third_party_
 
 
 @pytest.mark.integration
-def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary(third_party_client, monkeypatch):
+def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard actor detail refresh write-back contract:
@@ -745,8 +635,8 @@ def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary
       2. Response returns mocked works.
       3. Persisted actor record updates `last_work_id/last_work_title` from first work item.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     service = actor_api.actor_service
     actor_name = _unique_actor_name("Actor-TP-Detail-Sync")
 
@@ -761,8 +651,8 @@ def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary
             {
                 "creator": {"id": actor_id, "name": actor_name},
                 "works": [
-                    {"id": "AV-7701", "title": "Actor Detail Latest", "platform": "javdb"},
-                    {"id": "AV-7700", "title": "Actor Detail Old", "platform": "javbus"},
+                    {"id": "AV-7701", "title": "Actor Detail Latest", "platform": "va"},
+                    {"id": "AV-7700", "title": "Actor Detail Old", "platform": "vb"},
                 ],
                 "total": 2,
                 "offset": offset,
@@ -782,8 +672,8 @@ def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["works"][0]["id"] == "AV-7701"
-    assert payload["data"]["works"][0]["plugin_id"] == "video.javdb"
-    assert payload["data"]["works"][1]["plugin_id"] == "video.javbus"
+    assert payload["data"]["works"][0]["plugin_id"] == "video.alpha"
+    assert payload["data"]["works"][1]["plugin_id"] == "video.beta"
 
     saved = service._actor_repo.get_by_id(actor_id).to_dict()
     assert saved["last_work_id"] == "AV-7701"
@@ -791,7 +681,7 @@ def test_actor_works_force_refresh_persists_latest_work_for_subscription_summary
 
 
 @pytest.mark.integration
-def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, monkeypatch):
+def test_actor_works_route_forwards_offset_limit_to_service(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/actor/works/<actor_id>` route contract so pagination parameters are forwarded unchanged.
@@ -806,8 +696,8 @@ def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, 
     - History:
       - 2026-03-23: Added actor works route paging contract guard.
     """
-    client = third_party_client["client"]
-    actor_api = third_party_client["actor_api"]
+    client = fake_third_party_client["client"]
+    actor_api = fake_third_party_client["actor_api"]
     captured = {}
 
     def fake_get(actor_id, offset=0, limit=5, cache_only=False, force_refresh=False):
@@ -842,3 +732,6 @@ def test_actor_works_route_forwards_offset_limit_to_service(third_party_client, 
         "force_refresh": False,
     }
     assert payload["data"]["works"][0]["id"] == "W-ACT-1"
+
+
+

@@ -79,6 +79,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { showToast } from 'vant'
+import { useDevice } from '@/composables/useDevice'
 
 const props = defineProps({
   modelValue: {
@@ -104,6 +105,7 @@ const emit = defineEmits(['update:modelValue'])
 const showJumpInput = ref(false)
 const jumpInput = ref('')
 const jumpInputRef = ref(null)
+const { isMobile } = useDevice()
 
 const safePageSize = computed(() => {
   const value = Number(props.pageSize)
@@ -151,8 +153,47 @@ const totalItemsLabel = computed(() => {
 
 const pageItems = computed(() => {
   const total = totalPages.value
+  const current = safePage.value
 
-  if (total <= 7) {
+  if (isMobile.value) {
+    if (total <= 5) {
+      return Array.from({ length: total }, (_, index) => ({
+        key: `p-${index + 1}`,
+        type: 'page',
+        value: index + 1
+      }))
+    }
+
+    if (current <= 2) {
+      return [
+        { key: 'p-1', type: 'page', value: 1 },
+        { key: 'p-2', type: 'page', value: 2 },
+        { key: 'p-3', type: 'page', value: 3 },
+        { key: 'ellipsis-right', type: 'ellipsis', value: 'right' },
+        { key: `p-${total}`, type: 'page', value: total }
+      ]
+    }
+
+    if (current >= total - 1) {
+      return [
+        { key: 'p-1', type: 'page', value: 1 },
+        { key: 'ellipsis-left', type: 'ellipsis', value: 'left' },
+        { key: `p-${total - 2}`, type: 'page', value: total - 2 },
+        { key: `p-${total - 1}`, type: 'page', value: total - 1 },
+        { key: `p-${total}`, type: 'page', value: total }
+      ]
+    }
+
+    return [
+      { key: 'p-1', type: 'page', value: 1 },
+      { key: 'ellipsis-left', type: 'ellipsis', value: 'left' },
+      { key: `p-${current}`, type: 'page', value: current },
+      { key: 'ellipsis-right', type: 'ellipsis', value: 'right' },
+      { key: `p-${total}`, type: 'page', value: total }
+    ]
+  }
+
+  if (total <= 9) {
     return Array.from({ length: total }, (_, index) => ({
       key: `p-${index + 1}`,
       type: 'page',
@@ -160,12 +201,36 @@ const pageItems = computed(() => {
     }))
   }
 
-  const items = []
-  for (let page = 1; page <= 7; page += 1) {
-    items.push({ key: `p-${page}`, type: 'page', value: page })
+  const pages = new Set([1, total])
+  const sideSlots = 2
+  let start = Math.max(2, current - sideSlots)
+  let end = Math.min(total - 1, current + sideSlots)
+
+  if (current <= 4) {
+    start = 2
+    end = 7
+  } else if (current >= total - 3) {
+    start = total - 6
+    end = total - 1
   }
-  items.push({ key: 'ellipsis-right', type: 'ellipsis', value: 'right' })
-  items.push({ key: `p-${total}`, type: 'page', value: total })
+
+  for (let page = start; page <= end; page += 1) {
+    pages.add(page)
+  }
+
+  const sortedPages = [...pages].sort((first, second) => first - second)
+  const items = []
+  sortedPages.forEach((page, index) => {
+    const previous = sortedPages[index - 1]
+    if (previous && page - previous > 1) {
+      items.push({
+        key: `ellipsis-${previous}-${page}`,
+        type: 'ellipsis',
+        value: `${previous}-${page}`
+      })
+    }
+    items.push({ key: `p-${page}`, type: 'page', value: page })
+  })
   return items
 })
 
@@ -363,6 +428,8 @@ function confirmJump() {
 
   .pager-row {
     gap: 6px;
+    flex-wrap: nowrap;
+    min-width: 0;
   }
 
   .pager-btn {
@@ -382,6 +449,31 @@ function confirmJump() {
     min-width: 32px;
     width: 32px;
     font-size: 13px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-pagination {
+    padding: 8px 7px;
+  }
+
+  .pager-row {
+    gap: 4px;
+  }
+
+  .pager-btn {
+    min-width: 28px;
+    width: auto;
+    height: 30px;
+    padding: 0 6px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+
+  .pager-btn.nav-btn,
+  .pager-btn.edge-btn {
+    min-width: 28px;
+    width: 28px;
   }
 }
 </style>

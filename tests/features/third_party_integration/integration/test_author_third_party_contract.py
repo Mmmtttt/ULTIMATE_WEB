@@ -11,24 +11,30 @@ def _ok_result(data=None, message="ok"):
 
 
 @pytest.mark.integration
-def test_author_service_search_works_forwards_platform_adapter_contract(third_party_client, monkeypatch):
+def test_author_service_search_works_forwards_platform_adapter_contract(fake_third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护作者服务 _search_works 对 third_party.external_api.search_albums 的调用契约，防止平台映射/参数透传错误。
+    - 用例目的: 看护作者服务搜索对协议适配器搜索能力的调用契约，防止平台映射/参数透传错误。
     - 测试步骤:
-      1. mock author_service._get_external_api.search_albums 记录参数并返回 JM/PK 各一条作品。
+      1. mock author_service._get_external_api.search_albums 记录参数并返回两个协议平台各一条作品。
       2. 调用 author_service._search_works("Alice", page=1, max_pages=2)。
       3. 校验 adapter_name/max_pages/fast_mode 参数和返回平台字段。
     - 预期结果:
-      1. search_albums 分别以 jmcomic/picacomic 被调用。
+      1. search_albums 至少以两个 fake 漫画适配器被调用（平台列表来自协议注册表，随插件动态扩展）。
       2. max_pages=2、fast_mode=True 被正确传递。
-      3. 返回 works 同时包含 JM、PK 平台。
+      3. 返回 works 同时包含两个协议平台。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者第三方搜索契约。
+      - 2026-09-02: 改为子集断言避免平台集合硬编码。
     """
-    author_api = third_party_client["author_api"]
+    author_api = fake_third_party_client["author_api"]
     service = author_api.author_service
     calls = []
+
+    albums_by_adapter = {
+        "comic_alpha": [{"album_id": "1001", "title": "CA Work", "cover_url": "u1", "pages": 5}],
+        "comic_beta": [{"album_id": "2001", "title": "CB Work", "cover_url": "u2", "pages": 6}],
+    }
 
     class FakeExternalApi:
         def search_albums(self, keyword, page=1, max_pages=1, adapter_name=None, fast_mode=False):
@@ -41,26 +47,23 @@ def test_author_service_search_works_forwards_platform_adapter_contract(third_pa
                     "fast_mode": fast_mode,
                 }
             )
-            if adapter_name == "jmcomic":
-                return {"albums": [{"album_id": "1001", "title": "JM Work", "cover_url": "u1", "pages": 5}]}
-            return {"albums": [{"album_id": "2001", "title": "PK Work", "cover_url": "u2", "pages": 6}]}
+            return {"albums": albums_by_adapter.get(adapter_name, [])}
 
     monkeypatch.setattr(service, "_get_external_api", lambda: FakeExternalApi())
 
     result = service._search_works("Alice", page=1, max_pages=2)
     works = result.get("works", [])
 
-    assert len(calls) == 2
-    assert {item["adapter_name"] for item in calls} == {"jmcomic", "picacomic"}
+    assert {"comic_alpha", "comic_beta"}.issubset({item["adapter_name"] for item in calls})
     assert all(item["keyword"] == "Alice" for item in calls)
     assert all(int(item["page"]) == 1 for item in calls)
     assert all(int(item["max_pages"]) == 2 for item in calls)
     assert all(item["fast_mode"] is True for item in calls)
-    assert {item["platform"] for item in works} == {"JM", "PK"}
+    assert {item["platform"] for item in works} == {"CA", "CB"}
 
 
 @pytest.mark.integration
-def test_author_batch_detail_calls_get_album_by_id_and_preserves_id_order(third_party_client, monkeypatch):
+def test_author_batch_detail_calls_get_album_by_id_and_preserves_id_order(fake_third_party_client, monkeypatch):
     """
     用例描述:
     - 用例目的: 看护作者批量详情接口对 get_album_by_id 的调用契约与返回顺序，防止并发回调导致顺序错乱。
@@ -74,7 +77,7 @@ def test_author_batch_detail_calls_get_album_by_id_and_preserves_id_order(third_
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖批量详情并发顺序契约。
     """
-    author_api = third_party_client["author_api"]
+    author_api = fake_third_party_client["author_api"]
     service = author_api.author_service
     calls = []
 
@@ -105,7 +108,7 @@ def test_author_batch_detail_calls_get_album_by_id_and_preserves_id_order(third_
 
 
 @pytest.mark.integration
-def test_author_new_works_endpoint_enriches_results_via_external_detail(third_party_client, monkeypatch):
+def test_author_new_works_endpoint_enriches_results_via_external_detail(fake_third_party_client, monkeypatch):
     """
     用例描述:
     - 用例目的: 看护作者“新作品”链路在第三方搜索后补全详情的调用契约，防止 get_album_by_id 丢失导致作品字段不完整。
@@ -120,9 +123,10 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
       3. search_albums 与 get_album_by_id 均被触发。
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者新作详情补全契约。
+      - 2026-09-02: mock 对未知平台返回空结果。
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
     service = author_api.author_service
     calls = {"search": [], "detail": []}
 
@@ -131,6 +135,11 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
     assert sub_resp.status_code == 200
     assert sub_payload["code"] == 200
     author_id = sub_payload["data"]["id"]
+
+    albums_by_adapter = {
+        "comic_alpha": [{"album_id": "91001", "title": "CA Raw", "cover_url": "u1", "pages": 4}],
+        "comic_beta": [{"album_id": "92001", "title": "CB Raw", "cover_url": "u2", "pages": 5}],
+    }
 
     class FakeExternalApi:
         def search_albums(self, keyword, max_pages=1, adapter_name=None, fast_mode=False):
@@ -142,9 +151,7 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
                     "fast_mode": fast_mode,
                 }
             )
-            if adapter_name == "jmcomic":
-                return {"albums": [{"album_id": "91001", "title": "JM Raw", "cover_url": "u1", "pages": 4}]}
-            return {"albums": [{"album_id": "92001", "title": "PK Raw", "cover_url": "u2", "pages": 5}]}
+            return {"albums": albums_by_adapter.get(adapter_name, [])}
 
         def get_album_by_id(self, work_id):
             calls["detail"].append(str(work_id))
@@ -171,14 +178,14 @@ def test_author_new_works_endpoint_enriches_results_via_external_detail(third_pa
     assert len(new_works) >= 1
     assert all(item.get("author") == "Author-TP-A" for item in new_works)
     assert all(str(item.get("cover_url", "")).startswith("https://img/") for item in new_works)
-    assert all(item.get("plugin_id") in {"comic.jmcomic", "comic.picacomic"} for item in new_works)
+    assert all(item.get("plugin_id") in {"comic.alpha", "comic.beta"} for item in new_works)
     assert len(calls["search"]) >= 2
-    assert {"jmcomic", "picacomic"}.issubset({item["adapter_name"] for item in calls["search"]})
+    assert {"comic_alpha", "comic_beta"}.issubset({item["adapter_name"] for item in calls["search"]})
     assert len(calls["detail"]) >= 1
 
 
 @pytest.mark.integration
-def test_author_batch_detail_route_forwards_ids(third_party_client, monkeypatch):
+def test_author_batch_detail_route_forwards_ids(fake_third_party_client, monkeypatch):
     """
     用例描述:
     - 用例目的: 看护作者批量详情路由层参数透传契约，防止 ids 参数在 API 层被改写或丢失。
@@ -192,8 +199,8 @@ def test_author_batch_detail_route_forwards_ids(third_party_client, monkeypatch)
     - 历史变更:
       - 2026-03-23: 初始创建，覆盖作者批量详情路由契约。
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
     captured = {}
 
     def fake_batch_detail(ids):
@@ -215,7 +222,7 @@ def test_author_batch_detail_route_forwards_ids(third_party_client, monkeypatch)
 
 
 @pytest.mark.integration
-def test_author_works_force_refresh_persists_latest_work_for_subscription_summary(third_party_client, monkeypatch):
+def test_author_works_force_refresh_persists_latest_work_for_subscription_summary(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard author detail refresh write-back contract:
@@ -230,9 +237,9 @@ def test_author_works_force_refresh_persists_latest_work_for_subscription_summar
       2. Response returns mocked works.
       3. Persisted author record updates `last_work_id/last_work_title` from first work item.
     """
-    client = third_party_client["client"]
-    author_api = third_party_client["author_api"]
-    meta_dir = third_party_client["meta_dir"]
+    client = fake_third_party_client["client"]
+    author_api = fake_third_party_client["author_api"]
+    meta_dir = fake_third_party_client["meta_dir"]
     service = author_api.author_service
 
     subscribe_resp = client.post("/api/v1/author/subscribe", json={"name": "Author-TP-Detail-Sync"})
@@ -248,8 +255,8 @@ def test_author_works_force_refresh_persists_latest_work_for_subscription_summar
             {
                 "creator": {"id": author_id, "name": "Author-TP-Detail-Sync"},
                 "works": [
-                    {"id": "AR-8801", "title": "Author Detail Latest", "platform": "JM"},
-                    {"id": "AR-8800", "title": "Author Detail Old", "platform": "PK"},
+                    {"id": "AR-8801", "title": "Author Detail Latest", "platform": "CA"},
+                    {"id": "AR-8800", "title": "Author Detail Old", "platform": "CB"},
                 ],
                 "total": 2,
                 "offset": offset,
@@ -269,8 +276,8 @@ def test_author_works_force_refresh_persists_latest_work_for_subscription_summar
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["works"][0]["id"] == "AR-8801"
-    assert payload["data"]["works"][0]["plugin_id"] == "comic.jmcomic"
-    assert payload["data"]["works"][1]["plugin_id"] == "comic.picacomic"
+    assert payload["data"]["works"][0]["plugin_id"] == "comic.alpha"
+    assert payload["data"]["works"][1]["plugin_id"] == "comic.beta"
 
     authors = load_json(meta_dir / "authors_database.json").get("authors", [])
     saved = find_by_id(authors, author_id)

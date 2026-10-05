@@ -1,19 +1,21 @@
 <template>
   <div class="mine-page">
     <div class="stats-overview">
-      <van-grid :column-num="4" :border="false">
-        <van-grid-item icon="photo-o" :text="stats.count + ' 内容'" />
-        <van-grid-item icon="bookmark-o" :text="stats.read + ' 已读'" />
-        <van-grid-item icon="label-o" :text="stats.tags + ' 标签'" />
-        <van-grid-item icon="bars" :text="stats.lists + ' 清单'" />
-      </van-grid>
+      <div class="stats-grid">
+        <div v-for="item in statCards" :key="item.key" class="stat-card">
+          <span class="stat-icon"><van-icon :name="item.icon" /></span>
+          <span class="stat-value">{{ item.value }}</span>
+          <span class="stat-label">{{ item.label }}</span>
+        </div>
+      </div>
     </div>
     
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="我的清单" icon="list-switch-o" to="/lists" is-link />
+      <van-cell title="我的清单" icon="orders-o" to="/lists" is-link />
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
-      <van-cell title="标签管理" icon="tag-o" :to="tagManagePath" is-link />
+      <van-cell title="标签管理" icon="label-o" :to="tagManagePath" is-link />
+      <van-cell title="阅读记录" icon="clock-o" to="/history" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
@@ -53,7 +55,7 @@
         <div class="about-meta">
           <p class="version">版本 {{ appVersionLabel }}</p>
           <p class="copyright">© 2026 Ultimate Web</p>
-          <p class="mmmtttt">github@Mmmtttt</p>
+          <p class="mmmtttt">个人漫画电影内容管理小工具，为避免隐私泄露，禁止部署在公网</p>
           <p class="mmmtttt link-wrap">持续更新开源链接 https://github.com/Mmmtttt/ULTIMATE_WEB</p>
         </div>
         <div class="update-card">
@@ -197,6 +199,7 @@ import { useAuthStore } from '@/stores/auth'
 import { showFailToast, showConfirmDialog, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
 import { fetchProtocolPlatformOptions } from '@/utils'
+import { useDevice } from '@/composables/useDevice'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -208,6 +211,7 @@ const tagStore = useTagStore()
 const listStore = useListStore()
 const importTaskStore = useImportTaskStore()
 const appUpdateStore = useAppUpdateStore()
+const { isMobile } = useDevice()
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 const authEnabled = computed(() => authStore.enabled)
@@ -242,6 +246,13 @@ const stats = computed(() => {
     }
   }
 })
+
+const statCards = computed(() => [
+  { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容' },
+  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读' },
+  { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签' },
+  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单' }
+])
 
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
 const tagManagePath = '/tags'
@@ -394,14 +405,14 @@ async function handleComicImport() {
     target: importTarget.value,
     platform: String(importPlatform.value || '').trim().toUpperCase(),
     content_type: 'comic',
-    comic_id: normalizeImportId(importId.value, importPlatform.value)
+    item_id: normalizeImportId(importId.value, importPlatform.value)
   }
 
   if (!params.platform) {
     throw new Error('当前模式暂无可用平台')
   }
 
-  if (importType.value === 'by_id' && !params.comic_id) {
+  if (importType.value === 'by_id' && !params.item_id) {
     throw new Error('请输入漫画ID')
   }
 
@@ -410,8 +421,8 @@ async function handleComicImport() {
     if (comicIds.length === 0) {
       throw new Error('文件中没有可导入的ID')
     }
-    params.comic_ids = comicIds
-    params.comic_id = ''
+    params.item_ids = comicIds
+    params.item_id = ''
   } else if (importType.value !== 'by_id') {
     throw new Error('当前模式不支持该导入方式')
   }
@@ -437,7 +448,7 @@ async function handleVideoImport() {
       import_type: 'by_id',
       target,
       platform: defaultPlatform,
-      comic_id: videoCode,
+      item_id: videoCode,
       content_type: 'video'
     })
     if (!created) {
@@ -456,7 +467,7 @@ async function handleVideoImport() {
       import_type: 'by_list',
       target,
       platform: defaultPlatform,
-      comic_ids: videoCodes,
+      item_ids: videoCodes,
       content_type: 'video'
     })
     if (!created) {
@@ -506,57 +517,105 @@ watch(() => modeStore.currentMode, async () => {
 
 <style scoped>
 .mine-page {
-  padding-bottom: 20px;
+  padding: 2px 0 20px;
 }
 
 .stats-overview {
   background: var(--surface-2);
-  padding: 20px 0;
-  margin: 0 16px 12px;
+  padding: 12px;
+  margin: 12px 16px;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
 }
 
-.stats-overview :deep(.van-grid-item__content) {
-  background: transparent;
-  color: var(--text-primary);
-  padding: clamp(4px, 1vw, 10px) clamp(2px, 0.5vw, 4px);
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.stats-overview :deep(.van-grid-item__text) {
+.stat-card {
+  min-width: 0;
+  min-height: 66px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--surface-1);
+  display: grid;
+  grid-template-areas:
+    "icon value"
+    "icon label";
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  padding: 10px;
+}
+
+.stat-icon {
+  grid-area: icon;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: rgba(89, 160, 255, 0.12);
+  color: var(--brand-600);
+  font-size: 17px;
+}
+
+.stat-value {
+  grid-area: value;
+  color: var(--text-strong);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.stat-label {
+  grid-area: label;
   color: var(--text-secondary);
-  font-size: clamp(11px, 1.2vw, 14px);
-  margin-top: clamp(4px, 0.6vw, 8px);
-}
-
-.stats-overview :deep(.van-icon) {
-  color: var(--brand-600);
-  font-size: clamp(18px, 2.4vw, 28px);
-}
-
-.stats-overview :deep(.van-grid-item__icon) {
-  color: var(--brand-600);
-  font-size: clamp(18px, 2.4vw, 28px);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .mine-menu {
-  margin-bottom: 12px;
+  margin: 0 16px 12px;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: 18px;
   overflow: hidden;
+  box-shadow: var(--shadow-xs);
+}
+
+.mine-menu :deep(.van-cell) {
+  background: transparent;
+  min-height: 52px;
+}
+
+.mine-menu :deep(.van-cell__left-icon) {
+  width: 30px;
+  height: 30px;
+  margin-right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: rgba(89, 160, 255, 0.12);
+  color: var(--brand-600);
+  font-size: 16px;
 }
 
 .about {
-  padding: 28px 16px 16px;
+  padding: 16px 16px;
   color: var(--text-tertiary);
 }
 
 .about-card {
   width: 100%;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
+  border-radius: 18px;
   background: var(--surface-2);
   box-shadow: var(--shadow-sm);
 }
@@ -735,8 +794,49 @@ watch(() => modeStore.currentMode, async () => {
 }
 
 @media (max-width: 767px) {
+  .stats-overview {
+    padding: 8px;
+    border-radius: 16px;
+  }
+
+  .stats-grid {
+    gap: 6px;
+  }
+
+  .stat-card {
+    min-height: 56px;
+    grid-template-areas:
+      "icon"
+      "value"
+      "label";
+    grid-template-columns: 1fr;
+    justify-items: center;
+    row-gap: 3px;
+    padding: 8px 4px;
+  }
+
+  .stat-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 9px;
+    font-size: 14px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+  }
+
+  .stat-label {
+    font-size: 10px;
+  }
+
+  .stats-overview,
+  .mine-menu {
+    margin-inline: 10px;
+  }
+
   .about {
-    padding: 22px 12px 12px;
+    padding: 12px 10px;
   }
 
   .update-actions {

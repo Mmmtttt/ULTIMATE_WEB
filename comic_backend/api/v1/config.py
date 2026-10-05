@@ -1,4 +1,4 @@
-﻿import json
+import json
 import copy
 import os
 import shutil
@@ -27,7 +27,7 @@ from core.constants import (
     set_app_config_dir,
 )
 from core.runtime_profile import is_third_party_enabled, runtime_capabilities
-from infrastructure.logger import app_logger, error_logger
+from infrastructure.logger import app_logger, error_logger, configure_debug_mode
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
 from protocol.config_service import get_plugin_config_service
@@ -517,6 +517,8 @@ def update_config():
 
         result = config_service.update_config(**data)
         if result.success:
+            if "debug_mode" in data:
+                configure_debug_mode(bool(result.data.get("debug_mode", False)))
             cache_config = data.get('cache_config', {})
             if cache_config:
                 max_size_mb = cache_config.get('recommendation_cache_max_size_mb')
@@ -524,7 +526,7 @@ def update_config():
                     recommendation_cache_manager.update_max_size(max_size_mb)
                     app_logger.info(f"更新推荐缓存最大容量: {max_size_mb}MB")
 
-            app_logger.info(f"更新配置成功: {data}")
+            app_logger.info("更新配置成功: keys=%s, debug_mode=%s", sorted(data.keys()), result.data.get("debug_mode", False))
             return success_response(result.data)
         return error_response(400, result.message)
     except Exception as e:
@@ -537,6 +539,7 @@ def reset_config():
     try:
         result = config_service.reset_config()
         if result.success:
+            configure_debug_mode(False)
             recommendation_cache_manager.update_max_size(5120)
             app_logger.info("重置配置成功")
             return success_response(result.data)
@@ -840,5 +843,78 @@ def get_storage_ranking():
         return success_response(build_storage_ranking(category=category, limit=limit))
     except Exception as e:
         error_logger.error(f"获取存储排行失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@config_bp.route('/list-directory', methods=['GET'])
+def list_directory():
+    import os
+    import platform
+
+    path = request.args.get('path', '').strip()
+
+    try:
+        if not path:
+            # Windows 返回驱动器列表
+            if platform.system() == 'Windows':
+                import string
+                import ctypes
+                drives = []
+                try:
+                    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+                    for letter in string.ascii_uppercase:
+                        if bitmask & 1:
+                            drive_path = f"{letter}:\\"
+                            drives.append({
+                                'name': f"{letter}:\\",
+                                'path': drive_path,
+                                'type': 'drive',
+                                'is_dir': True,
+                            })
+                        bitmask >>= 1
+                except Exception:
+                    pass
+                return success_response({'entries': drives, 'current_path': ''})
+            else:
+                return success_response({
+                    'entries': [{'name': '/', 'path': '/', 'type': 'dir', 'is_dir': True}],
+                    'current_path': ''
+                })
+
+        normalized = os.path.normpath(path)
+        if not os.path.exists(normalized):
+            return error_response(404, "路径不存在")
+        if not os.path.isdir(normalized):
+            return error_response(400, "不是目录")
+
+        entries = []
+        try:
+            for entry in os.scandir(normalized):
+                try:
+                    is_dir = entry.is_dir()
+                    info = {
+                        'name': entry.name,
+                        'path': entry.path,
+                        'type': 'dir' if is_dir else 'file',
+                        'is_dir': is_dir,
+                    }
+                    if not is_dir:
+                        info['size'] = entry.stat().st_size
+                    entries.append(info)
+                except OSError:
+                    continue
+        except PermissionError:
+            return error_response(403, "无权限访问此目录")
+
+        entries.sort(key=lambda e: (not e['is_dir'], e['name'].lower()))
+
+        parent_path = os.path.dirname(normalized) if os.path.normpath(normalized) != os.path.abspath(os.sep) else None
+        return success_response({
+            'entries': entries,
+            'current_path': normalized,
+            'parent_path': parent_path,
+        })
+    except Exception as e:
+        error_logger.error(f"列出目录失败: {e}")
         return error_response(500, "服务器内部错误")
 

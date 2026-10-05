@@ -1,21 +1,6 @@
 import { defineStore } from 'pinia'
-import { login as loginApi, getAuthStatus, logout as logoutApi } from '@/api/auth'
-
-function getPrivateApiBase() {
-  const privatePort = import.meta.env.VITE_PRIVATE_PORT || 5000
-  const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
-  const protocol = sslEnabled ? 'https' : 'http'
-  const hostname = window.location.hostname
-  return `${protocol}://${hostname}:${privatePort}/api`
-}
-
-function getNormalApiBase() {
-  const normalPort = import.meta.env.VITE_NORMAL_PORT || 5001
-  const sslEnabled = import.meta.env.VITE_BACKEND_SSL_ENABLED !== false
-  const protocol = sslEnabled ? 'https' : 'http'
-  const hostname = window.location.hostname
-  return `${protocol}://${hostname}:${normalPort}/api`
-}
+import { login as loginApi, getAuthStatus, logout as logoutApi, updateProjectPassword } from '@/api/auth'
+import { getConfiguredSpaceApiBaseUrl } from '@/runtime/endpoint'
 
 function setRuntimeApiBase(url) {
   try {
@@ -31,32 +16,86 @@ function setRuntimeApiBase(url) {
   }
 }
 
+function setNormalAuthToken(token) {
+  const normalized = String(token || '')
+  try {
+    window.__ULTIMATE_NORMAL_AUTH_TOKEN = normalized
+  } catch (_) {
+    // The in-memory Pinia state remains the source of truth in non-browser tests.
+  }
+  return normalized
+}
+
+function applySpaceApiBase(mode) {
+  const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
+    && window.__ULTIMATE_SPACE_API_BASES
+    && typeof window.__ULTIMATE_SPACE_API_BASES === 'object'
+  const configured = hasRuntimeSpaceEndpoints ? getConfiguredSpaceApiBaseUrl(mode) : ''
+  // Only packaged runtimes inject per-space absolute endpoints. Development
+  // uses the same-origin Vite proxy and must not connect to LAN backend ports.
+  setRuntimeApiBase(configured)
+}
+
+function prepareAuthStatusProbe() {
+  // A restarted dual-space client must always probe the private listener first.
+  const hasRuntimeSpaceEndpoints = typeof window !== 'undefined'
+    && window.__ULTIMATE_SPACE_API_BASES
+    && typeof window.__ULTIMATE_SPACE_API_BASES === 'object'
+  if (hasRuntimeSpaceEndpoints) applySpaceApiBase('private')
+}
+
+const AUTH_STATUS_RETRY_DELAYS_MS = [0, 250, 500, 750, 1000, 1500]
+
+function waitForAuthStatusRetry(delayMs) {
+  if (!delayMs) return Promise.resolve()
+  return new Promise(resolve => setTimeout(resolve, delayMs))
+}
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     enabled: false,
     authenticated: false,
     mode: 'private',
     loading: false,
-    hasAttemptedLogin: false
+    hasAttemptedLogin: false,
+    normalAuthToken: '',
+    authStatusError: null,
+    authStatusProbePrepared: false
   }),
 
   actions: {
     async checkStatus() {
-      try {
-        const res = await getAuthStatus()
-        if (res.code === 200) {
-          this.enabled = res.data.enabled
-          this.authenticated = res.data.authenticated
-          this.mode = res.data.mode
-          if (res.data.authenticated) {
-            this.hasAttemptedLogin = true
-          }
-        }
-        return res.data
-      } catch (e) {
-        console.error('[auth] check status failed:', e)
-        throw e
+      if (!this.authStatusProbePrepared) {
+        prepareAuthStatusProbe()
+        this.authStatusProbePrepared = true
       }
+      let lastError = null
+      for (const delayMs of AUTH_STATUS_RETRY_DELAYS_MS) {
+        await waitForAuthStatusRetry(delayMs)
+        try {
+          const res = await getAuthStatus()
+          if (res.code === 200) {
+            this.enabled = res.data.enabled
+            this.authenticated = res.data.authenticated
+            this.mode = res.data.mode
+            this.authStatusError = null
+            if (this.enabled) {
+              applySpaceApiBase(this.authenticated ? 'normal' : 'private')
+            }
+            if (res.data.authenticated) {
+              this.hasAttemptedLogin = true
+            }
+            return res.data
+          }
+          lastError = new Error(res.msg || '认证状态响应无效')
+        } catch (e) {
+          lastError = e
+        }
+      }
+
+      console.error('[auth] check status failed after retries:', lastError)
+      this.authStatusError = lastError || new Error('认证状态检查失败')
+      throw lastError || new Error('认证状态检查失败')
     },
 
     async login(password) {
@@ -64,20 +103,21 @@ export const useAuthStore = defineStore('auth', {
       try {
         const res = await loginApi(password)
         if (res.code === 200) {
+          if (typeof res.data.enabled === 'boolean') {
+            this.enabled = res.data.enabled
+          }
           this.authenticated = res.data.authenticated
           this.mode = res.data.mode
           this.hasAttemptedLogin = true
+          this.normalAuthToken = setNormalAuthToken(res.data.normal_auth_token || '')
+          this.authStatusError = null
 
-          if (import.meta.env.DEV) {
-            // 开发模式：通过切换端口来切换空间
-            if (!res.data.authenticated) {
-              setRuntimeApiBase(getPrivateApiBase())
-            } else {
-              // 开发环境走 Vite 代理（相对路径），不需要切换绝对 URL
-              setRuntimeApiBase('')
-            }
+          if (this.enabled) {
+            applySpaceApiBase(res.data.authenticated ? 'normal' : 'private')
           }
-          // 生产模式：始终走相对路径 /api，通过 X-Space-Mode header 由前端服务器路由
+          if (!res.data.authenticated) {
+            this.normalAuthToken = setNormalAuthToken('')
+          }
         }
         return res.data
       } finally {
@@ -94,6 +134,7 @@ export const useAuthStore = defineStore('auth', {
       this.authenticated = false
       this.mode = 'private'
       this.hasAttemptedLogin = false
+      this.normalAuthToken = setNormalAuthToken('')
 
       try {
         window.localStorage.removeItem('ULTIMATE_API_BASE_URL')
@@ -102,26 +143,31 @@ export const useAuthStore = defineStore('auth', {
         // ignore
       }
 
-      if (import.meta.env.DEV) {
-        // 开发模式：退出后切到 private 端口
-        setRuntimeApiBase(getPrivateApiBase())
-      }
+      if (this.enabled) applySpaceApiBase('private')
     },
 
     switchToPrivateMode() {
       this.authenticated = false
       this.mode = 'private'
-      if (import.meta.env.DEV) {
-        setRuntimeApiBase(getPrivateApiBase())
-      }
+      this.normalAuthToken = setNormalAuthToken('')
+      if (this.enabled) applySpaceApiBase('private')
     },
 
     switchToNormalMode() {
       this.authenticated = true
       this.mode = 'normal'
-      if (import.meta.env.DEV) {
-        setRuntimeApiBase('')
+      if (this.enabled) applySpaceApiBase('normal')
+    },
+
+    async changePassword(password) {
+      const res = await updateProjectPassword(password)
+      if (res.code === 200) {
+        this.enabled = true
+        this.authenticated = true
+        this.mode = 'normal'
+        this.hasAttemptedLogin = true
       }
+      return res
     }
   }
 })

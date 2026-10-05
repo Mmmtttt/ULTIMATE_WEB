@@ -6,6 +6,14 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.catalog_query_service import CatalogQueryService
+from application.comic_online_update import (
+    apply_remote_album_metadata,
+    build_update_check_payload,
+    extract_remote_total_page,
+)
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -61,12 +69,14 @@ class RecommendationAppService:
             "recommendations",
             "total_recommendations",
         )
+        self._catalog_query_service = CatalogQueryService()
 
     @staticmethod
     def _recommendation_to_summary_dict(recommendation: Recommendation, tag_map: Dict[str, str]) -> Dict[str, Any]:
         payload = recommendation.to_dict() if hasattr(recommendation, "to_dict") else {}
         payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in recommendation.tag_ids]
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     @staticmethod
@@ -107,6 +117,7 @@ class RecommendationAppService:
             "custom_order": recommendation.custom_order,
         }
         payload.update(RecommendationAppService._storage_fields_from_item(recommendation))
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     def _build_recommendation_persisted_metadata(
@@ -221,6 +232,42 @@ class RecommendationAppService:
         """获取推荐漫画列表 - 支持排序和评分筛选"""
         try:
             app_logger.info(f"[get_recommendation_list] sort_type={sort_type}, sort_order={sort_order}, min_score={min_score}, max_score={max_score}")
+            if paginate and not include_storage_usage:
+                tags = self._tag_repo.get_all()
+                tag_map = {t.id: t.name for t in tags}
+                base_serializer = self._recommendation_to_card_dict if summary_only else (
+                    lambda recommendation: self._recommendation_to_summary_dict(recommendation, tag_map)
+                )
+
+                def indexed_serializer(item: Dict[str, Any]) -> Dict[str, Any]:
+                    return base_serializer(Recommendation.from_dict(item))
+
+                indexed_payload = self._catalog_query_service.query_local_page(
+                    media_type="comic",
+                    source="preview",
+                    serializer=indexed_serializer,
+                    sort_type=sort_type,
+                    sort_order=sort_order,
+                    min_score=min_score,
+                    max_score=max_score,
+                    keyword=keyword,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    authors=authors,
+                    list_ids=list_ids,
+                    unread_only=unread_only,
+                    page=page,
+                    page_size=page_size,
+                    include_available_authors=include_available_authors,
+                )
+                if indexed_payload is not None:
+                    app_logger.info(
+                        f"通过 SQLite 索引获取推荐漫画分页列表成功，页 {indexed_payload['page']}/"
+                        f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个"
+                    )
+                    warm_cover_thumbnails_for_items(indexed_payload.get("items", []))
+                    return ServiceResult.ok(indexed_payload)
+
             recommendations = self._recommendation_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -275,9 +322,11 @@ class RecommendationAppService:
                 app_logger.info(
                     f"获取推荐分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个"
                 )
+                warm_cover_thumbnails_for_items(payload.get("items", []))
                 return ServiceResult.ok(payload)
 
             recommendation_list = [serializer(r) for r in recommendations]
+            warm_cover_thumbnails_for_items(recommendation_list)
             app_logger.info(f"获取推荐列表成功，共 {len(recommendation_list)} 个")
             return ServiceResult.ok(recommendation_list)
         except Exception as e:
@@ -426,6 +475,169 @@ class RecommendationAppService:
         except Exception as e:
             error_logger.error(f"更新推荐总页数失败: {e}")
             return ServiceResult.error("更新推荐总页数失败")
+
+    def check_recommendation_update(self, recommendation_id: str) -> ServiceResult:
+        """Check whether a preview-library comic has remote updates."""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation or recommendation.is_deleted:
+                return ServiceResult.error("推荐漫画不存在")
+
+            if self._is_teledrive_recommendation(recommendation):
+                total_page = normalize_total_page(recommendation.total_page, default=0)
+                cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+                return ServiceResult.ok({
+                    "recommendation_id": recommendation_id,
+                    "db_total_page": total_page,
+                    "cached_page_count": len(cached_pages),
+                    "remote_total_page": total_page,
+                    "has_update": False,
+                    "can_update": False,
+                    "reason": "teledrive_remote_stream"
+                }, "TeleDrive 推荐漫画无需在线更新")
+
+            platform_key, original_id, _manifest = split_prefixed_id(recommendation_id, media_type="comic")
+            if not platform_key or not original_id:
+                return ServiceResult.error("当前平台暂不支持在线更新")
+
+            platform_service = self._get_platform_service()
+            remote_meta = platform_service.get_album_by_id(platform_key, original_id)
+            remote_total_page = extract_remote_total_page(remote_meta)
+            if remote_total_page <= 0:
+                return ServiceResult.error("获取远程页数失败")
+
+            db_total_page = normalize_total_page(recommendation.total_page, default=0)
+            cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            cached_page_count = len(cached_pages)
+            expected_cached_pages = max(db_total_page, remote_total_page)
+            missing_cached_pages = (
+                expected_cached_pages > 0
+                and cached_page_count > 0
+                and cached_page_count < expected_cached_pages
+            )
+            payload = build_update_check_payload(
+                content_id=recommendation_id,
+                id_key="recommendation_id",
+                db_total_page=db_total_page,
+                known_page_count=cached_page_count,
+                remote_total_page=remote_total_page,
+                known_page_key="cached_page_count",
+            )
+            if missing_cached_pages:
+                payload["has_update"] = True
+                payload["update_reason"] = "missing_cached_pages"
+                payload["expected_cached_page_count"] = expected_cached_pages
+                payload["missing_cached_page_count"] = expected_cached_pages - cached_page_count
+
+            return ServiceResult.ok(
+                payload,
+                "推荐漫画更新检查完成",
+            )
+        except RuntimeError as e:
+            error_logger.error(f"检查推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("当前运行环境未启用第三方库")
+        except Exception as e:
+            error_logger.error(f"检查推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("检查推荐漫画更新失败")
+
+    def download_recommendation_update(self, recommendation_id: str, force: bool = False) -> ServiceResult:
+        """Download remote update into preview cache and refresh preview metadata."""
+        try:
+            recommendation = self._recommendation_repo.get_by_id(recommendation_id)
+            if not recommendation or recommendation.is_deleted:
+                return ServiceResult.error("推荐漫画不存在")
+
+            check_result = self.check_recommendation_update(recommendation_id)
+            if not check_result.success:
+                return check_result
+
+            check_data = check_result.data or {}
+            if not bool(check_data.get("can_update")):
+                return ServiceResult.error(check_data.get("reason") or "当前平台暂不支持在线更新")
+            if not bool(check_data.get("has_update")) and not force:
+                return ServiceResult.error("没有可下载的更新")
+
+            platform_key, original_id, manifest = split_prefixed_id(recommendation_id, media_type="comic")
+            if not platform_key or not original_id:
+                return ServiceResult.error("当前平台暂不支持在线更新")
+
+            platform_service = self._get_platform_service()
+            download_dir = build_platform_root_dir(
+                COMIC_RECOMMENDATION_CACHE_DIR,
+                manifest=manifest,
+                platform_name=platform_key,
+            )
+            download_kwargs = get_capability_default_params(manifest, "asset.bundle.fetch")
+            album_detail, success = platform_service.download_album(
+                platform_key,
+                original_id,
+                download_dir=download_dir,
+                show_progress=False,
+                **download_kwargs,
+            )
+            if not success:
+                return ServiceResult.error("下载更新失败")
+
+            local_pages = normalize_total_page(
+                album_detail.get("local_pages", album_detail.get("pages_count", 0)),
+                default=0,
+            )
+            if local_pages <= 0:
+                local_pages = len(recommendation_cache_manager.get_cached_pages(recommendation_id))
+
+            added = recommendation_cache_manager.add_to_cache(recommendation_id, local_pages)
+            cached_pages = recommendation_cache_manager.get_cached_pages(recommendation_id)
+            if not cached_pages:
+                if not added:
+                    error_logger.error(f"推荐漫画更新下载成功但缓存索引失败: {recommendation_id}")
+                return ServiceResult.error("下载成功但缓存目录识别失败，请重试")
+
+            remote_meta = platform_service.get_album_by_id(platform_key, original_id)
+            remote_total_page = extract_remote_total_page(remote_meta)
+            old_total_page = normalize_total_page(recommendation.total_page, default=0)
+            changed_fields = apply_remote_album_metadata(
+                recommendation,
+                remote_meta,
+                include_preview_pages=True,
+            )
+            local_page_count = len(cached_pages)
+            expected_page_count = max(
+                normalize_total_page(check_data.get("remote_total_page"), default=0),
+                remote_total_page,
+                old_total_page,
+            )
+            if expected_page_count > 0 and local_page_count < expected_page_count:
+                return ServiceResult.error(
+                    f"缓存仍不完整，当前 {local_page_count}/{expected_page_count} 页，请重试"
+                )
+
+            next_total_page = max(local_page_count, remote_total_page, old_total_page)
+            if next_total_page > 0 and normalize_total_page(recommendation.total_page) != next_total_page:
+                recommendation.total_page = next_total_page
+                recommendation.current_page = min(max(1, recommendation.current_page), local_page_count)
+                if "total_page" not in changed_fields:
+                    changed_fields.append("total_page")
+
+            if self._refresh_recommendation_persisted_metadata(recommendation):
+                changed_fields.append("storage_path")
+
+            if not self._recommendation_repo.save(recommendation):
+                return ServiceResult.error("保存推荐漫画更新失败")
+
+            return ServiceResult.ok({
+                "recommendation_id": recommendation_id,
+                "had_update": bool(check_data.get("has_update")),
+                "old_total_page": old_total_page,
+                "cached_page_count": local_page_count,
+                "remote_total_page": remote_total_page,
+                "changed_fields": changed_fields,
+            }, "推荐漫画更新完成")
+        except RuntimeError as e:
+            error_logger.error(f"下载推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("当前运行环境未启用第三方库")
+        except Exception as e:
+            error_logger.error(f"下载推荐漫画更新失败: {recommendation_id}, {e}")
+            return ServiceResult.error("下载推荐漫画更新失败")
 
     def _get_local_comic_dir(self, recommendation: Recommendation) -> Optional[str]:
         platform_key, original_id, manifest = split_prefixed_id(recommendation.id, media_type="comic")
@@ -889,10 +1101,27 @@ class RecommendationAppService:
     def search(self, keyword: str) -> ServiceResult:
         """搜索"""
         try:
-            results = self._recommendation_repo.search(keyword)
-            
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引搜索推荐漫画成功: 关键词 '{keyword}', 结果数量: {len(recommendation_list)}"
+                )
+                warm_cover_thumbnails_for_items(recommendation_list)
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.search(keyword)
             
             recommendation_list = []
             for r in results:
@@ -909,6 +1138,7 @@ class RecommendationAppService:
                     "list_ids": r.list_ids
                 })
             
+            warm_cover_thumbnails_for_items(recommendation_list)
             app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(recommendation_list)}")
             return ServiceResult.ok(recommendation_list)
         except Exception as e:
@@ -918,10 +1148,29 @@ class RecommendationAppService:
     def filter_by_tags(self, include_tag_ids: List[str], exclude_tag_ids: List[str]) -> ServiceResult:
         """根据标签筛选"""
         try:
-            results = self._recommendation_repo.filter_by_tags(include_tag_ids, exclude_tag_ids)
-            
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                include_tags=include_tag_ids,
+                exclude_tags=exclude_tag_ids,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引筛选推荐漫画成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, "
+                    f"结果数量: {len(recommendation_list)}"
+                )
+                warm_cover_thumbnails_for_items(recommendation_list)
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.filter_by_tags(include_tag_ids, exclude_tag_ids)
             
             recommendation_list = []
             for r in results:
@@ -938,6 +1187,7 @@ class RecommendationAppService:
                     "list_ids": r.list_ids
                 })
             
+            warm_cover_thumbnails_for_items(recommendation_list)
             app_logger.info(f"筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 结果数量: {len(recommendation_list)}")
             return ServiceResult.ok(recommendation_list)
         except Exception as e:
@@ -948,9 +1198,31 @@ class RecommendationAppService:
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         """多条件筛选：标签、作者、清单"""
         try:
-            results = self._recommendation_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                source="preview",
+                serializer=lambda item: self._recommendation_to_summary_dict(
+                    Recommendation.from_dict(item),
+                    tag_map,
+                ),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                recommendation_list = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选推荐漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(recommendation_list)}"
+                )
+                warm_cover_thumbnails_for_items(recommendation_list)
+                return ServiceResult.ok(recommendation_list)
+
+            results = self._recommendation_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             recommendation_list = []
             for r in results:
@@ -969,6 +1241,7 @@ class RecommendationAppService:
                     "list_ids": r.list_ids
                 })
             
+            warm_cover_thumbnails_for_items(recommendation_list)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(recommendation_list)}")
             return ServiceResult.ok(recommendation_list)
         except Exception as e:
@@ -986,15 +1259,24 @@ class RecommendationAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
 
-            success_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    for tag_id in validated_tag_ids:
-                        if tag_id not in recommendation.tag_ids:
-                            recommendation.tag_ids.append(tag_id)
-                    if self._recommendation_repo.save(recommendation):
-                        success_count += 1
+            def add_recommendation_tags(recommendation) -> None:
+                for tag_id in validated_tag_ids:
+                    if tag_id not in recommendation.tag_ids:
+                        recommendation.tag_ids.append(tag_id)
+
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                success_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    add_recommendation_tags,
+                )
+            else:
+                success_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        add_recommendation_tags(recommendation)
+                        if self._recommendation_repo.save(recommendation):
+                            success_count += 1
             
             app_logger.info(f"批量添加标签成功: {success_count}个推荐漫画")
             return ServiceResult.ok({"success_count": success_count})
@@ -1005,15 +1287,24 @@ class RecommendationAppService:
     def batch_remove_tags(self, recommendation_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         """批量移除标签"""
         try:
-            success_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    for tag_id in tag_ids:
-                        if tag_id in recommendation.tag_ids:
-                            recommendation.tag_ids.remove(tag_id)
-                    if self._recommendation_repo.save(recommendation):
-                        success_count += 1
+            def remove_recommendation_tags(recommendation) -> None:
+                for tag_id in tag_ids:
+                    if tag_id in recommendation.tag_ids:
+                        recommendation.tag_ids.remove(tag_id)
+
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                success_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    remove_recommendation_tags,
+                )
+            else:
+                success_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        remove_recommendation_tags(recommendation)
+                        if self._recommendation_repo.save(recommendation):
+                            success_count += 1
             
             app_logger.info(f"批量移除标签成功: {success_count}个推荐漫画")
             return ServiceResult.ok({"success_count": success_count})
@@ -1143,13 +1434,19 @@ class RecommendationAppService:
     def batch_move_to_trash(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量移动漫画到回收站"""
         try:
-            updated_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    recommendation.move_to_trash()
-                    if self._recommendation_repo.save(recommendation):
-                        updated_count += 1
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                updated_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    lambda recommendation: recommendation.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        recommendation.move_to_trash()
+                        if self._recommendation_repo.save(recommendation):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -1163,13 +1460,19 @@ class RecommendationAppService:
     def batch_restore_from_trash(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复漫画"""
         try:
-            updated_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
-                    recommendation.restore_from_trash()
-                    if self._recommendation_repo.save(recommendation):
-                        updated_count += 1
+            if hasattr(self._recommendation_repo, "update_many_by_ids"):
+                updated_count = self._recommendation_repo.update_many_by_ids(
+                    recommendation_ids,
+                    lambda recommendation: recommendation.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        recommendation.restore_from_trash()
+                        if self._recommendation_repo.save(recommendation):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -1214,13 +1517,18 @@ class RecommendationAppService:
     def batch_delete_permanently(self, recommendation_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
-            deleted_count = 0
-            for rec_id in recommendation_ids:
-                recommendation = self._recommendation_repo.get_by_id(rec_id)
-                if recommendation:
+            if hasattr(self._recommendation_repo, "get_many_by_ids") and hasattr(self._recommendation_repo, "delete_many_by_ids"):
+                for recommendation in self._recommendation_repo.get_many_by_ids(recommendation_ids):
                     self._cleanup_recommendation_files(recommendation)
-                if self._recommendation_repo.delete(rec_id):
-                    deleted_count += 1
+                deleted_count = self._recommendation_repo.delete_many_by_ids(recommendation_ids)
+            else:
+                deleted_count = 0
+                for rec_id in recommendation_ids:
+                    recommendation = self._recommendation_repo.get_by_id(rec_id)
+                    if recommendation:
+                        self._cleanup_recommendation_files(recommendation)
+                    if self._recommendation_repo.delete(rec_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")

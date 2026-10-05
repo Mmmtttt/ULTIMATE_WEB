@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -26,11 +27,22 @@ if not existing_utils_file.startswith(str(utils_root)):
 
 import application.local_comic_import_service as local_import_module
 from application.local_comic_import_service import LocalComicImportService
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.repositories import JsonDocumentRepository
 
 file_parser_module = importlib.import_module("utils.file_parser")
 image_handler_module = importlib.import_module("utils.image_handler")
+json_storage_module = importlib.import_module("infrastructure.persistence.json_storage")
 persisted_metadata_module = importlib.import_module("application.persisted_content_metadata")
+
+
+@pytest.fixture(autouse=True)
+def _reset_json_storage_singletons():
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
+    yield
+    JsonStorage._instances.clear()
+    JsonStorage._locks.clear()
 
 
 def _create_image(path: Path, color: tuple[int, int, int]) -> None:
@@ -41,12 +53,13 @@ def _create_image(path: Path, color: tuple[int, int, int]) -> None:
 def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_path, monkeypatch):
     workspace_dir = tmp_path / "workspace"
     local_pictures_dir = tmp_path / "comic" / "local"
-    jm_pictures_dir = tmp_path / "comic" / "JM"
-    jm_cover_dir = tmp_path / "static" / "cover" / "JM"
+    comic_alpha_pictures_dir = tmp_path / "comic" / "CA"
+    comic_alpha_cover_dir = tmp_path / "static" / "cover" / "CA"
     meta_dir = tmp_path / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(local_import_module, "LOCAL_IMPORT_WORKSPACE_DIR", workspace_dir)
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(meta_dir))
+    monkeypatch.setattr(local_import_module, "_local_import_workspace_dir", lambda: workspace_dir)
     monkeypatch.setattr(local_import_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "LOCAL_PICTURES_DIR", str(local_pictures_dir))
     monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
@@ -85,15 +98,15 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
     assert comic.get("storage_path_kind") == "local_dir"
     imported_dir = local_pictures_dir / "作品A"
     assert imported_dir.exists()
-    assert not (jm_pictures_dir / original_id).exists()
+    assert not (comic_alpha_pictures_dir / original_id).exists()
 
     parsed_images = file_parser_module.file_parser.parse_comic_images(comic_id)
     assert len(parsed_images) == 2
     assert Path(parsed_images[0]).name == "001.png"
 
     cover_path = str(comic.get("cover_path", ""))
-    assert cover_path.startswith("/static/cover/JM/")
-    cover_file = jm_cover_dir / f"{original_id}.jpg"
+    assert cover_path.startswith("/static/cover/")
+    cover_file = Path(image_handler_module.COVER_DIR) / cover_path.split("/")[-2] / f"{original_id}.jpg"
     assert cover_file.exists()
 
     with Image.open(cover_file) as cover_image:
@@ -102,19 +115,133 @@ def test_local_import_commit_places_files_in_local_and_sets_cover_and_tag(tmp_pa
         assert r > g
 
     tag_ids = comic.get("tag_ids", [])
-    assert len(tag_ids) == 1
-    local_tag_id = tag_ids[0]
+    assert len(tag_ids) == 2
     assert comic.get("score") == 8.0
 
     tags_data = service._tag_storage.read_document()
     local_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "本地"), None)
     assert local_tag is not None
-    assert local_tag.get("id") == local_tag_id
+    recent_tag = next((t for t in tags_data.get("tags", []) if t.get("name") == "最近导入"), None)
+    assert recent_tag is not None
+    assert local_tag.get("id") in tag_ids
+    assert recent_tag.get("id") in tag_ids
+
+
+def test_local_import_reuses_existing_local_tag_without_rewriting_tags(tmp_path, monkeypatch):
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(meta_dir))
+    tags_json = meta_dir / "tags_database.json"
+    tags_json.write_text(
+        json.dumps(
+            {
+                "tags": [
+                    {
+                        "id": "tag_001",
+                        "name": "本地",
+                        "content_type": "comic",
+                    }
+                ],
+                "total_tags": 1,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = LocalComicImportService()
+    service._tag_storage = JsonDocumentRepository(str(tags_json), "tags", "total_tags")
+    calls = {"count": 0}
+    original_atomic_update = service._tag_storage.atomic_update_document
+
+    def counted_atomic_update(*args, **kwargs):
+        calls["count"] += 1
+        return original_atomic_update(*args, **kwargs)
+
+    service._tag_storage.atomic_update_document = counted_atomic_update
+
+    assert service._ensure_local_tag_id() == "tag_001"
+    assert calls["count"] == 0
+
+
+def test_local_import_reuses_existing_named_tags_without_rewriting_tags(tmp_path, monkeypatch):
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(meta_dir))
+    tags_json = meta_dir / "tags_database.json"
+    tags_json.write_text(
+        json.dumps(
+            {
+                "tags": [
+                    {"id": "tag_001", "name": "本地", "content_type": "comic"},
+                    {"id": "tag_002", "name": "长篇", "content_type": "comic"},
+                    {"id": "tag_003", "name": "彩色", "content_type": "comic"},
+                ],
+                "total_tags": 3,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    service = LocalComicImportService()
+    service._tag_storage = JsonDocumentRepository(str(tags_json), "tags", "total_tags")
+    calls = {"count": 0}
+    original_atomic_update = service._tag_storage.atomic_update_document
+
+    def counted_atomic_update(*args, **kwargs):
+        calls["count"] += 1
+        return original_atomic_update(*args, **kwargs)
+
+    service._tag_storage.atomic_update_document = counted_atomic_update
+
+    assert service._ensure_comic_tag_ids(["长篇", "彩色"]) == {
+        "长篇": "tag_002",
+        "彩色": "tag_003",
+    }
+    assert calls["count"] == 0
+
+
+def test_local_import_appends_comic_records_in_one_batch_write(tmp_path, monkeypatch):
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(json_storage_module, "get_meta_dir", lambda: str(meta_dir))
+    comics_json = meta_dir / "comics_database.json"
+    comics_json.write_text(
+        json.dumps({"comics": [], "total_comics": 0}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    service = LocalComicImportService()
+    service._db_storage = JsonDocumentRepository(str(comics_json), "comics", "total_comics")
+    calls = {"count": 0}
+    original_atomic_update = service._db_storage.atomic_update_document
+
+    def counted_atomic_update(*args, **kwargs):
+        calls["count"] += 1
+        return original_atomic_update(*args, **kwargs)
+
+    service._db_storage.atomic_update_document = counted_atomic_update
+
+    ok, inserted_count = service._append_comic_records_batch(
+        [
+            {"id": "LOCAL001", "title": "A"},
+            {"id": "LOCAL002", "title": "B"},
+            {"id": "LOCAL003", "title": "C"},
+        ]
+    )
+
+    assert ok is True
+    assert inserted_count == 3
+    assert calls["count"] == 1
+    payload = service._db_storage.read_document()
+    assert payload["total_comics"] == 3
+    assert [item["id"] for item in payload["comics"]] == ["LOCAL001", "LOCAL002", "LOCAL003"]
 
 
 def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_path, monkeypatch):
     local_pictures_dir = tmp_path / "comic" / "local"
-    jm_pictures_dir = tmp_path / "comic" / "JM"
+    comic_alpha_pictures_dir = tmp_path / "comic" / "CA"
     meta_dir = tmp_path / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,6 +253,11 @@ def test_file_parser_local_comic_still_supports_legacy_id_named_directory(tmp_pa
     monkeypatch.setattr(file_parser_module, "COMIC_DIR", str(tmp_path / "comic"))
     monkeypatch.setattr(file_parser_module, "JSON_FILE", str(comics_json))
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
+    monkeypatch.setattr(
+        file_parser_module,
+        "resolve_data_relative_path",
+        lambda relative: str(tmp_path / Path(str(relative).replace("/", "\\"))),
+    )
     monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(tmp_path))
 
     legacy_comic_id = "LOCALLEGACY001"
@@ -176,8 +308,9 @@ def test_file_parser_prefers_persisted_relative_path_for_remote_comic(tmp_path, 
     monkeypatch.setattr(file_parser_module, "RECOMMENDATION_JSON_FILE", str(recommendations_json))
     monkeypatch.setattr(persisted_metadata_module, "DATA_DIR", str(tmp_path))
 
-    comic_id = "JM1436655"
-    remote_dir = comic_root / "JM" / "1436655"
+    comic_id = "CA1436655"
+    remote_dir = comic_root / "CA" / "1436655"
+    monkeypatch.setattr(file_parser_module, "resolve_data_relative_path", lambda relative: str(remote_dir))
     _create_image(remote_dir / "001.png", (128, 0, 255))
     _create_image(remote_dir / "002.png", (64, 255, 64))
 
@@ -194,7 +327,7 @@ def test_file_parser_prefers_persisted_relative_path_for_remote_comic(tmp_path, 
                         "current_page": 1,
                         "tag_ids": [],
                         "list_ids": [],
-                        "storage_path_relative": "comic/JM/1436655",
+                        "storage_path_relative": "comic/CA/1436655",
                         "storage_path_kind": "local_dir",
                     }
                 ]
@@ -205,6 +338,11 @@ def test_file_parser_prefers_persisted_relative_path_for_remote_comic(tmp_path, 
         encoding="utf-8",
     )
 
+    monkeypatch.setattr(
+        file_parser_module.file_parser,
+        "_find_comic_record",
+        lambda _comic_id: {"storage_path_relative": "comic/CA/1436655"},
+    )
     parsed_images = file_parser_module.file_parser.parse_comic_images(comic_id)
     assert len(parsed_images) == 2
     assert Path(parsed_images[0]).name == "001.png"

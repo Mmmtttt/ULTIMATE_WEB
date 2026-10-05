@@ -5,6 +5,9 @@
 from flask import Blueprint, request, jsonify, Response, make_response, send_file, stream_with_context
 from application.video_app_service import VideoAppService
 from application.actor_app_service import ActorAppService
+from application.catalog_query_service import CatalogQueryService
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
+from application.cover_versioning import annotate_cover_url
 from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
@@ -56,9 +59,36 @@ video_bp = Blueprint('video', __name__)
 video_service = VideoAppService()
 actor_service = ActorAppService()
 config_service = ConfigAppService()
+catalog_query_service = CatalogQueryService()
+LOCAL_VIDEO_STREAM_CHUNK_SIZE = 1024 * 256
+LOCAL_VIDEO_STREAM_OPEN_RANGE_SIZE = 1024 * 1024 * 8
+STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS = {
+    "access-control-allow-credentials",
+    "access-control-allow-headers",
+    "access-control-allow-methods",
+    "access-control-allow-origin",
+    "access-control-expose-headers",
+    "access-control-max-age",
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+}
 _preview_refresh_lock = threading.Lock()
 _preview_refresh_last_run = {}
 _PREVIEW_REFRESH_COOLDOWN_SECONDS = 180
+
+
+def _filter_stream_proxy_response_headers(headers):
+    if hasattr(headers, "items"):
+        iterator = headers.items()
+    else:
+        iterator = headers or []
+    return {
+        name: value
+        for name, value in iterator
+        if str(name).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS
+    }
 
 
 def success_response(data=None, msg="成功"):
@@ -125,9 +155,15 @@ def _build_play_sources(code: str):
 
     all_sources = []
     seen_keys = set()
+    default_plugin_id = ""
 
     # 1. Always try the default proxy client first (backward compat for tests & runtime)
     try:
+        proxy_manifests = list(
+            get_protocol_gateway().list_manifests(media_type="video", capability="playback.proxy.stream")
+        )
+        if proxy_manifests:
+            default_plugin_id = str(proxy_manifests[0].plugin_id or "").strip()
         client = _get_video_proxy_client()
         sources = client.build_sources(code)
         for src in (sources or []):
@@ -147,6 +183,8 @@ def _build_play_sources(code: str):
     gateway = get_protocol_gateway()
     manifests = list(gateway.list_manifests(media_type="video", capability="playback.sources.build"))
     for manifest in manifests:
+        if default_plugin_id and str(manifest.plugin_id or "").strip() == default_plugin_id:
+            continue
         try:
             client = gateway.get_client(manifest.plugin_id, proxy_base_path='/api/v1/video')
             sources = client.build_sources(code)
@@ -1016,10 +1054,16 @@ def import_video():
         data = request.json
         if not data:
             return error_response(400, "缺少参数")
+        app_logger.info(
+            "[video-import] start platform=%s target=%s",
+            str(data.get("platform") or "").strip() or "local",
+            str(data.get("target") or "home").strip(),
+        )
         
         result = video_service.import_video(data)
         if result.success:
             video_id = result.data.get("id") if isinstance(result.data, dict) else None
+            app_logger.info("[video-import] success video_id=%s", video_id or "")
             if video_id:
                 _schedule_video_asset_cache(
                     video_id=video_id,
@@ -1042,7 +1086,7 @@ def import_video():
         else:
             return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"导入视频失败: {e}")
+        error_logger.exception(f"导入视频失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -1054,10 +1098,13 @@ def batch_import():
         
         if not videos:
             return error_response(400, "缺少视频数据")
+
+        app_logger.info("[video-import] batch start count=%s", len(videos))
         
         result = video_service.batch_import_videos(videos)
         if result.success:
             imported_ids = result.data.get("imported_ids", []) if isinstance(result.data, dict) else []
+            app_logger.info("[video-import] batch success requested=%s imported=%s", len(videos), len(imported_ids))
             if imported_ids:
                 imported_id_set = {str(item_id) for item_id in imported_ids if item_id}
                 for video_item in videos:
@@ -1088,7 +1135,7 @@ def batch_import():
         else:
             return error_response(400, result.message)
     except Exception as e:
-        error_logger.error(f"批量导入失败: {e}")
+        error_logger.exception(f"批量导入失败: {e}")
         return error_response(500, "服务器内部错误")
 
 
@@ -1115,7 +1162,7 @@ def local_import_from_path():
         return error_response(500, "internal server error")
 
 
-@video_bp.route('/local-stream/<video_id>', methods=['GET'])
+@video_bp.route('/local-stream/<video_id>', methods=['GET', 'HEAD'])
 def stream_local_video(video_id):
     try:
         episode_index = request.args.get("episode", default=0, type=int) or 0
@@ -1123,18 +1170,69 @@ def stream_local_video(video_id):
         if not resolved or not os.path.isfile(resolved):
             return make_response("Not Found", 404)
 
+        file_size = os.path.getsize(resolved)
         guessed_type, _ = mimetypes.guess_type(resolved)
-        response = make_response(
-            send_file(
-                resolved,
-                mimetype=guessed_type or "application/octet-stream",
-                conditional=True,
-            )
-        )
-        response.headers["Accept-Ranges"] = "bytes"
-        return response
+        content_type = guessed_type or "video/mp4"
+
+        # Handle Range requests. Mobile browsers often probe with "bytes=0-";
+        # keep that first response bounded so playback can start quickly.
+        range_header = request.headers.get("Range")
+        if range_header:
+            range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+            if range_match:
+                start = int(range_match.group(1))
+                end_str = range_match.group(2)
+                if end_str:
+                    end = int(end_str)
+                else:
+                    end = start + LOCAL_VIDEO_STREAM_OPEN_RANGE_SIZE - 1
+                end = min(end, file_size - 1)
+
+                if start >= file_size or end < start:
+                    resp = make_response("", 416)
+                    resp.headers["Content-Range"] = f"bytes */{file_size}"
+                    return resp
+
+                chunk_size = end - start + 1
+
+                def generate_range():
+                    remaining = chunk_size
+                    with open(resolved, "rb") as f:
+                        f.seek(start)
+                        while remaining > 0:
+                            data = f.read(min(LOCAL_VIDEO_STREAM_CHUNK_SIZE, remaining))
+                            if not data:
+                                break
+                            remaining -= len(data)
+                            yield data
+
+                resp = Response(stream_with_context(generate_range()), status=206)
+                resp.headers["Content-Type"] = content_type
+                resp.headers["Content-Length"] = str(chunk_size)
+                resp.headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+                resp.headers["Accept-Ranges"] = "bytes"
+                return resp
+
+        # Full file response
+        resp = make_response()
+        resp.headers["Content-Type"] = content_type
+        resp.headers["Content-Length"] = str(file_size)
+        resp.headers["Accept-Ranges"] = "bytes"
+
+        # Stream the file directly instead of using Flask's send_file
+        # (send_file relies on wsgi.file_wrapper which may not work on Chaquopy/Android)
+        def generate():
+            with open(resolved, "rb") as f:
+                while True:
+                    chunk = f.read(LOCAL_VIDEO_STREAM_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        resp.response = generate()
+        return resp
     except Exception as e:
-        error_logger.error(f"stream local video failed: id={video_id}, error={e}")
+        error_logger.error(f"stream local video failed: id={video_id}, error={e}", exc_info=True)
         return make_response("Internal Server Error", 500)
 
 
@@ -2053,6 +2151,8 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "date",
         "cover_path",
         "cover_path_local",
+        "cover_url",
+        "cover_thumbnail_url",
         "actors",
         "source",
         "storage_size_bytes",
@@ -2062,6 +2162,7 @@ def _build_preview_video_card_dict(video_data: dict, *, tag_map: dict | None = N
         "storage_is_soft_ref",
         "storage_excluded_reason",
     }
+    annotate_cover_url(card)
     return {key: card.get(key) for key in allowed_keys}
 
 
@@ -2432,7 +2533,7 @@ def third_party_search():
             platforms_to_search = search_plugins
             is_multi_platform = False
         elif ',' in normalized_platform:
-            # 多平台逗号分隔，如 "hanime1,javbus"
+            # 多平台逗号分隔
             platform_names = [p.strip() for p in normalized_platform.split(',') if p.strip()]
             platforms_to_search = []
             for pname in platform_names:
@@ -2977,13 +3078,44 @@ def get_video_recommendation_list():
         page = request.args.get('page', default=1, type=int)
         page_size = request.args.get('page_size', default=24, type=int)
 
-        document_repo = _get_video_recommendation_document_repository()
-        db_data = document_repo.read_document()
-        videos = db_data.get('video_recommendations', [])
-
         tag_service = TagAppService()
         tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         tag_map = {t["id"]: t["name"] for t in tags}
+
+        def serialize_card(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _build_preview_video_card_dict(item, tag_map=tag_map)
+
+        def serialize_detail(item):
+            if include_storage_usage:
+                annotate_video_storage_usage([item], source="preview")
+            return _decorate_video_recommendation_item(item, tag_map=tag_map)
+
+        if paginate and not include_storage_usage:
+            indexed_payload = CatalogQueryService().query_local_page(
+                media_type="video",
+                source="preview",
+                serializer=serialize_card if summary_only else serialize_detail,
+                sort_type=sort_type or "create_time",
+                sort_order=sort_order,
+                min_score=min_score,
+                max_score=max_score,
+                keyword=keyword,
+                include_tags=include_tag_ids,
+                exclude_tags=exclude_tag_ids,
+                authors=authors,
+                list_ids=list_ids,
+                page=page,
+                page_size=page_size,
+                include_available_authors=include_available_authors,
+            )
+            if indexed_payload is not None:
+                return success_response(indexed_payload)
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
+        videos = db_data.get('video_recommendations', [])
 
         filtered_videos = []
         for video in videos:
@@ -3023,16 +3155,6 @@ def get_video_recommendation_list():
             sort_type or 'create_time',
             sort_order,
         )
-
-        def serialize_card(item):
-            if include_storage_usage:
-                annotate_video_storage_usage([item], source="preview")
-            return _build_preview_video_card_dict(item, tag_map=tag_map)
-
-        def serialize_detail(item):
-            if include_storage_usage:
-                annotate_video_storage_usage([item], source="preview")
-            return _decorate_video_recommendation_item(item, tag_map=tag_map)
 
         if paginate:
             payload = build_paginated_payload(
@@ -3077,7 +3199,7 @@ def get_video_recommendation_detail():
         video_id = request.args.get('video_id')
         if not video_id:
             return error_response(400, "缺少参数: video_id")
-        
+
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
@@ -3552,6 +3674,23 @@ def search_video_recommendations():
         tag_service = TagAppService()
         tags = tag_service.get_tag_list(ContentType.VIDEO).data or []
         tag_map = {t["id"]: t["name"] for t in tags}
+
+        indexed_payload = catalog_query_service.query_local_all(
+            media_type="video",
+            source="preview",
+            serializer=lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map),
+            keyword=keyword,
+        )
+        if indexed_payload is not None:
+            app_logger.info(
+                f"通过 SQLite 索引搜索推荐视频成功: 关键词 {keyword}, 结果数量: {len(indexed_payload['items'])}"
+            )
+            warm_cover_thumbnails_for_items(indexed_payload["items"])
+            return success_response(indexed_payload["items"])
+
+        document_repo = _get_video_recommendation_document_repository()
+        db_data = document_repo.read_document()
+        videos = db_data.get('video_recommendations', [])
         
         results = []
         for video in videos:
@@ -3565,6 +3704,7 @@ def search_video_recommendations():
                     _decorate_video_recommendation_item(video, tag_map=tag_map)
                 )
         
+        warm_cover_thumbnails_for_items(results)
         return success_response(results)
     except Exception as e:
         error_logger.error(f"搜索推荐视频失败: {e}")
@@ -3587,6 +3727,24 @@ def filter_video_recommendations():
         tag_repo = TagJsonRepository()
         tags = tag_repo.get_all()
         tag_map = {t.id: t.name for t in tags}
+
+        indexed_payload = catalog_query_service.query_local_all(
+            media_type="video",
+            source="preview",
+            serializer=lambda item: _decorate_video_recommendation_item(item, tag_map=tag_map),
+            include_tags=include_tag_ids,
+            exclude_tags=exclude_tag_ids,
+            authors=authors,
+            list_ids=list_ids,
+        )
+        if indexed_payload is not None:
+            results = indexed_payload["items"]
+            app_logger.info(
+                f"通过 SQLite 索引筛选推荐视频成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, "
+                f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+            )
+            warm_cover_thumbnails_for_items(results)
+            return success_response(results)
         
         if authors or list_ids:
             videos = video_repo.filter_multi(
@@ -3606,6 +3764,7 @@ def filter_video_recommendations():
 
         results = _decorate_video_recommendation_items(results, tag_map=tag_map)
 
+        warm_cover_thumbnails_for_items(results)
         app_logger.info(f"视频推荐筛选成功: 包含 {include_tag_ids}, 排除 {exclude_tag_ids}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
         return success_response(results)
     except Exception as e:
@@ -3622,6 +3781,7 @@ def get_video_recommendation_play_urls(video_id):
     try:
         playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
         remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
+        app_logger.info("[video-play] start scope=recommendation video_id=%s source=%s provider=%s", video_id, playback_source, remote_provider or "auto")
         document_repo = _get_video_recommendation_document_repository()
         db_data = document_repo.read_document()
         videos = db_data.get('video_recommendations', [])
@@ -3640,11 +3800,13 @@ def get_video_recommendation_play_urls(video_id):
 
         remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
         if remote_result.success:
+            app_logger.info("[video-play] success scope=recommendation video_id=%s provider=%s", video_id, remote_provider or "auto")
             return success_response(remote_result.data)
+        app_logger.warning("[video-play] unavailable scope=recommendation video_id=%s reason=%s", video_id, remote_result.message)
         return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
-        error_logger.error(f"获取播放链接失败: {e}")
+        error_logger.exception("获取推荐视频播放链接失败: video_id=%s error=%s", video_id, e)
         return error_response(500, "服务器内部错误")
 
 @video_bp.route('/<video_id>/play-urls', methods=['GET'])
@@ -3654,6 +3816,7 @@ def get_video_play_urls(video_id):
         playback_source = _normalize_playback_source_arg(request.args.get("playback_source", ""))
         remote_provider = _normalize_remote_provider_arg(request.args.get("remote_provider", ""))
         platform = str(request.args.get("platform") or "").strip()
+        app_logger.info("[video-play] start scope=local_or_remote video_id=%s source=%s provider=%s platform=%s", video_id, playback_source, remote_provider or "auto", platform or "local")
         result = video_service.get_video_detail(video_id)
         if not result.success or not result.data:
             # 如果本地找不到视频但有 platform 参数，尝试第三方渠道
@@ -3673,6 +3836,7 @@ def get_video_play_urls(video_id):
         if playback_source == "local":
             local_sources = _build_local_video_sources(video)
             if local_sources:
+                app_logger.info("[video-play] success scope=local video_id=%s episodes=%s", video_id, len(local_sources))
                 local_provider_groups = [
                     _build_provider_group(
                         key="local",
@@ -3697,11 +3861,14 @@ def get_video_play_urls(video_id):
         if playback_source == "remote":
             remote_result = _resolve_remote_video_sources(video_id, video, remote_provider=remote_provider)
             if remote_result.success:
+                app_logger.info("[video-play] success scope=remote video_id=%s provider=%s", video_id, remote_provider or "auto")
                 return success_response(remote_result.data)
+            app_logger.warning("[video-play] unavailable scope=remote video_id=%s reason=%s", video_id, remote_result.message)
             return error_response(400, remote_result.message or "远程播放源不可用")
 
         local_sources = _build_local_video_sources(video)
         if local_sources:
+            app_logger.info("[video-play] success scope=local_fallback video_id=%s episodes=%s", video_id, len(local_sources))
             local_provider_groups = [
                 _build_provider_group(
                     key="local",
@@ -3733,11 +3900,13 @@ def get_video_play_urls(video_id):
 
         remote_result = _resolve_remote_video_sources(video_id, video, remote_provider="")
         if remote_result.success:
+            app_logger.info("[video-play] success scope=third_party video_id=%s provider=%s", video_id, remote_provider or "auto")
             return success_response(remote_result.data)
+        app_logger.warning("[video-play] unavailable scope=third_party video_id=%s reason=%s", video_id, remote_result.message)
         return error_response(400, remote_result.message or "远程播放源不可用")
         
     except Exception as e:
-        error_logger.error(f"获取播放链接失败: {e}")
+        error_logger.exception("获取视频播放链接失败: video_id=%s error=%s", video_id, e)
         return error_response(500, "服务器内部错误")
 
 
@@ -3752,7 +3921,11 @@ def proxy_video_request(domain, path):
             query_string=request.query_string.decode(),
             incoming_referer=request.headers.get('Referer', '')
         )
-        return Response(proxy_result.body, status=proxy_result.status_code, headers=proxy_result.headers)
+        return Response(
+            proxy_result.body,
+            status=proxy_result.status_code,
+            headers=_filter_stream_proxy_response_headers(proxy_result.headers),
+        )
         
     except Exception as e:
         error_logger.error(f"代理请求失败: {e}")
@@ -3886,17 +4059,24 @@ def proxy_video_request2():
         # 兼容非流式响应（如测试 mock 的 SimpleNamespace 不含 iter_content）
         if hasattr(proxy_result, "iter_content"):
             def generate():
-                for chunk in proxy_result.iter_content(chunk_size=65536):
-                    if chunk:
-                        yield chunk
+                try:
+                    for chunk in proxy_result.iter_content(chunk_size=262144):
+                        if chunk:
+                            yield chunk
+                finally:
+                    close = getattr(proxy_result, "close", None)
+                    if callable(close):
+                        close()
 
             resp_headers = {}
             if hasattr(proxy_result.headers, "items"):
                 for n, v in proxy_result.headers.items():
-                    resp_headers[n] = v
+                    if str(n).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS:
+                        resp_headers[n] = v
             else:
                 for n, v in proxy_result.headers:
-                    resp_headers[n] = v
+                    if str(n).lower() not in STREAM_PROXY_EXCLUDED_RESPONSE_HEADERS:
+                        resp_headers[n] = v
 
             return Response(
                 stream_with_context(generate()),
@@ -3907,12 +4087,8 @@ def proxy_video_request2():
         # fallback: 非流式响应（旧协议/测试 mock），使用 make_response
         response = make_response(proxy_result.content)
         response.status_code = proxy_result.status_code
-        if hasattr(proxy_result.headers, "items"):
-            for n, v in proxy_result.headers.items():
-                response.headers[n] = v
-        else:
-            for n, v in proxy_result.headers:
-                response.headers[n] = v
+        for n, v in _filter_stream_proxy_response_headers(proxy_result.headers).items():
+            response.headers[n] = v
         return response
     except ValueError as e:
         return Response(str(e), status=400)

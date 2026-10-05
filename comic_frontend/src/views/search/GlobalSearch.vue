@@ -19,26 +19,6 @@
 
       <div class="search-subtitle">仅搜索全网内容，输入关键词后点击搜索或按回车触发。</div>
 
-      <!-- 平台选择器（多选） -->
-      <div v-if="platformOptions.length > 0" class="platform-selector">
-        <div
-          class="platform-chip"
-          :class="{ active: selectedPlatforms.length === 0 }"
-          @click="handlePlatformChange('all')"
-        >
-          全部
-        </div>
-        <div
-          v-for="opt in platformOptions"
-          :key="opt.platform"
-          class="platform-chip"
-          :class="{ active: selectedPlatforms.includes(opt.platform) }"
-          @click="handlePlatformChange(opt.platform)"
-        >
-          {{ opt.label }}
-        </div>
-      </div>
-
       <div v-if="isVideoMode" class="tag-search-entry">
         <van-button size="small" plain type="primary" icon="filter-o" @click="goToTagSearch">
           标签搜索
@@ -46,7 +26,7 @@
       </div>
     </div>
 
-    <div class="search-content">
+    <div ref="searchContentRef" class="search-content" @scroll.passive="saveScrollTop">
       <van-loading v-if="loading" class="loading-center" />
 
       <EmptyState
@@ -107,9 +87,9 @@
         <div v-if="hasMore" class="load-more">
           <div v-if="paginationInfo" class="pagination-info">
             <template v-if="isVideoMode">
-              <span class="platform-info">平台: {{ paginationInfo.platform.toUpperCase() }}</span>
-              <span class="page-info">第 {{ paginationInfo.page }} 页</span>
-              <span v-if="paginationInfo.total_pages" class="total-pages">/ {{ paginationInfo.total_pages }} 页</span>
+              <span v-if="paginationInfo?.platform" class="platform-info">平台: {{ String(paginationInfo.platform).toUpperCase() }}</span>
+              <span class="page-info">第 {{ paginationInfo?.page || 1 }} 页</span>
+              <span v-if="paginationInfo?.total_pages" class="total-pages">/ {{ paginationInfo.total_pages }} 页</span>
             </template>
             <template v-else>
               <div v-for="(info, plat) in paginationInfo" :key="plat" class="platform-item">
@@ -136,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, onActivated, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useModeStore, useComicStore, useImportTaskStore, useVideoStore, useGlobalSearchStore } from '@/stores'
@@ -172,12 +152,14 @@ const {
   searchExecuted,
   selectedPlatforms,
   platformOptions,
+  scrollTop,
 } = storeToRefs(searchStore)
 
 // 临时 UI 状态 — 组件销毁即消失
 const loading = ref(false)
 const loadingMore = ref(false)
 const showImportSheet = ref(false)
+const searchContentRef = ref(null)
 
 const isVideoMode = computed(() => modeStore.isVideoMode)
 
@@ -346,12 +328,12 @@ async function confirmImport(target) {
     })
 
     let taskCount = 0
-    for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+    for (const [platform, itemIds] of Object.entries(itemsByPlatform)) {
       const params = {
         import_type: 'by_list',
         target,
         platform: isVideoMode.value ? String(platform).toUpperCase() : platform,
-        comic_ids: comicIds,
+        item_ids: itemIds,
         content_type: isVideoMode.value ? 'video' : 'comic'
       }
       const created = await importTaskStore.createImportTask(params)
@@ -377,6 +359,10 @@ async function handleSearch() {
   hasMore.value = false
   selectedIds.value = []
   paginationInfo.value = null
+  searchStore.setScrollTop(0)
+  if (searchContentRef.value) {
+    searchContentRef.value.scrollTop = 0
+  }
 
   if (!normalizedKeyword) {
     return
@@ -390,6 +376,21 @@ async function handleSearch() {
   } finally {
     loading.value = false
   }
+}
+
+function saveScrollTop() {
+  const el = searchContentRef.value
+  if (!el) return
+  searchStore.setScrollTop(Number(el.scrollTop) || 0)
+}
+
+async function restoreScrollTop() {
+  await nextTick()
+  const el = searchContentRef.value
+  if (!el) return
+  const top = Number(scrollTop.value)
+  if (!Number.isFinite(top) || top <= 0) return
+  el.scrollTop = top
 }
 
 async function searchRemote(searchKeyword) {
@@ -442,7 +443,11 @@ async function loadMore() {
       const nextPage = currentPage.value + 1
       const res = await videoStore.thirdPartySearch(normalizedKeyword, platform, nextPage, 40)
       if (res.results) {
-        searchStore.appendResults(res.results, res.page, res.has_more, res.platform_info)
+        searchStore.appendResults(res.results, res.page, res.has_more, {
+          platform: res.platform || 'all',
+          page: res.page || nextPage,
+          total_pages: res.total_pages || 1,
+        })
       }
       return
     }
@@ -476,9 +481,11 @@ async function loadPlatformOptions(mediaType) {
 // 监听视频/漫画模式切换：模式变化时清空数据、刷新平台列表
 watch(isVideoMode, async (newMode, oldMode) => {
   const modeChanged = oldMode !== undefined && newMode !== oldMode
-  if (modeChanged) {
+  const searchStateBelongsToCurrentMode = searchStore.videoMode === newMode
+  if (modeChanged || !searchStateBelongsToCurrentMode) {
     // 模式真正切换了 → 清空结果和平台选择
     searchStore.clearResults()
+    searchStore.setSearchState({ videoMode: newMode })
     selectedPlatforms.value = []
     platformOptions.value = []
     await loadPlatformOptions(newMode ? 'video' : 'comic')
@@ -489,8 +496,11 @@ watch(isVideoMode, async (newMode, oldMode) => {
 }, { immediate: true })
 
 onMounted(() => {
-  // onMounted 不再处理 —— watch 的 immediate: true 已覆盖
+  restoreScrollTop()
 })
+
+onActivated(restoreScrollTop)
+onBeforeUnmount(saveScrollTop)
 </script>
 
 <style scoped>
@@ -499,6 +509,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   color: var(--text-primary);
+  width: 100%;
+  margin: 0 auto;
 }
 
 .search-header {
@@ -532,6 +544,10 @@ onMounted(() => {
   background: transparent;
 }
 
+.search-input-wrapper :deep(.van-search__content) {
+  background: var(--surface-1);
+}
+
 .search-action-btn {
   border: 0;
   background: transparent;
@@ -545,45 +561,6 @@ onMounted(() => {
   padding: 0 14px 10px;
   font-size: 12px;
   color: var(--text-tertiary);
-}
-
-.platform-selector {
-  display: flex;
-  gap: 8px;
-  padding: 0 14px 10px;
-  overflow-x: auto;
-  flex-shrink: 0;
-  scrollbar-width: none;
-}
-
-.platform-selector::-webkit-scrollbar {
-  display: none;
-}
-
-.platform-chip {
-  flex-shrink: 0;
-  padding: 4px 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  background: var(--surface-3);
-  border: 1px solid var(--border-soft);
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.platform-chip:hover {
-  border-color: var(--brand-400);
-  color: var(--brand-500);
-}
-
-.platform-chip.active {
-  background: var(--brand-500);
-  border-color: var(--brand-500);
-  color: #fff;
 }
 
 .tag-search-entry {
@@ -660,7 +637,7 @@ onMounted(() => {
 
 .floating-import-bar {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
@@ -853,6 +830,10 @@ onMounted(() => {
 }
 
 @media (min-width: 768px) {
+  .search-page {
+    max-width: min(1520px, calc(100vw - 28px));
+  }
+
   .search-header {
     margin-inline: 14px;
   }

@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -36,18 +37,33 @@ DEFAULT_STAGED_DIR = ROOT_DIR / "output" / "multi_target"
 DEFAULT_PACKAGES_DIR = ROOT_DIR / "output" / "packages"
 DEFAULT_TARGETS_CONFIG = ROOT_DIR / "build" / "targets.json"
 DEFAULT_PACKAGERS_CONFIG = ROOT_DIR / "build" / "packagers.json"
+DEFAULT_RESIDENT_DEPENDENCY_POOL = ROOT_DIR / "build" / "resident_dependency_pools.json"
 DEFAULT_APP_VERSION = "0.0.0"
 DEFAULT_WINDOWS_FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+PROJECT_PLUGINS_DIR = ROOT_DIR / "plugins"
 HOST_OVERLAY_FILENAME = "ultimate-host.json"
 MOBILE_PROTOCOL_SNAPSHOT_FILENAME = "mobile_protocol_snapshot.json"
 SNAPSHOT_PROVIDER_ENTRYPOINT = "protocol.snapshot_provider:MetadataOnlyProvider"
 PLUGIN_PACKAGE_MODE_EXTERNAL = "external"
-PLUGIN_PACKAGE_MODE_BUNDLED = "bundled"
-PLUGIN_PACKAGE_MODES = (
-    PLUGIN_PACKAGE_MODE_EXTERNAL,
-    PLUGIN_PACKAGE_MODE_BUNDLED,
-)
+PLUGIN_PACKAGE_MODES = (PLUGIN_PACKAGE_MODE_EXTERNAL,)
 DEFAULT_PLUGIN_PACKAGE_MODE = PLUGIN_PACKAGE_MODE_EXTERNAL
+PLUGIN_PACKAGE_EXCLUDES_ENV = "ULTIMATE_PACKAGE_THIRD_PARTY_EXCLUDES"
+PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES = (
+    PLUGIN_PACKAGE_EXCLUDES_ENV,
+    "THIRD_PARTY_PACKAGE_EXCLUDES",
+)
+ANDROID_THIRD_PARTY_MODE_DISABLED = "disabled"
+ANDROID_THIRD_PARTY_MODE_EXTERNAL = "external"
+ANDROID_THIRD_PARTY_MODE_SELECTED = "selected"
+ANDROID_THIRD_PARTY_MODE_SUPPORTED = "supported"
+ANDROID_THIRD_PARTY_MODE_ALL = "all"
+ANDROID_THIRD_PARTY_MODES = (
+    ANDROID_THIRD_PARTY_MODE_DISABLED,
+    ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+    ANDROID_THIRD_PARTY_MODE_SELECTED,
+    ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+    ANDROID_THIRD_PARTY_MODE_ALL,
+)
 DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES = (
     "email",
     "html",
@@ -150,14 +166,458 @@ def normalize_plugin_package_mode(raw: str, default: str = DEFAULT_PLUGIN_PACKAG
         "external_plugins": PLUGIN_PACKAGE_MODE_EXTERNAL,
         "hotplug": PLUGIN_PACKAGE_MODE_EXTERNAL,
         "dynamic": PLUGIN_PACKAGE_MODE_EXTERNAL,
-        "compiled": PLUGIN_PACKAGE_MODE_BUNDLED,
-        "embedded": PLUGIN_PACKAGE_MODE_BUNDLED,
-        "builtin": PLUGIN_PACKAGE_MODE_BUNDLED,
     }
     mode = aliases.get(mode, mode)
     if mode not in PLUGIN_PACKAGE_MODES:
         raise ValueError(f"unsupported plugin package mode: {raw}")
     return mode
+
+
+def normalize_third_party_exclude_names(raw: object) -> List[str]:
+    values: List[str] = []
+    if isinstance(raw, str):
+        values = re.split(r"[,;\n]+", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item or "") for item in raw]
+    normalized: List[str] = []
+    seen = set()
+    for item in values:
+        text = str(item or "").strip().strip("/\\").lower()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def get_third_party_exclude_names() -> List[str]:
+    for env_name in PLUGIN_PACKAGE_EXCLUDES_ENV_ALIASES:
+        raw = os.environ.get(env_name)
+        if raw is not None:
+            return normalize_third_party_exclude_names(raw)
+    return []
+
+
+def is_third_party_dir_excluded(path: Path, third_party_root: Path, excludes: Optional[List[str]] = None) -> bool:
+    exclude_names = excludes if excludes is not None else get_third_party_exclude_names()
+    if not exclude_names:
+        return False
+    try:
+        relative = path.resolve().relative_to(third_party_root.resolve())
+    except ValueError:
+        relative = path.relative_to(third_party_root)
+    parts = [part.strip().lower() for part in relative.parts if str(part).strip()]
+    return bool(parts and parts[0] in set(exclude_names))
+
+
+def backend_source_copy_ignore(src: str, names: List[str]) -> set[str]:
+    excludes = set(get_third_party_exclude_names())
+    if not excludes:
+        return set()
+    path = Path(src)
+    if path.name != "third_party":
+        return set()
+    return {name for name in names if name.strip().lower() in excludes}
+
+
+def parse_config_bool(raw: object, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disable", "disabled"}:
+        return False
+    return default
+
+
+def normalize_android_third_party_mode(packager_cfg: Dict) -> str:
+    if not parse_config_bool(packager_cfg.get("android_backend_enable_third_party"), default=False):
+        return ANDROID_THIRD_PARTY_MODE_DISABLED
+    mode = str(packager_cfg.get("android_backend_third_party_mode") or "").strip().lower()
+    if not mode:
+        mode = ANDROID_THIRD_PARTY_MODE_SELECTED if normalize_android_plugin_selectors(packager_cfg) else ANDROID_THIRD_PARTY_MODE_ALL
+    aliases = {
+        "none": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "off": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "false": ANDROID_THIRD_PARTY_MODE_DISABLED,
+        "external": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "external_plugins": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "extension": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "extensions": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "hotplug": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "dynamic": ANDROID_THIRD_PARTY_MODE_EXTERNAL,
+        "include": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "include_only": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "allowlist": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "whitelist": ANDROID_THIRD_PARTY_MODE_SELECTED,
+        "manifest": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+        "supported_only": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+        "auto": ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+        "full": ANDROID_THIRD_PARTY_MODE_ALL,
+        "enabled": ANDROID_THIRD_PARTY_MODE_ALL,
+        "true": ANDROID_THIRD_PARTY_MODE_ALL,
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ANDROID_THIRD_PARTY_MODES:
+        raise ValueError(f"unsupported android third-party mode: {mode}")
+    return mode
+
+
+def normalize_android_plugin_selectors(packager_cfg: Dict) -> List[str]:
+    values: List[str] = []
+    for key in (
+        "android_backend_plugins",
+        "android_backend_included_plugins",
+        "android_backend_plugin_dirs",
+    ):
+        raw = packager_cfg.get(key)
+        if isinstance(raw, str):
+            values.extend(re.split(r"[,;\n]+", raw))
+        elif isinstance(raw, (list, tuple, set)):
+            values.extend([str(item or "") for item in raw])
+
+    normalized: List[str] = []
+    seen = set()
+    for item in values:
+        text = str(item or "").strip().strip("/\\")
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(text)
+    return normalized
+
+
+def _read_plugin_id_from_manifest(manifest_path: Path) -> str:
+    try:
+        payload = load_json(manifest_path)
+        plugin = dict(payload.get("plugin") or {})
+        return str(plugin.get("id") or "").strip()
+    except Exception:
+        return ""
+
+
+def _manifest_android_packaging(payload: Dict[str, Any]) -> Dict[str, Any]:
+    packaging = payload.get("packaging")
+    if not isinstance(packaging, dict):
+        return {}
+    android_packaging = packaging.get("android")
+    if not isinstance(android_packaging, dict):
+        return {}
+    return android_packaging
+
+
+def _manifest_android_enabled(payload: Dict[str, Any]) -> bool:
+    return parse_config_bool(_manifest_android_packaging(payload).get("enabled"), default=False)
+
+
+def _is_android_supported_plugin_root(plugin_root: Path) -> bool:
+    for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+        try:
+            payload = load_json(manifest_path)
+        except Exception:
+            continue
+        if _manifest_android_enabled(payload):
+            return True
+    return False
+
+
+def _discover_third_party_plugin_dirs(third_party_root: Path) -> List[Path]:
+    if not third_party_root.exists():
+        return []
+    excluded = set(get_third_party_exclude_names())
+    roots: List[Path] = []
+    for child in sorted(third_party_root.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        if child.name.strip().lower() in excluded:
+            continue
+        if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
+            roots.append(child)
+    return roots
+
+
+def resolve_android_plugin_roots(third_party_root: Path, packager_cfg: Dict) -> List[Path]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    if mode == ANDROID_THIRD_PARTY_MODE_DISABLED or not third_party_root.exists():
+        return []
+
+    all_roots = _discover_third_party_plugin_dirs(third_party_root)
+    if mode == ANDROID_THIRD_PARTY_MODE_ALL:
+        return all_roots
+    if mode in {ANDROID_THIRD_PARTY_MODE_SUPPORTED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
+        return [root for root in all_roots if _is_android_supported_plugin_root(root)]
+
+    selectors = normalize_android_plugin_selectors(packager_cfg)
+    selector_keys = {item.lower() for item in selectors}
+    matched_selectors: set[str] = set()
+    selected_roots: List[Path] = []
+    selected_seen: set[Path] = set()
+
+    for root in all_roots:
+        root_keys = {root.name.lower(), root.relative_to(third_party_root).as_posix().lower()}
+        manifest_ids: set[str] = set()
+        for manifest_path in sorted(root.rglob("ultimate-plugin.json")):
+            plugin_id = _read_plugin_id_from_manifest(manifest_path)
+            if plugin_id:
+                manifest_ids.add(plugin_id.lower())
+        keys = root_keys | manifest_ids
+        if not selector_keys.intersection(keys):
+            continue
+        matched_selectors.update(selector_keys.intersection(keys))
+        if root not in selected_seen:
+            selected_seen.add(root)
+            selected_roots.append(root)
+
+    missing = [item for item in selectors if item.lower() not in matched_selectors]
+    if missing:
+        raise ValueError(
+            "android selected third-party plugin(s) not found: "
+            + ", ".join(missing)
+            + f" under {third_party_root}"
+        )
+    return selected_roots
+
+
+def collect_plugin_manifest_payloads(plugin_roots: List[Path]) -> List[Dict[str, Any]]:
+    payloads: List[Dict[str, Any]] = []
+    for plugin_root in plugin_roots:
+        for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+            try:
+                payloads.append(load_json(manifest_path))
+            except Exception:
+                continue
+    return payloads
+
+
+def collect_android_manifest_payloads(third_party_root: Path, packager_cfg: Dict) -> List[Dict[str, Any]]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    payloads = collect_plugin_manifest_payloads(resolve_android_plugin_roots(third_party_root, packager_cfg))
+    if mode in {ANDROID_THIRD_PARTY_MODE_SUPPORTED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
+        return [payload for payload in payloads if _manifest_android_enabled(payload)]
+    return payloads
+
+
+def collect_android_packaged_plugin_ids(third_party_root: Path, packager_cfg: Dict) -> List[str]:
+    plugin_ids: List[str] = []
+    seen = set()
+    for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+        plugin = dict(payload.get("plugin") or {})
+        plugin_id = str(plugin.get("id") or "").strip()
+        key = plugin_id.lower()
+        if plugin_id and key not in seen:
+            seen.add(key)
+            plugin_ids.append(plugin_id)
+    return plugin_ids
+
+
+def normalize_pip_install_entry(raw: object) -> Optional[List[str]]:
+    if isinstance(raw, str):
+        text = raw.strip()
+        return [text] if text else None
+    if isinstance(raw, dict):
+        raw = raw.get("args") or raw.get("install") or raw.get("requirement")
+    if isinstance(raw, (list, tuple)):
+        args = [str(item or "").strip() for item in raw if str(item or "").strip()]
+        return args or None
+    return None
+
+
+def merge_pip_install_entries(*entry_groups: object) -> List[List[str]]:
+    merged: List[List[str]] = []
+    seen = set()
+    for entries in entry_groups:
+        if isinstance(entries, (str, dict)):
+            iterable = [entries]
+        else:
+            iterable = list(entries or [])
+        for entry in iterable:
+            normalized = normalize_pip_install_entry(entry)
+            if not normalized:
+                continue
+            key = tuple(normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+    return merged
+
+
+def collect_android_pip_options(packager_cfg: Dict, source_backend_dir: Path) -> List[List[str]]:
+    entries = merge_pip_install_entries(
+        packager_cfg.get("embed_backend_pip_options") or [],
+        packager_cfg.get("android_backend_pip_options") or [],
+    )
+
+    third_party_root = source_backend_dir / "third_party"
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+            android_packaging = _manifest_android_packaging(payload)
+            entries = merge_pip_install_entries(entries, android_packaging.get("pip_options") or [])
+    return entries
+
+
+def load_resident_dependency_requirements(packager_cfg: Dict, platform_key: str) -> List[str]:
+    """Load platform runtime dependencies independently of discovered plugins."""
+    configured_path = str(packager_cfg.get("resident_dependency_pool") or "").strip()
+    pool_path = Path(configured_path) if configured_path else DEFAULT_RESIDENT_DEPENDENCY_POOL
+    if not pool_path.is_absolute():
+        pool_path = ROOT_DIR / pool_path
+    if not pool_path.is_file():
+        return []
+    try:
+        payload = load_json(pool_path)
+    except Exception as exc:
+        raise ValueError(f"invalid resident dependency pool: {pool_path}: {exc}") from exc
+    pools = payload.get("pools") if isinstance(payload, dict) else None
+    if not isinstance(pools, dict):
+        raise ValueError(f"invalid resident dependency pool format: {pool_path}")
+    requirements = pools.get(platform_key) or []
+    if not isinstance(requirements, list):
+        raise ValueError(f"resident dependency pool must be a list: {pool_path} ({platform_key})")
+    return _normalize_string_list(requirements)
+
+
+def collect_android_pip_install_entries(packager_cfg: Dict, source_backend_dir: Path) -> List[List[str]]:
+    default_reqs = [
+        "flask==2.3.0",
+        "flask-cors==4.0.0",
+        "Werkzeug>=2.3.0",
+        "Jinja2>=3.1.2",
+        "MarkupSafe==3.0.3",
+        "itsdangerous>=2.1.2",
+        "click>=8.1.3",
+        "blinker>=1.6.2",
+        "requests>=2.31.0",
+        "certifi>=2025.8.3",
+        "charset-normalizer>=3.4.0",
+        "idna>=3.10",
+        "urllib3>=2.0.0",
+        "PyYAML==6.0.3",
+        "Pillow==11.0.0",
+        "beautifulsoup4>=4.13.4",
+        "soupsieve>=2.5",
+        "typing-extensions>=4.12.0",
+        "rarfile>=4.2",
+    ]
+    reqs = packager_cfg.get("embed_backend_requirements")
+    if not isinstance(reqs, list) or not reqs:
+        reqs = default_reqs
+
+    resident_requirements = []
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        resident_requirements = load_resident_dependency_requirements(packager_cfg, "android")
+    entries = merge_pip_install_entries(
+        reqs,
+        resident_requirements,
+        packager_cfg.get("embed_backend_pip_install_args") or [],
+        packager_cfg.get("android_backend_pip_install_args") or [],
+    )
+
+    third_party_root = source_backend_dir / "third_party"
+    if normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+            android_packaging = _manifest_android_packaging(payload)
+            entries = merge_pip_install_entries(
+                entries,
+                android_packaging.get("pip_requirements") or [],
+                android_packaging.get("pip_install_args") or [],
+            )
+
+    return entries
+
+
+def format_gradle_options_args(args: List[str]) -> str:
+    return ", ".join([f'"{_groovy_escape(item)}"' for item in args])
+
+
+def format_gradle_install_args(args: List[str]) -> str:
+    return ", ".join([f'"{_groovy_escape(item)}"' for item in args])
+
+
+def collect_android_extract_packages(packager_cfg: Dict) -> List[str]:
+    raw_values = packager_cfg.get("android_extract_packages")
+    if raw_values is None and normalize_android_third_party_mode(packager_cfg) != ANDROID_THIRD_PARTY_MODE_DISABLED:
+        raw_values = ["third_party"]
+    return _normalize_string_list(raw_values or [])
+
+
+def prune_android_runtime_manifest_files(plugin_root: Path, mode: str) -> List[Path]:
+    if mode != ANDROID_THIRD_PARTY_MODE_SUPPORTED:
+        return []
+    pruned: List[Path] = []
+    for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+        try:
+            payload = load_json(manifest_path)
+        except Exception:
+            continue
+        if _manifest_android_enabled(payload):
+            continue
+        manifest_path.unlink()
+        pruned.append(manifest_path.relative_to(plugin_root))
+    return pruned
+
+
+def copy_android_third_party_sources(source_backend_dir: Path, py_dir: Path, packager_cfg: Dict) -> Dict[str, Any]:
+    mode = normalize_android_third_party_mode(packager_cfg)
+    target_root = py_dir / "third_party"
+    if target_root.exists():
+        shutil.rmtree(target_root)
+
+    if mode in {ANDROID_THIRD_PARTY_MODE_DISABLED, ANDROID_THIRD_PARTY_MODE_EXTERNAL}:
+        return {"mode": mode, "copied": [], "plugin_ids": []}
+
+    source_root = source_backend_dir / "third_party"
+    if not source_root.exists():
+        return {"mode": mode, "copied": [], "plugin_ids": []}
+    selected_roots = resolve_android_plugin_roots(source_root, packager_cfg)
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    for item in sorted(source_root.iterdir(), key=lambda value: value.name.lower()):
+        if item.is_file():
+            shutil.copy2(item, target_root / item.name)
+
+    copied: List[str] = []
+    pruned_manifests: List[str] = []
+    for plugin_root in selected_roots:
+        rel = plugin_root.relative_to(source_root)
+        target = target_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(plugin_root, target, ignore=backend_source_copy_ignore)
+        for manifest_rel in prune_android_runtime_manifest_files(target, mode):
+            pruned_manifests.append((rel / manifest_rel).as_posix())
+        copied.append(rel.as_posix())
+
+    return {
+        "mode": mode,
+        "copied": copied,
+        "pruned_manifests": pruned_manifests,
+        "plugin_ids": collect_android_packaged_plugin_ids(source_root, packager_cfg),
+    }
+
+
+def optimize_android_gradle_wrapper(android_project_dir: Path, packager_cfg: Dict) -> str:
+    distribution_type = str(packager_cfg.get("android_gradle_distribution_type", "bin")).strip().lower()
+    if distribution_type not in {"bin", "all"}:
+        distribution_type = "bin"
+    if distribution_type == "all":
+        return "gradle wrapper distribution left unchanged by config"
+
+    properties_path = android_project_dir / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    if not properties_path.exists():
+        return f"gradle wrapper properties not found: {properties_path}"
+
+    raw = properties_path.read_text(encoding="utf-8")
+    updated = re.sub(r"-(?:all|bin)\.zip", f"-{distribution_type}.zip", raw)
+    if updated == raw:
+        return "gradle wrapper distribution already optimized or not recognized"
+    write_text(properties_path, updated)
+    return f"gradle wrapper distribution set to {distribution_type}.zip"
 
 
 def normalize_app_version(raw: str) -> str:
@@ -228,6 +688,32 @@ def run_cmd(cmd: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> 
     )
     output = (process.stdout or "") + (process.stderr or "")
     return process.returncode, output
+
+
+def run_cmd_with_retries(
+    cmd: List[str],
+    cwd: Path,
+    env: Optional[Dict[str, str]] = None,
+    *,
+    attempts: int = 1,
+    delay_seconds: int = 10,
+) -> Tuple[int, str]:
+    attempts = max(1, attempts)
+    collected: List[str] = []
+    last_code = 1
+    for attempt in range(1, attempts + 1):
+        if attempts > 1:
+            collected.append(f"[attempt {attempt}/{attempts}]\n")
+        last_code, output = run_cmd(cmd, cwd=cwd, env=env)
+        collected.append(output)
+        if last_code == 0 or attempt == attempts:
+            return last_code, "".join(collected)
+        collected.append(
+            f"\n[retry] command failed with code {last_code}; "
+            f"retrying in {delay_seconds} seconds\n"
+        )
+        time.sleep(delay_seconds)
+    return last_code, "".join(collected)
 
 
 def is_pyinstaller_available() -> bool:
@@ -715,12 +1201,14 @@ def ensure_android_project_chaquopy_app(
             1,
         )
 
+    abi_filters = _normalize_string_list(packager_cfg.get("android_abi_filters") or ["arm64-v8a", "x86_64"])
+    abi_filter_args = ", ".join([f"'{_groovy_escape(item)}'" for item in abi_filters])
     if "abiFilters" not in patched:
         patched = patched.replace(
             "        minSdkVersion rootProject.ext.minSdkVersion\n",
             "        minSdkVersion rootProject.ext.minSdkVersion\n"
             "        ndk {\n"
-            "            abiFilters 'arm64-v8a', 'x86_64'\n"
+            f"            abiFilters {abi_filter_args}\n"
             "        }\n",
             1,
         )
@@ -731,26 +1219,30 @@ def ensure_android_project_chaquopy_app(
         py_exe = sys.executable
     py_exe = py_exe.replace("\\", "/")
 
-    reqs = packager_cfg.get("embed_backend_requirements")
-    if not isinstance(reqs, list) or not reqs:
-        reqs = [
-            "flask==2.3.0",
-            "flask-cors==4.0.0",
-            "requests>=2.31.0",
-            "PyYAML",
-            "Pillow",
-            "beautifulsoup4",
-            "rarfile>=4.2",
+    source_backend_dir = workspace_dir / get_android_workspace_backend_dir(packager_cfg)
+    pip_options = collect_android_pip_options(packager_cfg, source_backend_dir)
+    pip_installs = collect_android_pip_install_entries(packager_cfg, source_backend_dir)
+    extract_packages = collect_android_extract_packages(packager_cfg)
+    option_lines = "\n".join([f"                options({format_gradle_options_args(item)})" for item in pip_options])
+    req_lines = "\n".join([f"                install({format_gradle_install_args(item)})" for item in pip_installs])
+    pip_lines = "\n".join([line for line in [option_lines, req_lines] if line])
+    extract_package_lines = "\n".join(
+        [f'        extractPackages("{_groovy_escape(item)}")' for item in extract_packages]
+    )
+    default_config_lines = "\n".join(
+        [
+            f'        version = "{chaquopy_python}"',
+            f'        buildPython("{py_exe}")',
+            extract_package_lines,
+            "        pip {",
+            f"{pip_lines}",
+            "        }",
         ]
-    req_lines = "\n".join([f'                install("{item}")' for item in reqs if str(item).strip()])
+    )
     chaquopy_block = (
         "\nchaquopy {\n"
         "    defaultConfig {\n"
-        f'        version = "{chaquopy_python}"\n'
-        f'        buildPython("{py_exe}")\n'
-        "        pip {\n"
-        f"{req_lines}\n"
-        "        }\n"
+        f"{default_config_lines}\n"
         "    }\n"
         "    sourceSets {\n"
         "        main {\n"
@@ -786,7 +1278,11 @@ def ensure_android_project_chaquopy_app(
     )
 
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip() or "com.ultimate.web"
-    backend_port = int(packager_cfg.get("backend_port", 5000))
+    backend_port = int(packager_cfg.get("backend_port", 5035))
+    android_private_port = int(packager_cfg.get("android_private_port", backend_port))
+    android_normal_port = int(packager_cfg.get("android_normal_port", android_private_port + 1))
+    if android_private_port == android_normal_port:
+        raise ValueError("android private and normal ports must be different")
     third_party_enabled = str(packager_cfg.get("android_backend_enable_third_party", "false")).strip().lower()
     java_rel = Path(*app_id.split(".")) / "MainActivity.java"
     java_path = android_project_dir / "app" / "src" / "main" / "java" / java_rel
@@ -804,9 +1300,14 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.util.Log;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -823,23 +1324,75 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
+import android.widget.Toast;
 
 public class MainActivity extends BridgeActivity {{
     private static final String TAG = "UltimateEmbeddedBackend";
     private static final AtomicBoolean BACKEND_STARTED = new AtomicBoolean(false);
     private static final int REQUEST_STORAGE_PERMISSION = 1101;
+    private static final int REQUEST_DIRECTORY_PICKER = 1102;
+    private static final int MAX_DIR_PICKER_RETRIES = 8;
+    private static final long DIR_PICKER_RETRY_MS = 600;
     private static final int ARCHIVE_EVENT_RETRY_COUNT = 6;
     private static final long ARCHIVE_EVENT_RETRY_INTERVAL_MS = 420L;
     private static final String ARCHIVE_SESSION_KEY = "ultimate_android_open_archive_path";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable pendingArchiveDispatchTask = null;
     private volatile String pendingArchivePath = null;
+    private boolean storagePermissionGranted = false;
+    private volatile String directoryPickerCallbackId = null;
+    private ActivityResultLauncher<Intent> directoryPickerLauncher = null;
+    // Pending result when bridge is not ready at onActivityResult time (before onResume)
+    private volatile String pendingDirPickerCallbackId = null;
+    private volatile String pendingDirPickerPath = null;
+    private int pendingDirPickerRetries = 0;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         normalizeWebViewTextScale();
         ensureStorageAccessPermission();
+
+        // Use AndroidX ActivityResultLauncher — more reliable than onActivityResult
+        // which Capacitor's BridgeActivity may intercept.
+        directoryPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {{
+                final String callbackId = directoryPickerCallbackId;
+                directoryPickerCallbackId = null;
+                if (callbackId == null) return;
+
+                if (result.getResultCode() != RESULT_OK || result.getData() == null) {{
+                    emitDirectoryPickerError(callbackId, "cancelled");
+                    return;
+                }}
+
+                try {{
+                    Uri treeUri = result.getData().getData();
+                    if (treeUri == null) {{
+                        emitDirectoryPickerError(callbackId, "no uri returned");
+                        return;
+                    }}
+
+                    // Take persistable permission so the backend can still access it
+                    try {{
+                        getContentResolver().takePersistableUriPermission(treeUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }} catch (SecurityException e) {{
+                        Log.w(TAG, "Cannot take persistable uri permission", e);
+                    }}
+
+                    String realPath = resolveTreeUriPath(treeUri);
+                    String finalPath = realPath != null ? realPath : treeUri.toString();
+                    emitDirectoryPickerResult(callbackId, finalPath);
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to handle directory picker result", ex);
+                    emitDirectoryPickerError(callbackId, ex.getMessage());
+                }}
+            }}
+        );
+
+        addNativeDirectoryPicker();
         startEmbeddedBackend();
         captureArchiveIntent(getIntent());
     }}
@@ -848,7 +1401,22 @@ public class MainActivity extends BridgeActivity {{
     public void onResume() {{
         super.onResume();
         normalizeWebViewTextScale();
+        // Android 11+: re-check if user granted all-files access after returning from Settings
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {{
+            if (Environment.isExternalStorageManager()) {{
+                if (!storagePermissionGranted) {{
+                    storagePermissionGranted = true;
+                    Log.i(TAG, "All-files access permission granted");
+                }}
+            }} else {{
+                if (storagePermissionGranted) {{
+                    storagePermissionGranted = false;
+                    Log.w(TAG, "All-files access permission revoked");
+                }}
+            }}
+        }}
         dispatchPendingArchivePathWithRetry();
+        flushPendingDirectoryResult();
     }}
 
     @Override
@@ -893,9 +1461,22 @@ public class MainActivity extends BridgeActivity {{
         try {{
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {{
                 if (!Environment.isExternalStorageManager()) {{
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    startActivity(intent);
+                    try {{
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        Toast.makeText(this, "请在设置中开启「允许访问所有文件」权限", Toast.LENGTH_LONG).show();
+                    }} catch (Exception e) {{
+                        // Fallback: open app details settings
+                        Log.w(TAG, "Cannot open all-files-access settings, falling back to app details", e);
+                        Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        fallback.setData(Uri.parse("package:" + getPackageName()));
+                        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(fallback);
+                    }}
+                }} else {{
+                    storagePermissionGranted = true;
                 }}
                 return;
             }}
@@ -913,9 +1494,36 @@ public class MainActivity extends BridgeActivity {{
                     }},
                     REQUEST_STORAGE_PERMISSION
                 );
+            }} else {{
+                storagePermissionGranted = true;
             }}
         }} catch (Throwable ex) {{
             Log.w(TAG, "Failed to request storage permissions", ex);
+        }}
+    }}
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {{
+            boolean allGranted = true;
+            if (grantResults != null) {{
+                for (int result : grantResults) {{
+                    if (result != PackageManager.PERMISSION_GRANTED) {{
+                        allGranted = false;
+                        break;
+                    }}
+                }}
+            }} else {{
+                allGranted = false;
+            }}
+            storagePermissionGranted = allGranted;
+            if (allGranted) {{
+                Log.i(TAG, "Storage permissions granted");
+            }} else {{
+                Log.w(TAG, "Storage permissions denied");
+                Toast.makeText(this, "存储权限被拒绝，部分功能可能受限", Toast.LENGTH_LONG).show();
+            }}
         }}
     }}
 
@@ -932,15 +1540,16 @@ public class MainActivity extends BridgeActivity {{
         }}
         final String filesDir = dataRoot;
         final String internalFilesDir = getApplicationContext().getFilesDir().getAbsolutePath();
-        final int backendPort = {backend_port};
+        final int privateBackendPort = {android_private_port};
+        final int normalBackendPort = {android_normal_port};
         new Thread(() -> {{
             try {{
                 if (!Python.isStarted()) {{
                     Python.start(new AndroidPlatform(getApplicationContext()));
                 }}
                 PyObject module = Python.getInstance().getModule("ultimate_android_backend");
-                module.callAttr("start_backend", filesDir, "127.0.0.1", backendPort, "{third_party_enabled}", internalFilesDir);
-                Log.i(TAG, "Embedded backend startup invoked on port " + backendPort);
+                module.callAttr("start_backend", filesDir, "127.0.0.1", privateBackendPort, "{third_party_enabled}", internalFilesDir, normalBackendPort);
+                Log.i(TAG, "Embedded backend startup invoked on private port " + privateBackendPort + " and normal port " + normalBackendPort);
             }} catch (Throwable ex) {{
                 Log.e(TAG, "Failed to start embedded backend", ex);
             }}
@@ -1162,13 +1771,186 @@ public class MainActivity extends BridgeActivity {{
         }};
         mainHandler.postDelayed(pendingArchiveDispatchTask, 240L);
     }}
+
+    private void addNativeDirectoryPicker() {{
+        try {{
+            if (bridge == null) {{
+                Log.w(TAG, "Bridge not ready for native directory picker");
+                return;
+            }}
+            WebView webView = bridge.getWebView();
+            if (webView == null) {{
+                Log.w(TAG, "WebView not ready for native directory picker");
+                return;
+            }}
+            webView.addJavascriptInterface(new DirectoryPickerInterface(), "AndroidBridge");
+            Log.i(TAG, "Native directory picker bridge registered");
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to register native directory picker", ex);
+        }}
+    }}
+
+    private class DirectoryPickerInterface {{
+        @JavascriptInterface
+        public void pickDirectory(final String callbackId) {{
+            mainHandler.post(() -> {{
+                try {{
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    directoryPickerCallbackId = callbackId;
+                    if (directoryPickerLauncher != null) {{
+                        directoryPickerLauncher.launch(intent);
+                    }} else {{
+                        Log.e(TAG, "directoryPickerLauncher is null — fallback to startActivityForResult");
+                        startActivityForResult(intent, REQUEST_DIRECTORY_PICKER);
+                    }}
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to launch directory picker", ex);
+                    emitDirectoryPickerError(callbackId, ex.getMessage());
+                    directoryPickerCallbackId = null;
+                }}
+            }});
+        }}
+    }}
+
+    private void emitDirectoryPickerResult(String callbackId, String pathStr) {{
+        Log.i(TAG, "emitDirectoryPickerResult cb=" + callbackId + " path=" + pathStr);
+        if (callbackId == null) {{
+            Log.w(TAG, "emitDirectoryPickerResult: callbackId is null");
+            return;
+        }}
+
+        // Always save to pending — the ActivityResultLauncher fires during
+        // activity restoration when the WebView JS engine is still paused.
+        // onResume → flushPendingDirectoryResult will inject JS when ready.
+        pendingDirPickerCallbackId = callbackId;
+        pendingDirPickerPath = pathStr;
+        pendingDirPickerRetries = 0;
+        Log.i(TAG, "emitDirectoryPickerResult: saved to pending, will flush in onResume");
+    }}
+
+    private WebView getWebViewSafe() {{
+        if (bridge == null) return null;
+        try {{
+            return bridge.getWebView();
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "getWebViewSafe threw", ex);
+            return null;
+        }}
+    }}
+
+    private void flushPendingDirectoryResult() {{
+        final String callbackId = pendingDirPickerCallbackId;
+        if (callbackId == null) return;
+
+        final WebView webView = getWebViewSafe();
+        if (webView != null) {{
+            Log.i(TAG, "flushPendingDirectoryResult: WebView ready, emitting result for cb=" + callbackId);
+            // Must quote both callbackId AND path — callbackId contains underscore
+            // and would be a JS syntax error if unquoted (e.g. 1766234567890_a1b2c3)
+            final String qCallbackId = JSONObject.quote(callbackId);
+            final String qPath = JSONObject.quote(pendingDirPickerPath != null ? pendingDirPickerPath : "");
+            final String callbackJs = "try{{window.AndroidBridge.onDirectoryPicked("
+                + qCallbackId + "," + qPath
+                + ");}}catch(e){{}}";
+            final String storageJs = "try{{sessionStorage.setItem('__native_dir_path',"
+                + qPath
+                + ");}}catch(e){{}}";
+            // Use loadUrl("javascript:...") — more reliable than evaluateJavascript
+            // in some WebView versions when the JS engine is recovering from pause.
+            final String js = "javascript:" + callbackJs + storageJs + "void(0);";
+            webView.post(() -> {{
+                try {{
+                    webView.loadUrl(js);
+                }} catch (Throwable ex) {{
+                    Log.w(TAG, "Failed to loadUrl dir picker JS", ex);
+                }}
+            }});
+            pendingDirPickerCallbackId = null;
+            pendingDirPickerPath = null;
+            pendingDirPickerRetries = 0;
+            return;
+        }}
+
+        pendingDirPickerRetries++;
+        Log.w(TAG, "flushPendingDirectoryResult: retry " + pendingDirPickerRetries
+            + "/" + MAX_DIR_PICKER_RETRIES + " (bridge still not ready)");
+        if (pendingDirPickerRetries >= MAX_DIR_PICKER_RETRIES) {{
+            Log.e(TAG, "flushPendingDirectoryResult: giving up after " + MAX_DIR_PICKER_RETRIES + " retries");
+            pendingDirPickerCallbackId = null;
+            pendingDirPickerPath = null;
+            pendingDirPickerRetries = 0;
+        }} else {{
+            mainHandler.postDelayed(this::flushPendingDirectoryResult, DIR_PICKER_RETRY_MS);
+        }}
+    }}
+
+    private void emitDirectoryPickerError(String callbackId, String error) {{
+        if (callbackId == null) return;
+        emitDirectoryPickerResult(callbackId, "__error__:" + (error != null ? error : "unknown"));
+    }}
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {{
+        super.onActivityResult(requestCode, resultCode, data);
+        // REQUEST_DIRECTORY_PICKER is now handled by ActivityResultLauncher.
+        // Fallback only if launcher was null (shouldn't happen).
+        if (requestCode == REQUEST_DIRECTORY_PICKER) {{
+            Log.w(TAG, "onActivityResult REQUEST_DIRECTORY_PICKER fired as fallback");
+            // Let the launcher's callback handle it — or if launcher is null, try manual
+            if (directoryPickerLauncher == null) {{
+                final String callbackId = directoryPickerCallbackId;
+                directoryPickerCallbackId = null;
+                if (callbackId != null) {{
+                    if (resultCode != RESULT_OK || data == null) {{
+                        emitDirectoryPickerError(callbackId, "cancelled");
+                    }} else {{
+                        try {{
+                            Uri uri = data.getData();
+                            if (uri != null) {{
+                                String path = resolveTreeUriPath(uri);
+                                emitDirectoryPickerResult(callbackId, path != null ? path : uri.toString());
+                            }}
+                        }} catch (Throwable ex) {{
+                            emitDirectoryPickerError(callbackId, ex.getMessage());
+                        }}
+                    }}
+                }}
+            }}
+        }}
+    }}
+
+    private String resolveTreeUriPath(Uri treeUri) {{
+        if (treeUri == null) return null;
+        try {{
+            String docId = DocumentsContract.getTreeDocumentId(treeUri);
+            if (docId == null) return null;
+
+            // docId format: "primary:Download" or "XXXX-XXXX:some/path"
+            String[] parts = docId.split(":");
+            String type = parts.length > 0 ? parts[0] : "";
+            String relativePath = parts.length > 1 ? parts[1] : "";
+
+            if ("primary".equalsIgnoreCase(type)) {{
+                String base = Environment.getExternalStorageDirectory().getAbsolutePath();
+                return relativePath.isEmpty() ? base : base + "/" + relativePath;
+            }}
+
+            // Secondary / SD card storage
+            String base = "/storage/" + type;
+            return relativePath.isEmpty() ? base : base + "/" + relativePath;
+        }} catch (Throwable ex) {{
+            Log.w(TAG, "Failed to resolve tree URI path", ex);
+            return treeUri.toString();
+        }}
+    }}
 }}
 """
     write_text(java_path, java_source)
 
     py_dir = android_project_dir / "app" / "src" / "main" / "python"
     py_dir.mkdir(parents=True, exist_ok=True)
-    source_backend_dir = workspace_dir / workspace_backend_dir
     if source_backend_dir.exists():
         excluded_names = {
             "__pycache__",
@@ -1191,15 +1973,52 @@ public class MainActivity extends BridgeActivity {{
                 shutil.copytree(item, target)
             else:
                 shutil.copy2(item, target)
+        third_party_copy_status = copy_android_third_party_sources(source_backend_dir, py_dir, packager_cfg)
+        copied_plugins = list(third_party_copy_status.get("copied") or [])
+        if copied_plugins:
+            print(
+                "[android-third-party] "
+                f"mode={third_party_copy_status.get('mode')} "
+                f"copied={copied_plugins} "
+                f"plugin_ids={third_party_copy_status.get('plugin_ids')}"
+            )
 
     protocol_dir = py_dir / "protocol"
     protocol_dir.mkdir(parents=True, exist_ok=True)
+    android_pool_requirements = [
+        arg
+        for entry in pip_installs
+        for arg in entry
+        if str(arg or "").strip() and not str(arg or "").strip().startswith("-")
+    ]
+    write_plugin_dependency_pool_manifest(
+        protocol_dir / "plugin_dependency_pool_manifest.json",
+        android_pool_requirements,
+        platform_key="android",
+        dependency_root="chaquopy",
+    )
+    dependency_pool_payload = load_json(protocol_dir / "plugin_dependency_pool_manifest.json")
     third_party_root = source_backend_dir / "third_party"
-    snapshot_payload = build_mobile_protocol_snapshot(third_party_root)
+    snapshot_plugin_ids = None
+    android_third_party_mode = normalize_android_third_party_mode(packager_cfg)
+    if android_third_party_mode == ANDROID_THIRD_PARTY_MODE_EXTERNAL:
+        snapshot_plugin_ids = []
+    elif android_third_party_mode in {
+        ANDROID_THIRD_PARTY_MODE_SELECTED,
+        ANDROID_THIRD_PARTY_MODE_SUPPORTED,
+    }:
+        snapshot_plugin_ids = collect_android_packaged_plugin_ids(third_party_root, packager_cfg)
+    snapshot_payload = build_mobile_protocol_snapshot(third_party_root, include_plugin_ids=snapshot_plugin_ids)
     snapshot_path = protocol_dir / MOBILE_PROTOCOL_SNAPSHOT_FILENAME
     write_text(snapshot_path, json.dumps(snapshot_payload, ensure_ascii=False, indent=2) + "\n")
     embedded_snapshot_json = json.dumps(
         snapshot_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    embedded_dependency_pool_json = json.dumps(
+        dependency_pool_payload,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -1232,6 +2051,7 @@ _started = False
 _lock = threading.Lock()
 BOOTSTRAP_BUILD_ID = "__BOOTSTRAP_BUILD_ID__"
 EMBEDDED_PROTOCOL_SNAPSHOT_JSON = __EMBEDDED_SNAPSHOT_JSON__
+EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON = __EMBEDDED_DEPENDENCY_POOL_JSON__
 
 
 def _write_boot_log(files_dir, message):
@@ -1281,6 +2101,54 @@ def _load_embedded_protocol_snapshot_payload():
     except Exception:
         pass
     return {}
+
+
+def _load_embedded_dependency_pool_payload():
+    try:
+        raw = str(EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON or "").strip()
+        if not raw:
+            return {}
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _materialize_dependency_pool_manifest(files_dir, internal_exec_dir=""):
+    try:
+        payload = _load_embedded_dependency_pool_payload()
+        requirements = payload.get("requirements") or []
+        target_root = (
+            str(internal_exec_dir or "").strip()
+            or str(files_dir or "").strip()
+            or os.path.abspath(os.path.dirname(__file__))
+        )
+        protocol_dir = os.path.join(target_root, "protocol_runtime")
+        os.makedirs(protocol_dir, exist_ok=True)
+        manifest_path = os.path.join(protocol_dir, "plugin_dependency_pool_manifest.json")
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\\n"
+        should_write = True
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as existing_fp:
+                    should_write = existing_fp.read() != serialized
+            except Exception:
+                should_write = True
+        if should_write:
+            with open(manifest_path, "w", encoding="utf-8") as fp:
+                fp.write(serialized)
+        os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = manifest_path
+        _write_boot_log(
+            files_dir,
+            f"plugin dependency pool materialized path={manifest_path!r} requirement_count={len(requirements)} "
+            f"target_root={target_root!r}",
+        )
+        return manifest_path
+    except Exception as ex:
+        _write_boot_log(files_dir, f"plugin dependency pool materialize failed: {ex!r}")
+        return ""
 
 
 def _materialize_protocol_snapshot(files_dir, internal_exec_dir=""):
@@ -1443,7 +2311,70 @@ def _prepare_android_archive_runtime(files_dir, internal_exec_dir=None):
         return ""
 
 
-def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="false", internal_exec_dir=""):
+def _configure_android_plugin_roots(files_dir):
+    try:
+        module_dir = os.path.abspath(os.path.dirname(__file__))
+        imported_root = ""
+        import_error = ""
+        try:
+            third_party_module = importlib.import_module("third_party")
+            imported_root = os.path.abspath(os.path.dirname(str(getattr(third_party_module, "__file__", "") or "")))
+        except Exception as ex:
+            import_error = repr(ex)
+        packaged_root = os.path.join(module_dir, "third_party")
+        user_root = os.path.join(str(files_dir or "").strip() or ".", "plugins")
+        try:
+            os.makedirs(user_root, exist_ok=True)
+        except Exception:
+            pass
+        roots = []
+        if os.path.isdir(user_root):
+            roots.append(user_root)
+        if imported_root and os.path.isdir(imported_root):
+            roots.append(imported_root)
+        if os.path.isdir(packaged_root):
+            if packaged_root not in roots:
+                roots.append(packaged_root)
+
+        existing = str(os.environ.get("ULTIMATE_PLUGIN_ROOTS") or os.environ.get("BACKEND_PLUGIN_ROOTS") or "").strip()
+        if existing:
+            for item in existing.split(os.pathsep):
+                item = str(item or "").strip()
+                if item and item not in roots:
+                    roots.append(item)
+
+        if roots:
+            joined = os.pathsep.join(roots)
+            os.environ["ULTIMATE_PLUGIN_ROOTS"] = joined
+            os.environ["BACKEND_PLUGIN_ROOTS"] = joined
+        if os.path.isdir(user_root):
+            os.environ["ULTIMATE_USER_PLUGIN_ROOT"] = user_root
+        dep_manifest = str(os.environ.get("ULTIMATE_PLUGIN_DEP_MANIFEST") or "").strip()
+        if not dep_manifest:
+            candidate_dep_manifest = os.path.join(module_dir, "protocol", "plugin_dependency_pool_manifest.json")
+            if os.path.isfile(candidate_dep_manifest):
+                os.environ["ULTIMATE_PLUGIN_DEP_MANIFEST"] = candidate_dep_manifest
+                dep_manifest = candidate_dep_manifest
+
+        try:
+            entries = sorted(os.listdir(packaged_root))[:20] if os.path.isdir(packaged_root) else []
+        except Exception as list_ex:
+            entries = [f"<list failed: {list_ex!r}>"]
+        _write_boot_log(
+            files_dir,
+            "android plugin roots "
+            f"module_dir={module_dir!r} packaged_root={packaged_root!r} "
+            f"user_root={user_root!r} "
+            f"imported_root={imported_root!r} import_error={import_error!r} "
+            f"exists={os.path.exists(packaged_root)} is_dir={os.path.isdir(packaged_root)} "
+            f"entries={entries!r} env={os.environ.get('ULTIMATE_PLUGIN_ROOTS', '')!r} "
+            f"dep_manifest={dep_manifest!r}",
+        )
+    except Exception as ex:
+        _write_boot_log(files_dir, f"android plugin root config failed: {ex!r}")
+
+
+def start_backend(files_dir, host="127.0.0.1", port=5035, third_party_enabled="false", internal_exec_dir="", normal_port=None):
     global _started
     _write_boot_log(files_dir, f"bootstrap build_id={BOOTSTRAP_BUILD_ID}")
     with _lock:
@@ -1454,10 +2385,15 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     os.environ["BACKEND_RUNTIME_PROFILE"] = "android"
     os.environ["ANDROID_APP_FILES_DIR"] = str(files_dir or "")
     os.environ["BACKEND_HOST"] = str(host or "127.0.0.1")
-    os.environ["BACKEND_PORT"] = str(int(port or 5000))
+    os.environ["BACKEND_PORT"] = str(int(port or 5035))
+    os.environ["BACKEND_PRIVATE_PORT"] = str(int(port or 5035))
+    os.environ["BACKEND_NORMAL_PORT"] = str(int(normal_port or (int(port or 5035) + 1)))
     os.environ["BACKEND_DEBUG"] = "false"
     os.environ["BACKEND_ENABLE_THIRD_PARTY"] = str(third_party_enabled or "false").lower()
     os.environ["ULTIMATE_APP_VERSION"] = "__APP_VERSION__"
+    os.environ["ULTIMATE_PROTOCOL_BOOT_LOG"] = os.path.join(str(files_dir or "").strip() or ".", "ultimate_backend_boot.log")
+    _materialize_dependency_pool_manifest(files_dir, internal_exec_dir=internal_exec_dir)
+    _configure_android_plugin_roots(files_dir)
     snapshot_path = _materialize_protocol_snapshot(files_dir, internal_exec_dir=internal_exec_dir)
     if os.path.isfile(snapshot_path):
         os.environ["BACKEND_PROTOCOL_SNAPSHOT_PATH"] = snapshot_path
@@ -1494,7 +2430,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
         raise
 
     try:
-        backend_app.run_backend_server(host="0.0.0.0", port=int(port or 5000), debug=False)
+        backend_app.run_backend_server(host="0.0.0.0", port=int(port or 5035), debug=False)
     except Exception as ex:
         _write_boot_log(files_dir, f"backend run failed: {ex!r}")
         raise
@@ -1506,6 +2442,7 @@ def start_backend(files_dir, host="127.0.0.1", port=5000, third_party_enabled="f
     py_source = py_source.replace("__APP_VERSION__", normalize_app_version(app_version) or DEFAULT_APP_VERSION)
     py_source = py_source.replace("__SNAPSHOT_FILENAME__", MOBILE_PROTOCOL_SNAPSHOT_FILENAME)
     py_source = py_source.replace("__EMBEDDED_SNAPSHOT_JSON__", repr(embedded_snapshot_json))
+    py_source = py_source.replace("__EMBEDDED_DEPENDENCY_POOL_JSON__", repr(embedded_dependency_pool_json))
     write_text(py_bootstrap, py_source)
 
     marker_path = workspace_dir / workspace_web_dir / "backend_bootstrap.json"
@@ -1775,18 +2712,36 @@ def write_desktop_bundle_scripts(
     binary_name: str,
     runtime_env: Dict[str, str],
     frontend_binary_name: str = "",
+    launcher_binary_name: str = "",
 ) -> None:
     runtime_profile = runtime_env.get("BACKEND_RUNTIME_PROFILE", "full")
     third_party_enabled = runtime_env.get("BACKEND_ENABLE_THIRD_PARTY", "true")
+    third_party_excludes = ",".join(get_third_party_exclude_names())
+    backend_host = str(runtime_env.get("BACKEND_HOST", "127.0.0.1")).strip() or "127.0.0.1"
     has_frontend = bool(frontend_binary_name)
+    backend_host_bat = f"set BACKEND_HOST={backend_host}\n"
+    backend_host_ps1 = f"$env:BACKEND_HOST = \"{backend_host}\"\n"
+    backend_host_sh = f"export BACKEND_HOST=\"{backend_host}\"\n"
+    backend_proxy_mode_bat = "set BACKEND_SERVE_FRONTEND=false\n" if has_frontend else ""
+    backend_proxy_mode_ps1 = "$env:BACKEND_SERVE_FRONTEND = \"false\"\n" if has_frontend else ""
+    backend_proxy_mode_sh = "export BACKEND_SERVE_FRONTEND=\"false\"\n" if has_frontend else ""
+    dependency_rel = str(get_common_plugin_dependency_relative_dir()).replace("\\", "/")
+    dependency_rel_win = dependency_rel.replace("/", "\\")
 
     bat = (
         "@echo off\n"
         "setlocal\n"
         f"set BACKEND_RUNTIME_PROFILE={runtime_profile}\n"
         f"set BACKEND_ENABLE_THIRD_PARTY={third_party_enabled}\n"
+        f"set {PLUGIN_PACKAGE_EXCLUDES_ENV}={third_party_excludes}\n"
+        f"{backend_host_bat}"
+        f"{backend_proxy_mode_bat}"
         "set SCRIPT_DIR=%~dp0\n"
         "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
+        "set ULTIMATE_USER_PLUGIN_ROOT=%SCRIPT_DIR%plugins\n"
+        f"set ULTIMATE_PLUGIN_DEP_ROOTS=%SCRIPT_DIR%{dependency_rel_win}\n"
+        "set BACKEND_PLUGIN_DEP_ROOTS=%ULTIMATE_PLUGIN_DEP_ROOTS%\n"
+        "set ULTIMATE_PLUGIN_DEP_MANIFEST=%SCRIPT_DIR%runtime_deps\\dependency_pool_manifest.json\n"
         "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
         "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
         "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
@@ -1808,7 +2763,14 @@ def write_desktop_bundle_scripts(
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_profile}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{third_party_enabled}\"\n"
+        f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{third_party_excludes}\"\n"
+        f"{backend_host_ps1}"
+        f"{backend_proxy_mode_ps1}"
         "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
+        "$env:ULTIMATE_USER_PLUGIN_ROOT = Join-Path $scriptDir \"plugins\"\n"
+        f"$env:ULTIMATE_PLUGIN_DEP_ROOTS = Join-Path $scriptDir \"{dependency_rel}\"\n"
+        "$env:BACKEND_PLUGIN_DEP_ROOTS = $env:ULTIMATE_PLUGIN_DEP_ROOTS\n"
+        "$env:ULTIMATE_PLUGIN_DEP_MANIFEST = Join-Path $scriptDir \"runtime_deps/dependency_pool_manifest.json\"\n"
         "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
         "if (Test-Path $archiveTools) {\n"
         "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
@@ -1837,6 +2799,10 @@ def write_desktop_bundle_scripts(
             "setlocal\n"
             "set SCRIPT_DIR=%~dp0\n"
             "set ULTIMATE_PLUGIN_ROOTS=%SCRIPT_DIR%plugins\n"
+            "set ULTIMATE_USER_PLUGIN_ROOT=%SCRIPT_DIR%plugins\n"
+            f"set ULTIMATE_PLUGIN_DEP_ROOTS=%SCRIPT_DIR%{dependency_rel_win}\n"
+            "set BACKEND_PLUGIN_DEP_ROOTS=%ULTIMATE_PLUGIN_DEP_ROOTS%\n"
+            "set ULTIMATE_PLUGIN_DEP_MANIFEST=%SCRIPT_DIR%runtime_deps\\dependency_pool_manifest.json\n"
             "set ARCHIVE_TOOLS_DIR=%SCRIPT_DIR%tools\\archive\n"
             "if exist \"%ARCHIVE_TOOLS_DIR%\" set PATH=%ARCHIVE_TOOLS_DIR%;%PATH%\n"
             "set FFMPEG_TOOLS_DIR=%SCRIPT_DIR%tools\\ffmpeg\n"
@@ -1856,6 +2822,10 @@ def write_desktop_bundle_scripts(
             "$ErrorActionPreference = 'Stop'\n"
             "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
             "$env:ULTIMATE_PLUGIN_ROOTS = Join-Path $scriptDir \"plugins\"\n"
+            "$env:ULTIMATE_USER_PLUGIN_ROOT = Join-Path $scriptDir \"plugins\"\n"
+            f"$env:ULTIMATE_PLUGIN_DEP_ROOTS = Join-Path $scriptDir \"{dependency_rel}\"\n"
+            "$env:BACKEND_PLUGIN_DEP_ROOTS = $env:ULTIMATE_PLUGIN_DEP_ROOTS\n"
+            "$env:ULTIMATE_PLUGIN_DEP_MANIFEST = Join-Path $scriptDir \"runtime_deps/dependency_pool_manifest.json\"\n"
             "$archiveTools = Join-Path $scriptDir \"tools/archive\"\n"
             "if (Test-Path $archiveTools) {\n"
             "    $env:PATH = \"$archiveTools;$env:PATH\"\n"
@@ -1882,8 +2852,15 @@ def write_desktop_bundle_scripts(
         "set -e\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_profile}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{third_party_enabled}\"\n"
+        f"export {PLUGIN_PACKAGE_EXCLUDES_ENV}=\"{third_party_excludes}\"\n"
+        f"{backend_host_sh}"
+        f"{backend_proxy_mode_sh}"
         "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
+        "export ULTIMATE_USER_PLUGIN_ROOT=\"$SCRIPT_DIR/plugins\"\n"
+        f"export ULTIMATE_PLUGIN_DEP_ROOTS=\"$SCRIPT_DIR/{dependency_rel}\"\n"
+        "export BACKEND_PLUGIN_DEP_ROOTS=\"$ULTIMATE_PLUGIN_DEP_ROOTS\"\n"
+        "export ULTIMATE_PLUGIN_DEP_MANIFEST=\"$SCRIPT_DIR/runtime_deps/dependency_pool_manifest.json\"\n"
         "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
         "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
         "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
@@ -1917,6 +2894,10 @@ def write_desktop_bundle_scripts(
             "set -e\n"
             "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
             "export ULTIMATE_PLUGIN_ROOTS=\"$SCRIPT_DIR/plugins\"\n"
+            "export ULTIMATE_USER_PLUGIN_ROOT=\"$SCRIPT_DIR/plugins\"\n"
+            f"export ULTIMATE_PLUGIN_DEP_ROOTS=\"$SCRIPT_DIR/{dependency_rel}\"\n"
+            "export BACKEND_PLUGIN_DEP_ROOTS=\"$ULTIMATE_PLUGIN_DEP_ROOTS\"\n"
+            "export ULTIMATE_PLUGIN_DEP_MANIFEST=\"$SCRIPT_DIR/runtime_deps/dependency_pool_manifest.json\"\n"
             "ARCHIVE_TOOLS_DIR=\"$SCRIPT_DIR/tools/archive\"\n"
             "if [ -d \"$ARCHIVE_TOOLS_DIR\" ]; then\n"
             "  export PATH=\"$ARCHIVE_TOOLS_DIR:$PATH\"\n"
@@ -1973,7 +2954,22 @@ def write_desktop_bundle_scripts(
             "Write-Output $p"
         )
 
-        app_bat = (
+        if launcher_binary_name:
+            app_bat = (
+                "@echo off\n"
+                "setlocal\n"
+                "set SCRIPT_DIR=%~dp0\n"
+                f"set {PLUGIN_PACKAGE_EXCLUDES_ENV}={','.join(get_third_party_exclude_names())}\n"
+                f"if exist \"%SCRIPT_DIR%bin\\{launcher_binary_name}.exe\" (\n"
+                f"  \"%SCRIPT_DIR%bin\\{launcher_binary_name}.exe\" --root \"%SCRIPT_DIR%\" --mode packaged "
+                f"--backend-exe \"{binary_name}.exe\" --frontend-exe \"{frontend_binary_name}.exe\" --open-browser\n"
+                "  exit /b %ERRORLEVEL%\n"
+                ")\n"
+                "call \"%SCRIPT_DIR%scripts\\start_backend.bat\"\n"
+                "start \"UltimateWeb-Frontend\" \"%SCRIPT_DIR%scripts\\start_frontend.bat\"\n"
+            )
+        else:
+            app_bat = (
             "@echo off\n"
             "setlocal\n"
             "set SCRIPT_DIR=%~dp0\n"
@@ -1984,10 +2980,24 @@ def write_desktop_bundle_scripts(
             "start \"UltimateWeb-Frontend\" \"%SCRIPT_DIR%start_frontend.bat\"\n"
             "timeout /t 2 >nul\n"
             "start \"\" \"https://127.0.0.1:%APP_PORT%/\"\n"
-        )
+            )
         write_text(bundle_dir / "start_app.bat", app_bat)
 
-        app_ps1 = (
+        if launcher_binary_name:
+            launcher_app_ps1 = (
+                "$ErrorActionPreference = 'Stop'\n"
+                "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+                f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{','.join(get_third_party_exclude_names())}\"\n"
+                f"$launcherPath = Join-Path $scriptDir 'bin/{launcher_binary_name}.exe'\n"
+                "if (Test-Path -LiteralPath $launcherPath) {\n"
+                f"    & $launcherPath --root $scriptDir --mode packaged --backend-exe '{binary_name}.exe' --frontend-exe '{frontend_binary_name}.exe' --open-browser\n"
+                "    exit $LASTEXITCODE\n"
+                "}\n"
+                "& (Join-Path $scriptDir 'scripts/start_backend.ps1')\n"
+                "Start-Process -FilePath (Join-Path $scriptDir 'scripts/start_frontend.ps1') -WindowStyle Normal\n"
+            )
+        else:
+            frontend_app_ps1 = (
             "$ErrorActionPreference = 'Stop'\n"
             "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
             "$appPort = 5173\n"
@@ -2024,14 +3034,14 @@ def write_desktop_bundle_scripts(
             "Start-Process -FilePath (Join-Path $scriptDir 'start_frontend.ps1') -WindowStyle Normal\n"
             "Start-Sleep -Seconds 2\n"
             "Start-Process (\"https://127.0.0.1:{0}/\" -f $appPort)\n"
-        )
-        write_text(bundle_dir / "start_app.ps1", app_ps1)
+            )
+        write_text(bundle_dir / "start_app.ps1", launcher_app_ps1 if launcher_binary_name else frontend_app_ps1)
     else:
         app_bat = (
         "@echo off\n"
         "set SCRIPT_DIR=%~dp0\n"
-        "set APP_PORT=5000\n"
-        "for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"$p=5000; $defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'; $cfgDir = $defaultCfgDir; $envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR; if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir) } else { $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'; if (Test-Path -LiteralPath $overridePath) { try { $ov = Get-Content -LiteralPath $overridePath -Raw ^| ConvertFrom-Json; $persisted = [string]$ov.config_dir; if (-not [string]::IsNullOrWhiteSpace($persisted)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted) } } catch {} } }; $cfgPath = Join-Path $cfgDir 'server_config.json'; if (Test-Path -LiteralPath $cfgPath) { try { $cfg = Get-Content -LiteralPath $cfgPath -Raw ^| ConvertFrom-Json; if ($cfg.backend.port -ne $null) { $p = [int]$cfg.backend.port } } catch {} }; Write-Output $p\"`) do set APP_PORT=%%I\n"
+        "set APP_PORT=5035\n"
+        "for /f \"usebackq delims=\" %%I in (`powershell -NoProfile -Command \"$p=5035; $defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'; $cfgDir = $defaultCfgDir; $envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR; if (-not [string]::IsNullOrWhiteSpace($envCfgDir)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($envCfgDir) } else { $overridePath = Join-Path $defaultCfgDir 'config_dir.override.json'; if (Test-Path -LiteralPath $overridePath) { try { $ov = Get-Content -LiteralPath $overridePath -Raw ^| ConvertFrom-Json; $persisted = [string]$ov.config_dir; if (-not [string]::IsNullOrWhiteSpace($persisted)) { $cfgDir = [Environment]::ExpandEnvironmentVariables($persisted) } } catch {} } }; $cfgPath = Join-Path $cfgDir 'server_config.json'; if (Test-Path -LiteralPath $cfgPath) { try { $cfg = Get-Content -LiteralPath $cfgPath -Raw ^| ConvertFrom-Json; if ($cfg.backend.port -ne $null) { $p = [int]$cfg.backend.port } } catch {} }; Write-Output $p\"`) do set APP_PORT=%%I\n"
         "start \"\" \"%SCRIPT_DIR%start_backend.bat\"\n"
         "timeout /t 2 >nul\n"
         "start \"\" \"http://127.0.0.1:%APP_PORT%/\"\n"
@@ -2041,7 +3051,7 @@ def write_desktop_bundle_scripts(
     app_ps1 = (
         "$ErrorActionPreference = 'Stop'\n"
         "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
-        "$appPort = 5000\n"
+        "$appPort = 5035\n"
         "$defaultCfgDir = Join-Path $env:APPDATA 'ULTIMATE_WEB'\n"
         "$cfgDir = $defaultCfgDir\n"
         "$envCfgDir = [string]$env:ULTIMATE_CONFIG_DIR\n"
@@ -2075,6 +3085,75 @@ def write_desktop_bundle_scripts(
         "Start-Process (\"http://127.0.0.1:{0}/\" -f $appPort)\n"
     )
     write_text(bundle_dir / "start_app.ps1", app_ps1)
+    if has_frontend:
+        write_text(bundle_dir / "start_app.ps1", launcher_app_ps1 if launcher_binary_name else frontend_app_ps1)
+
+
+def tidy_desktop_bundle_launchers(bundle_dir: Path) -> None:
+    """Keep only the user-facing launchers in the bundle root."""
+    scripts_dir = bundle_dir / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    helper_names = {
+        "start_backend.bat",
+        "start_backend.ps1",
+        "start_backend.sh",
+        "start_frontend.bat",
+        "start_frontend.ps1",
+        "start_frontend.sh",
+        "start_app.bat",
+        "start_app.ps1",
+        "install_plugin_deps.ps1",
+        "install_plugin_deps.sh",
+    }
+
+    for name in helper_names:
+        source = bundle_dir / name
+        if not source.exists():
+            continue
+        target = scripts_dir / name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(source), str(target))
+
+        text = target.read_text(encoding="utf-8")
+        if target.suffix.lower() == ".bat":
+            text = text.replace(
+                "set SCRIPT_DIR=%~dp0\n",
+                "for %%I in (\"%~dp0..\") do set SCRIPT_DIR=%%~fI\\\n",
+            )
+            text = text.replace("%SCRIPT_DIR%start_backend.bat", "%SCRIPT_DIR%scripts\\start_backend.bat")
+            text = text.replace("%SCRIPT_DIR%start_frontend.bat", "%SCRIPT_DIR%scripts\\start_frontend.bat")
+        elif target.suffix.lower() == ".ps1":
+            text = text.replace(
+                "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n",
+                "$scriptDir = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..')).Path\n",
+            )
+            text = text.replace("Join-Path $scriptDir 'start_backend.ps1'", "Join-Path $scriptDir 'scripts/start_backend.ps1'")
+            text = text.replace("Join-Path $scriptDir 'start_frontend.ps1'", "Join-Path $scriptDir 'scripts/start_frontend.ps1'")
+        elif target.suffix.lower() == ".sh":
+            text = text.replace(
+                'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
+                'SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"',
+            )
+        target.write_text(text, encoding="utf-8")
+
+    write_text(
+        bundle_dir / "start_project.bat",
+        "@echo off\n"
+        "setlocal\n"
+        "set SCRIPT_DIR=%~dp0\n"
+        "start \"\" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%SCRIPT_DIR%scripts\\start_app.ps1\"\n"
+        "exit /b 0\n",
+    )
+    write_text(
+        bundle_dir / "start_project.ps1",
+        "$ErrorActionPreference = 'Stop'\n"
+        "$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path\n"
+        "$appScript = Join-Path $scriptDir 'scripts/start_app.ps1'\n"
+        "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $appScript) -WindowStyle Hidden\n"
+        "exit 0\n",
+    )
 
 
 def prepare_desktop_release_bundle(
@@ -2086,6 +3165,7 @@ def prepare_desktop_release_bundle(
     plugin_package_mode: str = DEFAULT_PLUGIN_PACKAGE_MODE,
     frontend_binary_name: str = "",
     frontend_entry: str = "",
+    launcher_binary_name: str = "",
 ) -> Path:
     plugin_mode = normalize_plugin_package_mode(plugin_package_mode)
     bundle_dir = target_out_dir / "release_bundle"
@@ -2098,7 +3178,7 @@ def prepare_desktop_release_bundle(
     frontend_src = staged_target_dir / "comic_frontend" if frontend_entry else None
 
     if backend_src.exists():
-        shutil.copytree(backend_src, bundle_dir / "backend_source")
+        shutil.copytree(backend_src, bundle_dir / "backend_source", ignore=backend_source_copy_ignore)
     if frontend_dist.exists():
         frontend_target = bundle_dir / "frontend_dist"
         if frontend_target.exists():
@@ -2122,16 +3202,15 @@ def prepare_desktop_release_bundle(
     if manifest_src.exists():
         shutil.copy2(manifest_src, bundle_dir / "stage_manifest.json")
 
-    if plugin_mode == PLUGIN_PACKAGE_MODE_EXTERNAL:
-        external_plugin_roots = copy_external_plugins_to_bundle(backend_src, bundle_dir) if backend_src.exists() else []
-    else:
-        plugins_dir = bundle_dir / "plugins"
-        plugins_dir.mkdir(parents=True, exist_ok=True)
-        write_text(
-            plugins_dir / "README.md",
-            "Drop additional protocol plugin directories here. Built-in release plugins are bundled in the executable.\n",
-        )
-        external_plugin_roots = []
+    plugins_dir = bundle_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    external_plugin_roots = collect_desktop_dependency_plugin_roots(backend_src) if backend_src.exists() else []
+    remove_default_plugins_from_bundle_backend_source(bundle_dir, external_plugin_roots)
+    write_text(
+        plugins_dir / "README.md",
+        "Drop local protocol plugin zip packages or extracted plugin directories here. "
+        "Default repository plugin code is installed as an external extension.\n",
+    )
     write_external_plugin_dependency_scripts(bundle_dir, external_plugin_roots)
 
     archive_tools_dir = copy_archive_runtime_tools(target, bundle_dir)
@@ -2143,17 +3222,15 @@ def prepare_desktop_release_bundle(
         f"- target: `{target}`",
         "- `backend_source/`: fallback Python source runtime",
         "- `frontend_dist/`: frontend static assets",
-        f"- plugin package mode: `{plugin_mode}`",
+        "- plugin package mode: `external` (the only supported desktop mode)",
         "- `plugins/`: external hot-pluggable protocol plugins",
         "- `bin/`: packaged backend executable (if packaging executed successfully)",
     ]
     if has_frontend:
         notes.insert(3, "- `frontend_source/`: fallback frontend server source")
         notes.append("- `bin/` also contains frontend server executable")
-    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
-        notes.append("- default repository plugins are bundled into the executable; `plugins/` is reserved for extra plugins")
-    else:
-        notes.append("- default repository plugins are placed under `plugins/` and loaded dynamically at runtime")
+    notes.append("- default repository plugin dependencies are prebuilt under `runtime_deps/`; plugin code is installed locally into `plugins/`")
+    notes.append("- local extension packages must be installed from the third-party config page, then restart the app")
     if archive_tools_dir is not None:
         notes.append("- `tools/archive/`: bundled archive runtime binaries for RAR/7z support")
     if ffmpeg_tools_dir is not None:
@@ -2162,12 +3239,12 @@ def prepare_desktop_release_bundle(
         [
             "",
             "Start commands:",
-            "- Windows cmd: `start_app.bat` (starts both backend + frontend)",
-            "- Windows PowerShell: `start_app.ps1`",
-            "- Linux/macOS: `bash start_app.sh` (if frontend server available)",
-            "- Start backend only: `start_backend.bat` / `start_backend.ps1` / `start_backend.sh`",
-            "- Start frontend only: `start_frontend.bat` / `start_frontend.ps1` / `start_frontend.sh` (if available)",
-            "- Install external plugin deps manually if needed: `install_plugin_deps.ps1` / `install_plugin_deps.sh`",
+            "- Windows cmd: `start_project.bat` (starts both backend + frontend)",
+            "- Windows PowerShell: `start_project.ps1`",
+            "- Advanced helper scripts are stored under `scripts/` to keep the bundle root clean",
+            "- Start backend only: `scripts/start_backend.bat` / `scripts/start_backend.ps1` / `scripts/start_backend.sh`",
+            "- Start frontend only: `scripts/start_frontend.bat` / `scripts/start_frontend.ps1` / `scripts/start_frontend.sh` (if available)",
+            "- Install external plugin deps manually if needed: `scripts/install_plugin_deps.ps1` / `scripts/install_plugin_deps.sh`",
         ]
     )
     write_text(bundle_dir / "README.md", "\n".join(notes) + "\n")
@@ -2178,7 +3255,9 @@ def prepare_desktop_release_bundle(
         binary_name=binary_name,
         runtime_env=runtime_env,
         frontend_binary_name=frontend_binary_name,
+        launcher_binary_name=launcher_binary_name,
     )
+    tidy_desktop_bundle_launchers(bundle_dir)
     return bundle_dir
 
 
@@ -2205,13 +3284,30 @@ def _deep_merge_dict(base: Any, override: Any) -> Any:
     return json.loads(json.dumps(override))
 
 
+def discover_project_plugin_roots(project_plugins_dir: Optional[Path] = None) -> List[Path]:
+    resolved_plugins_dir = project_plugins_dir or PROJECT_PLUGINS_DIR
+    if not resolved_plugins_dir.exists():
+        return []
+    roots: List[Path] = []
+    for child in sorted(resolved_plugins_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir():
+            continue
+        if (child / HOST_OVERLAY_FILENAME).exists() or any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
+            roots.append(child)
+    return roots
+
+
 def discover_packaged_plugin_roots(third_party_root: Path) -> List[Path]:
     if not third_party_root.exists():
         return []
 
     roots: List[Path] = []
+    excluded_names = get_third_party_exclude_names()
     for child in sorted(third_party_root.iterdir(), key=lambda item: item.name.lower()):
         if not child.is_dir():
+            continue
+        if child.name.strip().lower() in set(excluded_names):
+            print(f"[package] skip third-party plugin by packaging switch: {child.name}")
             continue
         if any(path.name == "ultimate-plugin.json" for path in child.rglob("ultimate-plugin.json")):
             roots.append(child)
@@ -2232,6 +3328,14 @@ def get_external_plugin_vendor_relative_dir() -> Path:
     return Path("vendor") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
 
 
+def get_common_plugin_dependency_relative_dir() -> Path:
+    return Path("runtime_deps") / "python" / current_plugin_python_tag() / current_plugin_platform_tag()
+
+
+def get_plugin_dependency_manifest_relative_path() -> Path:
+    return Path("runtime_deps") / "dependency_pool_manifest.json"
+
+
 def get_external_plugin_dependency_state_filename() -> str:
     return ".ultimate_vendor_state.json"
 
@@ -2247,6 +3351,58 @@ def _collect_external_plugin_requirements(payload: Dict[str, Any]) -> List[str]:
         return _normalize_string_list(external.get("pip_requirements") or [])
     pyinstaller = dict(packaging.get("pyinstaller") or {})
     return _normalize_string_list(pyinstaller.get("pip_requirements") or [])
+
+
+def _requirement_name(requirement: str) -> str:
+    text = str(requirement or "").strip()
+    if not text or text.startswith("-"):
+        return ""
+    return re.split(r"\s*(?:\[|==|>=|<=|~=|!=|>|<|=|;)\s*", text, maxsplit=1)[0].strip().lower().replace("_", "-")
+
+
+def collect_plugin_dependency_requirements(plugin_roots: List[Path], platform_key: str = "external") -> List[str]:
+    requirements: List[str] = []
+    for plugin_root in plugin_roots:
+        for manifest_path in sorted(plugin_root.rglob("ultimate-plugin.json")):
+            try:
+                payload = load_json(manifest_path)
+            except Exception:
+                continue
+            packaging = dict(payload.get("packaging") or {})
+            section = dict(packaging.get(platform_key) or {})
+            if section.get("pip_requirements"):
+                requirements.extend(_normalize_string_list(section.get("pip_requirements") or []))
+            elif platform_key == "external":
+                requirements.extend(_collect_external_plugin_requirements(payload))
+    return _normalize_string_list(requirements)
+
+
+def collect_desktop_dependency_plugin_roots(staged_backend: Path) -> List[Path]:
+    roots: List[Path] = []
+    third_party_root = staged_backend / "third_party"
+    roots.extend(discover_packaged_plugin_roots(third_party_root))
+    roots.extend(discover_project_plugin_roots())
+    return roots
+
+
+def write_plugin_dependency_pool_manifest(
+    manifest_path: Path,
+    requirements: List[str],
+    *,
+    platform_key: str,
+    dependency_root: str = "",
+) -> None:
+    payload = {
+        "version": 1,
+        "platform": platform_key,
+        "python_tag": current_plugin_python_tag(),
+        "platform_tag": current_plugin_platform_tag(),
+        "dependency_root": dependency_root,
+        "requirements": _normalize_string_list(requirements),
+        "requirement_names": sorted({name for name in (_requirement_name(item) for item in requirements) if name}),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    write_text(manifest_path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
 
 def collect_external_plugin_metadata(plugin_root: Path) -> Dict[str, Any]:
@@ -2293,6 +3449,16 @@ def copy_external_plugins_to_bundle(staged_backend: Path, bundle_dir: Path) -> L
     return copied_roots
 
 
+def remove_default_plugins_from_bundle_backend_source(bundle_dir: Path, plugin_roots: List[Path]) -> None:
+    backend_third_party = bundle_dir / "backend_source" / "third_party"
+    if not backend_third_party.exists():
+        return
+    for plugin_root in plugin_roots:
+        target = backend_third_party / plugin_root.name
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+
+
 def _serialize_external_plugin_dependency_state(metadata: Dict[str, Any]) -> str:
     payload = dict(metadata.get("state_payload") or {})
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -2330,40 +3496,34 @@ def _quote_powershell_single(text: str) -> str:
 
 
 def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: List[Path]) -> List[List[str]]:
+    requirements = _normalize_string_list(
+        load_resident_dependency_requirements({}, "external")
+        + collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    )
+    dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
+    dependency_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_plugin_dependency_pool_manifest(
+        manifest_path,
+        requirements,
+        platform_key="external",
+        dependency_root=str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+    )
+    state_path = dependency_root / get_external_plugin_dependency_state_filename()
+    expected_state = json.dumps(
+        {
+            "requirements": requirements,
+            "dependency_root": str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+            "python_tag": current_plugin_python_tag(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     commands: List[List[str]] = []
-    script_specs: List[Dict[str, str]] = []
-    for plugin_root in plugin_roots:
-        metadata = collect_external_plugin_metadata(plugin_root)
-        requirements = list(metadata.get("requirements") or [])
-        if not requirements:
-            continue
-        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
-        vendor_target.mkdir(parents=True, exist_ok=True)
-        relative_vendor_target = vendor_target.relative_to(bundle_dir).as_posix()
-        state_path = get_external_plugin_dependency_state_path(plugin_root)
-        relative_state_path = state_path.relative_to(bundle_dir).as_posix()
-        commands.append(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--target",
-                str(vendor_target),
-                *requirements,
-            ]
-        )
-        script_specs.append(
-            {
-                "plugin_name": plugin_root.name,
-                "relative_vendor_target": relative_vendor_target,
-                "relative_state_path": relative_state_path,
-                "requirements": " ".join(requirements),
-                "requirements_ps": " ".join(_quote_powershell_single(item) for item in requirements),
-                "requirements_shell": " ".join(shlex.quote(item) for item in requirements),
-                "expected_state": _serialize_external_plugin_dependency_state(metadata),
-            }
-        )
+    if requirements:
+        commands.append([sys.executable, "-m", "pip", "install", "--target", str(dependency_root), *requirements])
 
     ps1_lines = [
         "$ErrorActionPreference = 'Stop'",
@@ -2387,49 +3547,48 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
         "  exit 1",
         "fi",
     ]
-    for spec in script_specs:
-        expected_state_ps = _quote_powershell_single(spec["expected_state"])
+    relative_dependency_root = str(get_common_plugin_dependency_relative_dir()).replace("\\", "/")
+    relative_state_path = (get_common_plugin_dependency_relative_dir() / get_external_plugin_dependency_state_filename()).as_posix()
+    relative_dependency_root_win = relative_dependency_root.replace("/", "\\")
+    relative_state_path_win = relative_state_path.replace("/", "\\")
+    requirements_ps = " ".join(_quote_powershell_single(item) for item in requirements)
+    requirements_shell = " ".join(shlex.quote(item) for item in requirements)
+    expected_state_ps = _quote_powershell_single(expected_state)
+    ps1_lines.append(f"$vendorPath = Join-Path $scriptDir {_quote_powershell_single(relative_dependency_root_win)}")
+    ps1_lines.append(f"$statePath = Join-Path $scriptDir {_quote_powershell_single(relative_state_path_win)}")
+    ps1_lines.append(f"$expectedState = {expected_state_ps}")
+    ps1_lines.append("New-Item -ItemType Directory -Force -Path $vendorPath | Out-Null")
+    if requirements:
         ps1_lines.append(
-            f"$vendorPath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_vendor_target'].replace('/', '\\'))}"
-        )
-        ps1_lines.append(
-            f"$statePath = Join-Path $scriptDir {_quote_powershell_single(spec['relative_state_path'].replace('/', '\\'))}"
-        )
-        ps1_lines.append(f"$expectedState = {expected_state_ps}")
-        ps1_lines.append("New-Item -ItemType Directory -Force -Path $vendorPath | Out-Null")
-        ps1_lines.append(
-            f"if ((Test-Path $statePath) -and (Test-Path $vendorPath) -and "
-            f"(@(Get-ChildItem -Force $vendorPath -ErrorAction SilentlyContinue).Count -gt 0) -and "
-            f"((Get-Content -Raw -Path $statePath).Trim() -eq $expectedState)) "
-            f"{{ Write-Host \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\" }}"
+            "if ((Test-Path $statePath) -and (Test-Path $vendorPath) -and "
+            "(@(Get-ChildItem -Force $vendorPath -ErrorAction SilentlyContinue).Count -gt 0) -and "
+            "((Get-Content -Raw -Path $statePath).Trim() -eq $expectedState)) "
+            "{ Write-Host \"Skipping plugin dependency pool; already installed.\" }"
         )
         ps1_lines.append("else {")
-        ps1_lines.append(
-            f"  & $pythonCmd.Source -m pip install --target $vendorPath {spec['requirements_ps']}"
-        )
-        ps1_lines.append(
-            f"  if ($LASTEXITCODE -ne 0) {{ throw \"plugin dependency install failed: {spec['plugin_name']}\" }}"
-        )
+        ps1_lines.append(f"  & $pythonCmd.Source -m pip install --target $vendorPath {requirements_ps}")
+        ps1_lines.append("  if ($LASTEXITCODE -ne 0) { throw \"plugin dependency pool install failed\" }")
         ps1_lines.append("  Set-Content -Path $statePath -Value $expectedState -Encoding UTF8")
         ps1_lines.append("}")
+    else:
+        ps1_lines.append("Set-Content -Path $statePath -Value $expectedState -Encoding UTF8")
 
+    sh_lines.append(f"VENDOR_PATH=\"$SCRIPT_DIR/{relative_dependency_root}\"")
+    sh_lines.append(f"STATE_PATH=\"$SCRIPT_DIR/{relative_state_path}\"")
+    sh_lines.append(f"EXPECTED_STATE={shlex.quote(expected_state)}")
+    sh_lines.append("mkdir -p \"$VENDOR_PATH\"")
+    if requirements:
         sh_lines.append(
-            f"VENDOR_PATH=\"$SCRIPT_DIR/{spec['relative_vendor_target']}\""
+            "if [ -f \"$STATE_PATH\" ] && [ -n \"$(ls -A \"$VENDOR_PATH\" 2>/dev/null)\" ] "
+            "&& [ \"$(tr -d '\\r\\n' < \"$STATE_PATH\")\" = \"$EXPECTED_STATE\" ]; then"
         )
-        sh_lines.append(f"STATE_PATH=\"$SCRIPT_DIR/{spec['relative_state_path']}\"")
-        sh_lines.append(f"EXPECTED_STATE={shlex.quote(spec['expected_state'])}")
-        sh_lines.append("mkdir -p \"$VENDOR_PATH\"")
-        sh_lines.append(
-            f"if [ -f \"$STATE_PATH\" ] && [ -n \"$(ls -A \"$VENDOR_PATH\" 2>/dev/null)\" ] "
-            f"&& [ \"$(tr -d '\\r\\n' < \"$STATE_PATH\")\" = \"$EXPECTED_STATE\" ]; then"
-        )
-        sh_lines.append(f"  echo \"Skipping {spec['plugin_name']} plugin dependencies; already installed.\"")
+        sh_lines.append("  echo \"Skipping plugin dependency pool; already installed.\"")
         sh_lines.append("else")
-        sh_lines.append(
-            f"  \"$PYTHON_CMD\" -m pip install --target \"$VENDOR_PATH\" {spec['requirements_shell']}"
-        )
+        sh_lines.append(f"  \"$PYTHON_CMD\" -m pip install --target \"$VENDOR_PATH\" {requirements_shell}")
         sh_lines.append("  printf '%s' \"$EXPECTED_STATE\" > \"$STATE_PATH\"")
         sh_lines.append("fi")
+    else:
+        sh_lines.append("printf '%s' \"$EXPECTED_STATE\" > \"$STATE_PATH\"")
 
     write_text(bundle_dir / "install_plugin_deps.ps1", "\n".join(ps1_lines) + "\n")
     sh_path = bundle_dir / "install_plugin_deps.sh"
@@ -2442,40 +3601,56 @@ def write_external_plugin_dependency_scripts(bundle_dir: Path, plugin_roots: Lis
 
 
 def install_external_plugin_dependencies(bundle_dir: Path, plugin_roots: List[Path]) -> Tuple[bool, str]:
-    outputs: List[str] = []
-    for plugin_root in plugin_roots:
-        metadata = collect_external_plugin_metadata(plugin_root)
-        requirements = list(metadata.get("requirements") or [])
-        if not requirements:
-            continue
-        if _external_plugin_dependency_install_is_current(plugin_root, metadata):
-            outputs.append(f"skip {plugin_root.name}: plugin dependencies already installed")
-            continue
-        vendor_target = plugin_root / get_external_plugin_vendor_relative_dir()
-        vendor_target.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--target",
-            str(vendor_target),
-            *requirements,
-        ]
-        code, output = run_cmd(cmd, cwd=bundle_dir)
-        outputs.append(output)
-        if code != 0:
-            return False, output
-        _write_external_plugin_dependency_state(plugin_root, metadata)
-    return True, "\n".join(outputs)
+    requirements = _normalize_string_list(
+        load_resident_dependency_requirements({}, "external")
+        + collect_plugin_dependency_requirements(plugin_roots, platform_key="external")
+    )
+    dependency_root = bundle_dir / get_common_plugin_dependency_relative_dir()
+    dependency_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = bundle_dir / get_plugin_dependency_manifest_relative_path()
+    write_plugin_dependency_pool_manifest(
+        manifest_path,
+        requirements,
+        platform_key="external",
+        dependency_root=str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+    )
+    expected_state = json.dumps(
+        {
+            "requirements": requirements,
+            "dependency_root": str(get_common_plugin_dependency_relative_dir()).replace("\\", "/"),
+            "python_tag": current_plugin_python_tag(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    state_path = dependency_root / get_external_plugin_dependency_state_filename()
+    if state_path.exists():
+        try:
+            if state_path.read_text(encoding="utf-8").strip() == expected_state and any(dependency_root.iterdir()):
+                return True, "skip: plugin dependency pool already installed"
+        except OSError:
+            pass
+    if not requirements:
+        write_text(state_path, expected_state + "\n")
+        return True, "skip: no external plugin dependencies"
+    cmd = [sys.executable, "-m", "pip", "install", "--target", str(dependency_root), *requirements]
+    code, output = run_cmd(cmd, cwd=bundle_dir)
+    if code != 0:
+        return False, output
+    write_text(state_path, expected_state + "\n")
+    return True, output
 
 
-def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Dict[str, Any]]:
+def _scan_plugin_payloads(root_dir: Path, filename: str, *, apply_third_party_excludes: bool = True) -> Dict[str, Dict[str, Any]]:
     payloads: Dict[str, Dict[str, Any]] = {}
-    if not third_party_root.exists():
+    if not root_dir.exists():
         return payloads
 
-    for payload_path in sorted(third_party_root.rglob(filename)):
+    excluded_names = get_third_party_exclude_names() if apply_third_party_excludes else []
+    for payload_path in sorted(root_dir.rglob(filename)):
+        if apply_third_party_excludes and is_third_party_dir_excluded(payload_path, root_dir, excluded_names):
+            continue
         try:
             payload = load_json(payload_path)
         except Exception:
@@ -2494,19 +3669,46 @@ def _scan_plugin_payloads(third_party_root: Path, filename: str) -> Dict[str, Di
     return payloads
 
 
+def _merge_plugin_payload_maps(*maps: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for payload_map in maps:
+        for plugin_id, item in (payload_map or {}).items():
+            if plugin_id not in merged:
+                merged[plugin_id] = dict(item or {})
+                continue
+            merged[plugin_id]["payload"] = _deep_merge_dict(
+                merged[plugin_id].get("payload") or {},
+                (item or {}).get("payload") or {},
+            )
+            merged[plugin_id]["path"] = str((item or {}).get("path") or merged[plugin_id].get("path") or "")
+    return merged
+
+
 def _derive_snapshot_plugin_defaults(plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     plugin = dict(payload.get("plugin") or {})
     inferred_name = str(plugin.get("name") or "").strip() or plugin_id
     inferred_config_key = str(plugin.get("config_key") or "").strip()
-    if not inferred_config_key and "." in plugin_id:
+    parent_config_key = str(
+        plugin.get("config_parent_key")
+        or plugin.get("parent_config_key")
+        or plugin.get("inherits_config_key")
+        or ""
+    ).strip()
+    if not inferred_config_key and not parent_config_key and "." in plugin_id:
         inferred_config_key = plugin_id.rsplit(".", 1)[-1]
-    return {
+    normalized = {
         "id": plugin_id,
         "name": inferred_name,
         "version": str(plugin.get("version") or "").strip() or "0.0.0-snapshot",
         "config_key": inferred_config_key,
         "entrypoint": SNAPSHOT_PROVIDER_ENTRYPOINT,
     }
+    if parent_config_key:
+        normalized["config_parent_key"] = parent_config_key
+    effective_config_key = str(plugin.get("effective_config_key") or "").strip()
+    if effective_config_key:
+        normalized["effective_config_key"] = effective_config_key
+    return normalized
 
 
 def _stringify_snapshot_template_list(raw_values: Any) -> List[str]:
@@ -2606,10 +3808,19 @@ def inspect_android_apk_for_snapshot(apk_path: Path) -> str:
         return f"apk_inspect_failed path={apk_path} error={exc!r}"
 
 
-def build_mobile_protocol_snapshot(third_party_root: Path) -> Dict[str, Any]:
-    manifest_payloads = _scan_plugin_payloads(third_party_root, "ultimate-plugin.json")
-    overlay_payloads = _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME)
+def build_mobile_protocol_snapshot(third_party_root: Path, include_plugin_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    manifest_payloads = _merge_plugin_payload_maps(
+        _scan_plugin_payloads(third_party_root, "ultimate-plugin.json"),
+        _scan_plugin_payloads(PROJECT_PLUGINS_DIR, "ultimate-plugin.json", apply_third_party_excludes=False),
+    )
+    overlay_payloads = _merge_plugin_payload_maps(
+        _scan_plugin_payloads(third_party_root, HOST_OVERLAY_FILENAME),
+        _scan_plugin_payloads(PROJECT_PLUGINS_DIR, HOST_OVERLAY_FILENAME, apply_third_party_excludes=False),
+    )
     plugin_ids = sorted(set(manifest_payloads.keys()) | set(overlay_payloads.keys()))
+    if include_plugin_ids is not None:
+        include_set = {str(item or "").strip().lower() for item in include_plugin_ids if str(item or "").strip()}
+        plugin_ids = [plugin_id for plugin_id in plugin_ids if plugin_id.lower() in include_set]
 
     manifests: List[Dict[str, Any]] = []
     for plugin_id in plugin_ids:
@@ -2723,18 +3934,6 @@ def write_pyinstaller_scripts(
     ]
     append_repeated_cli_option(cmd, "--collect-submodules", DESKTOP_PLUGIN_RUNTIME_COLLECT_SUBMODULES)
     append_repeated_cli_option(cmd, "--hidden-import", DESKTOP_PLUGIN_RUNTIME_HIDDEN_IMPORTS)
-    if plugin_mode == PLUGIN_PACKAGE_MODE_BUNDLED:
-        plugin_metadata = collect_pyinstaller_plugin_metadata(staged_backend)
-        append_repeated_cli_option(cmd, "--collect-all", list(plugin_metadata.get("collect_all") or []))
-        append_repeated_cli_option(cmd, "--hidden-import", list(plugin_metadata.get("hidden_imports") or []))
-        for plugin_root in plugin_metadata.get("plugin_roots") or []:
-            plugin_path = Path(str(plugin_root))
-            cmd.extend(
-                [
-                    "--add-data",
-                    f"{plugin_path}{sep}comic_backend/third_party/{plugin_path.name}",
-                ]
-            )
     cmd.append(entry)
     
     if server_config_src.exists():
@@ -2749,6 +3948,7 @@ def write_pyinstaller_scripts(
         "Set-Location $StagedDir\n"
         f"$env:BACKEND_RUNTIME_PROFILE = \"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"$env:BACKEND_ENABLE_THIRD_PARTY = \"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
+        f"$env:{PLUGIN_PACKAGE_EXCLUDES_ENV} = \"{','.join(get_third_party_exclude_names())}\"\n"
         + " ".join([f"\"{part}\"" if " " in part else part for part in cmd])
         + "\n"
     )
@@ -2763,6 +3963,7 @@ def write_pyinstaller_scripts(
         "cd \"$STAGED_DIR\"\n"
         f"export BACKEND_RUNTIME_PROFILE=\"{runtime_env.get('BACKEND_RUNTIME_PROFILE', 'full')}\"\n"
         f"export BACKEND_ENABLE_THIRD_PARTY=\"{runtime_env.get('BACKEND_ENABLE_THIRD_PARTY', 'true')}\"\n"
+        f"export {PLUGIN_PACKAGE_EXCLUDES_ENV}=\"{','.join(get_third_party_exclude_names())}\"\n"
         + " ".join(cmd)
         + "\n"
     )
@@ -2790,6 +3991,7 @@ def package_pyinstaller(
     frontend_dist_dir = str(packager_cfg.get("frontend_dist_dir", "comic_frontend_dist")).strip()
     frontend_binary_name = str(packager_cfg.get("frontend_binary_name", "")).strip()
     frontend_entry = str(packager_cfg.get("frontend_entry", "")).strip()
+    launcher_binary_name = str(packager_cfg.get("launcher_binary_name", "")).strip() if target == "windows" else ""
 
     cmd = write_pyinstaller_scripts(
         out_dir=target_out_dir,
@@ -2809,8 +4011,10 @@ def package_pyinstaller(
         plugin_package_mode=plugin_mode,
         frontend_binary_name=frontend_binary_name,
         frontend_entry=frontend_entry,
+        launcher_binary_name=launcher_binary_name,
     )
-    external_plugin_roots = sorted((bundle_dir / "plugins").iterdir(), key=lambda item: item.name.lower()) if (bundle_dir / "plugins").exists() else []
+    staged_backend = staged_target_dir / "comic_backend"
+    external_plugin_roots = collect_desktop_dependency_plugin_roots(staged_backend)
 
     if not execute:
         extra_msg = ""
@@ -2905,6 +4109,35 @@ def package_pyinstaller(
             shutil.copy2(fe_built_binary, bundle_dir / "bin" / fe_built_binary.name)
             frontend_built = True
 
+    # The Windows control center is intentionally separate from the backend
+    # and frontend binaries so Linux and Android keep their existing launchers.
+    launcher_built = False
+    if launcher_binary_name:
+        launcher_out_dir = target_out_dir / "launcher_pyinstaller"
+        launcher_cmd = _write_launcher_pyinstaller_script(
+            out_dir=launcher_out_dir,
+            target=target,
+            binary_name=launcher_binary_name,
+        )
+        launcher_code, launcher_output = run_cmd(launcher_cmd, cwd=ROOT_DIR, env=runtime_env)
+        launcher_build_log = target_out_dir / "pyinstaller_launcher.log"
+        write_text(launcher_build_log, launcher_output)
+        if launcher_code != 0:
+            return PackageResult(
+                target=target,
+                status="failed",
+                message=f"launcher pyinstaller failed with code {launcher_code}; see {launcher_build_log}",
+                output_dir=str(target_out_dir),
+                command=launcher_cmd,
+            )
+        launcher_dist_dir = launcher_out_dir / "dist"
+        launcher_built_binary = launcher_dist_dir / launcher_binary_name
+        if target == "windows":
+            launcher_built_binary = launcher_built_binary.with_suffix(".exe")
+        if launcher_built_binary.exists():
+            shutil.copy2(launcher_built_binary, bundle_dir / "bin" / launcher_built_binary.name)
+            launcher_built = True
+
     # Copy frontend dist if available
     frontend_source_dir = staged_target_dir / frontend_dist_dir
     if frontend_source_dir.exists():
@@ -2916,6 +4149,8 @@ def package_pyinstaller(
     status_msg = f"pyinstaller build completed and desktop release bundle updated (plugin_package_mode={plugin_mode}"
     if frontend_binary_name:
         status_msg += f"; frontend={'built' if frontend_built else 'failed'}"
+    if launcher_binary_name:
+        status_msg += f"; launcher={'built' if launcher_built else 'failed'}"
     status_msg += ")"
 
     return PackageResult(
@@ -2925,6 +4160,57 @@ def package_pyinstaller(
         output_dir=str(target_out_dir),
         command=cmd,
     )
+
+
+def _write_launcher_pyinstaller_script(
+    out_dir: Path,
+    target: str,
+    binary_name: str,
+) -> List[str]:
+    """Generate the Windows-only GUI launcher executable."""
+    dist_dir = out_dir / "dist"
+    work_dir = out_dir / "build"
+    spec_dir = out_dir / "spec"
+    source = ROOT_DIR / "scripts" / "windows_launcher.py"
+    brand_image = ROOT_DIR / "comic_frontend" / "public" / "vite.jpg"
+    launcher_icon = ROOT_DIR / "comic_frontend" / "public" / "ultimate_web.ico"
+    sep = ";" if target == "windows" else ":"
+    cmd = [
+        "python",
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onefile",
+        "--windowed",
+        "--icon",
+        str(launcher_icon),
+        "--name",
+        binary_name,
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
+        "--specpath",
+        str(spec_dir),
+        "--hidden-import",
+        "PIL.ImageTk",
+        "--collect-data",
+        "PIL",
+        "--add-data",
+        f"{brand_image}{sep}assets",
+        "--add-data",
+        f"{launcher_icon}{sep}assets",
+        str(source),
+    ]
+    ps1 = (
+        "$ErrorActionPreference = 'Stop'\n"
+        + "Set-Location '" + str(ROOT_DIR).replace("'", "''") + "'\n"
+        + " ".join([f'\"{part}\"' if " " in part else part for part in cmd])
+        + "\n"
+    )
+    write_text(out_dir / "run_pyinstaller.ps1", ps1)
+    return cmd
 
 
 def _write_frontend_pyinstaller_script(
@@ -3008,7 +4294,11 @@ def write_android_capacitor_plan(
     app_id = str(packager_cfg.get("app_id", "com.ultimate.web")).strip()
     app_name = str(packager_cfg.get("app_name", "UltimateWeb")).strip()
     embed_backend = bool(packager_cfg.get("embed_backend", False))
-    backend_port = int(packager_cfg.get("backend_port", 5000))
+    backend_port = int(packager_cfg.get("backend_port", 5035))
+    android_private_port = int(packager_cfg.get("android_private_port", backend_port))
+    android_normal_port = int(packager_cfg.get("android_normal_port", android_private_port + 1))
+    if android_private_port == android_normal_port:
+        raise ValueError("android private and normal ports must be different")
     staged_web_dir_name = str(packager_cfg.get("web_dir", "comic_frontend_dist")).strip() or "comic_frontend_dist"
     workspace_web_dir_name = str(packager_cfg.get("workspace_web_dir", "web")).strip() or "web"
     workspace_backend_dir_name = get_android_workspace_backend_dir(packager_cfg)
@@ -3031,14 +4321,20 @@ def write_android_capacitor_plan(
     api_base_url = str(packager_cfg.get("api_base_url", "")).strip()
     if embed_backend and not api_base_url:
         api_base_url = f"http://127.0.0.1:{backend_port}/api"
-    if api_base_url:
+    if api_base_url or embed_backend:
         runtime_js_path = workspace_dir / workspace_web_dir_name / "runtime-api-base.js"
-        write_text(
-            runtime_js_path,
-            "window.__ULTIMATE_API_BASE_URL = "
-            + json.dumps(api_base_url, ensure_ascii=False)
-            + ";\n",
-        )
+        if embed_backend:
+            space_api_bases = {
+                "private": str(packager_cfg.get("android_private_api_base_url", "")).strip()
+                or f"http://127.0.0.1:{android_private_port}/api",
+                "normal": str(packager_cfg.get("android_normal_api_base_url", "")).strip()
+                or f"http://127.0.0.1:{android_normal_port}/api",
+            }
+            runtime_config = "window.__ULTIMATE_SPACE_API_BASES = " + json.dumps(space_api_bases, ensure_ascii=False) + ";\n"
+            runtime_config += "window.__ULTIMATE_API_BASE_URL = " + json.dumps(space_api_bases["private"], ensure_ascii=False) + ";\n"
+        else:
+            runtime_config = "window.__ULTIMATE_API_BASE_URL = " + json.dumps(api_base_url, ensure_ascii=False) + ";\n"
+        write_text(runtime_js_path, runtime_config)
         index_html = workspace_dir / workspace_web_dir_name / "index.html"
         if index_html.exists():
             raw = index_html.read_text(encoding="utf-8")
@@ -3120,7 +4416,10 @@ def write_android_capacitor_plan(
     plan.append(f"- expected APK path in workspace: `{apk_relative_path}`")
     if embed_backend:
         plan.append(f"- backend build input dir: `{workspace_backend_dir_name}`")
-        plan.append(f"- embedded backend api base: `http://127.0.0.1:{backend_port}/api`")
+        plan.append(
+            f"- embedded backend api bases: private=`http://127.0.0.1:{android_private_port}/api`, "
+            f"normal=`http://127.0.0.1:{android_normal_port}/api`"
+        )
         plan.append("- embedded backend injection: enabled (Chaquopy consumes build-only backend input, not web assets)")
     plan.append("- ensure Android SDK, Java, and Gradle are available in environment.")
     write_text(target_out_dir / "android_packaging_plan.md", "\n".join(plan) + "\n")
@@ -3194,9 +4493,11 @@ def package_android(
             command=[item for cmd in commands for item in cmd],
         )
 
+    gradle_attempts = int(packager_cfg.get("android_gradle_max_attempts", 3) or 3)
     logs: List[str] = []
     for idx, cmd in enumerate(commands, start=1):
         cwd = workspace_dir
+        is_gradle_step = idx == len(commands)
         if idx == len(commands):
             cwd = workspace_dir / "android"
             if not cwd.exists():
@@ -3209,7 +4510,13 @@ def package_android(
                 )
             write_android_local_properties(cwd, sdk_dir)
         try:
-            code, output = run_cmd(cmd, cwd=cwd, env=android_env)
+            code, output = run_cmd_with_retries(
+                cmd,
+                cwd=cwd,
+                env=android_env,
+                attempts=gradle_attempts if is_gradle_step else 1,
+                delay_seconds=15,
+            )
         except FileNotFoundError:
             log_path = target_out_dir / "android_build.log"
             logs.append(f"$ {' '.join(cmd)}\n[launcher-error] executable not found in PATH or cwd\n")
@@ -3247,6 +4554,20 @@ def package_android(
                     message=f"android launcher icon apply failed after step {idx}; see {log_path}",
                     output_dir=str(target_out_dir),
                     command=["apply_android_launcher_icon"],
+                )
+            try:
+                message = optimize_android_gradle_wrapper(workspace_dir / "android", packager_cfg)
+                logs.append(f"$ [internal] optimize android gradle wrapper\n[ok] {message}\n")
+            except Exception as ex:
+                log_path = target_out_dir / "android_build.log"
+                logs.append(f"$ [internal] optimize android gradle wrapper\n[error] {ex}\n")
+                write_text(log_path, "\n".join(logs))
+                return PackageResult(
+                    target=target,
+                    status="failed",
+                    message=f"android gradle wrapper optimization failed after step {idx}; see {log_path}",
+                    output_dir=str(target_out_dir),
+                    command=["optimize_android_gradle_wrapper"],
                 )
         if embed_backend and idx == 4:
             try:
@@ -3348,7 +4669,18 @@ def parse_args() -> argparse.Namespace:
         "--plugin-package-mode",
         default=os.environ.get("ULTIMATE_PLUGIN_PACKAGE_MODE", DEFAULT_PLUGIN_PACKAGE_MODE),
         choices=PLUGIN_PACKAGE_MODES,
-        help="Desktop plugin packaging mode: external keeps default plugins outside the executable; bundled compiles default plugins into the executable while keeping external plugin discovery enabled.",
+        help="Desktop plugin packaging mode. External extensions are the only supported mode.",
+    )
+    parser.add_argument(
+        "--third-party-excludes",
+        default=os.environ.get(PLUGIN_PACKAGE_EXCLUDES_ENV, os.environ.get("THIRD_PARTY_PACKAGE_EXCLUDES", "")),
+        help="Comma-separated third_party directory names excluded from packaged plugins and mobile protocol snapshots.",
+    )
+    parser.add_argument(
+        "--android-third-party-mode",
+        default=os.environ.get("ULTIMATE_ANDROID_THIRD_PARTY_MODE", ""),
+        choices=("",) + ANDROID_THIRD_PARTY_MODES,
+        help="Override Android third-party packaging mode. Empty keeps build/packagers.json.",
     )
     parser.add_argument("--execute", action="store_true", help="Execute packaging commands when possible.")
     return parser.parse_args()
@@ -3364,6 +4696,9 @@ def main() -> int:
     available_targets = [str(item.get("id", "")).strip().lower() for item in targets_cfg.get("targets", []) if str(item.get("id", "")).strip()]
     selected_targets = select_targets(available_targets, args.targets)
     plugin_package_mode = normalize_plugin_package_mode(args.plugin_package_mode)
+    third_party_excludes = ",".join(normalize_third_party_exclude_names(args.third_party_excludes))
+    android_third_party_mode_override = str(args.android_third_party_mode or "").strip().lower()
+    os.environ[PLUGIN_PACKAGE_EXCLUDES_ENV] = third_party_excludes
 
     packagers = packagers_cfg.get("packagers", {})
     if not isinstance(packagers, dict):
@@ -3373,6 +4708,9 @@ def main() -> int:
     print(f"[package] staged root: {staged_root}")
     print(f"[package] output root: {output_root}")
     print(f"[package] plugin package mode: {plugin_package_mode}")
+    if android_third_party_mode_override:
+        print(f"[package] android third-party mode override: {android_third_party_mode_override}")
+    print(f"[package] third-party excludes: {third_party_excludes or '(none)'}")
 
     results: List[PackageResult] = []
     for target in selected_targets:
@@ -3392,6 +4730,9 @@ def main() -> int:
             continue
 
         packager_cfg = packagers.get(target, {})
+        if target == "android" and android_third_party_mode_override:
+            packager_cfg = dict(packager_cfg or {})
+            packager_cfg["android_backend_third_party_mode"] = android_third_party_mode_override
         packager_type = str(packager_cfg.get("type", "")).strip().lower()
         if packager_type == "pyinstaller":
             result = package_pyinstaller(

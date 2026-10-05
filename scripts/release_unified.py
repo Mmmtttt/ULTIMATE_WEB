@@ -36,14 +36,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true", help="Execute packager commands when available.")
     parser.add_argument(
         "--plugin-package-mode",
-        choices=("external", "bundled"),
+        choices=("external",),
         default="external",
-        help="Desktop plugin packaging mode passed to package_unified.py.",
+        help="Desktop plugin packaging mode. External extensions are the only supported mode.",
     )
     parser.add_argument(
         "--app-version",
         default="",
         help="Set packaged app version (e.g. 2.0.0). If empty, build script auto-resolves from env/tag/package.json.",
+    )
+    parser.add_argument(
+        "--third-party-excludes",
+        default="",
+        help="Comma-separated third_party directory names excluded from packaged plugins and mobile protocol snapshots.",
     )
     return parser.parse_args()
 
@@ -85,8 +90,12 @@ def main() -> int:
         "--packagers-config",
         args.packagers_config,
         "--plugin-package-mode",
-        args.plugin_package_mode,
+        "external",
+        "--android-third-party-mode",
+        "external",
     ]
+    if str(args.third_party_excludes or "").strip():
+        package_cmd.extend(["--third-party-excludes", str(args.third_party_excludes).strip()])
     if args.execute:
         package_cmd.append("--execute")
 

@@ -6,9 +6,9 @@ import pytest
 
 
 @pytest.mark.integration
-def test_generate_local_thumbnails_route_forwards_video_id_to_service(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+def test_generate_local_thumbnails_route_forwards_video_id_to_service(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    video_api = fake_third_party_client["video_api"]
     ServiceResult = importlib.import_module("infrastructure.common.result").ServiceResult
     captured = {}
 
@@ -48,9 +48,9 @@ def test_generate_local_thumbnails_route_forwards_video_id_to_service(third_part
 
 
 @pytest.mark.integration
-def test_select_local_thumbnail_cover_route_forwards_index_to_service(third_party_client, monkeypatch):
-    client = third_party_client["client"]
-    video_api = third_party_client["video_api"]
+def test_select_local_thumbnail_cover_route_forwards_index_to_service(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
+    video_api = fake_third_party_client["video_api"]
     ServiceResult = importlib.import_module("infrastructure.common.result").ServiceResult
     captured = {}
 

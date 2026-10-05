@@ -1,0 +1,633 @@
+from __future__ import annotations
+
+import json
+import math
+import os
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Sequence
+
+from infrastructure.logger import app_logger, error_logger
+
+from .builder import document_stats, rebuild_index
+from .connection import catalog_index_connection, get_catalog_index_path
+from .schema import catalog_search_available
+
+
+SUPPORTED_SORT_TYPES = {
+    "",
+    "default",
+    "name",
+    "title",
+    "random",
+    "create_time",
+    "score",
+    "page_count",
+    "total_page",
+    "pages",
+    "access_time",
+    "read_time",
+    "date",
+    "custom",
+}
+
+# 查询路径触发的全量重建保护：singleflight 锁保证并发 stale 请求只会触发一次重建，
+# 其余请求等待锁释放后复用重建结果，避免并发重复 rebuild 造成写放大。
+# 批量写入期间的索引同步频率已由 JsonStorage.defer_catalog_index_sync 在写入侧合并。
+_REBUILD_SINGLEFLIGHT_LOCK = threading.Lock()
+
+
+@dataclass
+class CatalogQueryResult:
+    items: List[Dict[str, Any]]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    available_authors: List[str]
+    rebuilt: bool
+    elapsed_ms: float
+    search_index: str
+
+
+class CatalogIndex:
+    @staticmethod
+    def enabled() -> bool:
+        value = str(os.environ.get("CATALOG_INDEX_ENABLED", "1")).strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def search_enabled() -> bool:
+        value = str(os.environ.get("CATALOG_SEARCH_INDEX_ENABLED", "1")).strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def can_query(sort_type: str | None) -> bool:
+        normalized = str(sort_type or "").strip().lower()
+        return normalized in SUPPORTED_SORT_TYPES
+
+    def status(self) -> Dict[str, Any]:
+        path = get_catalog_index_path()
+        with catalog_index_connection() as conn:
+            stale = self._is_stale(conn)
+            search_available = self.search_enabled() and catalog_search_available(conn)
+            rows = conn.execute(
+                """
+                SELECT media_type, source, COUNT(*) AS total
+                FROM catalog_item
+                GROUP BY media_type, source
+                ORDER BY media_type, source
+                """
+            ).fetchall()
+            return {
+                "enabled": self.enabled(),
+                "path": path,
+                "exists": os.path.exists(path),
+                "stale": stale,
+                "search_index": "fts5_trigram_like" if search_available else "like_scan",
+                "counts": [dict(row) for row in rows],
+            }
+
+    def rebuild(self) -> Dict[str, Any]:
+        with catalog_index_connection() as conn:
+            return rebuild_index(conn)
+
+    def load_feed_candidates(self, *, media_type: str, source: str = "local") -> List[Dict[str, Any]] | None:
+        if not self.enabled():
+            return None
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+
+                rows = conn.execute(
+                    """
+                    SELECT
+                        i.item_id,
+                        i.title,
+                        i.creator,
+                        i.score,
+                        i.current_unit,
+                        i.total_units,
+                        GROUP_CONCAT(ct.tag_id) AS tag_ids
+                    FROM catalog_item i
+                    LEFT JOIN catalog_tag ct ON ct.item_key = i.item_key
+                    WHERE i.media_type = ?
+                      AND i.source = ?
+                      AND i.is_deleted = 0
+                      AND i.total_units > 0
+                    GROUP BY i.item_key
+                    ORDER BY i.source_order ASC
+                    """,
+                    [media_type, source],
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"加载 catalog feed candidates 失败，将回退 JSON: {exc}")
+            return None
+
+        candidates: List[Dict[str, Any]] = []
+        for row in rows:
+            raw_tag_ids = str(row["tag_ids"] or "").strip()
+            candidates.append(
+                {
+                    "id": row["item_id"],
+                    "title": row["title"],
+                    "creator": row["creator"],
+                    "score": row["score"],
+                    "current_unit": row["current_unit"],
+                    "total_units": row["total_units"],
+                    "tag_ids": [tag_id for tag_id in raw_tag_ids.split(",") if tag_id],
+                }
+            )
+        return candidates
+
+    def count_tags(self, content_type: Any) -> Dict[str, int] | None:
+        """Return visible content counts per tag for one media type from the index."""
+        if not self.enabled():
+            return None
+
+        media_type = str(getattr(content_type, "value", content_type) or "").strip().lower()
+        if media_type not in {"comic", "video"}:
+            return {}
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                rows = conn.execute(
+                    """
+                    SELECT ct.tag_id, COUNT(DISTINCT i.item_key) AS total
+                    FROM catalog_tag ct
+                    JOIN catalog_item i ON i.item_key = ct.item_key
+                    WHERE i.media_type = ?
+                      AND i.is_deleted = 0
+                    GROUP BY ct.tag_id
+                    """,
+                    (media_type,),
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog tag count query failed, fallback to JSON path: {exc}")
+            return None
+
+        return {
+            str(row["tag_id"] or "").strip(): int(row["total"] or 0)
+            for row in rows
+            if str(row["tag_id"] or "").strip()
+        }
+
+    def count_list_members(self, list_ids: Iterable[Any]) -> Dict[str, Dict[str, int]] | None:
+        """Return comic/video member counts for many lists in a single indexed query."""
+        if not self.enabled():
+            return None
+
+        normalized_ids = normalize_string_list(list_ids)
+        if not normalized_ids:
+            return {}
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                placeholders = ",".join("?" for _ in normalized_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        cl.list_id AS list_id,
+                        i.media_type AS media_type,
+                        COUNT(DISTINCT i.item_key) AS total
+                    FROM catalog_list cl
+                    JOIN catalog_item i ON i.item_key = cl.item_key
+                    WHERE cl.list_id IN ({placeholders})
+                      AND i.is_deleted = 0
+                    GROUP BY cl.list_id, i.media_type
+                    """,
+                    normalized_ids,
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog list member count query failed, fallback to JSON path: {exc}")
+            return None
+
+        counts = {
+            list_id: {"comic_count": 0, "video_count": 0}
+            for list_id in normalized_ids
+        }
+        for row in rows:
+            list_id = str(row["list_id"] or "").strip()
+            media_type = str(row["media_type"] or "").strip().lower()
+            if list_id not in counts:
+                continue
+            if media_type == "comic":
+                counts[list_id]["comic_count"] = int(row["total"] or 0)
+            elif media_type == "video":
+                counts[list_id]["video_count"] = int(row["total"] or 0)
+        return counts
+
+    def load_list_members(self, list_id: Any) -> List[Dict[str, Any]] | None:
+        """Load all visible members for one list from the catalog index."""
+        if not self.enabled():
+            return None
+
+        normalized_id = str(list_id or "").strip()
+        if not normalized_id:
+            return []
+
+        try:
+            with catalog_index_connection() as conn:
+                self._ensure_index_fresh(conn)
+                rows = conn.execute(
+                    """
+                    SELECT i.media_type, i.source, i.payload_json
+                    FROM catalog_list cl
+                    JOIN catalog_item i ON i.item_key = cl.item_key
+                    WHERE cl.list_id = ?
+                      AND i.is_deleted = 0
+                    ORDER BY
+                        CASE i.media_type WHEN 'comic' THEN 0 WHEN 'video' THEN 1 ELSE 2 END ASC,
+                        i.source_order ASC
+                    """,
+                    (normalized_id,),
+                ).fetchall()
+        except Exception as exc:
+            error_logger.warning(f"Catalog list member detail query failed, fallback to JSON path: {exc}")
+            return None
+
+        members: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            members.append(
+                {
+                    "media_type": str(row["media_type"] or "").strip().lower(),
+                    "source": str(row["source"] or "").strip().lower(),
+                    "payload": payload,
+                }
+            )
+        return members
+
+    def query_local_items(
+        self,
+        *,
+        media_type: str,
+        source: str = "local",
+        sort_type: str | None = "",
+        sort_order: str = "desc",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        include_deleted: bool = False,
+        keyword: str = "",
+        include_tags: Iterable[Any] | None = None,
+        exclude_tags: Iterable[Any] | None = None,
+        authors: Iterable[Any] | None = None,
+        list_ids: Iterable[Any] | None = None,
+        unread_only: bool = False,
+        page: int = 1,
+        page_size: int = 24,
+        include_available_authors: bool = False,
+    ) -> CatalogQueryResult | None:
+        return self._query_items(
+            media_type=media_type,
+            source=source,
+            sort_type=sort_type,
+            sort_order=sort_order,
+            min_score=min_score,
+            max_score=max_score,
+            include_deleted=include_deleted,
+            keyword=keyword,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            authors=authors,
+            list_ids=list_ids,
+            unread_only=unread_only,
+            page=page,
+            page_size=page_size,
+            include_available_authors=include_available_authors,
+        )
+
+    def query_matching_items(
+        self,
+        *,
+        media_type: str,
+        source: str = "local",
+        sort_type: str | None = "",
+        sort_order: str = "desc",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        include_deleted: bool = False,
+        keyword: str = "",
+        include_tags: Iterable[Any] | None = None,
+        exclude_tags: Iterable[Any] | None = None,
+        authors: Iterable[Any] | None = None,
+        list_ids: Iterable[Any] | None = None,
+        unread_only: bool = False,
+    ) -> CatalogQueryResult | None:
+        """Return every matching row while still doing filtering/sorting in SQLite."""
+        return self._query_items(
+            media_type=media_type,
+            source=source,
+            sort_type=sort_type,
+            sort_order=sort_order,
+            min_score=min_score,
+            max_score=max_score,
+            include_deleted=include_deleted,
+            keyword=keyword,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            authors=authors,
+            list_ids=list_ids,
+            unread_only=unread_only,
+            page=None,
+            page_size=None,
+            include_available_authors=False,
+        )
+
+    def _query_items(
+        self,
+        *,
+        media_type: str,
+        source: str,
+        sort_type: str | None,
+        sort_order: str,
+        min_score: float | None,
+        max_score: float | None,
+        include_deleted: bool,
+        keyword: str,
+        include_tags: Iterable[Any] | None,
+        exclude_tags: Iterable[Any] | None,
+        authors: Iterable[Any] | None,
+        list_ids: Iterable[Any] | None,
+        unread_only: bool,
+        page: int | None,
+        page_size: int | None,
+        include_available_authors: bool,
+    ) -> CatalogQueryResult | None:
+        if not self.enabled() or not self.can_query(sort_type):
+            return None
+
+        started = time.perf_counter()
+        paginated = page is not None
+        normalized_page = normalize_page(page, 1) if paginated else 1
+        normalized_page_size = normalize_page_size(page_size) if paginated else 1
+        rebuilt = False
+
+        with catalog_index_connection() as conn:
+            rebuilt = self._ensure_index_fresh(conn)
+
+            search_available = self.search_enabled() and catalog_search_available(conn)
+            where, params, search_index = self._build_where(
+                media_type=media_type,
+                source=source,
+                include_deleted=include_deleted,
+                min_score=min_score,
+                max_score=max_score,
+                keyword=keyword,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+                unread_only=unread_only,
+                search_available=search_available,
+            )
+            total = int(conn.execute(f"SELECT COUNT(*) FROM catalog_item i WHERE {where}", params).fetchone()[0])
+            if paginated:
+                total_pages = max(1, math.ceil(total / normalized_page_size))
+                current_page = min(normalized_page, total_pages)
+                offset = (current_page - 1) * normalized_page_size
+            else:
+                total_pages = 1
+                current_page = 1
+                normalized_page_size = max(1, total)
+            order_by = self._build_order_by(sort_type, sort_order)
+
+            sql = f"""
+                SELECT payload_json
+                FROM catalog_item i
+                WHERE {where}
+                ORDER BY {order_by}
+                """
+            item_params = list(params)
+            if paginated:
+                sql += " LIMIT ? OFFSET ?"
+                item_params.extend([normalized_page_size, offset])
+            item_rows = conn.execute(sql, item_params).fetchall()
+            items = [json.loads(row["payload_json"]) for row in item_rows]
+            available_authors = self._load_available_authors(conn, where, params) if include_available_authors else []
+
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        if rebuilt:
+            app_logger.info(f"Catalog index rebuilt before query: media_type={media_type}, elapsed_ms={elapsed_ms:.2f}")
+        return CatalogQueryResult(
+            items=items,
+            total=total,
+            page=current_page,
+            page_size=normalized_page_size,
+            total_pages=total_pages,
+            available_authors=available_authors,
+            rebuilt=rebuilt,
+            elapsed_ms=elapsed_ms,
+            search_index=search_index,
+        )
+
+    def _ensure_index_fresh(self, conn) -> bool:
+        """查询路径的 stale 处理：全量重建受 singleflight 锁保护。
+
+        并发发现 stale 的请求只会触发一次重建，其余线程等锁后复用结果。
+        返回是否执行了重建。
+        """
+        if not self._is_stale(conn):
+            return False
+
+        with _REBUILD_SINGLEFLIGHT_LOCK:
+            # 等锁期间其他线程可能已完成重建
+            if not self._is_stale(conn):
+                return False
+            rebuild_index(conn)
+            return True
+
+    def _is_stale(self, conn) -> bool:
+        try:
+            rows = conn.execute(
+                "SELECT logical_name, size_bytes, mtime_ns FROM catalog_index_meta"
+            ).fetchall()
+            indexed = {row["logical_name"]: (int(row["size_bytes"]), int(row["mtime_ns"])) for row in rows}
+            current = document_stats()
+            for logical_name, stat in current.items():
+                if indexed.get(logical_name) != (int(stat["size_bytes"]), int(stat["mtime_ns"])):
+                    return True
+            return not indexed
+        except Exception as exc:
+            error_logger.warning(f"检查 catalog index 状态失败，将重建: {exc}")
+            return True
+
+    def _build_where(
+        self,
+        *,
+        media_type: str,
+        source: str,
+        include_deleted: bool,
+        min_score: float | None,
+        max_score: float | None,
+        keyword: str,
+        include_tags: Iterable[Any] | None,
+        exclude_tags: Iterable[Any] | None,
+        authors: Iterable[Any] | None,
+        list_ids: Iterable[Any] | None,
+        unread_only: bool,
+        search_available: bool,
+    ) -> tuple[str, List[Any], str]:
+        clauses: List[str] = ["i.media_type = ?", "i.source = ?"]
+        params: List[Any] = [media_type, source]
+
+        if not include_deleted:
+            clauses.append("i.is_deleted = 0")
+        if min_score is not None:
+            clauses.append("i.score IS NOT NULL AND i.score >= ?")
+            params.append(float(min_score))
+        if max_score is not None:
+            clauses.append("i.score IS NOT NULL AND i.score <= ?")
+            params.append(float(max_score))
+        if unread_only:
+            clauses.append("i.current_unit = 1")
+
+        normalized_include_tags = normalize_string_list(include_tags)
+        if normalized_include_tags:
+            placeholders = ",".join("?" for _ in normalized_include_tags)
+            clauses.append(
+                "i.item_key IN ("
+                "SELECT ct.item_key FROM catalog_tag ct "
+                f"WHERE ct.tag_id IN ({placeholders}) "
+                "GROUP BY ct.item_key HAVING COUNT(DISTINCT ct.tag_id) = ?"
+                ")"
+            )
+            params.extend(normalized_include_tags)
+            params.append(len(set(normalized_include_tags)))
+
+        for tag_id in normalize_string_list(exclude_tags):
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM catalog_tag ct WHERE ct.item_key = i.item_key AND ct.tag_id = ?)"
+            )
+            params.append(tag_id)
+
+        normalized_authors = normalize_string_list(authors)
+        if normalized_authors:
+            placeholders = ",".join("?" for _ in normalized_authors)
+            clauses.append(
+                f"i.item_key IN (SELECT ca.item_key FROM catalog_author ca WHERE ca.name IN ({placeholders}))"
+            )
+            params.extend(normalized_authors)
+
+        normalized_list_ids = normalize_string_list(list_ids)
+        if normalized_list_ids:
+            placeholders = ",".join("?" for _ in normalized_list_ids)
+            clauses.append(
+                f"i.item_key IN (SELECT cl.item_key FROM catalog_list cl WHERE cl.list_id IN ({placeholders}))"
+            )
+            params.extend(normalized_list_ids)
+
+        tokens = [token for token in str(keyword or "").strip().lower().split() if token]
+        use_search_index = should_use_fts_search(
+            tokens,
+            search_available=search_available,
+            include_tags=normalized_include_tags,
+            authors=normalized_authors,
+            list_ids=normalized_list_ids,
+        )
+        for token in tokens:
+            if use_search_index:
+                clauses.append(
+                    "i.item_key IN ("
+                    "SELECT cs.item_key FROM catalog_item_search cs "
+                    "WHERE cs.search_text LIKE ?"
+                    ")"
+                )
+            else:
+                clauses.append("i.search_text LIKE ?")
+            params.append(f"%{token}%")
+
+        if not tokens:
+            search_index = "none"
+        elif use_search_index:
+            search_index = "fts5_trigram_like"
+        else:
+            search_index = "like_scan"
+        return " AND ".join(clauses), params, search_index
+
+    def _build_order_by(self, sort_type: str | None, sort_order: str) -> str:
+        normalized_sort_type = str(sort_type or "").strip().lower()
+        direction = "ASC" if str(sort_order or "desc").strip().lower() == "asc" else "DESC"
+
+        if normalized_sort_type in {"", "default"}:
+            return "i.source_order ASC"
+        if normalized_sort_type in {"name", "title"}:
+            return f"i.title_sort_key {direction}, i.item_id {direction}"
+        if normalized_sort_type == "random":
+            return "RANDOM()"
+        if normalized_sort_type == "score":
+            return f"COALESCE(i.score, 0) {direction}, i.title {direction}, i.item_id {direction}"
+        if normalized_sort_type == "create_time":
+            return f"i.create_time {direction}, i.title {direction}, i.item_id {direction}"
+        if normalized_sort_type in {"access_time", "read_time"}:
+            return f"i.last_access_time {direction}, i.title {direction}, i.item_id {direction}"
+        if normalized_sort_type in {"page_count", "total_page", "pages"}:
+            return f"i.total_units {direction}, i.title {direction}, i.item_id {direction}"
+        if normalized_sort_type == "date":
+            return f"i.date {direction}, i.title {direction}, i.item_id {direction}"
+        if normalized_sort_type == "custom":
+            return "CASE WHEN i.custom_order IS NULL THEN 1 ELSE 0 END ASC, i.custom_order ASC, i.create_time DESC, i.title ASC, i.item_id ASC"
+        return "i.source_order ASC"
+
+    def _load_available_authors(self, conn, where: str, params: Sequence[Any]) -> List[str]:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT ca.name
+            FROM catalog_author ca
+            JOIN catalog_item i ON i.item_key = ca.item_key
+            WHERE {where} AND ca.name <> ''
+            ORDER BY ca.name ASC
+            """,
+            list(params),
+        ).fetchall()
+        return [str(row["name"]) for row in rows]
+
+
+def normalize_string_list(values: Iterable[Any] | None) -> List[str]:
+    normalized: List[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def should_use_fts_search(
+    tokens: Sequence[str],
+    *,
+    search_available: bool,
+    include_tags: Sequence[str],
+    authors: Sequence[str],
+    list_ids: Sequence[str],
+) -> bool:
+    if not search_available or not tokens:
+        return False
+    if include_tags or authors or list_ids:
+        return False
+    return all(len(token) >= 3 for token in tokens)
+
+
+def normalize_page(value: Any, default: int = 1) -> int:
+    try:
+        page = int(value)
+    except (TypeError, ValueError):
+        page = default
+    return max(1, page)
+
+
+def normalize_page_size(value: Any, default: int = 24, maximum: int = 120) -> int:
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        size = default
+    size = max(1, size)
+    return min(size, maximum)

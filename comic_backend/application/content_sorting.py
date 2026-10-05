@@ -134,7 +134,9 @@ def sort_content_items(
 
     if normalized_sort_type == "random":
         shuffled = list(safe_items)
-        random.shuffle(shuffled)
+        # Use SystemRandom to avoid deterministic results caused by forked
+        # worker processes inheriting the same random module state.
+        random.SystemRandom().shuffle(shuffled)
         return shuffled
 
     if normalized_sort_type == "custom":

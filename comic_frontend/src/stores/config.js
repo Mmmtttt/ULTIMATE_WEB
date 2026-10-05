@@ -20,6 +20,7 @@ export const useConfigStore = defineStore('config', () => {
   const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
   const listPageSize = ref(DEFAULT_CONFIG.LIST_PAGE_SIZE)
   const leftRightReadingReversed = ref(DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED)
+  const debugMode = ref(DEFAULT_CONFIG.DEBUG_MODE)
   const loading = ref(false)
 
   const normalizePageMode = (mode) => {
@@ -53,7 +54,9 @@ export const useConfigStore = defineStore('config', () => {
 
   const resolveTheme = (background) => {
     const normalized = normalizeBackground(background)
-    return normalized === BACKGROUND.DARK ? 'dark' : 'light'
+    if (normalized === BACKGROUND.DARK) return 'dark'
+    if (normalized === BACKGROUND.SEPIA) return 'sepia'
+    return 'light'
   }
 
   const applyAppTheme = (background = defaultBackground.value) => {
@@ -71,7 +74,8 @@ export const useConfigStore = defineStore('config', () => {
     autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value,
     singlePageBrowsing: singlePageBrowsing.value,
     listPageSize: listPageSize.value,
-    leftRightReadingReversed: leftRightReadingReversed.value
+    leftRightReadingReversed: leftRightReadingReversed.value,
+    debugMode: debugMode.value
   }))
 
   const isLeftRightMode = computed(() => defaultPageMode.value === PAGE_MODE.LEFT_RIGHT)
@@ -160,6 +164,7 @@ export const useConfigStore = defineStore('config', () => {
         serverConfig.leftRightReadingReversed ??
         leftRightReadingReversed.value
       )
+      debugMode.value = Boolean(serverConfig.debug_mode ?? DEFAULT_CONFIG.DEBUG_MODE)
       saveConfig()
       applyAppTheme(defaultBackground.value)
       return true
@@ -183,7 +188,8 @@ export const useConfigStore = defineStore('config', () => {
         auto_hide_toolbar: autoHideToolbar.value,
         show_page_number: showPageNumber.value,
         auto_download_preview_assets_for_preview_import: autoDownloadPreviewImportAssets.value,
-        single_page_browsing: singlePageBrowsing.value
+        single_page_browsing: singlePageBrowsing.value,
+        debug_mode: debugMode.value
       }
       const res = await configApi.update(payload)
       return res.code === 200
@@ -255,6 +261,7 @@ export const useConfigStore = defineStore('config', () => {
     singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
     listPageSize.value = DEFAULT_CONFIG.LIST_PAGE_SIZE
     leftRightReadingReversed.value = DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
+    debugMode.value = DEFAULT_CONFIG.DEBUG_MODE
     saveConfig()
     applyAppTheme(defaultBackground.value)
     await saveConfigToServer()
@@ -285,6 +292,10 @@ export const useConfigStore = defineStore('config', () => {
     if (newConfig.leftRightReadingReversed !== undefined) {
       setLeftRightReadingReversed(newConfig.leftRightReadingReversed)
     }
+    if (newConfig.debugMode !== undefined) {
+      debugMode.value = Boolean(newConfig.debugMode)
+      saveConfig()
+    }
   }
 
   loadConfig()
@@ -298,6 +309,7 @@ export const useConfigStore = defineStore('config', () => {
     singlePageBrowsing,
     listPageSize,
     leftRightReadingReversed,
+    debugMode,
     loading,
 
     config,

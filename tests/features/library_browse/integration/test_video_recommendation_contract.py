@@ -22,13 +22,14 @@ def test_video_recommendation_list_exposes_protocol_display_metadata(integration
             "last_updated": "2026-04-23",
             "video_recommendations": [
                 {
-                    "id": "JAVDBPREVIEW900001",
+                    "id": "VAPREVIEW900001",
+                    "plugin_id": "video.alpha",
                     "code": "PRE-900001",
-                    "title": "Preview Javdb Video",
+                    "title": "Preview Video Alpha",
                     "creator": "Preview Creator A",
                     "actors": ["Actor A"],
-                    "cover_path": "/static/cover/JAVDB/900001.jpg",
-                    "preview_video": "https://media.example/javdb-preview-900001.mp4",
+                    "cover_path": "/static/cover/VA/900001.jpg",
+                    "preview_video": "https://media.example/video_alpha-preview-900001.mp4",
                     "thumbnail_images": [],
                     "tag_ids": [],
                     "list_ids": [],
@@ -37,12 +38,14 @@ def test_video_recommendation_list_exposes_protocol_display_metadata(integration
                     "is_deleted": False,
                 },
                 {
-                    "id": "JAVBUSPREVIEWABP123",
+                    "id": "VBPREVIEWABP123",
+                    "plugin_id": "video.beta",
+                    "platform": "VB",
                     "code": "ABP-123",
-                    "title": "Preview Javbus Video",
+                    "title": "Preview Video Beta",
                     "creator": "Preview Creator B",
                     "actors": ["Actor B"],
-                    "cover_path": "/static/cover/JAVBUS/ABP123.jpg",
+                    "cover_path": "/static/cover/VB/ABP123.jpg",
                     "preview_video": "",
                     "thumbnail_images": [],
                     "tag_ids": [],
@@ -65,10 +68,10 @@ def test_video_recommendation_list_exposes_protocol_display_metadata(integration
         assert data["code"] == 200
 
         items = {item["id"]: item for item in (data["data"] or [])}
-        assert items["JAVDBPREVIEW900001"]["plugin_id"] == "video.javdb"
-        assert ((((items["JAVDBPREVIEW900001"].get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
-        assert items["JAVBUSPREVIEWABP123"]["plugin_id"] == "video.javbus"
-        assert ((((items["JAVBUSPREVIEWABP123"].get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "2 / 3")
+        assert items["VAPREVIEW900001"]["plugin_id"] == "video.alpha"
+        assert ((((items["VAPREVIEW900001"].get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
+        assert items["VBPREVIEWABP123"]["plugin_id"] == "video.beta"
+        assert ((((items["VBPREVIEWABP123"].get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "2 / 3")
     finally:
         save_json(db_path, original_payload)
 
@@ -81,8 +84,8 @@ def test_video_recommendation_detail_exposes_local_and_remote_preview_assets(int
     db_path = meta_dir / "video_recommendations_database.json"
 
     original_payload = load_json(db_path)
-    preview_relative_path = "video/JAVDB/JAVDBDETAILLOCAL900003/hls/index.m3u8"
-    preview_abs_path = data_dir / "video" / "JAVDB" / "JAVDBDETAILLOCAL900003" / "hls" / "index.m3u8"
+    preview_relative_path = "video/VA/VADETAILLOCAL900003/hls/index.m3u8"
+    preview_abs_path = data_dir / "video" / "VA" / "VADETAILLOCAL900003" / "hls" / "index.m3u8"
     preview_abs_path.parent.mkdir(parents=True, exist_ok=True)
     preview_abs_path.write_text("#EXTM3U\n", encoding="utf-8")
 
@@ -94,13 +97,13 @@ def test_video_recommendation_detail_exposes_local_and_remote_preview_assets(int
             "last_updated": "2026-04-23",
             "video_recommendations": [
                 {
-                    "id": "JAVDBDETAILLOCAL900003",
+                    "id": "VADETAILLOCAL900003",
                     "code": "PRE-900003",
-                    "title": "Preview Detail Javdb Local Video",
+                    "title": "Preview Detail Local Video Alpha",
                     "creator": "Preview Creator Local Detail",
                     "actors": ["Actor Local Detail"],
-                    "cover_path": "/static/cover/JAVDB/900003.jpg",
-                    "preview_video": "https://media.example/javdb-preview-900003.m3u8",
+                    "cover_path": "/static/cover/VA/900003.jpg",
+                    "preview_video": "https://media.example/video_alpha-preview-900003.m3u8",
                     "preview_video_local": preview_relative_path,
                     "thumbnail_images": [],
                     "tag_ids": [],
@@ -115,7 +118,7 @@ def test_video_recommendation_detail_exposes_local_and_remote_preview_assets(int
 
         response = requests.get(
             f"{base_url}/api/v1/video/recommendation/detail",
-            params={"video_id": "JAVDBDETAILLOCAL900003"},
+            params={"video_id": "VADETAILLOCAL900003"},
             timeout=5,
         )
 
@@ -128,8 +131,8 @@ def test_video_recommendation_detail_exposes_local_and_remote_preview_assets(int
         assert preview.get("available") is True
         assert preview.get("default_asset_key") == "preview_local"
         assert [asset.get("key") for asset in assets] == ["preview_local", "preview_remote"]
-        assert assets[0]["url"] == "/media/video/JAVDB/JAVDBDETAILLOCAL900003/hls/index.m3u8"
-        assert assets[1]["url"] == "https://media.example/javdb-preview-900003.m3u8"
+        assert assets[0]["url"] == "/media/video/VA/VADETAILLOCAL900003/hls/index.m3u8"
+        assert assets[1]["url"] == "https://media.example/video_alpha-preview-900003.m3u8"
     finally:
         save_json(db_path, original_payload)
 
@@ -150,13 +153,13 @@ def test_video_recommendation_detail_exposes_protocol_display_metadata(integrati
             "last_updated": "2026-04-23",
             "video_recommendations": [
                 {
-                    "id": "JAVDBDETAIL900002",
+                    "id": "VADETAIL900002",
                     "code": "PRE-900002",
-                    "title": "Preview Detail Javdb Video",
+                    "title": "Preview Detail Video Alpha",
                     "creator": "Preview Creator Detail",
                     "actors": ["Actor Detail"],
-                    "cover_path": "/static/cover/JAVDB/900002.jpg",
-                    "preview_video": "https://media.example/javdb-preview-900002.mp4",
+                    "cover_path": "/static/cover/VA/900002.jpg",
+                    "preview_video": "https://media.example/video_alpha-preview-900002.mp4",
                     "thumbnail_images": [],
                     "tag_ids": [],
                     "list_ids": [],
@@ -170,7 +173,7 @@ def test_video_recommendation_detail_exposes_protocol_display_metadata(integrati
 
         response = requests.get(
             f"{base_url}/api/v1/video/recommendation/detail",
-            params={"video_id": "JAVDBDETAIL900002"},
+            params={"video_id": "VADETAIL900002"},
             timeout=5,
         )
 
@@ -178,8 +181,8 @@ def test_video_recommendation_detail_exposes_protocol_display_metadata(integrati
         data = response.json()
         assert data["code"] == 200
         detail = data["data"]
-        assert detail["id"] == "JAVDBDETAIL900002"
-        assert detail["plugin_id"] == "video.javdb"
+        assert detail["id"] == "VADETAIL900002"
+        assert detail["plugin_id"] == "video.alpha"
         assert detail["source"] == "preview"
         assert ((((detail.get("display") or {}).get("cover") or {}).get("aspect_ratio")) == "16 / 9")
         playback = detail.get("playback") or {}
@@ -192,6 +195,6 @@ def test_video_recommendation_detail_exposes_protocol_display_metadata(integrati
         assets = preview.get("assets") or []
         assert len(assets) == 1
         assert assets[0]["key"] == "preview_remote"
-        assert assets[0]["url"] == "https://media.example/javdb-preview-900002.mp4"
+        assert assets[0]["url"] == "https://media.example/video_alpha-preview-900002.mp4"
     finally:
         save_json(db_path, original_payload)

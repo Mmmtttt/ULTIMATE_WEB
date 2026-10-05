@@ -78,7 +78,11 @@
           v-model="sourcePath"
           label="本地路径"
           placeholder="例如 D:\\漫画\\合集 或 /data/comic.zip"
-        />
+        >
+          <template #right-icon>
+            <DirectoryPicker v-model="sourcePath" />
+          </template>
+        </van-field>
         <van-field
           v-if="pathImportMode === 'softlink_ref'"
           v-model="pathArchivePassword"
@@ -88,17 +92,13 @@
           placeholder="可选：用于解析加密压缩包目录"
         />
         <div class="import-mode-switch">
-          <div class="switch-main">
-            <span class="switch-side" :class="{ active: pathImportMode === 'hardlink_move' }">硬链接</span>
-            <van-switch
-              v-model="isSoftlinkMode"
-              size="20px"
-            />
-            <span class="switch-side" :class="{ active: pathImportMode === 'softlink_ref' }">软链接</span>
-          </div>
-          <div class="switch-desc">
-            {{ pathImportMode === 'softlink_ref' ? '不移动源文件（软连接）' : '移动源文件（硬链接）' }}
-          </div>
+          <span class="switch-side" :class="{ active: pathImportMode === 'hardlink_move' }">硬链接</span>
+          <van-switch
+            v-model="isSoftlinkMode"
+            size="20px"
+          />
+          <span class="switch-side" :class="{ active: pathImportMode === 'softlink_ref' }">软链接</span>
+          <span class="switch-desc">{{ pathImportMode === 'softlink_ref' ? '不移动源文件（软连接）' : '移动源文件（硬链接）' }}</span>
         </div>
         <div v-if="recoverableSessions.length" class="recover-row">
           <div class="hint">检测到未完成导入会话，可继续上一次任务。</div>
@@ -281,6 +281,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
+import DirectoryPicker from '@/components/common/DirectoryPicker.vue'
 import { comicApi } from '@/api'
 import { useComicStore, useTagStore } from '@/stores'
 
@@ -1100,16 +1101,13 @@ watch(
   border-radius: 12px;
   background: var(--surface-1);
   padding: 10px 12px;
-}
-
-.switch-main {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.switch-side {
+.recover-row {
   font-size: 13px;
   color: var(--text-tertiary);
   transition: color var(--motion-fast) var(--ease-standard);
@@ -1121,10 +1119,13 @@ watch(
 }
 
 .switch-desc {
-  margin-top: 6px;
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.45;
+  margin-left: auto;
+  text-align: right;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .recover-row {
@@ -1206,6 +1207,8 @@ watch(
 .tree-footer-actions {
   margin-top: 10px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
 }
 
@@ -1369,6 +1372,61 @@ watch(
 
   .tree-name {
     max-width: 170px;
+  }
+}
+
+@media (max-width: 640px) {
+  .comic-local-import-page {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .card-surface {
+    margin-inline: 10px;
+    border-radius: 18px;
+  }
+
+  .section-title,
+  .picker-row,
+  .recover-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hero-steps span,
+  .mode-btn,
+  .mark-mode-btn {
+    flex: 1 1 100%;
+  }
+
+  .mode-toggle,
+  .mark-mode-row {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mode-btn + .mode-btn,
+  .mark-mode-btn + .mark-mode-btn {
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .switch-desc {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .tree-card {
+    min-height: 420px;
+  }
+
+  .tree-list {
+    max-height: 52vh;
+  }
+
+  .tree-footer-actions .van-button,
+  .result-actions .van-button {
+    flex: 1 1 100%;
   }
 }
 </style>

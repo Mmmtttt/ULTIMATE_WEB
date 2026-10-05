@@ -121,16 +121,16 @@ tests/
 说明：采用“固定 + 多样化”而非随机数据，保证失败可复现、可定位。
 
 漫画（5 条）：
-- `JM100001`: score 8.5, tags `tag_action`, author `Tester A`, list `list_favorites_comic`
-- `JM100002`: score 7.0, tags `tag_story`, author `Tester B`
-- `JM100003`: score 9.8, tags `tag_action,tag_drama`, author `Tester C`, list `list_curated_comic`
-- `JM100004`: score 6.2, tags `tag_drama`, author `Tester D`, list `list_curated_comic`
-- `JM100005`: score 4.1, tags `tag_action,tag_story`, author `Tester B`
+- `CA100001`: score 8.5, tags `tag_action`, author `Tester A`, list `list_favorites_comic`
+- `CA100002`: score 7.0, tags `tag_story`, author `Tester B`
+- `CA100003`: score 9.8, tags `tag_action,tag_drama`, author `Tester C`, list `list_curated_comic`
+- `CA100004`: score 6.2, tags `tag_drama`, author `Tester D`, list `list_curated_comic`
+- `CA100005`: score 4.1, tags `tag_action,tag_story`, author `Tester B`
 
 视频（3 条）：
-- `JAVDB900001`: score 8.0, tags `tag_video`
-- `JAVDB900002`: score 9.3, tags `tag_video,tag_video_action`, creator `Video Creator B`, list `list_curated_video`
-- `JAVDB900003`: score 5.6, tags `tag_video_story`
+- `VA900001`: score 8.0, tags `tag_video`
+- `VA900002`: score 9.3, tags `tag_video,tag_video_action`, creator `Video Creator B`, list `list_curated_video`
+- `VA900003`: score 5.6, tags `tag_video_story`
 
 ## 9. 用例编写硬规范（后续 AI 必须遵守）
 每个测试用例前都必须写“用例描述”，包含：
@@ -189,24 +189,24 @@ tests/
   - 作者/演员：`/author/search-works`、`/author/check-updates`、`/author/new-works`、`/author/works`、`/actor/search-works`、`/actor/check-updates`、`/actor/new-works`、`/actor/works`、`/actor/videos`
   - 推荐与系统配置：`/recommendation/cache/download`、`/config/system`（third-party 路径更新回调）
   - 预览库迁移到本地库异步任务：`/recommendation/migrate-to-local`、`/video/recommendation/migrate-to-local`（仅创建任务，不阻塞导入）
-  - 预览下载头：`VideoAppService._build_preview_video_headers`（JAVDB Referer/Cookie）
+  - 预览下载头：`VideoAppService._build_preview_video_headers`（VA Referer/Cookie）
 - E2E 看护点：
   - 用户在 `VideoTagSearch` 页面完成“选标签 -> 搜索 -> 选择结果 -> 导入”，并断言请求参数和导入 body。
   - 用户在 `VideoDetail` 与 `VideoRecommendationDetail` 页面完成“点击播放”，并断言 `play-urls` 请求与 `proxy2` 播放地址映射契约。
-  - 视频搜索结果混排（JAVDB 横版 + JAVBUS 竖版）卡片高度与比例守卫。
+  - 视频搜索结果混排（VA 横版 + VB 竖版）卡片高度与比例守卫。
 
 ## 14. Third-party Coverage Matrix (2026-03-25 Latest)
 - Current status: `tests/features/third_party_integration/` has `72` integration cases + `5` E2E cases.
 - Covered import flows:
   - Comic: `import/online` (`by_id`, `by_search`, `by_favorite`, `home`, `recommendation`), `import/async by_list`.
   - Video: `third-party/import` (`home`, `recommendation`), fallback `get_video_by_code`, duplicate-code guards (`home` and `recommendation`).
-  - List: `platform/import`, `platform/sync`, `platform/list/detail`, `import/sync favorites` for `JAVDB/JM/PK`.
+  - List: `platform/import`, `platform/sync`, `platform/list/detail`, `import/sync favorites` for `VA/CA/PK`.
   - Preview -> local migrate routes (`comic` and `video`) create async import tasks.
   - Video preview->local migrate cache copy: when preview cache exists, copy cached assets and rewrite local asset paths.
 - Covered search flows:
   - Comic third-party keyword search (`platform=all`, invalid platform guard).
   - Video third-party keyword search (`platform=all`, page parameter contract).
-  - Video JAVDB tag search (tag parsing, invalid tag IDs, cookie-required branch).
+  - Video VA tag search (tag parsing, invalid tag IDs, cookie-required branch).
   - Actor third-party search/update chain (`actor` and `video actor` route entries + service adapter calls).
   - E2E "search next page" via `/video-tag-search` load-more path.
 - Covered playback/download flows:
@@ -221,12 +221,12 @@ tests/
 - Covered list sync/import with third-party:
   - Tracking list creation/update persistence (`platform`, `platform_list_id`, `import_source`).
   - De-dup for sync (existing bound video codes and existing bound comic IDs).
-  - JM favorites branch via `/list/import` and non-favorites detail route forwarding.
+  - CA favorites branch via `/list/import` and non-favorites detail route forwarding.
 - Covered author/creator third-party:
-  - Author works search contract (`jmcomic/picacomic` mapping).
+  - Author works search contract (`comic_alpha/comic_beta` mapping).
   - Author new works enrichment (`get_album_by_id`), check-updates persistence, works runtime-guard/cache-only branches.
   - Actor check-updates persistence, new-works delta slicing, works/videos/search route contracts.
-  - Actor JAVDB `get_actor_works` (`works` payload) compatibility + cover proxy2 decode download contract.
+  - Actor VA `get_actor_works` (`works` payload) compatibility + cover proxy2 decode download contract.
   - Video actor works cache clear contract (`/api/v1/video/actor/works-cache/clear`).
 - Residual risk notes (next priority):
   - Add timeout/retry branch guards for long-running third-party adapter failures.
@@ -340,7 +340,7 @@ tests/
 | comic detail page moves to trash via API | 验证用户可将漫画移入回收站 | 用户打开漫画详情页，点击移入回收站，验证请求参数，测试结束后恢复数据 |
 | comic detail page starts reading and navigates to reader | 验证用户可开始阅读漫画 | 用户打开漫画详情页，点击阅读按钮，验证路由跳转 |
 
-**注意**: 移入回收站测试使用 JM100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响其他测试。
+**注意**: 移入回收站测试使用 CA100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响其他测试。
 
 #### e2e: video_detail_operations.spec.js
 | 用例名称 | 用例目的 | 测试内容 |
@@ -411,7 +411,7 @@ tests/
 | trash page shows delete button for trashed item | 验证回收站删除按钮存在 | 用户移入漫画到回收站，验证删除按钮可见，然后恢复数据 |
 | trash page shows empty button when items exist | 验证回收站清空按钮存在 | 用户移入漫画到回收站，验证清空按钮可见，然后恢复数据 |
 
-**注意**: 回收站测试使用 JM100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响 library_sort_by_score 等依赖所有漫画在库的测试。
+**注意**: 回收站测试使用 CA100005 (E2E Comic Epsilon)，测试结束后自动恢复数据，避免影响 library_sort_by_score 等依赖所有漫画在库的测试。
 
 ### 18.5 global_search 模块
 

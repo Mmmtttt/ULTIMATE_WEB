@@ -11,7 +11,7 @@ def _ok_result(data=None, message="ok"):
 
 
 @pytest.mark.integration
-def test_recommendation_cache_download_returns_503_when_third_party_unavailable(third_party_client, monkeypatch):
+def test_recommendation_cache_download_returns_503_when_third_party_unavailable(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard `/api/v1/recommendation/cache/download` unavailable branch so disabled third-party runtime is reported clearly.
@@ -25,10 +25,15 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
     - History:
       - 2026-03-23: Added runtime-guard branch coverage for recommendation cache download.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
 
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
+        "get_recommendation_detail",
+        lambda rid: _ok_result({"id": rid, "total_page": 6, "title": "Rec-000001"}),
+    )
     monkeypatch.setattr(
         recommendation_api.recommendation_service,
         "_get_platform_service",
@@ -37,7 +42,7 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
 
     response = client.post(
         "/api/v1/recommendation/cache/download",
-        json={"recommendation_id": "JM000001"},
+        json={"recommendation_id": "CA000001"},
     )
     payload = response.get_json()
 
@@ -47,28 +52,28 @@ def test_recommendation_cache_download_returns_503_when_third_party_unavailable(
 
 
 @pytest.mark.integration
-def test_recommendation_cache_download_forwards_platform_download_contract(third_party_client, monkeypatch):
+def test_recommendation_cache_download_forwards_platform_download_contract(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard recommendation cache download contract with third-party platform service:
       API input -> platform/original_id mapping -> download_album args -> cache/page mapping.
     - Steps:
       1. Mock recommendation detail, cache manager methods, and `update_total_page`.
-      2. Mock `third_party.platform_service.get_platform_service().download_album`.
-      3. Call `POST /api/v1/recommendation/cache/download` with a JM recommendation id.
+      2. Mock `protocol.platform_service.get_platform_service().download_album`.
+      3. Call `POST /api/v1/recommendation/cache/download` with a fake comic recommendation id.
       4. Assert third-party call args and final API payload.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. `download_album` receives `platform=JM`, `original_id`, `show_progress=False`, and JM cache dir.
+      2. `download_album` receives fake comic platform, `original_id`, `show_progress=False`, and platform cache dir.
       3. API returns `status=downloaded` with cached pages and normalized `total_pages`.
     - History:
       - 2026-03-23: Added strong contract guard for recommendation cache download chain.
     """
-    client = third_party_client["client"]
+    client = fake_third_party_client["client"]
     recommendation_api = importlib.import_module("api.v1.recommendation")
-    platform_service_module = importlib.import_module("third_party.platform_service")
+    platform_service_module = importlib.import_module("protocol.platform_service")
     captured = {"download": [], "add_to_cache": [], "update_total_page": []}
-    recommendation_id = "JM777001"
+    recommendation_id = "CA777001"
 
     monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
     monkeypatch.setattr(recommendation_api.recommendation_service, "_get_platform_service", lambda: object())
@@ -91,7 +96,7 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     monkeypatch.setattr(
         recommendation_api.recommendation_cache_manager,
         "get_cached_pages",
-        lambda _rid: [1, 2, 3, 4],
+        lambda _rid: [1, 2, 3, 4, 5, 6],
     )
 
     class FakePlatformService:
@@ -117,15 +122,166 @@ def test_recommendation_cache_download_forwards_platform_download_contract(third
     assert response.status_code == 200
     assert payload["code"] == 200
     assert payload["data"]["status"] == "downloaded"
-    assert payload["data"]["total_pages"] == 4
-    assert payload["data"]["cached_pages"] == [1, 2, 3, 4]
+    assert payload["data"]["total_pages"] == 6
+    assert payload["data"]["cached_pages"] == [1, 2, 3, 4, 5, 6]
 
     assert len(captured["download"]) == 1
-    assert captured["download"][0]["platform"] == "JM"
+    assert captured["download"][0]["platform"] == "CA"
     assert captured["download"][0]["original_id"] == "777001"
     assert captured["download"][0]["show_progress"] is False
-    assert "/recommendation_cache/comic/JM" in captured["download"][0]["download_dir"].replace("\\", "/")
+    assert "/recommendation_cache/comic/CA" in captured["download"][0]["download_dir"].replace("\\", "/")
 
     # First add uses third-party reported local page count, second add uses actual cached page count.
+    assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 6)]
+    assert captured["update_total_page"] == [(recommendation_id, 6)]
+
+
+@pytest.mark.integration
+def test_recommendation_cache_download_rejects_partial_cache_success(fake_third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard partial preview cache recovery. If the backend knows the album has more
+      pages than the cache currently exposes, the download API must not report success or shrink metadata.
+    - Steps:
+      1. Mock recommendation detail with total_page=6.
+      2. Mock platform download as successful but cache manager only exposes 4 pages.
+      3. Call recommendation cache download API.
+    - Expected:
+      1. HTTP 200 with business `code=500`.
+      2. `update_total_page` is not called with the incomplete page count.
+      3. The partial cache index can still be refreshed for a later retry.
+    """
+    client = fake_third_party_client["client"]
+    recommendation_api = importlib.import_module("api.v1.recommendation")
+    platform_service_module = importlib.import_module("protocol.platform_service")
+    captured = {"add_to_cache": [], "update_total_page": []}
+    recommendation_id = "CA777002"
+
+    monkeypatch.setattr(recommendation_api.recommendation_cache_manager, "is_cached", lambda _rid: False)
+    monkeypatch.setattr(recommendation_api.recommendation_service, "_get_platform_service", lambda: object())
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
+        "get_recommendation_detail",
+        lambda rid: _ok_result({"id": rid, "total_page": 6, "title": "Rec-777002"}),
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_service,
+        "update_total_page",
+        lambda rid, total_page: captured["update_total_page"].append((rid, total_page))
+        or _ok_result({"id": rid, "total_page": total_page}),
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_cache_manager,
+        "add_to_cache",
+        lambda rid, page_count: captured["add_to_cache"].append((rid, page_count)) or True,
+    )
+    monkeypatch.setattr(
+        recommendation_api.recommendation_cache_manager,
+        "get_cached_pages",
+        lambda _rid: [1, 2, 3, 4],
+    )
+
+    class FakePlatformService:
+        def download_album(self, platform, original_id, download_dir=None, show_progress=True):
+            return {"local_pages": 6, "pages_count": 6}, True
+
+    monkeypatch.setattr(platform_service_module, "get_platform_service", lambda: FakePlatformService())
+
+    response = client.post(
+        "/api/v1/recommendation/cache/download",
+        json={"recommendation_id": recommendation_id},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 500
+    assert "缓存仍不完整" in payload["msg"]
     assert captured["add_to_cache"] == [(recommendation_id, 6), (recommendation_id, 4)]
-    assert captured["update_total_page"] == [(recommendation_id, 4)]
+    assert captured["update_total_page"] == []
+
+
+@pytest.mark.integration
+def test_unified_comic_update_endpoint_dispatches_preview_source(fake_third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard the single comic update API pair for preview-library comics.
+    - Steps:
+      1. Mock recommendation update service.
+      2. Call `/api/v1/comic/update/check` with `source=preview`.
+    - Expected:
+      1. The unified comic endpoint dispatches to recommendation update logic.
+      2. No separate recommendation update endpoint is needed by the frontend.
+    """
+    client = fake_third_party_client["client"]
+    comic_api = importlib.import_module("api.v1.comic")
+    captured = []
+
+    monkeypatch.setattr(
+        comic_api.recommendation_service,
+        "check_recommendation_update",
+        lambda rid: captured.append(rid) or _ok_result({
+            "recommendation_id": rid,
+            "can_update": True,
+            "has_update": False,
+        }, "preview checked"),
+    )
+
+    response = client.post(
+        "/api/v1/comic/update/check",
+        json={"comic_id": "CA777001", "source": "preview"},
+    )
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["code"] == 200
+    assert payload["msg"] == "preview checked"
+    assert payload["data"]["recommendation_id"] == "CA777001"
+    assert captured == ["CA777001"]
+
+
+@pytest.mark.integration
+def test_unified_comic_cover_repair_endpoint_dispatches_source(fake_third_party_client, monkeypatch):
+    """
+    Case Description:
+    - Purpose: Guard the single-comic cover repair API source dispatch for local and preview libraries.
+    - Steps:
+      1. Mock `comic_service.repair_single_cover`.
+      2. Call `/api/v1/comic/cover/repair` once without source and once with `source=preview`.
+    - Expected:
+      1. Local call defaults to `source=local`.
+      2. Preview call preserves `source=preview`.
+    """
+    client = fake_third_party_client["client"]
+    comic_api = importlib.import_module("api.v1.comic")
+    captured = []
+
+    def fake_repair_single_cover(comic_id, *, source="local"):
+        captured.append((comic_id, source))
+        return _ok_result({
+            "comic_id": comic_id,
+            "source": source,
+            "cover_path": f"/static/cover/CA/{comic_id}.jpg",
+            "changed": True,
+        }, "cover repaired")
+
+    monkeypatch.setattr(comic_api.comic_service, "repair_single_cover", fake_repair_single_cover)
+
+    local_response = client.post(
+        "/api/v1/comic/cover/repair",
+        json={"comic_id": "CA777003"},
+    )
+    preview_response = client.post(
+        "/api/v1/comic/cover/repair",
+        json={"comic_id": "CA777004", "source": "preview"},
+    )
+
+    local_payload = local_response.get_json()
+    preview_payload = preview_response.get_json()
+
+    assert local_response.status_code == 200
+    assert preview_response.status_code == 200
+    assert local_payload["code"] == 200
+    assert preview_payload["code"] == 200
+    assert local_payload["data"]["source"] == "local"
+    assert preview_payload["data"]["source"] == "preview"
+    assert captured == [("CA777003", "local"), ("CA777004", "preview")]

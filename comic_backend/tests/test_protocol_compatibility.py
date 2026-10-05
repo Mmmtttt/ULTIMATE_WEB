@@ -11,6 +11,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from protocol import compatibility
 from protocol.base import ProtocolProvider
+from protocol.host_service import ProtocolHostService
 
 
 @dataclass
@@ -83,32 +84,32 @@ def test_compatibility_resolves_plugin_ids_from_manifest_metadata(monkeypatch):
     gateway = _FakeGateway(
         [
             _FakeManifest(
-                plugin_id="comic.jmcomic",
-                config_key="jmcomic",
+                plugin_id="comic.alpha",
+                config_key="comic_alpha",
                 media_types=["comic"],
                 capability_keys=["catalog.search"],
-                lookup_names=["comic.jmcomic", "jmcomic", "JM"],
-                name="JMComic",
-                identity={"platform_label": "JM", "host_id_prefix": "JM"},
+                lookup_names=["comic.alpha", "comic_alpha", "CA"],
+                name="Comic Alpha",
+                identity={"platform_label": "CA", "host_id_prefix": "CA"},
             ),
             _FakeManifest(
-                plugin_id="video.javdb",
-                config_key="javdb",
+                plugin_id="video.alpha",
+                config_key="video_alpha",
                 media_types=["video"],
                 capability_keys=["catalog.search"],
-                lookup_names=["video.javdb", "javdb", "JAVDB"],
-                name="JAVDB",
-                identity={"platform_label": "JAVDB", "host_id_prefix": "JAVDB"},
+                lookup_names=["video.alpha", "video_alpha", "VA"],
+                name="VA",
+                identity={"platform_label": "VA", "host_id_prefix": "VA"},
             ),
         ]
     )
 
-    monkeypatch.setattr(compatibility, "get_protocol_gateway", lambda: gateway)
+    monkeypatch.setattr(compatibility, "get_protocol_host_service", lambda: ProtocolHostService(gateway=gateway))
 
-    assert compatibility.get_plugin_id_for_adapter_name("jmcomic") == "comic.jmcomic"
-    assert compatibility.get_plugin_id_for_comic_platform("JM") == "comic.jmcomic"
-    assert compatibility.get_plugin_id_for_video_platform("javdb") == "video.javdb"
-    assert compatibility.get_plugin_id_for_platform("video.javdb") == "video.javdb"
+    assert compatibility.get_plugin_id_for_adapter_name("comic_alpha") == "comic.alpha"
+    assert compatibility.get_plugin_id_for_comic_platform("CA") == "comic.alpha"
+    assert compatibility.get_plugin_id_for_video_platform("video_alpha") == "video.alpha"
+    assert compatibility.get_plugin_id_for_platform("video.alpha") == "video.alpha"
 
 
 def test_compatibility_uses_capability_declared_proxy_client(monkeypatch):
@@ -172,3 +173,4 @@ def test_protocol_provider_client_exposes_public_request_alias():
             "impersonate": "",
         },
     }
+

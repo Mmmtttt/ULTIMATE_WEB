@@ -21,7 +21,7 @@ async function openComicDetail(page, title) {
   await page.waitForURL(/\/comic\//);
   await page.waitForLoadState("networkidle");
 
-  const moveToTrashBtn = page.locator('[title="移入回收站"]');
+  const moveToTrashBtn = page.getByRole("button", { name: "删除" });
   await expect(moveToTrashBtn).toBeVisible({ timeout: 10000 });
   return moveToTrashBtn;
 }

@@ -96,7 +96,7 @@ export const useImportTaskStore = defineStore('importTask', () => {
 
       if (isPlatformListImport) {
         const platform = String(payload.platform || '').trim().toUpperCase()
-        const platformListId = String(payload.platform_list_id || payload.comic_id || '').trim()
+        const platformListId = String(payload.platform_list_id || '').trim()
         const platformListName = String(payload.platform_list_name || payload.keyword || '').trim()
         if (!platform || !platformListId) {
           showFailToast('缺少平台清单参数')

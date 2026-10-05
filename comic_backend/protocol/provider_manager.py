@@ -7,7 +7,10 @@ import platform
 import sys
 from typing import Any, Dict, Optional
 
+from infrastructure.logger import app_logger
+
 from .base import PluginManifest, ProtocolProvider
+from .credential_guard import get_manifest_credential_status
 from .registry import PluginRegistry, get_plugin_registry
 from .runtime_config import ProtocolConfigStore
 
@@ -61,6 +64,11 @@ class ProviderManager:
             _append_relative_path(entry)
         for entry in vendor_templates:
             _append_relative_path(entry)
+        for env_key in ("ULTIMATE_PLUGIN_DEP_ROOTS", "BACKEND_PLUGIN_DEP_ROOTS"):
+            for entry in str(os.environ.get(env_key, "") or "").split(os.pathsep):
+                candidate = os.path.abspath(str(entry or "").strip())
+                if candidate and os.path.isdir(candidate):
+                    resolved.append(candidate)
 
         deduped: list[str] = []
         seen = set()
@@ -154,17 +162,47 @@ class ProviderManager:
             self._drop_plugin_runtime_paths(plugin_id)
 
     def _get_runtime_config(self, manifest: PluginManifest) -> Dict[str, Any]:
-        config_key = str(manifest.config_key or "").strip()
+        config_key = str(getattr(manifest, "effective_config_key", "") or manifest.config_key or "").strip()
         if not config_key:
             return {}
         return self._config_store.get_plugin_config(config_key, reload=True)
+
+    @staticmethod
+    def _capability_requires_enabled(capability: str) -> bool:
+        normalized = str(capability or "").strip()
+        if not normalized or normalized == "health.query.status":
+            return False
+        # taxonomy.*（标签元数据等）由各 provider 自行做凭据状态检查并优雅降级，
+        # 不能在这里前置拦截，否则破坏 tags 接口的契约（未配置时返回空列表而非报错）。
+        return normalized.startswith((
+            "catalog.",
+            "collection.",
+            "person.",
+            "asset.",
+            "playback.",
+            "transport.http.",
+        ))
+
+    def _ensure_plugin_enabled_for_capability(
+        self,
+        manifest: PluginManifest,
+        config: Dict[str, Any],
+        capability: str,
+    ) -> None:
+        if not self._capability_requires_enabled(capability):
+            return
+        status = get_manifest_credential_status(manifest, config)
+        if not bool(status.get("configured", False)):
+            raise RuntimeError(str(status.get("message") or "平台未启用或配置不完整，不能执行查询"))
 
     def execute(self, plugin_id: str, capability: str, params: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None):
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        normalized_capability = str(capability or "").strip()
+        self._ensure_plugin_enabled_for_capability(manifest, config, normalized_capability)
         return provider.execute(
-            str(capability or "").strip(),
+            normalized_capability,
             dict(params or {}),
             dict(context or {}),
             config,
@@ -174,20 +212,62 @@ class ProviderManager:
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        status = get_manifest_credential_status(manifest, config)
+        if not bool(status.get("configured", False)):
+            raise RuntimeError(str(status.get("message") or "平台未启用或配置不完整，不能创建客户端"))
         return provider.build_client(config, *args, **kwargs)
 
     def normalize_config(self, plugin_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         provider = self.get_provider(plugin_id)
         return provider.normalize_config(dict(payload or {}))
 
+    @staticmethod
+    def _fallback_public_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        sensitive_fragments = (
+            "password",
+            "token",
+            "cookie",
+            "secret",
+            "authorization",
+            "session",
+        )
+
+        def redact(value: Any, key: str = "") -> Any:
+            normalized_key = str(key or "").strip().lower()
+            if normalized_key and any(fragment in normalized_key for fragment in sensitive_fragments):
+                return None
+            if isinstance(value, dict):
+                return {
+                    item_key: redacted
+                    for item_key, item_value in value.items()
+                    if (redacted := redact(item_value, str(item_key))) is not None
+                }
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            return value
+
+        result = redact(dict(config or {}))
+        return result if isinstance(result, dict) else {}
+
     def serialize_public_config(self, plugin_id: str, config: Dict[str, Any]) -> Dict[str, Any]:
-        provider = self.get_provider(plugin_id)
-        return provider.serialize_public_config(dict(config or {}))
+        try:
+            provider = self.get_provider(plugin_id)
+            return provider.serialize_public_config(dict(config or {}))
+        except (ImportError, ModuleNotFoundError) as exc:
+            app_logger.warning(
+                "plugin config serializer unavailable; using generic redaction: plugin=%s error=%s",
+                plugin_id,
+                exc,
+            )
+            return self._fallback_public_config(config)
 
     def get_query_status(self, plugin_id: str) -> Dict[str, Any]:
         manifest = self.registry.get_manifest(plugin_id)
         provider = self.get_provider(plugin_id)
         config = self._get_runtime_config(manifest)
+        credential_status = get_manifest_credential_status(manifest, config)
+        if not bool(credential_status.get("configured", False)):
+            return credential_status
         return provider.get_query_status(config)
 
 

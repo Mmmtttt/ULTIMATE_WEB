@@ -53,7 +53,9 @@ export function buildCoverUrl(coverPath) {
   }
 
   if (normalizedPath.startsWith('http')) {
-    return normalizedPath
+    // Local absolute asset URLs also need the normal-space token. Remote URLs
+    // are returned unchanged by toBackendUrl, so this is safe for both cases.
+    return toBackendUrl(normalizedPath)
   }
 
   return toBackendUrl(normalizedPath)

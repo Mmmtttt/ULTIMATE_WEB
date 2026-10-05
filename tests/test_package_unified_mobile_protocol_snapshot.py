@@ -153,6 +153,92 @@ def test_build_mobile_protocol_snapshot_merges_manifest_and_overlay_and_keeps_ov
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_build_mobile_protocol_snapshot_respects_third_party_excludes(monkeypatch):
+    package_unified = _load_package_unified_module()
+    monkeypatch.setenv(package_unified.PLUGIN_PACKAGE_EXCLUDES_ENV, "excluded_plugin")
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"mobile_snapshot_excludes_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        third_party_root = temp_dir / "third_party"
+        _write_json(
+            third_party_root / "included_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {"id": "comic.included", "name": "Included"},
+                "media_types": ["comic"],
+            },
+        )
+        _write_json(
+            third_party_root / "excluded_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {"id": "comic.excluded", "name": "Excluded"},
+                "media_types": ["comic"],
+            },
+        )
+
+        snapshot = package_unified.build_mobile_protocol_snapshot(third_party_root)
+        plugin_ids = {item["plugin"]["id"] for item in snapshot.get("manifests", [])}
+
+        assert "comic.included" in plugin_ids
+        assert "comic.excluded" not in plugin_ids
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_build_mobile_protocol_snapshot_merges_project_plugin_host_overlays(monkeypatch):
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"mobile_snapshot_project_overlays_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        third_party_root = temp_dir / "third_party"
+        project_plugins_root = temp_dir / "project_plugins"
+        monkeypatch.setattr(package_unified, "PROJECT_PLUGINS_DIR", project_plugins_root)
+
+        _write_json(
+            third_party_root / "video_overlay_child" / "ultimate-plugin.json",
+            {
+                "protocol_version": "1.0",
+                "plugin": {
+                    "id": "video.overlay.child",
+                    "name": "Video Overlay Child",
+                    "entrypoint": "./ultimate_provider.py:DemoProvider",
+                },
+                "media_types": ["video"],
+                "capabilities": [{"key": "catalog.search"}],
+                "identity": {"platform_label": "VID2", "host_id_prefix": "VID2"},
+            },
+        )
+        _write_json(
+            project_plugins_root / "child-parent-config" / "ultimate-host.json",
+            {
+                "plugin": {
+                    "id": "video.overlay.child",
+                    "config_parent_key": "video_parent",
+                },
+                "configuration": {
+                    "credential": {
+                        "disabled_message": "parent disabled",
+                    }
+                },
+            },
+        )
+
+        snapshot = package_unified.build_mobile_protocol_snapshot(third_party_root)
+        manifests = {item["plugin"]["id"]: item for item in snapshot.get("manifests", [])}
+        child = manifests["video.overlay.child"]
+
+        assert child["plugin"].get("config_key") == ""
+        assert child["plugin"].get("config_parent_key") == "video_parent"
+        assert child["configuration"]["credential"]["disabled_message"] == "parent disabled"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir():
     package_unified = _load_package_unified_module()
     workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
@@ -175,7 +261,7 @@ def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir()
             "app_id": "com.ultimate.web",
             "app_name": "UltimateWeb",
             "embed_backend": True,
-            "backend_port": 5000,
+            "backend_port": 5035,
             "web_dir": "comic_frontend_dist",
             "workspace_web_dir": "web",
             "workspace_backend_dir": "_backend_build_input",
@@ -189,6 +275,10 @@ def test_write_android_capacitor_plan_keeps_backend_build_input_out_of_web_dir()
             app_version="1.2.3",
         )
 
+        runtime_api_text = (workspace_dir / "web" / "runtime-api-base.js").read_text(encoding="utf-8")
+        assert '"private": "http://127.0.0.1:5035/api"' in runtime_api_text
+        assert '"normal": "http://127.0.0.1:5036/api"' in runtime_api_text
+        assert 'window.__ULTIMATE_API_BASE_URL = "http://127.0.0.1:5035/api";' in runtime_api_text
         assert (workspace_dir / "web" / "index.html").exists()
         assert not (workspace_dir / "web" / "backend_source").exists()
         assert not (workspace_dir / "web" / "backend_bootstrap.json").exists()
@@ -302,7 +392,7 @@ def test_package_android_injects_embedded_backend_after_cap_sync(monkeypatch):
                 "web_dir": "comic_frontend_dist",
                 "workspace_web_dir": "web",
                 "embed_backend": True,
-                "backend_port": 5000,
+                "backend_port": 5035,
                 "gradle_task": "assembleDebug",
             },
             target_out_dir=out_dir,
@@ -314,6 +404,32 @@ def test_package_android_injects_embedded_backend_after_cap_sync(monkeypatch):
         inject_index = events.index("inject_backend")
         gradle_index = next(i for i, value in enumerate(events) if "gradlew" in value)
         assert sync_index < inject_index < gradle_index
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_optimize_android_gradle_wrapper_switches_all_distribution_to_bin():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_gradle_wrapper_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        properties_path = temp_dir / "gradle" / "wrapper" / "gradle-wrapper.properties"
+        properties_path.parent.mkdir(parents=True, exist_ok=True)
+        properties_path.write_text(
+            "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11.1-all.zip\n",
+            encoding="utf-8",
+        )
+
+        message = package_unified.optimize_android_gradle_wrapper(
+            temp_dir,
+            {"android_gradle_distribution_type": "bin"},
+        )
+
+        assert "bin.zip" in message
+        assert "gradle-8.11.1-bin.zip" in properties_path.read_text(encoding="utf-8")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -359,7 +475,7 @@ def test_ensure_android_project_chaquopy_app_embeds_snapshot_into_bootstrap():
         package_unified.ensure_android_project_chaquopy_app(
             android_project_dir=android_project_dir,
             workspace_dir=workspace_dir,
-            packager_cfg={"app_id": "com.ultimate.web", "backend_port": 5000},
+            packager_cfg={"app_id": "com.ultimate.web", "backend_port": 5035},
             app_version="1.2.3",
         )
 
@@ -372,6 +488,328 @@ def test_ensure_android_project_chaquopy_app_embeds_snapshot_into_bootstrap():
         assert "comic.demo.mobile" in bootstrap_text
         assert "_materialize_protocol_snapshot" in bootstrap_text
         assert '"comic.demo.mobile"' in snapshot_source_path.read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_ensure_android_project_chaquopy_app_packages_selected_android_plugin_only():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_selected_plugin_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        workspace_dir = temp_dir / "workspace"
+        android_project_dir = workspace_dir / "android"
+        app_gradle = android_project_dir / "app" / "build.gradle"
+        app_gradle.parent.mkdir(parents=True, exist_ok=True)
+        app_gradle.write_text(
+            "apply plugin: 'com.android.application'\n"
+            "android {\n"
+            "    defaultConfig {\n"
+            "        minSdkVersion rootProject.ext.minSdkVersion\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        source_backend_dir = workspace_dir / package_unified.get_android_workspace_backend_dir({})
+        source_backend_dir.mkdir(parents=True, exist_ok=True)
+        (source_backend_dir / "app.py").write_text("def run_backend_server(**kwargs):\n    return None\n", encoding="utf-8")
+        (source_backend_dir / "third_party").mkdir(parents=True, exist_ok=True)
+        (source_backend_dir / "third_party" / "credential_guard.py").write_text("VALUE = 1\n", encoding="utf-8")
+        _write_json(
+            source_backend_dir / "third_party" / "selected_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.selected.android",
+                    "name": "Selected",
+                    "entrypoint": "./ultimate_provider.py:SelectedProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "pip_options": ["--no-deps"],
+                        "pip_requirements": ["demo-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (source_backend_dir / "third_party" / "selected_plugin" / "ultimate_provider.py").write_text(
+            "class SelectedProvider: pass\n",
+            encoding="utf-8",
+        )
+        _write_json(
+            source_backend_dir / "third_party" / "other_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.other.android",
+                    "name": "Other",
+                    "entrypoint": "./ultimate_provider.py:OtherProvider",
+                },
+                "media_types": ["comic"],
+            },
+        )
+        (source_backend_dir / "third_party" / "other_plugin" / "ultimate_provider.py").write_text(
+            "class OtherProvider: pass\n",
+            encoding="utf-8",
+        )
+
+        package_unified.ensure_android_project_chaquopy_app(
+            android_project_dir=android_project_dir,
+            workspace_dir=workspace_dir,
+            packager_cfg={
+                "app_id": "com.ultimate.web",
+                "backend_port": 5035,
+                "android_backend_enable_third_party": True,
+                "android_backend_third_party_mode": "selected",
+                "android_backend_plugins": ["comic.selected.android"],
+                "android_abi_filters": ["arm64-v8a"],
+                "embed_backend_requirements": ["flask==2.3.0"],
+            },
+            app_version="1.2.3",
+        )
+
+        py_dir = android_project_dir / "app" / "src" / "main" / "python"
+        snapshot_path = py_dir / "protocol" / package_unified.MOBILE_PROTOCOL_SNAPSHOT_FILENAME
+        gradle_text = app_gradle.read_text(encoding="utf-8")
+        snapshot_text = snapshot_path.read_text(encoding="utf-8")
+
+        assert (py_dir / "third_party" / "credential_guard.py").exists()
+        assert (py_dir / "third_party" / "selected_plugin" / "ultimate_provider.py").exists()
+        assert not (py_dir / "third_party" / "other_plugin").exists()
+        assert "comic.selected.android" in snapshot_text
+        assert "comic.other.android" not in snapshot_text
+        assert "abiFilters 'arm64-v8a'" in gradle_text
+        assert 'extractPackages("third_party")' in gradle_text
+        assert 'options("--no-deps")' in gradle_text
+        assert 'install("demo-extra==1.0")' in gradle_text
+        assert 'module.callAttr("start_backend", filesDir, "127.0.0.1", privateBackendPort, "true", internalFilesDir, normalBackendPort)' in (
+            android_project_dir / "app" / "src" / "main" / "java" / "com" / "ultimate" / "web" / "MainActivity.java"
+        ).read_text(encoding="utf-8")
+        bootstrap_text = (
+            android_project_dir / "app" / "src" / "main" / "python" / "ultimate_android_backend.py"
+        ).read_text(encoding="utf-8")
+        assert "_configure_android_plugin_roots" in bootstrap_text
+        assert 'importlib.import_module("third_party")' in bootstrap_text
+        assert 'os.path.join(module_dir, "third_party")' in bootstrap_text
+        assert "imported_root" in bootstrap_text
+        assert 'os.environ["ULTIMATE_PLUGIN_ROOTS"]' in bootstrap_text
+        assert 'os.environ["BACKEND_PRIVATE_PORT"]' in bootstrap_text
+        assert 'os.environ["BACKEND_NORMAL_PORT"]' in bootstrap_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_ensure_android_project_chaquopy_app_packages_android_supported_plugins_only():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_supported_plugin_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        workspace_dir = temp_dir / "workspace"
+        android_project_dir = workspace_dir / "android"
+        app_gradle = android_project_dir / "app" / "build.gradle"
+        app_gradle.parent.mkdir(parents=True, exist_ok=True)
+        app_gradle.write_text(
+            "apply plugin: 'com.android.application'\n"
+            "android {\n"
+            "    defaultConfig {\n"
+            "        minSdkVersion rootProject.ext.minSdkVersion\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        source_backend_dir = workspace_dir / package_unified.get_android_workspace_backend_dir({})
+        source_backend_dir.mkdir(parents=True, exist_ok=True)
+        (source_backend_dir / "app.py").write_text("def run_backend_server(**kwargs):\n    return None\n", encoding="utf-8")
+        (source_backend_dir / "third_party").mkdir(parents=True, exist_ok=True)
+        _write_json(
+            source_backend_dir / "third_party" / "supported_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.supported.android",
+                    "name": "Supported",
+                    "entrypoint": "./ultimate_provider.py:SupportedProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "enabled": True,
+                        "pip_requirements": ["supported-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (source_backend_dir / "third_party" / "supported_plugin" / "ultimate_provider.py").write_text(
+            "class SupportedProvider: pass\n",
+            encoding="utf-8",
+        )
+        _write_json(
+            source_backend_dir / "third_party" / "supported_plugin" / "nested_desktop" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.nested.desktop",
+                    "name": "NestedDesktop",
+                    "entrypoint": "./ultimate_provider.py:NestedDesktopProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "enabled": False,
+                        "pip_requirements": ["nested-desktop-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (
+            source_backend_dir
+            / "third_party"
+            / "supported_plugin"
+            / "nested_desktop"
+            / "ultimate_provider.py"
+        ).write_text(
+            "class NestedDesktopProvider: pass\n",
+            encoding="utf-8",
+        )
+        _write_json(
+            source_backend_dir / "third_party" / "desktop_only_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.desktop.only",
+                    "name": "DesktopOnly",
+                    "entrypoint": "./ultimate_provider.py:DesktopProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "enabled": False,
+                        "pip_requirements": ["desktop-only-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (source_backend_dir / "third_party" / "desktop_only_plugin" / "ultimate_provider.py").write_text(
+            "class DesktopProvider: pass\n",
+            encoding="utf-8",
+        )
+
+        package_unified.ensure_android_project_chaquopy_app(
+            android_project_dir=android_project_dir,
+            workspace_dir=workspace_dir,
+            packager_cfg={
+                "app_id": "com.ultimate.web",
+                "backend_port": 5035,
+                "android_backend_enable_third_party": True,
+                "android_backend_third_party_mode": "supported",
+                "android_abi_filters": ["arm64-v8a"],
+                "embed_backend_requirements": ["flask==2.3.0"],
+            },
+            app_version="1.2.3",
+        )
+
+        py_dir = android_project_dir / "app" / "src" / "main" / "python"
+        snapshot_path = py_dir / "protocol" / package_unified.MOBILE_PROTOCOL_SNAPSHOT_FILENAME
+        gradle_text = app_gradle.read_text(encoding="utf-8")
+        snapshot_text = snapshot_path.read_text(encoding="utf-8")
+
+        assert (py_dir / "third_party" / "supported_plugin" / "ultimate_provider.py").exists()
+        assert not (py_dir / "third_party" / "supported_plugin" / "nested_desktop" / "ultimate-plugin.json").exists()
+        assert not (py_dir / "third_party" / "desktop_only_plugin").exists()
+        assert "comic.supported.android" in snapshot_text
+        assert "comic.nested.desktop" not in snapshot_text
+        assert "comic.desktop.only" not in snapshot_text
+        assert 'install("supported-extra==1.0")' in gradle_text
+        assert "nested-desktop-extra" not in gradle_text
+        assert "desktop-only-extra" not in gradle_text
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_ensure_android_project_chaquopy_app_external_mode_keeps_plugins_out_of_apk():
+    package_unified = _load_package_unified_module()
+    workspace_tmp_root = ROOT_DIR / ".codex_test_runtime"
+    workspace_tmp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = workspace_tmp_root / f"android_external_plugin_{uuid4().hex[:8]}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        workspace_dir = temp_dir / "workspace"
+        android_project_dir = workspace_dir / "android"
+        app_gradle = android_project_dir / "app" / "build.gradle"
+        app_gradle.parent.mkdir(parents=True, exist_ok=True)
+        app_gradle.write_text(
+            "apply plugin: 'com.android.application'\n"
+            "android {\n"
+            "    defaultConfig {\n"
+            "        minSdkVersion rootProject.ext.minSdkVersion\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        source_backend_dir = workspace_dir / package_unified.get_android_workspace_backend_dir({})
+        source_backend_dir.mkdir(parents=True, exist_ok=True)
+        (source_backend_dir / "app.py").write_text("def run_backend_server(**kwargs):\n    return None\n", encoding="utf-8")
+        _write_json(
+            source_backend_dir / "third_party" / "external_plugin" / "ultimate-plugin.json",
+            {
+                "plugin": {
+                    "id": "comic.external.android",
+                    "name": "External",
+                    "entrypoint": "./ultimate_provider.py:ExternalProvider",
+                },
+                "media_types": ["comic"],
+                "packaging": {
+                    "android": {
+                        "enabled": True,
+                        "pip_requirements": ["external-extra==1.0"],
+                    }
+                },
+            },
+        )
+        (source_backend_dir / "third_party" / "external_plugin" / "ultimate_provider.py").write_text(
+            "class ExternalProvider: pass\n",
+            encoding="utf-8",
+        )
+
+        package_unified.ensure_android_project_chaquopy_app(
+            android_project_dir=android_project_dir,
+            workspace_dir=workspace_dir,
+            packager_cfg={
+                "app_id": "com.ultimate.web",
+                "backend_port": 5035,
+                "android_backend_enable_third_party": True,
+                "android_backend_third_party_mode": "external",
+                "android_abi_filters": ["arm64-v8a"],
+                "embed_backend_requirements": ["flask==2.3.0"],
+            },
+            app_version="1.2.3",
+        )
+
+        py_dir = android_project_dir / "app" / "src" / "main" / "python"
+        snapshot_text = (py_dir / "protocol" / package_unified.MOBILE_PROTOCOL_SNAPSHOT_FILENAME).read_text(encoding="utf-8")
+        dep_manifest_text = (py_dir / "protocol" / "plugin_dependency_pool_manifest.json").read_text(encoding="utf-8")
+        gradle_text = app_gradle.read_text(encoding="utf-8")
+        bootstrap_text = (py_dir / "ultimate_android_backend.py").read_text(encoding="utf-8")
+
+        assert not (py_dir / "third_party" / "external_plugin").exists()
+        assert "comic.external.android" not in snapshot_text
+        assert 'install("external-extra==1.0")' in gradle_text
+        assert "external-extra==1.0" in dep_manifest_text
+        assert "flask==2.3.0" in dep_manifest_text
+        dep_manifest = json.loads(dep_manifest_text)
+        assert "flask" in dep_manifest["requirement_names"]
+        assert "external-extra" in dep_manifest["requirement_names"]
+        assert "EMBEDDED_PLUGIN_DEPENDENCY_POOL_JSON" in bootstrap_text
+        assert "_materialize_dependency_pool_manifest" in bootstrap_text
+        assert "user_root" in bootstrap_text
+        assert "ULTIMATE_USER_PLUGIN_ROOT" in bootstrap_text
+        assert "ULTIMATE_PLUGIN_DEP_MANIFEST" in bootstrap_text
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

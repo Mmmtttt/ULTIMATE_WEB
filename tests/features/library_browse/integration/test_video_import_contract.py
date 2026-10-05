@@ -39,7 +39,7 @@ def test_video_import_creates_video_with_valid_params(integration_runtime):
             "code": video_code,
             "title": f"Test Video {video_suffix}",
             "actors": ["Actor A", "Actor B"],
-            "cover_path": "/static/cover/JAVDB/900001.png",
+            "cover_path": "/static/cover/VA/900001.png",
         },
         timeout=5,
     )
@@ -115,13 +115,13 @@ def test_video_batch_import_creates_multiple_videos(integration_runtime):
                     "id": video_id_1,
                     "code": f"BATCH1-{suffix1}",
                     "title": f"Batch Video 1 {suffix1}",
-                    "cover_path": "/static/cover/JAVDB/900001.png",
+                    "cover_path": "/static/cover/VA/900001.png",
                 },
                 {
                     "id": video_id_2,
                     "code": f"BATCH2-{suffix2}",
                     "title": f"Batch Video 2 {suffix2}",
-                    "cover_path": "/static/cover/JAVDB/900002.png",
+                    "cover_path": "/static/cover/VA/900002.png",
                 },
             ]
         },
@@ -453,6 +453,54 @@ def test_video_play_urls_for_local_source_never_exposes_filesystem_path(integrat
 
 
 @pytest.mark.integration
+def test_local_video_open_ended_range_returns_bounded_stream_chunk(integration_runtime, tmp_path):
+    """
+    用例描述:
+    - 用例目的: 看护手机端本地视频首播性能，避免 `Range: bytes=0-` 一次读取完整大文件。
+    - 测试步骤:
+      1. 导入一个大于首块上限的本地视频。
+      2. 使用开放 Range 请求 local-stream。
+      3. 检查响应只返回首个有界分片。
+    - 预期结果:
+      1. HTTP 206 且带 Content-Range/Accept-Ranges。
+      2. 返回体长度为 8MB，而不是完整文件大小。
+    """
+    base_url = integration_runtime["base_url"]
+
+    source_dir = tmp_path / "range-source"
+    source_dir.mkdir()
+    video_file = source_dir / "large local source.mp4"
+    file_size = 9 * 1024 * 1024 + 123
+    first_chunk_size = 8 * 1024 * 1024
+    video_file.write_bytes(b"a" * file_size)
+
+    import_response = requests.post(
+        f"{base_url}/api/v1/video/local-import/from-path",
+        json={
+            "source_path": str(source_dir),
+            "import_mode": "softlink_ref",
+        },
+        timeout=5,
+    )
+    assert import_response.status_code == 200
+    import_payload = import_response.json()
+    assert import_payload["code"] == 200
+    created_id = import_payload["data"]["imported_ids"][0]
+
+    range_response = requests.get(
+        f"{base_url}/api/v1/video/local-stream/{created_id}",
+        headers={"Range": "bytes=0-"},
+        timeout=10,
+    )
+
+    assert range_response.status_code == 206
+    assert len(range_response.content) == first_chunk_size
+    assert range_response.headers["Accept-Ranges"] == "bytes"
+    assert range_response.headers["Content-Range"] == f"bytes 0-{first_chunk_size - 1}/{file_size}"
+    assert int(range_response.headers["Content-Length"]) == first_chunk_size
+
+
+@pytest.mark.integration
 def test_video_detail_ignores_preview_hls_segments_for_softlink_local_source(integration_runtime, tmp_path):
     """
     用例描述:
@@ -677,7 +725,7 @@ def test_video_detail_returns_full_info(integration_runtime):
     用例描述:
     - 用例目的: 验证视频详情接口返回完整的视频信息。
     - 测试步骤:
-      1. 调用 GET /api/v1/video/detail?video_id=JAVDB900001。
+      1. 调用 GET /api/v1/video/detail?video_id=VA900001。
       2. 检查返回数据完整性。
     - 预期结果:
       1. HTTP 200，业务 code=200。
@@ -951,9 +999,9 @@ def test_video_detail_preview_assets_normalize_local_relative_path(integration_r
     videos_path = meta_dir / "videos_database.json"
 
     original_payload = load_json(videos_path)
-    video_id = "JAVDBLOCALPREVIEW900004"
-    preview_relative_path = f"video/JAVDB/{video_id}/hls/index.m3u8"
-    preview_abs_path = data_dir / "video" / "JAVDB" / video_id / "hls" / "index.m3u8"
+    video_id = "VALOCALPREVIEW900004"
+    preview_relative_path = f"video/VA/{video_id}/hls/index.m3u8"
+    preview_abs_path = data_dir / "video" / "VA" / video_id / "hls" / "index.m3u8"
     preview_abs_path.parent.mkdir(parents=True, exist_ok=True)
     preview_abs_path.write_text("#EXTM3U\n", encoding="utf-8")
 
@@ -985,9 +1033,9 @@ def test_video_detail_preview_assets_normalize_local_relative_path(integration_r
                 "preview_video_local": preview_relative_path,
                 "cover_path_local": "",
                 "thumbnail_images_local": [],
-                "platform": "JAVDB",
-                "plugin_id": "video.javdb",
-                "plugin_name": "JAVDB",
+                "platform": "VA",
+                "plugin_id": "video.alpha",
+                "plugin_name": "VA",
             }
         )
         payload["videos"] = videos

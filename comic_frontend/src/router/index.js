@@ -84,6 +84,12 @@ const routes = [
         meta: { title: '清单管理' }
       },
       {
+        path: 'history',
+        name: 'ReadingHistory',
+        component: () => import('@/views/ReadingHistory.vue'),
+        meta: { title: '阅读记录' }
+      },
+      {
         path: 'list/:id',
         name: 'ListDetail',
         component: () => import('@/views/ListDetail.vue'),
@@ -99,7 +105,7 @@ const routes = [
         path: 'config/third-party',
         name: 'ThirdPartyConfig',
         component: () => import('@/views/ThirdPartyConfig.vue'),
-        meta: { title: '第三方平台配置' }
+        meta: { title: '第三方平台配置', requiresNormalSpace: true }
       },
       {
         path: 'sync',
@@ -227,10 +233,23 @@ router.beforeEach(async (to, from, next) => {
   if (!authChecked) {
     try {
       await authStore.checkStatus()
+      authChecked = true
     } catch (e) {
-      // 检查失败也继续，可能是网络问题
+      // 未确认认证状态前禁止进入业务页，避免启动慢时绕过登录。
+      authChecked = true
     }
-    authChecked = true
+  }
+
+  if (authStore.authStatusError) {
+    if (to.name !== 'Login') {
+      next({
+        name: 'Login',
+        query: { redirect: to.fullPath }
+      })
+    } else {
+      next()
+    }
+    return
   }
 
   // 未启用认证 → 直接通过
@@ -255,6 +274,11 @@ router.beforeEach(async (to, from, next) => {
       name: 'Login',
       query: { redirect: to.fullPath }
     })
+    return
+  }
+
+  if (to.meta.requiresNormalSpace && authStore.enabled && authStore.mode !== 'normal') {
+    next('/library')
     return
   }
 

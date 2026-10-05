@@ -3,6 +3,7 @@ from application.comic_app_service import ComicAppService
 from application.database_organize_service import DatabaseOrganizeService
 from application.local_comic_import_service import local_comic_import_service
 from application.persisted_content_metadata import build_persisted_annotation, normalize_data_relative_path
+from application.recommendation_app_service import RecommendationAppService
 from application.softref_comic_reader import (
     SoftRefPasswordRequiredError,
     SoftRefSourceMissingError,
@@ -28,7 +29,7 @@ from core.utils import normalize_total_page
 from protocol.compatibility import get_query_status_for_adapter_name
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items, annotate_item
-from .runtime_guard import require_third_party
+from .runtime_guard import require_normal_space, require_third_party
 from application.teledrive_app_service import (
     TeleDriveBridgeError,
     get_teledrive_app_service,
@@ -38,6 +39,7 @@ import time
 
 comic_bp = Blueprint('comic', __name__)
 comic_service = ComicAppService()
+recommendation_service = RecommendationAppService()
 database_organize_service = DatabaseOrganizeService(comic_service)
 softref_comic_reader = require_softref_reader("comic")
 
@@ -270,6 +272,7 @@ def comic_init():
 
 
 @comic_bp.route('/third-party/config', methods=['GET'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def get_third_party_config():
     try:
@@ -282,6 +285,7 @@ def get_third_party_config():
 
 
 @comic_bp.route('/third-party/config', methods=['POST'])
+@require_normal_space(error_response)
 @require_third_party(error_response)
 def save_third_party_config():
     try:
@@ -299,6 +303,84 @@ def save_third_party_config():
     except Exception as e:
         error_logger.error(f"保存第三方库配置失败: {e}")
         return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/extensions/install', methods=['POST'])
+@require_normal_space(error_response)
+@require_third_party(error_response)
+def install_third_party_extension():
+    try:
+        upload = request.files.get('file')
+        if upload is None:
+            return error_response(400, "缺少扩展包文件")
+
+        from protocol.extension_service import install_extension_zip
+
+        result = install_extension_zip(upload)
+        app_logger.info(f"第三方扩展安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/extensions/install-github', methods=['POST'])
+@require_normal_space(error_response)
+@require_third_party(error_response)
+def install_third_party_extension_from_github():
+    try:
+        data = request.json or {}
+        github_url = str(data.get('url') or '').strip()
+        if not github_url:
+            return error_response(400, "缺少 GitHub 仓库链接")
+
+        from protocol.extension_service import install_extension_from_github
+
+        result = install_extension_from_github(github_url)
+        app_logger.info(f"GitHub 第三方扩展安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"从 GitHub 安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/extensions/<path:plugin_id>/reinstall', methods=['POST'])
+@require_normal_space(error_response)
+@require_third_party(error_response)
+def reinstall_third_party_extension(plugin_id):
+    try:
+        from protocol.extension_service import reinstall_saved_extension
+
+        result = reinstall_saved_extension(plugin_id)
+        app_logger.info(f"第三方扩展重新安装成功: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"重新安装第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
+
+@comic_bp.route('/third-party/extensions/<path:plugin_id>', methods=['DELETE'])
+@require_normal_space(error_response)
+@require_third_party(error_response)
+def delete_third_party_extension(plugin_id):
+    try:
+        from protocol.extension_service import delete_extension
+
+        result = delete_extension(plugin_id)
+        app_logger.info(f"第三方扩展代码已删除: {result.get('plugin_id')}")
+        return success_response(result)
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        error_logger.error(f"删除第三方扩展失败: {e}")
+        return error_response(500, "服务器内部错误")
+
 
 @comic_bp.route('/list', methods=['GET'])
 def comic_list():
@@ -1508,6 +1590,12 @@ def import_online():
         import_type = data.get('import_type')
         target = data.get('target', 'home')
         requested_platform = str(data.get('platform', '') or '').strip() or _get_default_platform_name("comic")
+        app_logger.info(
+            "[comic-import] start type=%s target=%s platform=%s",
+            import_type,
+            target,
+            requested_platform,
+        )
         
         if import_type not in ['by_id', 'by_search', 'by_favorite']:
             return error_response(400, "无效的导入方式")
@@ -1869,6 +1957,36 @@ def organize_database():
         return error_response(500, "服务器内部错误")
 
 
+@comic_bp.route('/cover/repair', methods=['POST'])
+def repair_comic_cover():
+    """Repair cover for one local or preview-library comic."""
+    comic_id = ""
+    source = "local"
+    try:
+        data = request.json or {}
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
+        source = str(data.get('source') or 'local').strip().lower()
+        if not comic_id:
+            return error_response(400, "missing parameter: comic_id")
+
+        app_logger.info("[comic-cover-repair] start comic_id=%s source=%s", comic_id, source)
+        result = comic_service.repair_single_cover(comic_id, source=source)
+        if result.success:
+            app_logger.info(
+                "[comic-cover-repair] success comic_id=%s source=%s changed=%s downloaded=%s",
+                comic_id,
+                source,
+                bool((result.data or {}).get("changed")),
+                bool((result.data or {}).get("downloaded_cover")),
+            )
+            return success_response(result.data, result.message)
+        app_logger.warning("[comic-cover-repair] rejected comic_id=%s source=%s reason=%s", comic_id, source, result.message)
+        return error_response(400, result.message)
+    except Exception as e:
+        error_logger.exception("repair comic cover api failed: comic_id=%s source=%s error=%s", comic_id, source, e)
+        return error_response(500, "internal server error")
+
+
 @comic_bp.route('/local-metadata/refresh', methods=['POST'])
 @require_third_party(error_response)
 def refresh_local_comic_metadata():
@@ -1926,11 +2044,15 @@ def check_comic_update():
     """Check whether a comic has online updates."""
     try:
         data = request.json or {}
-        comic_id = data.get('comic_id')
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
         if not comic_id:
             return error_response(400, "missing parameter: comic_id")
 
-        result = comic_service.check_comic_update(comic_id)
+        source = str(data.get('source') or '').strip().lower()
+        if source in {"preview", "recommendation", "recommendation_library"}:
+            result = recommendation_service.check_recommendation_update(comic_id)
+        else:
+            result = comic_service.check_comic_update(comic_id)
         if result.success:
             return success_response(result.data, result.message)
         else:
@@ -1945,12 +2067,16 @@ def download_comic_update():
     """Download online updates for a comic and sync local page count."""
     try:
         data = request.json or {}
-        comic_id = data.get('comic_id')
+        comic_id = data.get('comic_id') or data.get('recommendation_id') or data.get('content_id')
         force = bool(data.get('force', False))
         if not comic_id:
             return error_response(400, "missing parameter: comic_id")
 
-        result = comic_service.download_comic_update(comic_id, force=force)
+        source = str(data.get('source') or '').strip().lower()
+        if source in {"preview", "recommendation", "recommendation_library"}:
+            result = recommendation_service.download_recommendation_update(comic_id, force=force)
+        else:
+            result = comic_service.download_comic_update(comic_id, force=force)
         if result.success:
             return success_response(result.data, result.message)
         else:
@@ -2077,9 +2203,9 @@ def import_async():
             content_type = raw_content_type
         else:
             content_type = _resolve_manifest_content_type(manifest)
-        comic_id = data.get('comic_id')
+        item_id = data.get('item_id')
+        item_ids = data.get('item_ids')
         keyword = data.get('keyword')
-        comic_ids = data.get('comic_ids')
         platform_list_id = data.get('platform_list_id')
         platform_list_name = data.get('platform_list_name', '')
         source = data.get('source', 'local')
@@ -2089,9 +2215,15 @@ def import_async():
         
         if target not in ['home', 'recommendation']:
             return error_response(400, "无效的目标目录")
+
+        if import_type == 'by_id' and not str(item_id or '').strip():
+            return error_response(400, "缺少内容ID: item_id")
+
+        if import_type == 'by_list' and not item_ids:
+            return error_response(400, "缺少内容ID列表: item_ids")
         
-        if content_type == 'comic' and import_type == 'by_id' and comic_id:
-            full_comic_id = _build_prefixed_id(host_prefix, comic_id)
+        if content_type == 'comic' and import_type == 'by_id' and item_id:
+            full_comic_id = _build_prefixed_id(host_prefix, item_id)
             
             db_data = _get_comic_document_repository(target != 'home').read_document()
             comics_key = 'comics' if target == 'home' else 'recommendations'
@@ -2104,11 +2236,11 @@ def import_async():
         if import_type == 'by_platform_list':
             if not platform_list_id:
                 return error_response(400, "缺少平台清单ID: platform_list_id")
-            comic_id = str(platform_list_id).strip()
+            item_id = str(platform_list_id).strip()
             keyword = str(platform_list_name or '').strip()
-            comic_ids = None
+            item_ids = None
             extra_data = {
-                "platform_list_id": comic_id,
+                "platform_list_id": item_id,
                 "platform_list_name": keyword,
                 "source": str(source or 'local').strip().lower() or 'local',
             }
@@ -2119,11 +2251,18 @@ def import_async():
             platform=platform_name,
             import_type=import_type,
             target=target,
-            comic_id=comic_id,
+            comic_id=item_id,
             keyword=keyword,
-            comic_ids=comic_ids,
+            comic_ids=item_ids,
             content_type=content_type,
             extra_data=extra_data
+        )
+        app_logger.info(
+            "[comic-import] async task created task_id=%s type=%s target=%s platform=%s",
+            task_id,
+            import_type,
+            target,
+            platform_name,
         )
         
         app_logger.info(
@@ -2137,7 +2276,7 @@ def import_async():
         }, "导入任务已创建，请通过任务ID查询进度")
         
     except Exception as e:
-        error_logger.error(f"创建异步导入任务失败: {e}")
+        error_logger.exception(f"创建异步导入任务失败: {e}")
         return error_response(500, "服务器内部错误")
 
 

@@ -5,11 +5,13 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 import copy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -42,6 +44,7 @@ from core.host_platform_fallback import (
     infer_existing_host_recommendation_cache_dir,
 )
 from core.enums import ContentType
+from core.storage_layout import SPACE_MODE_NORMAL, SPACE_MODE_PRIVATE, get_current_space_mode
 from infrastructure.logger import app_logger
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from application.tag_content_type_guard import filter_tag_ids_by_type_lookup, normalize_tag_content_type
@@ -102,6 +105,7 @@ class DirectionalSyncService:
     TASK_MAX_KEEP = 50
     _TASK_LOCK = threading.Lock()
     _TASKS: Dict[str, Dict[str, Any]] = {}
+    _TASK_TIMINGS: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self) -> None:
         os.makedirs(os.path.dirname(self.STORE_FILE), exist_ok=True)
@@ -151,6 +155,87 @@ class DirectionalSyncService:
         )
         thread.start()
         return self.get_directional_task(task_id) or task
+
+    def _start_task_timing(self, task_id: str, label: str) -> None:
+        now = time.perf_counter()
+        with self._TASK_LOCK:
+            self._TASK_TIMINGS[task_id] = {
+                "label": str(label or "sync"),
+                "started_at": now,
+                "stage": "starting",
+                "stage_started_at": now,
+            }
+        app_logger.info(f"[sync][timing] task={task_id} label={label} started")
+
+    def _record_task_stage_timing(
+        self,
+        task_id: str,
+        stage: str,
+        progress: int,
+        message: str = "",
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        next_stage = str(stage or "").strip() or "unknown"
+        now = time.perf_counter()
+        log_payload: Optional[Dict[str, Any]] = None
+        with self._TASK_LOCK:
+            timing = self._TASK_TIMINGS.get(task_id)
+            if not isinstance(timing, dict):
+                return
+            current_stage = str(timing.get("stage") or "")
+            if current_stage == next_stage:
+                return
+            stage_started = float(timing.get("stage_started_at") or now)
+            timing["stage"] = next_stage
+            timing["stage_started_at"] = now
+            log_payload = {
+                "label": timing.get("label") or "sync",
+                "stage": current_stage or "starting",
+                "duration_ms": (now - stage_started) * 1000.0,
+            }
+
+        details = ""
+        if isinstance(extra, dict) and extra:
+            compact = {
+                key: extra.get(key)
+                for key in (
+                    "record_count",
+                    "dataset_count",
+                    "file_count",
+                    "total_bytes",
+                    "downloaded_bytes",
+                    "known_file_count",
+                    "remote_file_count",
+                    "applied_files",
+                    "total_files",
+                    "pending_content_count",
+                )
+                if key in extra
+            }
+            if compact:
+                details = f" extra={compact}"
+        app_logger.info(
+            "[sync][timing] "
+            f"task={task_id} label={log_payload['label']} stage={log_payload['stage']} "
+            f"duration_ms={log_payload['duration_ms']:.1f} "
+            f"next_stage={next_stage} progress={int(progress or 0)} "
+            f"message={str(message or '').strip()!r}{details}"
+        )
+
+    def _finish_task_timing(self, task_id: str, status: str) -> None:
+        now = time.perf_counter()
+        with self._TASK_LOCK:
+            timing = self._TASK_TIMINGS.pop(task_id, None)
+        if not isinstance(timing, dict):
+            return
+        stage_started = float(timing.get("stage_started_at") or now)
+        started = float(timing.get("started_at") or now)
+        app_logger.info(
+            "[sync][timing] "
+            f"task={task_id} label={timing.get('label') or 'sync'} "
+            f"stage={timing.get('stage') or 'unknown'} duration_ms={(now - stage_started) * 1000.0:.1f} "
+            f"total_ms={(now - started) * 1000.0:.1f} status={status}"
+        )
 
     def start_directional_task(self, peer_id: str, direction: str) -> Dict[str, Any]:
         direction_key = str(direction or "").strip().lower()
@@ -218,8 +303,10 @@ class DirectionalSyncService:
             message=f"{direction} started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, f"directional:{direction}")
 
         def _progress_cb(progress: int, stage: str, message: str = "", extra: Optional[Dict[str, Any]] = None) -> None:
+            self._record_task_stage_timing(task_id, stage, progress, message, extra)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -244,6 +331,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] directional task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -258,6 +346,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _execute_list_scope_push_task(self, task_id: str) -> None:
         task = self.get_directional_task(task_id)
@@ -277,11 +366,13 @@ class DirectionalSyncService:
             message="list scope push started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, "list_scope:push")
 
         def _progress_cb(progress: int, stage: str, message: str = "", payload_extra: Optional[Dict[str, Any]] = None) -> None:
             merged_extra = dict(extra or {})
             if isinstance(payload_extra, dict):
                 merged_extra.update(payload_extra)
+            self._record_task_stage_timing(task_id, stage, progress, message, merged_extra)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -302,6 +393,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] list scope push task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -316,6 +408,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _execute_list_scope_pull_task(self, task_id: str) -> None:
         task = self.get_directional_task(task_id)
@@ -335,8 +428,10 @@ class DirectionalSyncService:
             message="list scope pull started",
             started_at=now_iso,
         )
+        self._start_task_timing(task_id, "list_scope:pull")
 
         def _progress_cb(progress: int, stage: str, message: str = "", extra_payload: Optional[Dict[str, Any]] = None) -> None:
+            self._record_task_stage_timing(task_id, stage, progress, message, extra_payload)
             self._update_directional_task(
                 task_id,
                 status="running",
@@ -357,6 +452,7 @@ class DirectionalSyncService:
                 result=result,
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "completed")
         except Exception as exc:
             app_logger.exception(f"[sync] list scope pull task failed task_id={task_id}: {exc}")
             self._update_directional_task(
@@ -371,6 +467,7 @@ class DirectionalSyncService:
                 },
                 finished_at=_iso(_utc_now()),
             )
+            self._finish_task_timing(task_id, "failed")
 
     def _update_directional_task(
         self,
@@ -470,6 +567,7 @@ class DirectionalSyncService:
             "created_at": invite["created_at"],
             "expires_at": invite["expires_at"],
             "device": store["device"],
+            "space_mode": self._current_space_mode(),
         }
 
     def claim_invite(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -485,6 +583,7 @@ class DirectionalSyncService:
         requester_id = str(payload.get("requester_device_id", "")).strip() or f"peer_{uuid.uuid4().hex[:12]}"
         requester_name = str(payload.get("requester_device_name", "")).strip() or "Unknown Device"
         requester_url = self._normalize_url(str(payload.get("requester_base_url", "")).strip())
+        requester_space_mode = self._normalize_space_mode(payload.get("requester_space_mode"), self._current_space_mode())
         now_iso = _iso(_utc_now())
         token = secrets.token_urlsafe(32)
 
@@ -494,6 +593,7 @@ class DirectionalSyncService:
                 "peer_id": requester_id,
                 "display_name": requester_name,
                 "remote_base_url": requester_url or str(peer.get("remote_base_url", "")).strip(),
+                "remote_space_mode": requester_space_mode,
                 "auth_token": token,
                 "status": "active",
                 "created_at": str(peer.get("created_at", "")).strip() or now_iso,
@@ -514,12 +614,15 @@ class DirectionalSyncService:
             "peer_name": store["device"]["device_name"],
             "auth_token": token,
             "paired_at": now_iso,
+            "space_mode": self._current_space_mode(),
         }
 
     def connect_peer(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         remote_base = self._normalize_url(str(payload.get("remote_base_url", "")).strip())
         pairing_code = str(payload.get("pairing_code", "")).strip()
         requester_url = self._normalize_url(str(payload.get("requester_base_url", "")).strip())
+        local_space_mode = self._current_space_mode()
+        requested_remote_space_mode = self._normalize_space_mode(payload.get("remote_space_mode"), local_space_mode)
         if not remote_base:
             raise ValueError("remote_base_url is required")
         if not pairing_code:
@@ -531,12 +634,23 @@ class DirectionalSyncService:
             "requester_device_id": store["device"]["device_id"],
             "requester_device_name": store["device"]["device_name"],
             "requester_base_url": requester_url,
+            "requester_space_mode": local_space_mode,
         }
-        result = self._request_json("POST", self._endpoint(remote_base, "/api/v1/sync/pairing/claim"), None, claim_payload)
+        result = self._request_json(
+            "POST",
+            self._endpoint(
+                remote_base,
+                "/api/v1/sync/pairing/claim",
+                space_mode=requested_remote_space_mode,
+            ),
+            None,
+            claim_payload,
+        )
         data = result.get("data", {}) if isinstance(result, dict) else {}
         peer_id = str(data.get("peer_id", "")).strip()
         token = str(data.get("auth_token", "")).strip()
         peer_name = str(data.get("peer_name", "")).strip() or remote_base
+        remote_space_mode = self._normalize_space_mode(data.get("space_mode"), requested_remote_space_mode)
         if not peer_id or not token:
             raise RuntimeError("pairing response invalid")
 
@@ -547,6 +661,7 @@ class DirectionalSyncService:
                 "peer_id": peer_id,
                 "display_name": peer_name,
                 "remote_base_url": remote_base,
+                "remote_space_mode": remote_space_mode,
                 "auth_token": token,
                 "status": "active",
                 "created_at": str(peer.get("created_at", "")).strip() or now_iso,
@@ -789,7 +904,7 @@ class DirectionalSyncService:
         if direction_key == "push":
             remote_inv = self._request_json(
                 "GET",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/inventory"),
                 headers,
                 None,
             )
@@ -800,7 +915,7 @@ class DirectionalSyncService:
             try:
                 remote_asset_inv = self._request_json(
                     "GET",
-                    self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                    self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
                     headers,
                     None,
                 )
@@ -840,7 +955,7 @@ class DirectionalSyncService:
         try:
             remote_estimate = self._request_json(
                 "POST",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/estimate"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/estimate"),
                 headers,
                 {
                     "known_inventory": local_inventory,
@@ -861,7 +976,7 @@ class DirectionalSyncService:
                 raise
             remote_delta = self._request_json(
                 "POST",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/delta"),
                 headers,
                 {"known_inventory": local_inventory},
             )
@@ -882,7 +997,7 @@ class DirectionalSyncService:
             try:
                 remote_asset_inv = self._request_json(
                     "GET",
-                    self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                    self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
                     headers,
                     None,
                 )
@@ -926,7 +1041,7 @@ class DirectionalSyncService:
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
         remote_inv = self._request_json(
             "GET",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"),
+            self._peer_endpoint(peer, "/api/v1/sync/directional/inventory"),
             headers,
             None,
         )
@@ -942,7 +1057,7 @@ class DirectionalSyncService:
         try:
             remote_asset_inv = self._request_json(
                 "GET",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
                 headers,
                 None,
             )
@@ -988,7 +1103,7 @@ class DirectionalSyncService:
         local_inventory = self.inventory()
         remote_delta = self._request_json(
             "POST",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/delta"),
+            self._peer_endpoint(peer, "/api/v1/sync/list-scope/delta"),
             headers,
             {
                 "list_id": list_id,
@@ -1003,7 +1118,7 @@ class DirectionalSyncService:
 
         remote_asset_inv = self._request_json(
             "GET",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+            self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
             headers,
             None,
         )
@@ -1047,7 +1162,7 @@ class DirectionalSyncService:
         self._report_progress(progress_cb, 14, "remote_inventory", "fetching remote inventory")
         remote_inv = self._request_json(
             "GET",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"),
+            self._peer_endpoint(peer, "/api/v1/sync/directional/inventory"),
             headers,
             None,
         )
@@ -1080,7 +1195,7 @@ class DirectionalSyncService:
         try:
             remote_asset_inv = self._request_json(
                 "GET",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
                 headers,
                 None,
             )
@@ -1111,7 +1226,7 @@ class DirectionalSyncService:
             )
             applied = self._request_json(
                 "POST",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/apply"),
                 headers,
                 {"datasets": datasets},
             )
@@ -1126,6 +1241,7 @@ class DirectionalSyncService:
                 remote_asset_files,
                 progress_cb=progress_cb,
                 rel_paths=asset_paths if isinstance(asset_paths, list) else [],
+                remote_space_mode=self._peer_remote_space_mode(peer),
             )
         else:
             asset_sync = {
@@ -1180,7 +1296,7 @@ class DirectionalSyncService:
         self._report_progress(progress_cb, 24, "remote_scope_delta", "requesting remote scoped delta")
         remote_delta = self._request_json(
             "POST",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/delta"),
+            self._peer_endpoint(peer, "/api/v1/sync/list-scope/delta"),
             headers,
             {
                 "list_id": list_id,
@@ -1231,6 +1347,7 @@ class DirectionalSyncService:
             local_asset_inventory.get("files", {}),
             progress_cb=progress_cb,
             rel_paths=asset_paths if isinstance(asset_paths, list) else [],
+            remote_space_mode=self._peer_remote_space_mode(peer),
         )
 
         if not datasets and int(asset_pull.get("file_count", 0)) == 0:
@@ -1276,7 +1393,7 @@ class DirectionalSyncService:
             f"[sync] push start peer_id={peer_id} remote={peer.get('remote_base_url', '')}"
         )
         self._report_progress(progress_cb, 14, "remote_inventory", "fetching remote inventory")
-        remote_inv = self._request_json("GET", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/inventory"), headers, None)
+        remote_inv = self._request_json("GET", self._peer_endpoint(peer, "/api/v1/sync/directional/inventory"), headers, None)
         self._report_progress(progress_cb, 20, "data_delta", "calculating data delta")
         delta = self.delta_from_known(remote_inv.get("data", {}) if isinstance(remote_inv, dict) else {})
         datasets = delta.get("datasets", {}) if isinstance(delta, dict) else {}
@@ -1295,7 +1412,7 @@ class DirectionalSyncService:
         try:
             remote_asset_inv = self._request_json(
                 "GET",
-                self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/assets/inventory"),
+                self._peer_endpoint(peer, "/api/v1/sync/directional/assets/inventory"),
                 headers,
                 None,
             )
@@ -1324,7 +1441,7 @@ class DirectionalSyncService:
                 "applying data delta on remote",
                 {"record_count": data_records},
             )
-            applied = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
+            applied = self._request_json("POST", self._peer_endpoint(peer, "/api/v1/sync/directional/apply"), headers, {"datasets": datasets})
             self._report_progress(progress_cb, 68, "data_apply_remote", "remote data delta applied")
         else:
             self._report_progress(progress_cb, 68, "data_apply_remote", "no data changes")
@@ -1335,6 +1452,7 @@ class DirectionalSyncService:
                 headers,
                 remote_asset_files,
                 progress_cb=progress_cb,
+                remote_space_mode=self._peer_remote_space_mode(peer),
             )
         else:
             asset_sync = {
@@ -1385,7 +1503,7 @@ class DirectionalSyncService:
         self._report_progress(progress_cb, 14, "local_inventory", "building local inventory")
         local_inventory = self.inventory()
         self._report_progress(progress_cb, 22, "remote_delta", "requesting remote delta")
-        remote_delta = self._request_json("POST", self._endpoint(peer["remote_base_url"], "/api/v1/sync/directional/delta"), headers, {"known_inventory": local_inventory})
+        remote_delta = self._request_json("POST", self._peer_endpoint(peer, "/api/v1/sync/directional/delta"), headers, {"known_inventory": local_inventory})
         self._report_progress(progress_cb, 36, "remote_delta", "remote delta received")
         self._report_progress(progress_cb, 44, "data_apply_local", "applying data delta locally")
         applied = self.apply_delta(remote_delta.get("data", {}) if isinstance(remote_delta, dict) else {})
@@ -1408,6 +1526,7 @@ class DirectionalSyncService:
             headers,
             local_asset_inventory.get("files", {}),
             progress_cb=progress_cb,
+            remote_space_mode=self._peer_remote_space_mode(peer),
         )
         self._touch_peer(peer_id)
         app_logger.info(
@@ -1446,6 +1565,7 @@ class DirectionalSyncService:
         remote_files: Dict[str, str],
         progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
         rel_paths: Optional[List[str]] = None,
+        remote_space_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._report_progress(progress_cb, 72, "asset_push", "building asset delta package")
         delta = self.build_asset_delta_zip(
@@ -1484,7 +1604,11 @@ class DirectionalSyncService:
             with open(zip_path, "rb") as fp:
                 files = {"package": ("assets_delta.zip", fp, "application/zip")}
                 response = requests.post(
-                    self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/apply"),
+                    self._endpoint(
+                        remote_base_url,
+                        "/api/v1/sync/directional/assets/apply",
+                        space_mode=remote_space_mode,
+                    ),
                     headers=headers,
                     files=files,
                     timeout=self.HTTP_TIMEOUT_SECONDS,
@@ -1532,10 +1656,15 @@ class DirectionalSyncService:
         known_files: Dict[str, str],
         progress_cb: Optional[Callable[[int, str, str, Optional[Dict[str, Any]]], None]] = None,
         rel_paths: Optional[List[str]] = None,
+        remote_space_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         temp_zip = ""
         try:
-            endpoint = self._endpoint(remote_base_url, "/api/v1/sync/directional/assets/delta/download")
+            endpoint = self._endpoint(
+                remote_base_url,
+                "/api/v1/sync/directional/assets/delta/download",
+                space_mode=remote_space_mode,
+            )
             app_logger.info(
                 f"[sync] pull assets request remote={remote_base_url} known_files={len(known_files or {})}"
             )
@@ -1744,7 +1873,7 @@ class DirectionalSyncService:
         headers = {"X-Sync-Token": str(peer.get("auth_token", ""))}
         payload = self._request_json(
             "GET",
-            self._endpoint(peer["remote_base_url"], "/api/v1/sync/list-scope/options"),
+            self._peer_endpoint(peer, "/api/v1/sync/list-scope/options"),
             headers,
             None,
         )
@@ -2854,9 +2983,42 @@ class DirectionalSyncService:
         return value.rstrip("/")
 
     @staticmethod
-    def _endpoint(base_url: str, path: str) -> str:
+    def _normalize_space_mode(value: Any, default: str = SPACE_MODE_PRIVATE) -> str:
+        mode = str(value or "").strip().lower()
+        if mode == SPACE_MODE_NORMAL:
+            return SPACE_MODE_NORMAL
+        if mode == SPACE_MODE_PRIVATE:
+            return SPACE_MODE_PRIVATE
+        return SPACE_MODE_NORMAL if str(default or "").strip().lower() == SPACE_MODE_NORMAL else SPACE_MODE_PRIVATE
+
+    @classmethod
+    def _current_space_mode(cls) -> str:
+        return cls._normalize_space_mode(get_current_space_mode(), SPACE_MODE_NORMAL)
+
+    def _peer_remote_space_mode(self, peer: Dict[str, Any]) -> str:
+        if not isinstance(peer, dict):
+            return self._current_space_mode()
+        return self._normalize_space_mode(peer.get("remote_space_mode"), self._current_space_mode())
+
+    def _peer_endpoint(self, peer: Dict[str, Any], path: str) -> str:
+        return self._endpoint(
+            str(peer.get("remote_base_url", "")).strip(),
+            path,
+            space_mode=self._peer_remote_space_mode(peer),
+        )
+
+    @staticmethod
+    def _endpoint(base_url: str, path: str, space_mode: Optional[str] = None) -> str:
         suffix = path if path.startswith("/") else f"/{path}"
-        return f"{base_url.rstrip('/')}{suffix}"
+        url = f"{base_url.rstrip('/')}{suffix}"
+        mode = str(space_mode or "").strip().lower()
+        if mode not in {SPACE_MODE_NORMAL, SPACE_MODE_PRIVATE}:
+            return url
+        parts = urlsplit(url)
+        query_items = parse_qsl(parts.query, keep_blank_values=True)
+        if not any(str(key).lower() == "space_mode" for key, _ in query_items):
+            query_items.append(("space_mode", mode))
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
 
     def _request_json(
         self,

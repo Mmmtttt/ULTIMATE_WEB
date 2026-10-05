@@ -427,7 +427,9 @@ def directional_task_start():
             return error_response(400, "peer_id is required")
         if direction not in {"push", "pull"}:
             return error_response(400, "direction must be push or pull")
+        logger.info("[sync] start directional task peer_id=%s direction=%s", peer_id, direction)
         task = directional_service.start_directional_task(peer_id, direction)
+        logger.info("[sync] directional task created task_id=%s peer_id=%s direction=%s", task.get("task_id"), peer_id, direction)
         return success_response(task)
     except ValueError as exc:
         return error_response(400, str(exc))
@@ -568,7 +570,9 @@ def list_scope_task_start():
             return error_response(400, "list_id is required")
         if direction not in {"push", "pull"}:
             return error_response(400, "direction must be push or pull")
+        logger.info("[sync] start list-scope task peer_id=%s list_id=%s direction=%s", peer_id, list_id, direction)
         task = directional_service.start_list_scope_task(peer_id, list_id, direction)
+        logger.info("[sync] list-scope task created task_id=%s peer_id=%s list_id=%s direction=%s", task.get("task_id"), peer_id, list_id, direction)
         return success_response(task)
     except ValueError as exc:
         return error_response(400, str(exc))

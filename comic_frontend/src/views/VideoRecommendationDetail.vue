@@ -122,17 +122,7 @@
       <div class="video-info">
         <van-icon name="edit" class="info-edit-btn" @click="openEdit" title="编辑信息" />
         <div class="video-title">{{ recommendation.title }}</div>
-        
-        <div class="info-row">
-          <span class="label">番号:</span>
-          <span class="value">{{ recommendation.code || '-' }}</span>
-        </div>
-        
-        <div class="info-row">
-          <span class="label">发布日期:</span>
-          <span class="value">{{ recommendation.date || '-' }}</span>
-        </div>
-        
+
         <div v-if="recommendation.actors && recommendation.actors.length > 0" class="info-row">
           <span class="label">演员:</span>
           <div class="actor-tags">
@@ -162,6 +152,11 @@
             </div>
           </div>
         </div>
+
+        <div class="info-row">
+          <span class="label">番号:</span>
+          <span class="value">{{ recommendation.code || '-' }}</span>
+        </div>
         
         <div v-if="recommendation.series" class="info-row">
           <span class="label">系列:</span>
@@ -180,7 +175,7 @@
           </div>
         </div>
         
-        <div v-if="recommendation.tags && recommendation.tags.length > 0" class="info-row">
+        <div class="info-row">
           <span class="label">标签:</span>
           <div class="tag-list">
             <van-tag 
@@ -196,7 +191,7 @@
             </van-tag>
             <van-tag 
               class="tag-item tag-add"
-              @click="showAddTag = true"
+              @click="openAddTagPopup"
             >
               <van-icon name="plus" size="12" />
             </van-tag>
@@ -291,6 +286,24 @@
             />
           </div>
         </van-cell-group>
+      </div>
+      <div class="action-section">
+        <div class="detail-action-strip">
+          <van-button
+            size="small"
+            type="warning"
+            :icon="isFavoritedVideo ? 'star' : 'star-o'"
+            @click="toggleFavorite"
+          >
+            {{ isFavoritedVideo ? '已收藏' : '收藏' }}
+          </van-button>
+          <van-button size="small" type="primary" icon="records-o" @click="openListManager">
+            加入清单
+          </van-button>
+          <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
+            删除
+          </van-button>
+        </div>
       </div>
     </div>
     
@@ -429,7 +442,28 @@
       <div class="edit-popup">
         <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
         <div class="tag-add-content">
-          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-search
+            v-model="newTagName"
+            shape="round"
+            placeholder="搜索已有标签，或输入新标签"
+            clearable
+            @search="handleAddTag"
+          />
+          <div v-if="filteredAddTagOptions.length > 0" class="tag-option-list">
+            <button
+              v-for="tag in filteredAddTagOptions"
+              :key="tag.id"
+              type="button"
+              class="tag-option"
+              @click="bindExistingTag(tag)"
+            >
+              <span class="tag-option-name">{{ tag.name }}</span>
+              <span class="tag-option-count">{{ tag.video_count || 0 }} 项</span>
+            </button>
+          </div>
+          <div v-else class="tag-option-empty">
+            {{ newTagName.trim() ? '没有匹配的已有标签，可直接新建。' : '输入关键词后会实时显示可选标签。' }}
+          </div>
           <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
             添加
           </van-button>
@@ -445,6 +479,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImagePreview, showLoadingToast, closeToast } from 'vant'
 import { useVideoRecommendationStore, useListStore, useActorStore } from '@/stores'
 import { tagApi } from '@/api/tag'
+import { historyApi } from '@/api/history'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
 import { copyTextToClipboard } from '@/runtime/browser'
@@ -534,6 +569,34 @@ const isFavoritedVideo = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
+const currentTagIdSet = computed(() => {
+  const ids = [
+    ...(recommendation.value?.tag_ids || []),
+    ...((recommendation.value?.tags || []).map(tag => tag?.id))
+  ]
+  return new Set(ids.filter(Boolean).map(id => String(id)))
+})
+
+const filteredAddTagOptions = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  return allTags.value
+    .filter(tag => tag?.id && !currentTagIdSet.value.has(String(tag.id)))
+    .filter(tag => {
+      if (!keyword) return true
+      return String(tag.name || '').toLowerCase().includes(keyword)
+    })
+    .slice(0, 32)
+})
+
+const exactExistingAddTag = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  if (!keyword) return null
+  return allTags.value.find(tag => {
+    return tag?.id &&
+      !currentTagIdSet.value.has(String(tag.id)) &&
+      String(tag.name || '').trim().toLowerCase() === keyword
+  }) || null
+})
 const preferredCoverPath = computed(() => {
   const localPath = String(recommendation.value?.cover_path_local || '').trim()
   const remotePath = String(recommendation.value?.cover_path || '').trim()
@@ -828,15 +891,34 @@ async function mountPreviewVideoSource() {
     return
   }
 
-  if (isM3u8Url(src)) {
+  // In the packaged Android WebView, relative media URLs resolve against
+  // https://localhost instead of the embedded backend listener.
+  const playableSrc = toBackendUrl(src) || src
+
+  if (isM3u8Url(playableSrc)) {
     if (Hls.isSupported()) {
       const instance = new Hls({
         debug: false,
-        enableWorker: true
+        enableWorker: true,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = true
+          const token = window.__ULTIMATE_NORMAL_AUTH_TOKEN
+          if (token) xhr.setRequestHeader('X-Ultimate-Normal-Token', token)
+        },
+        fetchSetup: (context, initParams) => ({
+          ...(initParams || {}),
+          credentials: 'include',
+          headers: {
+            ...((initParams || {}).headers || {}),
+            ...(window.__ULTIMATE_NORMAL_AUTH_TOKEN
+              ? { 'X-Ultimate-Normal-Token': window.__ULTIMATE_NORMAL_AUTH_TOKEN }
+              : {})
+          }
+        })
       })
 
       previewHls.value = instance
-      instance.loadSource(src)
+      instance.loadSource(playableSrc)
       instance.attachMedia(videoEl)
       instance.on(Hls.Events.ERROR, (event, data) => {
         console.error('预览视频 HLS 错误:', event, data)
@@ -849,7 +931,7 @@ async function mountPreviewVideoSource() {
     }
 
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = src
+      videoEl.src = playableSrc
       return
     }
 
@@ -857,7 +939,7 @@ async function mountPreviewVideoSource() {
     return
   }
 
-  videoEl.src = src
+  videoEl.src = playableSrc
 }
 
 async function refreshPreviewVideo() {
@@ -908,6 +990,7 @@ async function loadVideo() {
   try {
     const data = await videoRecommendationStore.fetchDetail(recommendationId.value)
     recommendation.value = data
+    recordReadingHistory(data)
     showMagnets.value = false
     syncPrimarySourceSelection(data)
     syncPreviewAssetSelection(data)
@@ -928,6 +1011,18 @@ async function loadVideo() {
     actorStore.fetchList()
   ]).catch((error) => {
     console.warn('加载附加数据失败:', error)
+  })
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || recommendationId.value
+  if (!contentId) return
+  historyApi.recordVisit({
+    contentType: 'video',
+    contentId,
+    source: 'preview'
+  }).catch((error) => {
+    console.warn('写入预览视频阅读记录失败:', error)
   })
 }
 
@@ -997,6 +1092,11 @@ function toggleListItem(listId) {
   } else {
     selectedListIds.value.push(listId)
   }
+}
+
+function openListManager() {
+  selectedListIds.value = [...(recommendation.value?.list_ids || [])]
+  showListPopup.value = true
 }
 
 async function addToLists() {
@@ -1125,6 +1225,14 @@ async function handleAction(action) {
   }
 }
 
+async function openAddTagPopup() {
+  newTagName.value = ''
+  if (allTags.value.length === 0) {
+    await fetchAllTags()
+  }
+  showAddTag.value = true
+}
+
 function goBack() {
   router.back()
 }
@@ -1132,18 +1240,45 @@ function goBack() {
 async function handleAddTag() {
   const name = newTagName.value.trim()
   if (!name) { showFailToast('请输入标签名称'); return }
+  if ((recommendation.value?.tags || []).some(tag => String(tag.name || '').trim().toLowerCase() === name.toLowerCase())) {
+    showFailToast('标签已存在')
+    return
+  }
+  const existing = exactExistingAddTag.value
+  if (existing) {
+    await bindExistingTag(existing)
+    return
+  }
   tagAdding.value = true
   try {
     const res = await tagApi.add(name, 'video')
-    if (res.code === 200 && res.data?.tag_id) {
-      await tagApi.batchAddTagsToVideos([recommendationId.value], [res.data.tag_id])
+    const tagId = res.data?.tag_id || res.data?.id
+    if (res.code === 200 && tagId) {
+      await tagApi.batchAddTagsToVideos([recommendationId.value], [tagId])
       await loadVideo()
+      await fetchAllTags()
       newTagName.value = ''
       showAddTag.value = false
       showSuccessToast('标签已添加')
     } else {
       showFailToast('添加失败')
     }
+  } catch (e) {
+    showFailToast('添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function bindExistingTag(tag) {
+  if (!tag?.id || currentTagIdSet.value.has(String(tag.id))) return
+  tagAdding.value = true
+  try {
+    await tagApi.batchAddTagsToVideos([recommendationId.value], [tag.id])
+    await loadVideo()
+    newTagName.value = ''
+    showAddTag.value = false
+    showSuccessToast('标签已添加')
   } catch (e) {
     showFailToast('添加失败')
   } finally {
@@ -1498,8 +1633,11 @@ async function playStream(stream) {
     console.warn('播放地址不可用', stream)
     return
   }
-  
-  console.log('播放URL:', url)
+
+  // Resolve relative URLs to absolute — <video> src isn't routed through axios
+  const absoluteUrl = toBackendUrl(url) || url
+
+  console.log('播放URL:', absoluteUrl)
   
   // 销毁之前的 HLS 实例
   if (hls.value) {
@@ -1512,14 +1650,29 @@ async function playStream(stream) {
   videoPlayer.value.load()
   
   // 判断是否是 m3u8
-  if (url.includes('.m3u8') || url.includes('m3u8')) {
+  if (absoluteUrl.includes('.m3u8') || absoluteUrl.includes('m3u8')) {
     if (Hls.isSupported()) {
       hls.value = new Hls({
         debug: false,
-        enableWorker: true
+        enableWorker: true,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = true
+          const token = window.__ULTIMATE_NORMAL_AUTH_TOKEN
+          if (token) xhr.setRequestHeader('X-Ultimate-Normal-Token', token)
+        },
+        fetchSetup: (context, initParams) => ({
+          ...(initParams || {}),
+          credentials: 'include',
+          headers: {
+            ...((initParams || {}).headers || {}),
+            ...(window.__ULTIMATE_NORMAL_AUTH_TOKEN
+              ? { 'X-Ultimate-Normal-Token': window.__ULTIMATE_NORMAL_AUTH_TOKEN }
+              : {})
+          }
+        })
       })
       
-      hls.value.loadSource(url)
+      hls.value.loadSource(absoluteUrl)
       hls.value.attachMedia(videoPlayer.value)
       
       hls.value.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1534,28 +1687,43 @@ async function playStream(stream) {
         }
       })
     } else if (videoPlayer.value.canPlayType('application/vnd.apple.mpegurl')) {
-      videoPlayer.value.src = url
+      videoPlayer.value.src = absoluteUrl
       videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
     } else {
       showFailToast('当前浏览器不支持播放此格式')
     }
   } else {
     // 普通视频格式
-    videoPlayer.value.src = url
+    videoPlayer.value.src = absoluteUrl
     videoPlayer.value.play().catch(e => console.warn('播放启动失败:', e))
   }
 }
 
 async function handlePlayerElementError(event) {
-  const mediaErrorCode = event?.target?.error?.code
+  const mediaError = event?.target?.error
+  const mediaErrorCode = mediaError?.code
+  const mediaErrorMessage = mediaError?.message || ''
+
+  const errorLabels = { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK', 3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' }
+  const errorLabel = errorLabels[mediaErrorCode] || `UNKNOWN(${mediaErrorCode})`
+
+  const videoSrc = event?.target?.src || event?.target?.currentSrc || ''
+
   console.error('预览库主播放器加载失败', {
     recommendationId: recommendationId.value,
     activeSource: activePrimarySourceKey.value,
     providerKey: activeProviderKey.value,
     currentSource: currentSource.value,
-    mediaErrorCode
+    mediaErrorCode,
+    mediaErrorMessage,
+    errorLabel,
+    videoSrc: videoSrc.substring(0, 120),
   })
-  showFailToast('当前平台播放失败，请手动切换播放平台')
+
+  const msgParts = ['当前平台播放失败']
+  if (errorLabel) msgParts.push(`[${errorLabel}]`)
+  if (mediaErrorMessage) msgParts.push(mediaErrorMessage)
+  showFailToast(msgParts.join(' '))
 }
 
 onMounted(() => {
@@ -1900,6 +2068,27 @@ onUnmounted(() => {
   font-weight: 700;
   color: var(--text-strong);
   margin-bottom: 14px;
+  padding-right: 34px;
+}
+
+.detail-action-strip {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 auto;
+}
+
+.detail-action-strip :deep(.van-button) {
+  min-width: 112px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 10px 20px rgba(17, 27, 45, 0.12);
+}
+
+.action-section {
+  padding: 16px 12px 20px;
+  text-align: center;
 }
 
 .info-row {
@@ -1992,6 +2181,63 @@ onUnmounted(() => {
 
 .tag-item {
   margin-bottom: 4px;
+}
+
+.tag-add-content {
+  padding: 16px;
+}
+
+.tag-add-content :deep(.van-search) {
+  padding: 0;
+  background: transparent;
+}
+
+.tag-add-content :deep(.van-search__content) {
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+}
+
+.tag-option-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.tag-option {
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tag-option-name {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-option-count,
+.tag-option-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.tag-option-empty {
+  padding: 16px 2px 4px;
+  text-align: center;
 }
 
 .action-buttons {
@@ -2222,6 +2468,19 @@ onUnmounted(() => {
 
   .play-icon {
     font-size: 54px;
+  }
+
+  .detail-action-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+
+  .detail-action-strip :deep(.van-button) {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 6px;
   }
 
   .action-buttons {

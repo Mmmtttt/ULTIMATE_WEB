@@ -1,8 +1,11 @@
 <template>
-  <div class="base-tag-manage">
+  <div class="base-tag-manage manage-page-shell">
     <van-nav-bar :title="pageTitle" left-text="返回" left-arrow @click-left="$router.back()">
       <template #right>
-        <van-icon name="plus" @click="showAddPopup = true" />
+        <button type="button" class="nav-add-button" @click="showAddPopup = true">
+          <van-icon name="plus" />
+          <span>添加</span>
+        </button>
       </template>
     </van-nav-bar>
     
@@ -95,10 +98,19 @@
               <span class="selected-count" v-if="selectedContentIds.length > 0">
                 已选 {{ selectedContentIds.length }} 项
               </span>
+              <van-button size="mini" plain type="primary" icon="filter-o" @click="showBatchFilterPanel = true">
+                筛选
+              </van-button>
               <van-button size="mini" plain type="primary" @click="toggleSelectAllContent">
                 {{ isAllContentSelected ? '取消全选' : '全选' }}
               </van-button>
             </div>
+          </div>
+
+          <div v-if="hasBatchFilter" class="active-batch-filter-bar">
+            <span class="active-batch-filter-label">已应用筛选</span>
+            <van-tag type="primary" round>{{ filteredContentList.length }} 项结果</van-tag>
+            <van-button size="mini" plain type="primary" @click="clearBatchFilters">清除</van-button>
           </div>
           
           <div class="content-select-grid">
@@ -189,49 +201,88 @@
       </van-tab>
     </van-tabs>
     
-    <van-popup 
-      v-model:show="showAddPopup" 
-      position="bottom" 
-      round 
-      :style="{ height: '40%' }"
+    <van-popup
+      v-model:show="showAddPopup"
+      position="center"
+      round
+      teleport="body"
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
-      <div class="popup-content">
-        <van-nav-bar title="添加标签">
-          <template #right>
-            <van-button type="primary" size="small" @click="addTag">确定</van-button>
-          </template>
-        </van-nav-bar>
-        
-        <van-cell-group inset>
-          <van-field 
-            v-model="newTagName" 
-            label="标签名称" 
-            placeholder="请输入标签名称"
-          />
-        </van-cell-group>
+      <div class="tag-dialog">
+        <div class="tag-dialog__header">
+          <div>
+            <div class="tag-dialog__title">添加标签</div>
+            <div class="tag-dialog__desc">新标签会创建到当前内容类型下。</div>
+          </div>
+          <button type="button" class="tag-dialog__close" @click="showAddPopup = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
+        <van-field
+          v-model="newTagName"
+          label="标签名称"
+          placeholder="请输入标签名称"
+        />
+        <div class="tag-dialog__actions">
+          <van-button round plain @click="showAddPopup = false">取消</van-button>
+          <van-button round type="primary" @click="addTag">确定</van-button>
+        </div>
       </div>
     </van-popup>
-    
-    <van-popup 
-      v-model:show="showEditPopup" 
-      position="bottom" 
-      round 
-      :style="{ height: '40%' }"
+
+    <van-popup
+      v-model:show="showEditPopup"
+      position="center"
+      round
+      teleport="body"
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
     >
-      <div class="popup-content">
-        <van-nav-bar title="编辑标签">
+      <div class="tag-dialog">
+        <div class="tag-dialog__header">
+          <div>
+            <div class="tag-dialog__title">编辑标签</div>
+            <div class="tag-dialog__desc">只会修改标签名称，不改变已绑定内容。</div>
+          </div>
+          <button type="button" class="tag-dialog__close" @click="showEditPopup = false">
+            <van-icon name="cross" />
+          </button>
+        </div>
+        <van-field
+          v-model="editTagName"
+          label="标签名称"
+          placeholder="请输入标签名称"
+        />
+        <div class="tag-dialog__actions">
+          <van-button round plain @click="showEditPopup = false">取消</van-button>
+          <van-button round type="primary" @click="editTag">保存</van-button>
+        </div>
+      </div>
+    </van-popup>
+
+    <van-popup
+      v-model:show="showBatchFilterPanel"
+      position="bottom"
+      round
+      :style="{ height: '70%' }"
+    >
+      <div class="filter-panel">
+        <van-nav-bar title="筛选" left-text="关闭" @click-left="showBatchFilterPanel = false">
           <template #right>
-            <van-button type="primary" size="small" @click="editTag">保存</van-button>
+            <van-button type="primary" size="small" @click="applyBatchFilterAndClose">确定</van-button>
           </template>
         </van-nav-bar>
-        
-        <van-cell-group inset>
-          <van-field 
-            v-model="editTagName" 
-            label="标签名称" 
-            placeholder="请输入标签名称"
-          />
-        </van-cell-group>
+        <AdvancedFilter
+          v-model:include-tags="tempBatchIncludeTags"
+          v-model:exclude-tags="tempBatchExcludeTags"
+          v-model:selected-authors="tempBatchSelectedAuthors"
+          v-model:selected-list-ids="tempBatchSelectedListIds"
+          v-model:min-score="tempBatchMinScore"
+          v-model:unread-only="tempBatchUnreadOnly"
+          :tags="allTags"
+          :authors="availableBatchAuthors"
+          :lists="availableBatchLists"
+          :is-video-mode="isVideo"
+        />
       </div>
     </van-popup>
     
@@ -249,12 +300,16 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
-import { useImportTaskStore, useRuntimeStore } from '@/stores'
+import { useImportTaskStore, useListStore, useModeStore, useRuntimeStore } from '@/stores'
+import AdvancedFilter from '@/components/filter/AdvancedFilter.vue'
 import {
   buildBatchTaskActions,
   clearBrowseState,
+  extractAuthors,
+  extractItemAuthors,
   getCoverUrl,
   isAllSelected,
+  isUnreadByProgress,
   keepSelectionWithinItems,
   loadBrowseState,
   saveBrowseState,
@@ -288,6 +343,8 @@ const emit = defineEmits(['tab-change'])
 
 const router = useRouter()
 const importTaskStore = useImportTaskStore()
+const listStore = useListStore()
+const modeStore = useModeStore()
 const runtimeStore = useRuntimeStore()
 const { isDesktop } = useDevice()
 
@@ -304,8 +361,22 @@ const batchTagKeyword = ref('')
 const selectedContentIds = ref([])
 const selectedTagIds = ref([])
 const showBatchTaskSheet = ref(false)
+const showBatchFilterPanel = ref(false)
+const batchMinScore = ref(null)
+const batchIncludeTags = ref([])
+const batchExcludeTags = ref([])
+const batchSelectedAuthors = ref([])
+const batchSelectedListIds = ref([])
+const batchUnreadOnly = ref(false)
+const tempBatchMinScore = ref(0)
+const tempBatchIncludeTags = ref([])
+const tempBatchExcludeTags = ref([])
+const tempBatchSelectedAuthors = ref([])
+const tempBatchSelectedListIds = ref([])
+const tempBatchUnreadOnly = ref(false)
 
-const isVideo = computed(() => props.contentType === 'video')
+const currentContentType = computed(() => (modeStore.isVideoMode ? 'video' : 'comic'))
+const isVideo = computed(() => currentContentType.value === 'video')
 
 const pageTitle = computed(() => isVideo.value ? '视频标签管理' : '标签管理')
 
@@ -314,13 +385,9 @@ const contentLabel = computed(() => isVideo.value ? '选择视频' : '选择漫�
 const coverFit = computed(() => isVideo.value ? 'cover' : 'contain')
 
 const tabs = computed(() => {
-  if (isVideo.value) {
-    return [{ key: 'video', title: '标签列表' }]
-  }
-  return [
-    { key: 'comic', title: '漫画标签' },
-    { key: 'video', title: '视频标签' }
-  ]
+  return isVideo.value
+    ? [{ key: 'video', title: '视频标签' }]
+    : [{ key: 'comic', title: '漫画标签' }]
 })
 
 const allTags = computed(() => {
@@ -331,18 +398,61 @@ const allTags = computed(() => {
 })
 
 const filteredBatchTags = computed(() => filterTagsByKeyword(allTags.value, batchTagKeyword.value))
+const availableBatchAuthors = computed(() => extractAuthors(contentList.value))
+const availableBatchLists = computed(() => listStore.lists
+  .filter((list) => list.content_type === currentContentType.value)
+  .map((list) => ({ ...list, item_count: list.item_ids?.length || 0 })))
 
-const paginationStorageKey = computed(() => `tag_manage_batch_${props.contentType}`)
+const hasBatchFilter = computed(() => (
+  (batchMinScore.value !== null && batchMinScore.value > 0)
+  || batchIncludeTags.value.length > 0
+  || batchExcludeTags.value.length > 0
+  || batchSelectedAuthors.value.length > 0
+  || batchSelectedListIds.value.length > 0
+  || (isVideo.value === false && batchUnreadOnly.value)
+))
+
+function itemMatchesBatchAuthors(item) {
+  if (batchSelectedAuthors.value.length === 0) return true
+  const authors = extractItemAuthors(item)
+  return batchSelectedAuthors.value.some((author) => authors.includes(author))
+}
+
+function itemMatchesBatchLists(item) {
+  if (batchSelectedListIds.value.length === 0) return true
+  const ids = new Set((item?.list_ids || []).map((id) => String(id)))
+  return batchSelectedListIds.value.some((id) => ids.has(String(id)))
+}
+
+const filteredContentList = computed(() => contentList.value.filter((item) => {
+  if (batchMinScore.value !== null && batchMinScore.value > 0 && Number(item.score || 0) < batchMinScore.value) {
+    return false
+  }
+  const tagIds = Array.isArray(item.tag_ids) ? item.tag_ids : []
+  if (batchIncludeTags.value.length > 0 && !batchIncludeTags.value.every((id) => tagIds.includes(id))) {
+    return false
+  }
+  if (batchExcludeTags.value.length > 0 && batchExcludeTags.value.some((id) => tagIds.includes(id))) {
+    return false
+  }
+  if (!isVideo.value && batchUnreadOnly.value && !isUnreadByProgress(item.current_page)) {
+    return false
+  }
+  return itemMatchesBatchAuthors(item) && itemMatchesBatchLists(item)
+}))
+
+const paginationStorageKey = computed(() => `tag_manage_batch_${currentContentType.value}`)
 const {
   pageSize,
   currentPage,
   totalItems,
-  pagedItems
-} = useClientPagination(contentList, paginationStorageKey)
+  pagedItems,
+  goFirst
+} = useClientPagination(filteredContentList, paginationStorageKey)
 const pagedContentList = computed(() => pagedItems.value)
 
 function getBrowseStateKey() {
-  return `tag_manage_state_${props.contentType}`
+  return `tag_manage_state_${currentContentType.value}`
 }
 
 function persistBrowseState() {
@@ -359,6 +469,12 @@ function persistBrowseState() {
   if (String(batchTagKeyword.value || '').trim()) {
     payload.batchTagKeyword = String(batchTagKeyword.value || '').trim()
   }
+  if (batchMinScore.value !== null && batchMinScore.value > 0) payload.batchMinScore = batchMinScore.value
+  if (batchIncludeTags.value.length > 0) payload.batchIncludeTags = [...batchIncludeTags.value]
+  if (batchExcludeTags.value.length > 0) payload.batchExcludeTags = [...batchExcludeTags.value]
+  if (batchSelectedAuthors.value.length > 0) payload.batchSelectedAuthors = [...batchSelectedAuthors.value]
+  if (batchSelectedListIds.value.length > 0) payload.batchSelectedListIds = [...batchSelectedListIds.value]
+  if (batchUnreadOnly.value) payload.batchUnreadOnly = true
 
   if (Object.keys(payload).length === 0) {
     clearBrowseState(getBrowseStateKey())
@@ -381,6 +497,18 @@ function restoreBrowseState() {
   }
   tagListKeyword.value = String(parsed.tagListKeyword || '').trim()
   batchTagKeyword.value = String(parsed.batchTagKeyword || '').trim()
+  batchMinScore.value = parsed.batchMinScore ?? null
+  batchIncludeTags.value = Array.isArray(parsed.batchIncludeTags) ? [...parsed.batchIncludeTags] : []
+  batchExcludeTags.value = Array.isArray(parsed.batchExcludeTags) ? [...parsed.batchExcludeTags] : []
+  batchSelectedAuthors.value = Array.isArray(parsed.batchSelectedAuthors) ? [...parsed.batchSelectedAuthors] : []
+  batchSelectedListIds.value = Array.isArray(parsed.batchSelectedListIds) ? [...parsed.batchSelectedListIds] : []
+  batchUnreadOnly.value = Boolean(parsed.batchUnreadOnly)
+  tempBatchMinScore.value = batchMinScore.value || 0
+  tempBatchIncludeTags.value = [...batchIncludeTags.value]
+  tempBatchExcludeTags.value = [...batchExcludeTags.value]
+  tempBatchSelectedAuthors.value = [...batchSelectedAuthors.value]
+  tempBatchSelectedListIds.value = [...batchSelectedListIds.value]
+  tempBatchUnreadOnly.value = batchUnreadOnly.value
 }
 
 const canBatchAdd = computed(() => {
@@ -397,12 +525,12 @@ const selectedContentItems = computed(() => {
 })
 
 const isAllContentSelected = computed(() => {
-  return isAllSelected(selectedContentIds.value, contentList.value, (item) => item.id)
+  return isAllSelected(selectedContentIds.value, filteredContentList.value, (item) => item.id)
 })
 
 const batchTaskActions = computed(() => {
   return buildBatchTaskActions({
-    contentType: props.contentType,
+    contentType: currentContentType.value,
     selectedItems: selectedContentItems.value,
     thirdPartyEnabled: runtimeStore.thirdPartyEnabled,
     supportsVideoThumbnailBatch: runtimeStore.supportsLocalVideoThumbnailBatch,
@@ -495,8 +623,7 @@ async function addTag() {
     return
   }
   
-  const currentTab = tabs.value[activeTab.value]
-  const contentType = currentTab?.key || props.contentType
+  const contentType = currentContentType.value
   
   try {
     const response = await props.tagStore.addTag(newTagName.value.trim(), contentType)
@@ -583,7 +710,39 @@ function toggleSelectAllContent() {
     selectedContentIds.value = []
     return
   }
-  selectedContentIds.value = contentList.value.map(item => item.id)
+  const selected = new Set(selectedContentIds.value)
+  filteredContentList.value.forEach((item) => selected.add(item.id))
+  selectedContentIds.value = [...selected]
+}
+
+function applyBatchFilterAndClose() {
+  batchMinScore.value = tempBatchMinScore.value > 0 ? tempBatchMinScore.value : null
+  batchIncludeTags.value = [...tempBatchIncludeTags.value]
+  batchExcludeTags.value = [...tempBatchExcludeTags.value]
+  batchSelectedAuthors.value = [...tempBatchSelectedAuthors.value]
+  batchSelectedListIds.value = [...tempBatchSelectedListIds.value]
+  batchUnreadOnly.value = Boolean(tempBatchUnreadOnly.value)
+  goFirst()
+  persistBrowseState()
+  showBatchFilterPanel.value = false
+}
+
+function clearBatchFilters() {
+  batchMinScore.value = null
+  batchIncludeTags.value = []
+  batchExcludeTags.value = []
+  batchSelectedAuthors.value = []
+  batchSelectedListIds.value = []
+  batchUnreadOnly.value = false
+  tempBatchMinScore.value = 0
+  tempBatchIncludeTags.value = []
+  tempBatchExcludeTags.value = []
+  tempBatchSelectedAuthors.value = []
+  tempBatchSelectedListIds.value = []
+  tempBatchUnreadOnly.value = false
+  selectedContentIds.value = []
+  goFirst()
+  persistBrowseState()
 }
 
 function toggleTagSelection(id) {
@@ -594,7 +753,7 @@ async function openBatchTaskSheet() {
   if (selectedContentIds.value.length === 0) {
     return
   }
-  await runtimeStore.fetchRuntime()
+  await runtimeStore.fetchRuntime(true)
   showBatchTaskSheet.value = true
 }
 
@@ -693,6 +852,7 @@ onMounted(async () => {
   restoreBrowseState()
   await fetchTagList()
   await fetchContentList()
+  await listStore.fetchLists()
 })
 
 watch(contentList, (nextItems) => {
@@ -703,24 +863,114 @@ watch(contentList, (nextItems) => {
   )
 })
 
-watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
-  persistBrowseState()
+watch(filteredContentList, (nextItems) => {
+  selectedContentIds.value = keepSelectionWithinItems(
+    selectedContentIds.value,
+    contentList.value,
+    (item) => item.id
+  )
+  if (nextItems.length === 0) {
+    goFirst()
+  }
 })
+
+watch(showBatchFilterPanel, (visible) => {
+  if (!visible) return
+  tempBatchMinScore.value = batchMinScore.value || 0
+  tempBatchIncludeTags.value = [...batchIncludeTags.value]
+  tempBatchExcludeTags.value = [...batchExcludeTags.value]
+  tempBatchSelectedAuthors.value = [...batchSelectedAuthors.value]
+  tempBatchSelectedListIds.value = [...batchSelectedListIds.value]
+  tempBatchUnreadOnly.value = batchUnreadOnly.value
+})
+
+watch(() => modeStore.currentMode, async () => {
+  activeTab.value = 0
+  currentPage.value = 1
+  tagListKeyword.value = ''
+  batchTagKeyword.value = ''
+  batchMinScore.value = null
+  batchIncludeTags.value = []
+  batchExcludeTags.value = []
+  batchSelectedAuthors.value = []
+  batchSelectedListIds.value = []
+  batchUnreadOnly.value = false
+  selectedContentIds.value = []
+  selectedTagIds.value = []
+  contentList.value = []
+  await fetchTagList()
+  await fetchContentList()
+})
+
+watch([
+  activeTab,
+  currentPage,
+  tagListKeyword,
+  batchTagKeyword,
+  batchMinScore,
+  batchIncludeTags,
+  batchExcludeTags,
+  batchSelectedAuthors,
+  batchSelectedListIds,
+  batchUnreadOnly
+], () => {
+  persistBrowseState()
+}, { deep: true })
 </script>
 
 <style scoped>
 .base-tag-manage {
-  min-height: 95vh;
-  background: var(--surface-0);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: transparent;
+  padding-bottom: 18px;
+}
+
+.nav-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--plain-primary-border);
+  border-radius: 999px;
+  background: var(--plain-btn-bg);
+  color: var(--plain-primary-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.base-tag-manage :deep(.van-tabs) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.base-tag-manage :deep(.van-tabs__content) {
+  flex: 1;
+}
+
+.base-tag-manage :deep(.van-tab__panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 .tag-list {
-  margin-top: 10px;
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
 }
 
 .tag-list-desktop {
   display: grid;
   gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
 .tag-icon {
@@ -729,7 +979,8 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .tag-search-bar {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  grid-column: 1 / -1;
 }
 
 .tag-search-bar :deep(.van-search) {
@@ -748,10 +999,11 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .tag-cell-desktop {
+  min-height: 72px;
   border-radius: 16px;
   border: 1px solid var(--border-soft);
-  background: var(--surface-2);
-  box-shadow: 0 10px 24px rgba(12, 24, 43, 0.08);
+  background: var(--surface-1);
+  box-shadow: none;
   transition:
     transform var(--motion-fast) var(--ease-standard),
     border-color var(--motion-fast) var(--ease-standard),
@@ -785,7 +1037,11 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .empty {
+  margin: 12px;
   padding: 40px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
   text-align: center;
 }
 
@@ -793,18 +1049,92 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   margin-top: 20px;
 }
 
-.popup-content {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+.tag-dialog {
+  padding: 16px;
+  background: var(--surface-2);
 }
 
-.popup-content .van-cell-group {
+.tag-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.tag-dialog__title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.tag-dialog__desc {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.tag-dialog__close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tag-dialog :deep(.van-cell) {
+  border-radius: 14px;
+  background: var(--surface-1);
+}
+
+.tag-dialog__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 16px;
 }
 
+.filter-panel {
+  height: 100%;
+  overflow: auto;
+  background: var(--surface-2);
+}
+
+.filter-panel :deep(.van-nav-bar) {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.active-batch-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -2px 0 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.active-batch-filter-label {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
 .batch-section {
-  padding: 16px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
 }
 
 .section-header {
@@ -833,26 +1163,38 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 
 .content-select-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
   margin-bottom: 20px;
 }
 
 .batch-pagination {
-  margin-bottom: 16px;
+  margin-top: auto;
+  background: var(--surface-1);
+  padding: 8px 0 12px;
+  margin-bottom: 0;
 }
 
 .content-select-item {
   position: relative;
-  background: var(--surface-2);
-  border-radius: 8px;
+  background: var(--surface-1);
+  border-radius: 14px;
   overflow: hidden;
-  border: 2px solid transparent;
-  transition: all 0.2s;
+  border: 1px solid var(--border-soft);
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.content-select-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .content-select-item.selected {
-  border-color: #1989fa;
+  border-color: rgba(89, 160, 255, 0.68);
+  box-shadow: 0 0 0 2px rgba(89, 160, 255, 0.16);
 }
 
 .content-thumb {
@@ -890,7 +1232,7 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
   right: 4px;
   width: 20px;
   height: 20px;
-  background: #1989fa;
+  background: var(--brand-600);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -917,14 +1259,38 @@ watch([activeTab, currentPage, tagListKeyword, batchTagKeyword], () => {
 }
 
 .batch-actions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
 @media (max-width: 767px) {
   .tag-list {
     margin-top: 8px;
+    padding: 10px;
+  }
+
+  .nav-add-button span {
+    display: none;
+  }
+
+  .content-select-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .section-header {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .section-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .batch-actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

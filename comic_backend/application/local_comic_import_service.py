@@ -39,8 +39,9 @@ except Exception:  # pragma: no cover
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z"}
 IMAGE_EXTENSIONS = {str(ext).lower() for ext in SUPPORTED_FORMATS}
 MAX_NESTED_DEPTH = 30
-SOFTREF_PASSWORDS_FILE = Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
 LOCAL_IMPORT_TAG_NAME = "本地"
+RECENT_IMPORT_TAG_ID = "tag_recent_import"
+RECENT_IMPORT_TAG_NAME = "最近导入"
 IMPORT_MODE_COPY_SAFE = "copy_safe"
 IMPORT_MODE_MOVE_HUGE = "move_huge"
 IMPORT_MODE_HARDLINK_MOVE = "hardlink_move"
@@ -51,9 +52,17 @@ SESSION_PHASE_COMMITTING = "committing"
 SESSION_PHASE_COMPLETED = "completed"
 SESSION_PHASE_FAILED = "failed"
 
-LOCAL_IMPORT_WORKSPACE_DIR = Path(CACHE_ROOT_DIR) / "comic_local_import_workspace"
-LOCAL_IMPORT_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 ensure_rar_backend_configured(logger=app_logger)
+
+
+def _softref_passwords_file() -> Path:
+    return Path(CACHE_ROOT_DIR) / "comic_softref_passwords.json"
+
+
+def _local_import_workspace_dir() -> Path:
+    path = Path(CACHE_ROOT_DIR) / "comic_local_import_workspace"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class LocalComicImportService:
@@ -67,7 +76,7 @@ class LocalComicImportService:
         return time.strftime("%Y-%m-%dT%H:%M:%S")
 
     def _session_dir(self, session_id: str) -> Path:
-        return LOCAL_IMPORT_WORKSPACE_DIR / session_id
+        return _local_import_workspace_dir() / session_id
 
     def _tree_path(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "tree.json"
@@ -209,10 +218,11 @@ class LocalComicImportService:
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     def _load_softref_password_store(self) -> Dict[str, Any]:
-        if not SOFTREF_PASSWORDS_FILE.exists():
+        password_file = _softref_passwords_file()
+        if not password_file.exists():
             return {"archives": {}}
         try:
-            payload = json.loads(SOFTREF_PASSWORDS_FILE.read_text(encoding="utf-8"))
+            payload = json.loads(password_file.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 return {"archives": {}}
             archives = payload.get("archives")
@@ -225,8 +235,9 @@ class LocalComicImportService:
     def _save_softref_password_store(self, payload: Dict[str, Any]) -> None:
         normalized = payload if isinstance(payload, dict) else {"archives": {}}
         normalized.setdefault("archives", {})
-        SOFTREF_PASSWORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        SOFTREF_PASSWORDS_FILE.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        password_file = _softref_passwords_file()
+        password_file.parent.mkdir(parents=True, exist_ok=True)
+        password_file.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _remember_softref_archive_password(self, locator: str, archive_password: Optional[str]) -> bool:
         password = str(archive_password or "").strip()
@@ -1820,6 +1831,21 @@ class LocalComicImportService:
         return f"tag_{max_tag_num + 1:03d}"
 
     def _ensure_local_tag_id(self) -> str:
+        existing_data = self._tag_storage.read_document()
+        existing_tags = existing_data.get("tags", [])
+        if isinstance(existing_tags, list):
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                if str(item.get("name", "")).strip() != LOCAL_IMPORT_TAG_NAME:
+                    continue
+                tag_id = str(item.get("id", "")).strip()
+                if tag_id:
+                    return tag_id
+
         result = {"tag_id": ""}
 
         def updater(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1860,6 +1886,96 @@ class LocalComicImportService:
             raise RuntimeError("创建/查询本地标签失败")
         return result["tag_id"]
 
+    def _ensure_recent_import_tag_id(self) -> str:
+        existing_data = self._tag_storage.read_document()
+        existing_tags = existing_data.get("tags", [])
+        if isinstance(existing_tags, list):
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type == "comic" and str(item.get("id", "")).strip() == RECENT_IMPORT_TAG_ID:
+                    if str(item.get("name", "")).strip() != RECENT_IMPORT_TAG_NAME:
+                        item["name"] = RECENT_IMPORT_TAG_NAME
+                        self._tag_storage.write_items(existing_tags)
+                    return RECENT_IMPORT_TAG_ID
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type == "comic" and str(item.get("name", "")).strip() == RECENT_IMPORT_TAG_NAME:
+                    tag_id = str(item.get("id", "")).strip()
+                    if tag_id:
+                        return tag_id
+
+        result = {"tag_id": ""}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            tags = data.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+
+            for item in tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type == "comic" and str(item.get("name", "")).strip() == RECENT_IMPORT_TAG_NAME:
+                    tag_id = str(item.get("id", "")).strip()
+                    if tag_id:
+                        result["tag_id"] = tag_id
+                        data["tags"] = tags
+                        return data
+
+            tags.append(
+                {
+                    "id": RECENT_IMPORT_TAG_ID,
+                    "name": RECENT_IMPORT_TAG_NAME,
+                    "content_type": "comic",
+                    "create_time": self._timestamp(),
+                }
+            )
+            data["tags"] = tags
+            data["last_updated"] = time.strftime("%Y-%m-%d")
+            result["tag_id"] = RECENT_IMPORT_TAG_ID
+            return data
+
+        ok = self._tag_storage.atomic_update_document(updater)
+        if not ok or not result["tag_id"]:
+            raise RuntimeError("创建/查询最近导入标签失败")
+        return result["tag_id"]
+
+    def _apply_recent_import_tags(self, comic_ids: List[str]) -> Dict[str, int]:
+        target_ids = {str(comic_id or "").strip() for comic_id in (comic_ids or []) if str(comic_id or "").strip()}
+        if not target_ids:
+            return {"updated_count": 0, "cleared_count": 0}
+
+        recent_tag_id = self._ensure_recent_import_tag_id()
+        stats = {"updated_count": 0, "cleared_count": 0}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            comics = data.get("comics", [])
+            if not isinstance(comics, list):
+                return data
+            for item in comics:
+                if not isinstance(item, dict):
+                    continue
+                tag_ids = [str(tag_id) for tag_id in (item.get("tag_ids") or []) if str(tag_id)]
+                had_recent = recent_tag_id in tag_ids
+                tag_ids = [tag_id for tag_id in tag_ids if tag_id != recent_tag_id]
+                if had_recent and str(item.get("id", "")).strip() not in target_ids:
+                    stats["cleared_count"] += 1
+                if str(item.get("id", "")).strip() in target_ids:
+                    tag_ids.append(recent_tag_id)
+                    if not had_recent:
+                        stats["updated_count"] += 1
+                item["tag_ids"] = tag_ids
+            data["last_updated"] = time.strftime("%Y-%m-%d")
+            return data
+
+        if not self._db_storage.atomic_update_document(updater):
+            raise RuntimeError("更新最近导入标签失败")
+        return stats
+
     def _ensure_comic_tag_ids(self, raw_tag_names: List[str]) -> Dict[str, str]:
         tag_names: List[str] = []
         seen: set[str] = set()
@@ -1873,6 +1989,21 @@ class LocalComicImportService:
             return {}
 
         result: Dict[str, str] = {}
+        existing_data = self._tag_storage.read_document()
+        existing_tags = existing_data.get("tags", [])
+        if isinstance(existing_tags, list):
+            for item in existing_tags:
+                if not isinstance(item, dict):
+                    continue
+                content_type = str(item.get("content_type", "comic")).strip().lower() or "comic"
+                if content_type != "comic":
+                    continue
+                name = str(item.get("name", "")).strip()
+                tag_id = str(item.get("id", "")).strip()
+                if name in tag_names and tag_id and name not in result:
+                    result[name] = tag_id
+        if all(name in result for name in tag_names):
+            return result
 
         def updater(data: Dict[str, Any]) -> Dict[str, Any]:
             tags = data.get("tags", [])
@@ -2059,6 +2190,40 @@ class LocalComicImportService:
         ok = self._db_storage.atomic_update_document(updater)
         return ok, bool(status["inserted"])
 
+    def _append_comic_records_batch(self, comic_records: List[Dict[str, Any]]) -> Tuple[bool, int]:
+        normalized_records = [
+            dict(record or {})
+            for record in (comic_records or [])
+            if isinstance(record, dict) and str(record.get("id", "")).strip()
+        ]
+        if not normalized_records:
+            return True, 0
+
+        status = {"inserted": 0}
+
+        def updater(data: Dict[str, Any]) -> Dict[str, Any]:
+            comics = data.setdefault("comics", [])
+            if not isinstance(comics, list):
+                comics = []
+                data["comics"] = comics
+
+            existing_ids = {str(item.get("id", "")) for item in comics if isinstance(item, dict)}
+            for record in normalized_records:
+                comic_id = str(record.get("id", "")).strip()
+                if not comic_id or comic_id in existing_ids:
+                    continue
+                comics.append(record)
+                existing_ids.add(comic_id)
+                status["inserted"] += 1
+
+            if status["inserted"]:
+                data["total_comics"] = len(comics)
+                data["last_updated"] = time.strftime("%Y-%m-%d")
+            return data
+
+        ok = self._db_storage.atomic_update_document(updater)
+        return bool(ok), int(status["inserted"])
+
     def _update_softref_cover_path(self, comic_id: str, cover_path: str) -> bool:
         comic_id = str(comic_id or "").strip()
         cover_path = str(cover_path or "").strip()
@@ -2211,6 +2376,7 @@ class LocalComicImportService:
         raw_assignments: Optional[Dict[str, str]] = None,
         raw_tag_assignments: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        started_at = time.perf_counter()
         meta = self._load_meta(session_id)
         effective_mode = self._normalize_import_mode(meta.get("effective_mode", IMPORT_MODE_COPY_SAFE))
         archive_password = str(meta.get("archive_password", "") or "").strip() or None
@@ -2284,6 +2450,18 @@ class LocalComicImportService:
 
         records = state.setdefault("records", {})
         softref_cover_candidates: set[str] = set()
+        pending_comic_records: List[Dict[str, Any]] = []
+        pending_record_keys_by_comic_id: Dict[str, str] = {}
+        state_save_counter = 0
+        state_save_interval = 25
+
+        def save_import_state(*, force: bool = False) -> None:
+            nonlocal state_save_counter
+            if effective_mode == IMPORT_MODE_SOFTLINK_REF and not force:
+                state_save_counter += 1
+                if state_save_counter % state_save_interval != 0:
+                    return
+            self._save_state(session_id, state)
 
         for entry in items:
             work_path = str(entry.get("作品文件地址") or "").strip()
@@ -2317,7 +2495,7 @@ class LocalComicImportService:
                 }
             )
             records[key] = record
-            self._save_state(session_id, state)
+            save_import_state()
 
             try:
                 if key in existing_source_map:
@@ -2329,7 +2507,7 @@ class LocalComicImportService:
                         self._ensure_comic_has_tags(record["comic_id"], target_tag_ids)
                     record["error"] = ""
                     record["updated_at"] = self._timestamp()
-                    self._save_state(session_id, state)
+                    save_import_state()
                     continue
 
                 comic_id = str(record.get("comic_id", "")).strip()
@@ -2350,7 +2528,7 @@ class LocalComicImportService:
                     # 软连接模式不拷贝数据，封面使用首图接口兜底，避免依赖缺失的默认封面文件。
                     cover_path = f"/api/v1/comic/image?comic_id={comic_id}&page_num=1"
                     record["data_moved"] = False
-                    self._save_state(session_id, state)
+                    save_import_state()
                 else:
                     storage_dir_name = str(record.get("local_asset_dir_name", "")).strip()
                     if not storage_dir_name:
@@ -2361,7 +2539,7 @@ class LocalComicImportService:
                             Path(LOCAL_PICTURES_DIR),
                         )
                         record["local_asset_dir_name"] = storage_dir_name
-                        self._save_state(session_id, state)
+                        save_import_state()
                     target_dir = Path(LOCAL_PICTURES_DIR) / storage_dir_name
                     moved_flag = bool(record.get("data_moved", False))
                     work_dir = Path(work_path)
@@ -2372,7 +2550,7 @@ class LocalComicImportService:
                             self._move_work_to_target(work_dir, target_dir)
                             record["data_moved"] = True
                             moved_flag = True
-                            self._save_state(session_id, state)
+                            save_import_state()
                     else:
                         if not work_dir.exists() or not work_dir.is_dir():
                             raise RuntimeError("作品目录不存在，可能已被删除")
@@ -2386,7 +2564,7 @@ class LocalComicImportService:
                         shutil.move(str(staging_dir), str(target_dir))
                         moved_flag = True
                         record["data_moved"] = True
-                        self._save_state(session_id, state)
+                        save_import_state()
 
                     if not target_dir.exists() or not target_dir.is_dir():
                         raise RuntimeError("目标作品目录不存在，导入过程可能被中断")
@@ -2431,9 +2609,7 @@ class LocalComicImportService:
                         comic_record["storage_path_relative"] = relative_target_dir
                     comic_record["storage_path_kind"] = "local_dir"
 
-                ok, inserted = self._append_comic_record(comic_record)
-                if not ok:
-                    raise RuntimeError("写入漫画数据库失败")
+                inserted = True
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF and archive_password and self._is_softref_locator(work_path):
                     self._remember_softref_archive_password(work_path, archive_password)
                 if not inserted and target_tag_ids:
@@ -2441,23 +2617,66 @@ class LocalComicImportService:
                 if effective_mode == IMPORT_MODE_SOFTLINK_REF:
                     softref_cover_candidates.add(comic_id)
 
+                pending_comic_records.append(comic_record)
+                pending_record_keys_by_comic_id[comic_id] = key
                 existing_ids.add(comic_id)
                 existing_source_map[key] = comic_id
                 record["status"] = "completed" if inserted else "skipped"
                 record["error"] = ""
                 record["effective_mode"] = effective_mode
                 record["updated_at"] = self._timestamp()
-                self._save_state(session_id, state)
+                save_import_state()
             except Exception as exc:
                 record["status"] = "failed"
                 record["error"] = str(exc)
                 record["updated_at"] = self._timestamp()
-                self._save_state(session_id, state)
+                save_import_state(force=True)
+
+        if pending_comic_records:
+            db_write_started_at = time.perf_counter()
+            ok, inserted_count = self._append_comic_records_batch(pending_comic_records)
+            db_write_elapsed_ms = (time.perf_counter() - db_write_started_at) * 1000
+            app_logger.info(
+                "本地漫画批量导入数据库写入完成: "
+                f"session_id={session_id}, pending={len(pending_comic_records)}, "
+                f"inserted={inserted_count}, elapsed_ms={db_write_elapsed_ms:.2f}"
+            )
+            if not ok or inserted_count != len(pending_comic_records):
+                failed_ids = {
+                    str(record.get("id", "")).strip()
+                    for record in pending_comic_records
+                    if str(record.get("id", "")).strip()
+                }
+                for comic_id in failed_ids:
+                    record_key = pending_record_keys_by_comic_id.get(comic_id, "")
+                    record = records.get(record_key)
+                    if not isinstance(record, dict):
+                        continue
+                    record["status"] = "failed"
+                    record["error"] = "写入漫画数据库失败"
+                    record["updated_at"] = self._timestamp()
+                softref_cover_candidates.difference_update(failed_ids)
+                save_import_state(force=True)
+            else:
+                imported_ids = [
+                    str(record.get("id", "")).strip()
+                    for record in pending_comic_records
+                    if str(record.get("id", "")).strip()
+                ]
+                try:
+                    recent_stats = self._apply_recent_import_tags(imported_ids)
+                    app_logger.info(
+                        "本地漫画最近导入标签更新完成: "
+                        f"session_id={session_id}, updated={recent_stats.get('updated_count', 0)}, "
+                        f"cleared={recent_stats.get('cleared_count', 0)}"
+                    )
+                except Exception as recent_error:
+                    app_logger.warning(f"本地漫画最近导入标签更新失败: {recent_error}")
 
         summary = self._summarize_state(state)
         has_failed = summary["failed_count"] > 0
         state["status"] = "failed" if has_failed else "completed"
-        self._save_state(session_id, state)
+        save_import_state(force=True)
         self._update_meta(
             session_id,
             {
@@ -2475,6 +2694,14 @@ class LocalComicImportService:
             except Exception:
                 session_removed = False
 
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        app_logger.info(
+            "本地漫画批量导入提交完成: "
+            f"session_id={session_id}, mode={effective_mode}, total={len(items)}, "
+            f"imported={summary['imported_count']}, skipped={summary['skipped_count']}, "
+            f"failed={summary['failed_count']}, elapsed_ms={elapsed_ms:.2f}"
+        )
+
         return {
             "session_id": session_id,
             "status": state["status"],
@@ -2485,10 +2712,11 @@ class LocalComicImportService:
 
     def list_recoverable_sessions(self, limit: int = 20) -> List[Dict[str, Any]]:
         sessions: List[Dict[str, Any]] = []
-        if not LOCAL_IMPORT_WORKSPACE_DIR.exists():
+        workspace_dir = _local_import_workspace_dir()
+        if not workspace_dir.exists():
             return sessions
 
-        for session_dir in LOCAL_IMPORT_WORKSPACE_DIR.iterdir():
+        for session_dir in workspace_dir.iterdir():
             if not session_dir.is_dir():
                 continue
             session_id = session_dir.name

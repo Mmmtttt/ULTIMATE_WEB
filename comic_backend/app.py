@@ -4,15 +4,20 @@ import json
 import os
 import sys
 import threading
+import uuid
+from datetime import datetime, timezone
 
 # Ultimate Web - Mmmtttt
 
 from flask import Flask, make_response, send_from_directory, g, request, session, jsonify
 from flask_cors import CORS
+from werkzeug.serving import WSGIRequestHandler
 
 from api import register_blueprints
+from api.v1.auth import is_authenticated
 from application.list_app_service import ListAppService
 from core.constants import (
+    CACHE_MAX_AGE,
     CACHE_ROOT_DIR,
     COMIC_DIR,
     COVER_DIR,
@@ -38,9 +43,11 @@ from core.storage_layout import (
 from core.ssl_cert import get_ssl_context_tuple
 from infrastructure.archive import ensure_rar_backend_configured, probe_7z_encryption_capability
 from infrastructure.backup_manager import init_backup_system, shutdown_backup_system
-from infrastructure.logger import app_logger
+from infrastructure.logger import app_logger, access_logger, configure_debug_mode
+from infrastructure.performance.timing import request_elapsed_ms, start_request_timer
 from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.persistence.repositories.tag_repository_impl import TagJsonRepository
+from infrastructure.persistence.repositories.config_repository_impl import ConfigJsonRepository
 
 
 def load_server_config():
@@ -54,6 +61,37 @@ def load_server_config():
 
 
 SERVER_CONFIG = load_server_config()
+
+
+class _QuietHealthRequestHandler(WSGIRequestHandler):
+    """Keep launcher health probes out of the development server console."""
+
+    def log_request(self, code="-", size="-"):
+        path = str(getattr(self, "path", "")).split("?", 1)[0]
+        if path == "/health":
+            return
+        super().log_request(code, size)
+
+
+def _write_runtime_boot_log(message: str) -> None:
+    """Write startup/runtime diagnostics to the packaged bootstrap log when configured."""
+    log_path = str(os.environ.get("ULTIMATE_PROTOCOL_BOOT_LOG", "") or "").strip()
+    if not log_path:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fp:
+            fp.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+    except Exception:
+        pass
+
+try:
+    env_debug = os.environ.get("BACKEND_DEBUG")
+    if env_debug is not None:
+        configure_debug_mode(str(env_debug).strip().lower() in {"1", "true", "yes", "on"})
+    else:
+        configure_debug_mode(ConfigJsonRepository().get().debug_mode)
+except Exception as exc:
+    app_logger.warning("读取日志模式配置失败，使用默认日志模式: %s", exc)
 
 
 def _as_bool(value, default=False):
@@ -122,6 +160,30 @@ def _resolve_secret_key() -> str:
     return "ultimate-web-default-secret-key-change-me"
 
 
+def _is_sync_request_allowed_without_session(path: str) -> bool:
+    """Server-to-server sync requests authenticate with pairing tokens, not browser sessions."""
+    normalized_path = str(path or "").strip()
+    if normalized_path == "/api/v1/sync/pairing/claim":
+        return True
+
+    token = str(request.headers.get("X-Sync-Token", "") or "").strip()
+    if not token:
+        return False
+
+    token_authenticated_paths = {
+        "/api/v1/sync/directional/inventory",
+        "/api/v1/sync/directional/assets/inventory",
+        "/api/v1/sync/directional/assets/apply",
+        "/api/v1/sync/directional/assets/delta/download",
+        "/api/v1/sync/directional/estimate",
+        "/api/v1/sync/directional/delta",
+        "/api/v1/sync/directional/apply",
+        "/api/v1/sync/list-scope/options",
+        "/api/v1/sync/list-scope/delta",
+    }
+    return normalized_path in token_authenticated_paths
+
+
 # ========== 后端 host/ssl 配置 ==========
 
 def _resolve_backend_host():
@@ -139,7 +201,7 @@ def _resolve_backend_port():
             return int(env_port)
         except Exception:
             pass
-    return int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+    return int(SERVER_CONFIG.get("backend", {}).get("port", 5035))
 
 
 def _resolve_backend_debug():
@@ -147,6 +209,13 @@ def _resolve_backend_debug():
     if env_debug is not None:
         return _as_bool(env_debug, default=False)
     return not getattr(sys, "frozen", False)
+
+
+def _resolve_backend_serve_frontend_enabled() -> bool:
+    env_enabled = os.environ.get("BACKEND_SERVE_FRONTEND")
+    if env_enabled is not None:
+        return _as_bool(env_enabled, default=True)
+    return True
 
 
 def _resolve_ssl_enabled() -> bool:
@@ -244,7 +313,38 @@ def resolve_frontend_dist_dir() -> str:
 
 
 FRONTEND_DIST_DIR = resolve_frontend_dist_dir()
-FRONTEND_ENABLED = bool(FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
+BACKEND_SERVE_FRONTEND = _resolve_backend_serve_frontend_enabled()
+FRONTEND_ENABLED = bool(BACKEND_SERVE_FRONTEND and FRONTEND_DIST_DIR and os.path.isdir(FRONTEND_DIST_DIR))
+
+
+def _apply_static_asset_cache_headers(response):
+    version = str(request.args.get("v", "") or "").strip()
+    if version:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        response.headers["Cache-Control"] = f"public, max-age={CACHE_MAX_AGE}"
+    return response
+
+
+def _detect_image_content_type(path: str, fallback: str = "application/octet-stream") -> str:
+    """Use the file signature when a provider used a misleading extension."""
+    try:
+        with open(path, "rb") as asset:
+            header = asset.read(16)
+    except OSError:
+        return fallback
+
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if header.startswith(b"BM"):
+        return "image/bmp"
+    return fallback
 
 
 def success_response(data=None):
@@ -274,6 +374,9 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     app.config['SECRET_KEY'] = _resolve_secret_key()
     app.config['SPACE_MODE'] = space_mode
     app.config['REQUIRE_AUTH'] = require_auth
+    # Ports do not isolate browser cookies. Keep normal/private sessions separate
+    # so a previous normal login cannot authenticate the private bootstrap app.
+    app.config['SESSION_COOKIE_NAME'] = f'ultimate_web_{space_mode}_session'
 
     CORS(app, supports_credentials=True)
 
@@ -286,26 +389,69 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     # before_request: 设置当前线程的空间模式 + 认证检查
     @app.before_request
     def set_space_mode_on_request():
+        start_request_timer()
+        g.request_id = uuid.uuid4().hex[:12]
         set_current_space_mode(space_mode)
         g.space_mode = space_mode
 
+        # CORS preflight requests intentionally do not carry session cookies.
+        # Let Flask-CORS answer them before the normal-space auth guard runs.
+        if request.method == 'OPTIONS':
+            message = (
+                "cors preflight allowed "
+                f"space={space_mode!r} path={request.path!r} "
+                f"origin={request.headers.get('Origin')!r} "
+                f"requested_method={request.headers.get('Access-Control-Request-Method')!r} "
+                f"requested_headers={request.headers.get('Access-Control-Request-Headers')!r}"
+            )
+            app_logger.info(message)
+            _write_runtime_boot_log(message)
+            return
+
         # 认证检查（仅 normal 空间需要）
         if require_auth:
-            # 白名单：登录接口、健康检查、静态资源不需要认证
+            # 白名单：认证接口和健康检查不需要正常空间登录。
             path = request.path
             public_paths = (
                 '/api/v1/auth/login',
                 '/api/v1/auth/status',
+                '/api/v1/auth/logout',
                 '/health',
             )
-            if path in public_paths or path.startswith('/static/') or path.startswith('/media/'):
+            if path in public_paths:
                 return
-            if not session.get('authenticated', False):
+            if _is_sync_request_allowed_without_session(path):
+                return
+            if not is_authenticated():
+                message = (
+                    "auth rejected "
+                    f"space={space_mode!r} path={request.path!r} "
+                    f"remote={request.remote_addr!r} "
+                    f"session_cookie={app.config.get('SESSION_COOKIE_NAME')!r}"
+                )
+                app_logger.warning(message)
+                _write_runtime_boot_log(message)
                 return jsonify({
                     "code": 401,
                     "msg": "Authentication required",
                     "data": {"authenticated": False, "mode": "private"}
                 }), 401
+
+    @app.after_request
+    def add_performance_headers(response):
+        elapsed_ms = request_elapsed_ms()
+        if elapsed_ms is not None:
+            response.headers["X-Ultimate-Elapsed-Ms"] = f"{elapsed_ms:.3f}"
+            response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.3f}"
+            log_message = (
+                "request_id=%s method=%s path=%s status=%s elapsed_ms=%.3f"
+                % (getattr(g, "request_id", "-"), request.method, request.path, response.status_code, elapsed_ms)
+            )
+            if response.status_code >= 400:
+                access_logger.warning(log_message)
+            else:
+                access_logger.debug(log_message)
+        return response
 
     # ========== 路由 ==========
 
@@ -347,13 +493,55 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
     @app.route('/static/cover/<path:filename>')
     def serve_cover(filename):
         cover_dir = get_cover_dir(space_mode)
+        target_path = os.path.abspath(os.path.join(cover_dir, str(filename).replace('/', os.sep)))
+        try:
+            is_in_root = os.path.commonpath([os.path.abspath(cover_dir), target_path]) == os.path.abspath(cover_dir)
+        except Exception:
+            is_in_root = False
+        try:
+            exists = os.path.exists(target_path)
+            is_file = os.path.isfile(target_path)
+            size = os.path.getsize(target_path) if is_file else 0
+            stat_error = ""
+        except OSError as exc:
+            exists = False
+            is_file = False
+            size = 0
+            stat_error = repr(exc)
+        app_logger.debug(
+            "[cover-debug] serve request filename=%r root=%r target=%r in_root=%s exists=%s is_file=%s size=%s suffix=%r stat_error=%r",
+            filename,
+            cover_dir,
+            target_path,
+            is_in_root,
+            exists,
+            is_file,
+            size,
+            os.path.splitext(target_path)[1].lower(),
+            stat_error,
+        )
+        if not is_in_root or not is_file:
+            app_logger.warning(
+                "[cover-debug] cover unavailable filename=%r target=%r in_root=%s exists=%s is_file=%s",
+                filename,
+                target_path,
+                is_in_root,
+                exists,
+                is_file,
+            )
         response = make_response(send_from_directory(cover_dir, filename))
-        if filename.endswith('.jpg') or filename.endswith('.jpeg'):
-            response.headers['Content-Type'] = 'image/jpeg'
-        elif filename.endswith('.png'):
-            response.headers['Content-Type'] = 'image/png'
-        elif filename.endswith('.webp'):
-            response.headers['Content-Type'] = 'image/webp'
+        extension_content_type = response.content_type or 'application/octet-stream'
+        detected_content_type = _detect_image_content_type(target_path, extension_content_type)
+        app_logger.debug(
+            "[cover-debug] serve response filename=%r status=%s content_type=%r detected_content_type=%r content_length=%r",
+            filename,
+            response.status_code,
+            response.content_type,
+            detected_content_type,
+            response.content_length,
+        )
+        response.headers['Content-Type'] = detected_content_type
+        _apply_static_asset_cache_headers(response)
         return response
 
     @app.route('/static/cover/<platform>/author_cache/<filename>')
@@ -367,6 +555,7 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             response.headers['Content-Type'] = 'image/jpeg'
         elif filename.endswith('.png'):
             response.headers['Content-Type'] = 'image/png'
+        _apply_static_asset_cache_headers(response)
         return response
 
     @app.route('/media/<path:filename>')
@@ -416,6 +605,8 @@ def create_app(space_mode: str = SPACE_MODE_NORMAL, require_auth: bool = False) 
             response.headers["Content-Type"] = "image/png"
         elif lowered.endswith(".webp"):
             response.headers["Content-Type"] = "image/webp"
+        if lowered.endswith((".jpg", ".jpeg", ".png", ".webp")):
+            _apply_static_asset_cache_headers(response)
         return response
 
     return app
@@ -522,15 +713,29 @@ def _run_app_in_thread(app_instance, port: int, ssl_context):
     """在当前线程运行 app（用于子线程）"""
     protocol = "https" if ssl_context else "http"
     mode = app_instance.config.get('SPACE_MODE', 'unknown')
-    app_logger.info(f"Starting {mode} backend at {protocol}://{HOST}:{port}")
-    app_instance.run(
-        host=HOST,
-        port=port,
-        debug=False,
-        use_reloader=False,
-        threaded=True,
-        ssl_context=ssl_context,
+    message = (
+        f"space listener starting mode={mode!r} protocol={protocol!r} "
+        f"host={HOST!r} port={port} "
+        f"require_auth={bool(app_instance.config.get('REQUIRE_AUTH'))} "
+        f"session_cookie={app_instance.config.get('SESSION_COOKIE_NAME')!r}"
     )
+    app_logger.info(message)
+    _write_runtime_boot_log(message)
+    try:
+        app_instance.run(
+            host=HOST,
+            port=port,
+            debug=False,
+            use_reloader=False,
+            threaded=True,
+            ssl_context=ssl_context,
+            request_handler=_QuietHealthRequestHandler,
+        )
+    except BaseException as exc:
+        message = f"space listener stopped mode={mode!r} port={port} error={exc!r}"
+        app_logger.exception(message)
+        _write_runtime_boot_log(message)
+        raise
 
 
 def run_backend_server(host=None, port=None, debug=None):
@@ -558,12 +763,23 @@ def run_backend_server(host=None, port=None, debug=None):
 
     auth_enabled = _resolve_auth_enabled()
     password = _resolve_auth_password()
+    app_logger.info(
+        "Backend auth startup: enabled=%s password_configured=%s private_port=%s normal_port=%s",
+        auth_enabled,
+        bool(password),
+        _resolve_private_port(),
+        _resolve_normal_port(),
+    )
 
     if not auth_enabled or not password:
         # 旧模式：单 app 启动
         if auth_enabled and not password:
             app_logger.warning("Auth enabled but password is empty, falling back to single mode")
         run_space_init(SPACE_MODE_NORMAL)
+        _write_runtime_boot_log(
+            f"single-space listener mode='normal' protocol={protocol!r} "
+            f"host={resolved_host!r} port={resolved_port}"
+        )
         app_logger.info(f"Starting backend service at {protocol}://{resolved_host}:{resolved_port}")
         app.run(
             host=resolved_host,
@@ -572,6 +788,7 @@ def run_backend_server(host=None, port=None, debug=None):
             use_reloader=False,
             threaded=True,
             ssl_context=ssl_context,
+            request_handler=_QuietHealthRequestHandler,
         )
         return
 
@@ -601,6 +818,10 @@ def run_backend_server(host=None, port=None, debug=None):
         name="private-backend",
     )
     private_thread.start()
+    _write_runtime_boot_log(
+        f"space listener thread started mode='private' port={private_port} "
+        f"alive={private_thread.is_alive()}"
+    )
 
     # 在主线程运行 normal app
     _run_app_in_thread(normal_app, normal_port, ssl_context)

@@ -7,6 +7,10 @@ from application.content_sorting import (
     normalize_custom_order_records,
     sort_content_items,
 )
+from application.catalog_query_service import CatalogQueryService
+from application.comic_online_update import build_update_check_payload, extract_remote_total_page
+from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
+from application.cover_versioning import annotate_cover_url
 from application.list_query_support import (
     build_paginated_payload,
     extract_available_authors,
@@ -26,6 +30,7 @@ from domain.recommendation import Recommendation
 from domain.tag import TagRepository
 from infrastructure.persistence.repositories import ComicJsonRepository, RecommendationJsonRepository, TagJsonRepository
 from infrastructure.persistence.repositories.document_repository import JsonDocumentRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.constants import COMIC_DIR, LOCAL_PICTURES_DIR, JSON_FILE, RECOMMENDATION_JSON_FILE, TAGS_JSON_FILE
@@ -47,6 +52,32 @@ FAVORITES_LIST_ID = "list_favorites_comic"
 
 
 class ComicAppService:
+    @staticmethod
+    def _debug_cover_file_state(path: str) -> dict:
+        """Collect cover diagnostics without allowing logging to affect repair."""
+        state = {"path": path, "exists": False, "is_file": False, "size": 0}
+        try:
+            state["exists"] = os.path.exists(path)
+            state["is_file"] = os.path.isfile(path)
+            if state["is_file"]:
+                state["size"] = os.path.getsize(path)
+        except OSError as exc:
+            state["stat_error"] = repr(exc)
+            return state
+
+        if state["is_file"] and state["size"] > 0:
+            try:
+                from infrastructure.logger.app_logger import is_debug_mode
+                if is_debug_mode():
+                    from PIL import Image
+                    with Image.open(path) as image:
+                        image.verify()
+                    state["decodable"] = True
+            except Exception as exc:
+                state["decodable"] = False
+                state["decode_error"] = repr(exc)
+        return state
+
     def __init__(
         self,
         comic_repo: ComicRepository = None,
@@ -62,6 +93,7 @@ class ComicAppService:
             "total_recommendations",
         )
         self._tag_document_repo = JsonDocumentRepository(TAGS_JSON_FILE, "tags")
+        self._catalog_query_service = CatalogQueryService()
 
     @staticmethod
     def _apply_persisted_fields(target: Any, updates: Dict[str, Any]) -> bool:
@@ -130,6 +162,7 @@ class ComicAppService:
         payload = comic.to_dict() if hasattr(comic, "to_dict") else {}
         payload.update(ComicAppService._storage_fields_from_item(comic))
         payload["tags"] = [{"id": tid, "name": tag_map.get(tid, tid)} for tid in comic.tag_ids]
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         if not include_progress:
             payload.pop("current_page", None)
             payload.pop("last_read_time", None)
@@ -174,6 +207,7 @@ class ComicAppService:
             "custom_order": comic.custom_order,
         }
         payload.update(ComicAppService._storage_fields_from_item(comic))
+        annotate_cover_url(payload, preferred_keys=("cover_path",))
         return payload
 
     @staticmethod
@@ -217,6 +251,41 @@ class ComicAppService:
                 f"[get_comic_list] sort_type={sort_type}, sort_order={sort_order}, "
                 f"min_score={min_score}, max_score={max_score}, paginate={paginate}"
             )
+            if paginate and not include_storage_usage:
+                tags = self._tag_repo.get_all()
+                tag_map = {t.id: t.name for t in tags}
+                base_serializer = self._comic_to_card_dict if summary_only else (
+                    lambda comic: self._comic_to_summary_dict(comic, tag_map)
+                )
+
+                def indexed_serializer(item: Dict[str, Any]) -> Dict[str, Any]:
+                    return base_serializer(Comic.from_dict(item))
+
+                indexed_payload = self._catalog_query_service.query_local_page(
+                    media_type="comic",
+                    serializer=indexed_serializer,
+                    sort_type=sort_type,
+                    sort_order=sort_order,
+                    min_score=min_score,
+                    max_score=max_score,
+                    keyword=keyword,
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    authors=authors,
+                    list_ids=list_ids,
+                    unread_only=unread_only,
+                    page=page,
+                    page_size=page_size,
+                    include_available_authors=include_available_authors,
+                )
+                if indexed_payload is not None:
+                    app_logger.info(
+                        f"通过 SQLite 索引获取漫画分页列表成功，页 {indexed_payload['page']}/"
+                        f"{indexed_payload['total_pages']}，总计 {indexed_payload['total']} 个漫画"
+                    )
+                    warm_cover_thumbnails_for_items(indexed_payload.get("items", []))
+                    return ServiceResult.ok(indexed_payload)
+
             comics = self._comic_repo.get_all()
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
@@ -272,9 +341,11 @@ class ComicAppService:
                 app_logger.info(
                     f"获取漫画分页列表成功，页 {payload['page']}/{payload['total_pages']}，总计 {payload['total']} 个漫画"
                 )
+                warm_cover_thumbnails_for_items(payload.get("items", []))
                 return ServiceResult.ok(payload)
 
             comic_list = [serializer(c) for c in comics]
+            warm_cover_thumbnails_for_items(comic_list)
             app_logger.info(f"获取漫画列表成功，共 {len(comic_list)} 个漫画")
             return ServiceResult.ok(comic_list)
         except Exception as e:
@@ -425,14 +496,33 @@ class ComicAppService:
     
     def search(self, keyword: str) -> ServiceResult:
         try:
-            comics = self._comic_repo.search(keyword)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(
+                    Comic.from_dict(item),
+                    tag_map,
+                    include_progress=False,
+                ),
+                keyword=keyword,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引搜索漫画成功: 关键词 '{keyword}', 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.search(keyword)
             
             results = []
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"搜索成功: 关键词 '{keyword}', 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -441,14 +531,34 @@ class ComicAppService:
     
     def filter_by_tags(self, include_tags: List[str], exclude_tags: List[str]) -> ServiceResult:
         try:
-            comics = self._comic_repo.filter_by_tags(include_tags, exclude_tags)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(
+                    Comic.from_dict(item),
+                    tag_map,
+                    include_progress=False,
+                ),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.filter_by_tags(include_tags, exclude_tags)
             
             results = []
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map, include_progress=False))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -458,14 +568,33 @@ class ComicAppService:
     def filter_multi(self, include_tags: List[str] = None, exclude_tags: List[str] = None,
                      authors: List[str] = None, list_ids: List[str] = None) -> ServiceResult:
         try:
-            comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            indexed_payload = self._catalog_query_service.query_local_all(
+                media_type="comic",
+                serializer=lambda item: self._comic_to_summary_dict(Comic.from_dict(item), tag_map),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                authors=authors,
+                list_ids=list_ids,
+            )
+            if indexed_payload is not None:
+                results = indexed_payload["items"]
+                app_logger.info(
+                    f"通过 SQLite 索引多条件筛选漫画成功: 包含 {include_tags}, 排除 {exclude_tags}, "
+                    f"作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}"
+                )
+                warm_cover_thumbnails_for_items(results)
+                return ServiceResult.ok(results)
+
+            comics = self._comic_repo.filter_multi(include_tags, exclude_tags, authors, list_ids)
             
             results = []
             for c in comics:
                 results.append(self._comic_to_summary_dict(c, tag_map))
             
+            warm_cover_thumbnails_for_items(results)
             app_logger.info(f"筛选成功: 包含 {include_tags}, 排除 {exclude_tags}, 作者 {authors}, 清单 {list_ids}, 结果数量: {len(results)}")
             return ServiceResult.ok(results)
         except Exception as e:
@@ -482,13 +611,19 @@ class ComicAppService:
             if validation_error:
                 return ServiceResult.error(validation_error)
             
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.add_tags(validated_tag_ids)
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.add_tags(validated_tag_ids),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.add_tags(validated_tag_ids)
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -501,13 +636,19 @@ class ComicAppService:
     
     def batch_remove_tags(self, comic_ids: List[str], tag_ids: List[str]) -> ServiceResult:
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.remove_tags(tag_ids)
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.remove_tags(tag_ids),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.remove_tags(tag_ids)
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -577,13 +718,19 @@ class ComicAppService:
     def batch_move_to_trash(self, comic_ids: List[str]) -> ServiceResult:
         """批量移动漫画到回收站"""
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.move_to_trash()
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.move_to_trash(),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.move_to_trash()
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -597,13 +744,19 @@ class ComicAppService:
     def batch_restore_from_trash(self, comic_ids: List[str]) -> ServiceResult:
         """批量从回收站恢复漫画"""
         try:
-            updated_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
-                    comic.restore_from_trash()
-                    if self._comic_repo.save(comic):
-                        updated_count += 1
+            if hasattr(self._comic_repo, "update_many_by_ids"):
+                updated_count = self._comic_repo.update_many_by_ids(
+                    comic_ids,
+                    lambda comic: comic.restore_from_trash(),
+                )
+            else:
+                updated_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        comic.restore_from_trash()
+                        if self._comic_repo.save(comic):
+                            updated_count += 1
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -819,25 +972,50 @@ class ComicAppService:
 
         comic_id = str(comic_data.get("id") or "").strip()
         if not comic_id:
+            app_logger.debug("[comic-cover-repair] soft-ref branch skipped: missing comic id")
             return False, False, False
 
         current_cover = str(comic_data.get("cover_path") or "").strip()
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref inspect comic_id=%s current_cover=%r",
+            comic_id,
+            current_cover,
+        )
         if current_cover.startswith("/static/cover/"):
             from core.constants import COVER_DIR
 
             relative_cover = current_cover[len("/static/cover/") :].replace("/", os.sep)
             local_cover_path = os.path.join(COVER_DIR, relative_cover)
-            if os.path.exists(local_cover_path):
+            file_state = self._debug_cover_file_state(local_cover_path)
+            app_logger.debug(
+                "[comic-cover-repair] soft-ref static cover state comic_id=%s state=%s",
+                comic_id,
+                file_state,
+            )
+            if file_state["is_file"] and file_state["size"] > 0:
+                app_logger.debug("[comic-cover-repair] soft-ref accepted existing static cover comic_id=%s", comic_id)
                 return False, False, False
 
         static_cover = self._generate_static_cover_from_soft_ref(comic_id)
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref generated candidate comic_id=%s candidate=%r",
+            comic_id,
+            static_cover,
+        )
         if static_cover:
             if current_cover == static_cover:
+                app_logger.debug("[comic-cover-repair] soft-ref candidate equals current path comic_id=%s", comic_id)
                 return False, False, False
             comic_data["cover_path"] = static_cover
             return True, True, False
 
         fallback_cover = self._build_page1_cover_url(comic_id)
+        app_logger.debug(
+            "[comic-cover-repair] soft-ref fallback evaluation comic_id=%s current_missing=%s fallback=%r",
+            comic_id,
+            self._is_missing_cover_path(current_cover),
+            fallback_cover,
+        )
         if self._is_missing_cover_path(current_cover) and current_cover != fallback_cover:
             comic_data["cover_path"] = fallback_cover
             return True, False, True
@@ -850,6 +1028,7 @@ class ComicAppService:
 
         comic_id = str(comic_data.get("id") or "").strip()
         if not comic_id or not self._is_local_import_comic_id(comic_id):
+            app_logger.debug("[comic-cover-repair] local-import branch skipped comic_id=%s", comic_id)
             return False, False
 
         from utils.file_parser import file_parser
@@ -857,7 +1036,14 @@ class ComicAppService:
 
         try:
             image_paths = file_parser.parse_comic_images(comic_id)
-        except Exception:
+            app_logger.debug(
+                "[comic-cover-repair] local-import pages comic_id=%s count=%s first=%r",
+                comic_id,
+                len(image_paths),
+                image_paths[0] if image_paths else "",
+            )
+        except Exception as exc:
+            app_logger.debug("[comic-cover-repair] local-import page scan failed comic_id=%s error=%r", comic_id, exc)
             image_paths = []
 
         next_cover = ""
@@ -872,8 +1058,14 @@ class ComicAppService:
             next_cover = self._build_page1_cover_url(comic_id)
 
         if not next_cover:
+            app_logger.debug(
+                "[comic-cover-repair] local-import no candidate comic_id=%s current_cover=%r",
+                comic_id,
+                comic_data.get("cover_path"),
+            )
             return False, False
         if str(comic_data.get("cover_path") or "").strip() == next_cover:
+            app_logger.debug("[comic-cover-repair] local-import candidate equals current path comic_id=%s", comic_id)
             return False, False
 
         comic_data["cover_path"] = next_cover
@@ -917,13 +1109,18 @@ class ComicAppService:
     def batch_delete_permanently(self, comic_ids: List[str]) -> ServiceResult:
         """批量永久删除漫画"""
         try:
-            deleted_count = 0
-            for comic_id in comic_ids:
-                comic = self._comic_repo.get_by_id(comic_id)
-                if comic:
+            if hasattr(self._comic_repo, "get_many_by_ids") and hasattr(self._comic_repo, "delete_many_by_ids"):
+                for comic in self._comic_repo.get_many_by_ids(comic_ids):
                     self._cleanup_comic_files(comic)
-                if self._comic_repo.delete(comic_id):
-                    deleted_count += 1
+                deleted_count = self._comic_repo.delete_many_by_ids(comic_ids)
+            else:
+                deleted_count = 0
+                for comic_id in comic_ids:
+                    comic = self._comic_repo.get_by_id(comic_id)
+                    if comic:
+                        self._cleanup_comic_files(comic)
+                    if self._comic_repo.delete(comic_id):
+                        deleted_count += 1
             
             if deleted_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -998,24 +1195,7 @@ class ComicAppService:
 
     def _extract_remote_total_page(self, meta_data: dict) -> int:
         """Extract remote total pages from adapter meta response."""
-        if not isinstance(meta_data, dict):
-            return 0
-
-        albums = meta_data.get("albums") or []
-        if not albums:
-            return 0
-
-        first_album = albums[0] if isinstance(albums[0], dict) else {}
-        for value in (
-            first_album.get("pages"),
-            first_album.get("pages_count"),
-            first_album.get("page_count"),
-            first_album.get("total_page"),
-        ):
-            pages = normalize_total_page(value, default=0)
-            if pages > 0:
-                return pages
-        return 0
+        return extract_remote_total_page(meta_data)
 
     @staticmethod
     def _resolve_comic_platform_context(comic_id: str):
@@ -1092,15 +1272,21 @@ class ComicAppService:
         from core.constants import COVER_DIR
 
         if self._is_soft_ref_storage_mode(comic_data.get("storage_mode", "")):
+            app_logger.debug("[comic-cover-repair] remote sync skipped for soft-ref comic_id=%s", comic_data.get("id"))
             return False, False
 
         if self._is_local_import_comic_id(comic_data.get("id", "")):
+            app_logger.debug("[comic-cover-repair] remote sync redirected to local-import comic_id=%s", comic_data.get("id"))
             updated, _ = self._repair_local_import_cover_for_record(comic_data)
             return False, updated
 
         comic_id = comic_data.get("id")
         platform_key, original_id, _manifest, host_prefix = self._resolve_comic_platform_context(comic_id)
         if not platform_key or not original_id:
+            app_logger.warning(
+                "[comic-cover-repair] remote sync cannot resolve platform comic_id=%s",
+                comic_id,
+            )
             return False, False
 
         cover_dir = os.path.join(COVER_DIR, host_prefix)
@@ -1110,6 +1296,16 @@ class ComicAppService:
 
         downloaded = False
         updated = False
+        app_logger.debug(
+            "[comic-cover-repair] remote sync inspect comic_id=%s platform=%s original_id=%s cover_file=%r exists=%s current_cover=%r expected_url=%r",
+            comic_id,
+            platform_key,
+            original_id,
+            cover_file,
+            os.path.isfile(cover_file),
+            comic_data.get("cover_path"),
+            cover_url,
+        )
 
         if not os.path.exists(cover_file):
             _, success = platform_service.download_cover(
@@ -1119,12 +1315,132 @@ class ComicAppService:
                 show_progress=False
             )
             downloaded = bool(success and os.path.exists(cover_file))
+            download_state = self._debug_cover_file_state(cover_file)
+            app_logger.debug(
+                "[comic-cover-repair] remote cover download result comic_id=%s success=%s state=%s",
+                comic_id,
+                success,
+                download_state,
+            )
+        else:
+            app_logger.debug("[comic-cover-repair] remote cover download skipped existing file comic_id=%s", comic_id)
 
         if os.path.exists(cover_file) and comic_data.get("cover_path") != cover_url:
             comic_data["cover_path"] = cover_url
             updated = True
 
         return downloaded, updated
+
+    def repair_single_cover(self, comic_id: str, *, source: str = "local") -> ServiceResult:
+        """Repair cover for one local or preview-library comic record."""
+        normalized_id = str(comic_id or "").strip()
+        source_key = str(source or "local").strip().lower()
+        is_recommendation = source_key in {"preview", "recommendation", "recommendation_library"}
+        app_logger.debug(
+            "[comic-cover-repair] normalized request raw_id=%r comic_id=%s source=%s recommendation=%s",
+            comic_id,
+            normalized_id,
+            source_key,
+            is_recommendation,
+        )
+        if not normalized_id:
+            return ServiceResult.error("missing parameter: comic_id")
+
+        try:
+            repo = self._recommendation_repo if is_recommendation else self._comic_repo
+            record = repo.get_by_id(normalized_id)
+            app_logger.debug(
+                "[comic-cover-repair] record lookup comic_id=%s source=%s found=%s deleted=%s repo=%s",
+                normalized_id,
+                source_key,
+                bool(record),
+                bool(getattr(record, "is_deleted", False)) if record else False,
+                type(repo).__name__,
+            )
+            if not record or getattr(record, "is_deleted", False):
+                return ServiceResult.error("漫画不存在")
+
+            before_cover_path = str(getattr(record, "cover_path", "") or "").strip()
+            payload = record.to_dict()
+            app_logger.debug(
+                "[comic-cover-repair] before state comic_id=%s storage_mode=%r cover_path=%r cover_url=%r cover_path_local=%r",
+                normalized_id,
+                payload.get("storage_mode"),
+                before_cover_path,
+                payload.get("cover_url"),
+                payload.get("cover_path_local"),
+            )
+            soft_ref_updated = False
+            soft_ref_generated = False
+            soft_ref_fallback = False
+
+            if not is_recommendation:
+                soft_ref_updated, soft_ref_generated, soft_ref_fallback = self._repair_soft_ref_cover_for_record(payload)
+            else:
+                app_logger.debug("[comic-cover-repair] soft-ref branch skipped for recommendation comic_id=%s", normalized_id)
+
+            if not soft_ref_updated:
+                if not is_recommendation and self._is_local_import_comic_id(normalized_id):
+                    app_logger.debug("[comic-cover-repair] selecting local-import repair branch comic_id=%s", normalized_id)
+                    cover_updated, _ = self._repair_local_import_cover_for_record(payload)
+                    downloaded = False
+                else:
+                    app_logger.debug("[comic-cover-repair] selecting remote cover sync branch comic_id=%s", normalized_id)
+                    from protocol.platform_service import get_platform_service
+
+                    platform_service = get_platform_service()
+                    downloaded, cover_updated = self._sync_cover_for_record(payload, platform_service)
+            else:
+                app_logger.debug(
+                    "[comic-cover-repair] selecting soft-ref result branch comic_id=%s generated=%s fallback=%s",
+                    normalized_id,
+                    soft_ref_generated,
+                    soft_ref_fallback,
+                )
+                downloaded = soft_ref_generated
+                cover_updated = True
+
+            after_cover_path = str(payload.get("cover_path") or "").strip()
+            changed = after_cover_path != before_cover_path
+            app_logger.debug(
+                "[comic-cover-repair] after state comic_id=%s before=%r after=%r changed=%s downloaded=%s updated=%s",
+                normalized_id,
+                before_cover_path,
+                after_cover_path,
+                changed,
+                downloaded,
+                cover_updated,
+            )
+            if changed:
+                record.cover_path = after_cover_path
+                saved = repo.save(record)
+                app_logger.debug("[comic-cover-repair] persistence result comic_id=%s saved=%s", normalized_id, saved)
+                if not saved:
+                    return ServiceResult.error("封面修复结果保存失败")
+
+            app_logger.debug(
+                "[comic-cover-repair] final decision comic_id=%s needs_repair=%s message=%s",
+                normalized_id,
+                bool(changed or cover_updated),
+                "封面修复完成" if changed or cover_updated else "封面无需修复",
+            )
+            return ServiceResult.ok(
+                {
+                    "comic_id": normalized_id,
+                    "source": "preview" if is_recommendation else "local",
+                    "cover_path": after_cover_path,
+                    "previous_cover_path": before_cover_path,
+                    "downloaded_cover": bool(downloaded),
+                    "updated_cover_path": bool(changed or cover_updated),
+                    "changed": bool(changed),
+                    "soft_ref_generated_cover": bool(soft_ref_generated),
+                    "soft_ref_fallback_cover": bool(soft_ref_fallback),
+                },
+                "封面修复完成" if changed or cover_updated else "封面无需修复",
+            )
+        except Exception as e:
+            error_logger.exception("Repair single comic cover failed: %s, source=%s, %s", normalized_id, source_key, e)
+            return ServiceResult.error("封面修复失败")
 
     @staticmethod
     def _strip_bracket_segments(raw_title: str) -> str:
@@ -1833,15 +2149,15 @@ class ComicAppService:
             if remote_total_page <= 0:
                 return ServiceResult.error("Failed to get remote page count")
 
-            has_update = remote_total_page > local_page_count
-            return ServiceResult.ok({
-                "comic_id": comic_id,
-                "db_total_page": db_total_page,
-                "local_page_count": local_page_count,
-                "remote_total_page": remote_total_page,
-                "has_update": has_update,
-                "can_update": True
-            }, "Update check completed")
+            payload = build_update_check_payload(
+                content_id=comic_id,
+                id_key="comic_id",
+                db_total_page=db_total_page,
+                known_page_count=local_page_count,
+                remote_total_page=remote_total_page,
+                known_page_key="local_page_count",
+            )
+            return ServiceResult.ok(payload, "Update check completed")
         except Exception as e:
             error_logger.error(f"Check comic update failed: {comic_id}, {e}")
             return ServiceResult.error("Update check failed")
@@ -2035,25 +2351,40 @@ class ComicAppService:
                 "skipped_deleted": 0,
             }
 
-            for comic in self._comic_repo.get_all():
-                if not isinstance(comic, Comic):
-                    continue
-                home_stats["total_records"] += 1
-                if bool(comic.is_deleted):
-                    home_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_comic_persisted_metadata(comic, source="local"):
-                    if self._comic_repo.save(comic):
-                        home_stats["updated_records"] += 1
+            updated_home = []
+            updated_recommendations = []
 
-            for recommendation in recommendation_repo.get_all():
-                recommendation_stats["total_records"] += 1
-                if bool(getattr(recommendation, "is_deleted", False)):
-                    recommendation_stats["skipped_deleted"] += 1
-                    continue
-                if self._refresh_comic_persisted_metadata(recommendation, source="recommendation"):
-                    if recommendation_repo.save(recommendation):
-                        recommendation_stats["updated_records"] += 1
+            # 批量补全期间延迟并合并 catalog index 同步；落库合并为每库一次写
+            with JsonStorage.defer_catalog_index_sync():
+                for comic in self._comic_repo.get_all():
+                    if not isinstance(comic, Comic):
+                        continue
+                    home_stats["total_records"] += 1
+                    if bool(comic.is_deleted):
+                        home_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_comic_persisted_metadata(comic, source="local"):
+                        updated_home.append(comic)
+
+                for recommendation in recommendation_repo.get_all():
+                    recommendation_stats["total_records"] += 1
+                    if bool(getattr(recommendation, "is_deleted", False)):
+                        recommendation_stats["skipped_deleted"] += 1
+                        continue
+                    if self._refresh_comic_persisted_metadata(recommendation, source="recommendation"):
+                        updated_recommendations.append(recommendation)
+
+                if hasattr(self._comic_repo, "save_many"):
+                    home_stats["updated_records"] = self._comic_repo.save_many(updated_home)
+                else:
+                    home_stats["updated_records"] = sum(1 for c in updated_home if self._comic_repo.save(c))
+
+                if hasattr(recommendation_repo, "save_many"):
+                    recommendation_stats["updated_records"] = recommendation_repo.save_many(updated_recommendations)
+                else:
+                    recommendation_stats["updated_records"] = sum(
+                        1 for r in updated_recommendations if recommendation_repo.save(r)
+                    )
 
             summary = (
                 f"漫画新版元数据补全完成：本地库更新 {home_stats['updated_records']} 条，"

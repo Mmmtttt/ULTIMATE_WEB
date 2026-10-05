@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import copy
+from contextlib import contextmanager
 import json
 import os
 import shutil
 import threading
 import time
 import uuid
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from core.constants import BACKUP_SUFFIX
 from core.storage_layout import get_meta_dir, get_current_space_mode
@@ -21,6 +23,7 @@ def _get_file_name_from_path(path: str) -> str:
 class JsonStorage:
     _instances: Dict[str, "JsonStorage"] = {}
     _locks: Dict[str, threading.RLock] = {}
+    _deferred_index_sync = threading.local()
 
     def __new__(cls, json_file: str = None, space_mode: str = None):
         if json_file is None:
@@ -68,6 +71,45 @@ class JsonStorage:
     @property
     def json_file(self) -> str:
         return self._get_json_file()
+
+    @classmethod
+    @contextmanager
+    def defer_catalog_index_sync(cls):
+        stack = getattr(cls._deferred_index_sync, "stack", None)
+        if stack is None:
+            stack = []
+            cls._deferred_index_sync.stack = stack
+
+        pending: Dict[str, Dict[str, object]] = {}
+        stack.append(pending)
+        try:
+            yield
+        finally:
+            stack.pop()
+            if stack:
+                parent = stack[-1]
+                for file_name, payload in pending.items():
+                    current = parent.setdefault(
+                        file_name,
+                        {
+                            "old": payload.get("old"),
+                            "old_set": payload.get("old_set", False),
+                            "new": payload.get("new"),
+                        },
+                    )
+                    if not current.get("old_set"):
+                        current["old"] = payload.get("old")
+                        current["old_set"] = payload.get("old_set", False)
+                    current["new"] = payload.get("new")
+                return
+
+            tag_payload = pending.get("tags_database.json")
+            if tag_payload is not None:
+                cls._sync_catalog_index_payload("tags_database.json", tag_payload.get("old"), tag_payload.get("new"))
+                return
+
+            for file_name, payload in pending.items():
+                cls._sync_catalog_index_payload(file_name, payload.get("old"), payload.get("new"))
 
     def _cleanup_stale_temp_files(self, force: bool = False) -> int:
         try:
@@ -172,7 +214,11 @@ class JsonStorage:
         lock = self._get_lock()
         with lock:
             try:
-                return self._write_unlocked(dict(data or {}))
+                payload = dict(data or {})
+                written = self._write_unlocked(payload)
+                if written:
+                    self._sync_catalog_index_after_write(None, payload)
+                return written
             except Exception as e:
                 error_logger.error(f"写入 JSON 文件失败: {e}")
                 return False
@@ -240,6 +286,25 @@ class JsonStorage:
                 "user": "用户名",
                 "last_updated": now,
                 "lists": [],
+            }
+
+        if file_name == "reading_history_database.json":
+            return {
+                "collection_name": "阅读记录",
+                "user": "用户名",
+                "last_updated": now,
+                "history": {
+                    "comic": [],
+                    "video": [],
+                },
+            }
+
+        if file_name == "lan_transfer_database.json":
+            return {
+                "collection_name": "局域网传输",
+                "user": "用户名",
+                "last_updated": now,
+                "items": [],
             }
 
         if file_name == "comics_database.json":
@@ -320,23 +385,138 @@ class JsonStorage:
                 error_logger.error(f"从备份恢复失败: {e}")
                 return self._create_empty_data()
 
-    def atomic_update(self, update_func: Callable[[dict], Optional[dict]], max_retries: int = 3) -> bool:
+    @staticmethod
+    def _normalize_catalog_index_changed_ids(changed_ids: Iterable[Any] | None) -> Optional[set[str]]:
+        if changed_ids is None:
+            return None
+        normalized = {
+            str(item or "").strip()
+            for item in changed_ids
+            if str(item or "").strip()
+        }
+        return normalized
+
+    def atomic_update(
+        self,
+        update_func: Callable[[dict], Optional[dict]],
+        max_retries: int = 3,
+        catalog_index_changed_ids: Iterable[Any] | None = None,
+    ) -> bool:
         del max_retries
+        normalized_changed_ids = self._normalize_catalog_index_changed_ids(catalog_index_changed_ids)
         lock = self._get_lock()
         with lock:
             try:
                 data = self._read_unlocked()
+                old_data_for_index = self._snapshot_for_catalog_index(data, normalized_changed_ids)
                 updated = update_func(data)
                 if updated is None:
                     return False
-                return self._write_unlocked(updated)
+                written = self._write_unlocked(updated)
+                if written:
+                    self._sync_catalog_index_after_write(old_data_for_index, updated, normalized_changed_ids)
+                return written
             except json.JSONDecodeError as e:
                 error_logger.error(f"原子更新时 JSON 文件损坏: path={self._get_json_file()}, error={e}")
                 data = self.restore_backup()
+                old_data_for_index = self._snapshot_for_catalog_index(data, normalized_changed_ids)
                 updated = update_func(data)
                 if updated is None:
                     return False
-                return self._write_unlocked(updated)
+                written = self._write_unlocked(updated)
+                if written:
+                    self._sync_catalog_index_after_write(old_data_for_index, updated, normalized_changed_ids)
+                return written
             except Exception as e:
                 error_logger.error(f"原子更新失败: {e}")
                 return False
+
+    def _snapshot_for_catalog_index(self, data: dict, changed_ids: Optional[set[str]] = None) -> Optional[dict]:
+        data_key_by_file = {
+            "comics_database.json": "comics",
+            "recommendations_database.json": "recommendations",
+            "videos_database.json": "videos",
+            "video_recommendations_database.json": "video_recommendations",
+        }
+        data_key = data_key_by_file.get(self._file_name.lower())
+        if not data_key:
+            return None
+        if changed_ids is None:
+            try:
+                from infrastructure.persistence.catalog_index.connection import get_catalog_index_path
+
+                if not os.path.exists(get_catalog_index_path()):
+                    return None
+            except Exception:
+                return None
+
+        items = data.get(data_key)
+        if not isinstance(items, list):
+            return {data_key: []}
+
+        snapshot_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if changed_ids is not None and str(item.get("id") or "").strip() not in changed_ids:
+                continue
+            copied = dict(item)
+            for key in (
+                "tag_ids",
+                "list_ids",
+                "actors",
+                "authors",
+                "thumbnail_images",
+                "thumbnail_images_local",
+                "preview_image_urls",
+                "preview_pages",
+                "actor_refs",
+            ):
+                if key in copied and isinstance(copied[key], list):
+                    copied[key] = list(copied[key])
+            snapshot_items.append(copied)
+        return {data_key: snapshot_items}
+
+    def _sync_catalog_index_after_write(
+        self,
+        old_data: Optional[dict],
+        new_data: dict,
+        changed_ids: Optional[set[str]] = None,
+    ) -> None:
+        if self._queue_deferred_catalog_index_sync(old_data, new_data):
+            return
+        self._sync_catalog_index_payload(self._file_name, old_data, new_data, changed_ids)
+
+    def _queue_deferred_catalog_index_sync(self, old_data: Optional[dict], new_data: dict) -> bool:
+        stack = getattr(self._deferred_index_sync, "stack", None)
+        if not stack:
+            return False
+
+        pending = stack[-1]
+        file_name = self._file_name
+        payload = pending.setdefault(
+            file_name,
+            {
+                "old": copy.deepcopy(old_data),
+                "old_set": True,
+                "new": None,
+            },
+        )
+        payload["new"] = copy.deepcopy(new_data)
+        return True
+
+    @staticmethod
+    def _sync_catalog_index_payload(
+        file_name: str,
+        old_data: Optional[dict],
+        new_data: Optional[dict],
+        changed_ids: Optional[set[str]] = None,
+    ) -> None:
+        if new_data is None:
+            return
+        try:
+            from infrastructure.persistence.catalog_index.writer import sync_after_json_write
+
+            sync_after_json_write(file_name, old_data, new_data, changed_ids=changed_ids)
+        except Exception as e:
+            error_logger.warning(f"同步 catalog index 失败，不影响 JSON 写入: {file_name}, {e}")

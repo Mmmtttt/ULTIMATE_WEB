@@ -4,8 +4,8 @@ import pytest
 
 
 @pytest.mark.integration
-def test_batch_local_comic_metadata_route_creates_task(third_party_client, monkeypatch):
-    client = third_party_client["client"]
+def test_batch_local_comic_metadata_route_creates_task(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
     captured = {}
 
     def fake_create_batch_task(**kwargs):
@@ -33,8 +33,8 @@ def test_batch_local_comic_metadata_route_creates_task(third_party_client, monke
 
 
 @pytest.mark.integration
-def test_batch_local_video_metadata_route_creates_task(third_party_client, monkeypatch):
-    client = third_party_client["client"]
+def test_batch_local_video_metadata_route_creates_task(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
     captured = {}
 
     def fake_create_batch_task(**kwargs):
@@ -62,8 +62,8 @@ def test_batch_local_video_metadata_route_creates_task(third_party_client, monke
 
 
 @pytest.mark.integration
-def test_batch_local_video_thumbnail_route_creates_task(third_party_client, monkeypatch):
-    client = third_party_client["client"]
+def test_batch_local_video_thumbnail_route_creates_task(fake_third_party_client, monkeypatch):
+    client = fake_third_party_client["client"]
     captured = {}
 
     def fake_create_batch_task(**kwargs):

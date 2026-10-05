@@ -7,12 +7,12 @@
 node_modules
 output
 build
+!build/
+!build/resident_dependency_pools.json
 data
 tests
-开发进展
-设计文档
-需求文档
 **/__pycache__/
 **/*.pyc
 **/*.pyo
 **/*.log
+comic_backend/third_party/

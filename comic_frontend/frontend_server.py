@@ -11,10 +11,11 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import json
 from pathlib import Path
 
 import requests
-from flask import Flask, request, make_response, send_from_directory, abort
+from flask import Flask, Response, request, make_response, send_from_directory, abort, stream_with_context
 
 # Add backend source to path so we can reuse config & SSL modules
 _BACKEND_SRC = Path(__file__).resolve().parents[1] / "comic_backend"
@@ -31,7 +32,6 @@ from core.ssl_cert import get_ssl_context_tuple  # noqa: E402
 
 
 def _load_server_config():
-    import json
     if os.path.exists(SERVER_CONFIG_PATH):
         try:
             with open(SERVER_CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -41,7 +41,27 @@ def _load_server_config():
     return copy.deepcopy(DEFAULT_SERVER_CONFIG)
 
 
+def _get_server_config_mtime():
+    try:
+        return os.path.getmtime(SERVER_CONFIG_PATH)
+    except Exception:
+        return None
+
+
 SERVER_CONFIG = _load_server_config()
+_SERVER_CONFIG_MTIME = _get_server_config_mtime()
+SPACE_COOKIE_NAME = "ultimate_space_mode"
+SPACE_MODE_NORMAL = "normal"
+SPACE_MODE_PRIVATE = "private"
+
+
+def _refresh_server_config_if_changed() -> None:
+    global SERVER_CONFIG, _SERVER_CONFIG_MTIME
+    current_mtime = _get_server_config_mtime()
+    if current_mtime == _SERVER_CONFIG_MTIME:
+        return
+    SERVER_CONFIG = _load_server_config()
+    _SERVER_CONFIG_MTIME = current_mtime
 
 
 # ---------- config ----------
@@ -185,6 +205,15 @@ def _resolve_private_backend_base() -> str:
     return f"{protocol}://{host}:{port}"
 
 
+def _resolve_single_backend_base() -> str:
+    """Base URL for legacy/single-backend mode."""
+    host = "127.0.0.1"
+    port = int(SERVER_CONFIG.get("backend", {}).get("port", 5000))
+    ssl = _as_bool(SERVER_CONFIG.get("backend", {}).get("ssl_enabled", True), default=True)
+    protocol = "https" if ssl else "http"
+    return f"{protocol}://{host}:{port}"
+
+
 # ---------- proxy helpers ----------
 
 _PROXY_HEADERS_PASS = (
@@ -201,6 +230,8 @@ _PROXY_HEADERS_PASS = (
     "if-modified-since",
     "if-none-match",
     "range",
+    "x-sync-token",
+    "x-ultimate-normal-token",
 )
 
 _RESPONSE_HEADERS_PASS = (
@@ -215,6 +246,21 @@ _RESPONSE_HEADERS_PASS = (
     "location",
     "accept-ranges",
     "content-range",
+)
+
+_STREAM_PROXY_PATH_PREFIXES = (
+    "/api/v1/video/local-stream/",
+    "/api/v1/video/proxy/",
+    "/api/v1/video/proxy2",
+    "/api/v1/teledrive/files/",
+    "/media/",
+)
+
+_STREAM_PROXY_CONTENT_TYPES = (
+    "application/octet-stream",
+    "application/vnd.apple.mpegurl",
+    "audio/",
+    "video/",
 )
 
 
@@ -234,8 +280,7 @@ def _build_proxy_headers() -> dict:
     return headers
 
 
-def _build_flask_response(proxy_resp) -> make_response:
-    response = make_response(proxy_resp.content, proxy_resp.status_code)
+def _copy_proxy_response_headers(response, proxy_resp) -> None:
     for header_name in _RESPONSE_HEADERS_PASS:
         header_value = proxy_resp.headers.get(header_name)
         if header_value is not None:
@@ -244,13 +289,93 @@ def _build_flask_response(proxy_resp) -> make_response:
                 response.headers.set(header_name, header_value)
             else:
                 response.headers[header_name] = header_value
+
+
+def _build_flask_response(proxy_resp) -> make_response:
+    response = make_response(proxy_resp.content, proxy_resp.status_code)
+    _copy_proxy_response_headers(response, proxy_resp)
     return response
+
+
+def _is_stream_proxy_response(path: str, proxy_resp) -> bool:
+    if request.method == "HEAD":
+        return False
+    if not hasattr(proxy_resp, "iter_content"):
+        return False
+
+    normalized_path = f"/{str(path or '').lstrip('/')}"
+    if normalized_path.startswith(_STREAM_PROXY_PATH_PREFIXES):
+        return True
+
+    content_type = str(proxy_resp.headers.get("content-type", "") or "").lower()
+    if any(content_type.startswith(prefix) for prefix in _STREAM_PROXY_CONTENT_TYPES):
+        return True
+
+    return bool(proxy_resp.headers.get("content-range") or proxy_resp.headers.get("accept-ranges"))
+
+
+def _build_streaming_flask_response(proxy_resp) -> Response:
+    def generate():
+        try:
+            for chunk in proxy_resp.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    yield chunk
+        finally:
+            proxy_resp.close()
+
+    response = Response(
+        stream_with_context(generate()),
+        status=proxy_resp.status_code,
+    )
+    _copy_proxy_response_headers(response, proxy_resp)
+    return response
+
+
+def _read_requested_space_mode() -> str:
+    mode = request.args.get("space_mode", "").strip().lower()
+    if not mode:
+        mode = request.cookies.get(SPACE_COOKIE_NAME, "").strip().lower()
+    if mode == SPACE_MODE_NORMAL:
+        return SPACE_MODE_NORMAL
+    return SPACE_MODE_PRIVATE
+
+
+def _set_space_mode_cookie(response, mode: str) -> None:
+    normalized = SPACE_MODE_NORMAL if str(mode or "").strip().lower() == SPACE_MODE_NORMAL else SPACE_MODE_PRIVATE
+    response.set_cookie(
+        SPACE_COOKIE_NAME,
+        normalized,
+        httponly=True,
+        secure=bool(request.is_secure),
+        samesite="Lax",
+        path="/",
+    )
+
+
+def _apply_space_cookie_from_auth_response(response, proxy_resp, path: str) -> None:
+    normalized_path = f"/{str(path or '').lstrip('/')}"
+    if normalized_path.startswith("/api/v1/auth/") or normalized_path == "/api/v1/auth":
+        try:
+            payload = json.loads(proxy_resp.content.decode("utf-8") or "{}")
+            data = payload.get("data") if isinstance(payload, dict) else {}
+            mode = data.get("mode") if isinstance(data, dict) else ""
+            if mode:
+                _set_space_mode_cookie(response, mode)
+                return
+        except Exception:
+            pass
+
+    if int(getattr(proxy_resp, "status_code", 0) or 0) == 401:
+        _set_space_mode_cookie(response, SPACE_MODE_PRIVATE)
 
 
 def _proxy_to_backend(backend_base: str, path: str):
     url = f"{backend_base.rstrip('/')}/{path.lstrip('/')}"
     headers = _build_proxy_headers()
     params = request.args.to_dict(flat=False)
+    normal_tokens = params.pop("normal_auth_token", [])
+    if normal_tokens and not headers.get("x-ultimate-normal-token"):
+        headers["x-ultimate-normal-token"] = str(normal_tokens[0] or "")
     timeout = 300
 
     method = request.method.lower()
@@ -265,9 +390,25 @@ def _proxy_to_backend(backend_base: str, path: str):
     if method in ("post", "put", "patch", "delete"):
         if request.is_json:
             kwargs["json"] = request.get_json(silent=True)
+        elif request.files:
+            files = []
+            for field_name, storage in request.files.items(multi=True):
+                storage.stream.seek(0)
+                files.append((
+                    field_name,
+                    (
+                        storage.filename,
+                        storage.stream,
+                        storage.mimetype or "application/octet-stream",
+                    ),
+                ))
+            kwargs["files"] = files
+            if request.form:
+                kwargs["data"] = request.form.to_dict(flat=False)
+        elif request.form:
+            kwargs["data"] = request.form.to_dict(flat=False)
         elif request.data:
             kwargs["data"] = request.data
-        kwargs["files"] = None
 
     try:
         resp = getattr(requests, method)(url, **kwargs)
@@ -281,7 +422,27 @@ def _proxy_to_backend(backend_base: str, path: str):
         print(f"[frontend proxy] error proxying to {url}: {e}")
         return make_response({"error": "proxy error", "detail": str(e)}, 502)
 
-    return _build_flask_response(resp)
+    if _is_stream_proxy_response(path, resp):
+        response = _build_streaming_flask_response(resp)
+        if int(getattr(resp, "status_code", 0) or 0) == 401:
+            print(
+                f"[frontend proxy] backend rejected stream method={request.method} "
+                f"path={path} target={url} status=401"
+            )
+            _set_space_mode_cookie(response, SPACE_MODE_PRIVATE)
+        return response
+
+    response = _build_flask_response(resp)
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        print(
+            f"[frontend proxy] backend response method={request.method} "
+            f"path={path} target={url} status={resp.status_code}"
+        )
+    close_response = getattr(resp, "close", None)
+    if callable(close_response):
+        close_response()
+    _apply_space_cookie_from_auth_response(response, resp, path)
+    return response
 
 
 # ---------- app factory ----------
@@ -290,32 +451,31 @@ def create_app() -> Flask:
     app = Flask(__name__)
 
     dist_dir = _resolve_frontend_dist_dir()
-    normal_base = _resolve_normal_backend_base()
-    private_base = _resolve_private_backend_base()
-    auth_enabled = _is_auth_enabled()
-
     print(f"[frontend] dist_dir: {dist_dir}")
-    print(f"[frontend] normal backend: {normal_base}")
-    print(f"[frontend] private backend: {private_base}")
-    print(f"[frontend] auth enabled: {auth_enabled}")
+    print(f"[frontend] single backend: {_resolve_single_backend_base()}")
+    print(f"[frontend] normal backend: {_resolve_normal_backend_base()}")
+    print(f"[frontend] private backend: {_resolve_private_backend_base()}")
+    print(f"[frontend] auth enabled: {_is_auth_enabled()}")
 
     def _resolve_backend_for_request() -> str:
+        _refresh_server_config_if_changed()
+        auth_enabled = _is_auth_enabled()
         if not auth_enabled:
-            return private_base
+            return _resolve_single_backend_base()
 
         # Auth-related endpoints always go to normal backend (the one that holds the real session)
         path = request.path or ""
         if path.startswith("/api/v1/auth/") or path == "/api/v1/auth":
-            return normal_base
+            return _resolve_normal_backend_base()
 
-        mode = request.headers.get("X-Space-Mode", "").strip().lower()
-        if mode == "normal":
-            return normal_base
-        return private_base
+        mode = _read_requested_space_mode()
+        if mode == SPACE_MODE_NORMAL:
+            return _resolve_normal_backend_base()
+        return _resolve_private_backend_base()
 
     # ---- API proxy ----
 
-    @app.route("/api/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+    @app.route("/api/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
     def api_proxy(subpath):
         if request.method == "OPTIONS":
             return make_response("", 204)
@@ -329,7 +489,7 @@ def create_app() -> Flask:
         backend_base = _resolve_backend_for_request()
         return _proxy_to_backend(backend_base, f"/static/cover/{subpath}")
 
-    @app.route("/media/<path:subpath>", methods=["GET"])
+    @app.route("/media/<path:subpath>", methods=["GET", "HEAD"])
     def media_proxy(subpath):
         backend_base = _resolve_backend_for_request()
         return _proxy_to_backend(backend_base, f"/media/{subpath}")

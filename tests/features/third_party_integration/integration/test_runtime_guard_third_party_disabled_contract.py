@@ -11,7 +11,7 @@ def _assert_disabled_payload(response) -> None:
 
 
 @pytest.mark.integration
-def test_runtime_guard_returns_503_for_third_party_endpoints_when_disabled(third_party_client, monkeypatch):
+def test_runtime_guard_returns_503_for_third_party_endpoints_when_disabled(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard runtime-profile disable behavior for decorated third-party endpoints:
@@ -26,11 +26,11 @@ def test_runtime_guard_returns_503_for_third_party_endpoints_when_disabled(third
     - History:
       - 2026-03-23: Added centralized runtime-guard contract test (decorator path).
     """
-    client = third_party_client["client"]
-    comic_api = third_party_client["comic_api"]
-    video_api = third_party_client["video_api"]
-    list_api = third_party_client["list_api"]
-    author_api = third_party_client["author_api"]
+    client = fake_third_party_client["client"]
+    comic_api = fake_third_party_client["comic_api"]
+    video_api = fake_third_party_client["video_api"]
+    list_api = fake_third_party_client["list_api"]
+    author_api = fake_third_party_client["author_api"]
 
     guarded_views = [
         comic_api.search_third_party_comics,
@@ -45,7 +45,7 @@ def test_runtime_guard_returns_503_for_third_party_endpoints_when_disabled(third
     responses = [
         client.get("/api/v1/comic/search-third-party", query_string={"keyword": "k", "platform": "all"}),
         client.get("/api/v1/video/third-party/search", query_string={"keyword": "k", "platform": "all"}),
-        client.get("/api/v1/list/platform/lists", query_string={"platform": "JAVDB"}),
+        client.get("/api/v1/list/platform/lists", query_string={"platform": "VA"}),
         client.get("/api/v1/author/search-works", query_string={"author_name": "Author-X"}),
     ]
 

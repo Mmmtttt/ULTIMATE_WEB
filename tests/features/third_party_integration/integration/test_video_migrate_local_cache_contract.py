@@ -8,7 +8,7 @@ from tests.shared.runtime_data import load_json, save_json
 
 
 @pytest.mark.integration
-def test_video_migrate_to_local_prefers_preview_cache_and_rewrites_local_asset_paths(third_party_client, monkeypatch):
+def test_video_migrate_to_local_prefers_preview_cache_and_rewrites_local_asset_paths(fake_third_party_client, monkeypatch):
     """
     Case Description:
     - Purpose: Guard video preview->local migrate cache behavior. When preview cache exists, assets must be copied
@@ -22,11 +22,11 @@ def test_video_migrate_to_local_prefers_preview_cache_and_rewrites_local_asset_p
       2. `preview_video_local/thumbnail_images_local/cover_path_local` are rewritten to local paths.
       3. Fallback async cache download is not triggered.
     """
-    video_service_module = third_party_client["video_service_module"]
+    video_service_module = fake_third_party_client["video_service_module"]
     service = video_service_module.VideoAppService()
-    meta_dir = third_party_client["meta_dir"]
+    meta_dir = fake_third_party_client["meta_dir"]
 
-    video_id = "JAVDB_CACHE001"
+    video_id = "VA_CACHE001"
     video_code = "CACHE-001"
 
     preview_dir, _, preview_prefix, local_prefix = service._build_preview_asset_prefixes(video_id)

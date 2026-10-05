@@ -5,6 +5,10 @@
 import request from './request'
 import { toBackendApiUrl } from '@/utils/url'
 
+const longRunningRequestOptions = {
+  timeout: 0
+}
+
 export const recommendationApi = {
   /**
    * 获取推荐漫画列表
@@ -272,7 +276,44 @@ export const recommendationApi = {
    * @returns {Promise}
    */
   downloadToCache: (recommendationId) => {
-    return request.post('/v1/recommendation/cache/download', { recommendation_id: recommendationId })
+    return request.post(
+      '/v1/recommendation/cache/download',
+      { recommendation_id: recommendationId },
+      longRunningRequestOptions
+    )
+  },
+
+  /**
+   * 检查推荐漫画是否有可下载更新
+   * @param {string} recommendationId - 漫画ID
+   * @returns {Promise}
+   */
+  checkUpdate: (recommendationId) => {
+    return request.post('/v1/comic/update/check', {
+      comic_id: recommendationId,
+      source: 'preview'
+    })
+  },
+
+  /**
+   * 下载推荐漫画更新并刷新预览缓存
+   * @param {string} recommendationId - 漫画ID
+   * @param {boolean} force - 是否强制下载
+   * @returns {Promise}
+   */
+  downloadUpdate: (recommendationId, force = false) => {
+    return request.post('/v1/comic/update/download', {
+      comic_id: recommendationId,
+      force,
+      source: 'preview'
+    }, longRunningRequestOptions)
+  },
+
+  repairCover: (recommendationId) => {
+    return request.post('/v1/comic/cover/repair', {
+      comic_id: recommendationId,
+      source: 'preview'
+    }, longRunningRequestOptions)
   },
   
   /**

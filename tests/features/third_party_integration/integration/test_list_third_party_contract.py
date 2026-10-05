@@ -12,13 +12,18 @@ def _ok_result(data=None, message="ok"):
     return SimpleNamespace(success=True, data=data, message=message)
 
 
+@pytest.fixture
+def third_party_client(fake_third_party_client):
+    return fake_third_party_client
+
+
 @pytest.mark.integration
-def test_list_platform_lists_jm_returns_virtual_favorites(third_party_client):
+def test_list_platform_lists_comic_returns_virtual_favorites(third_party_client):
     """
     用例描述:
-    - 用例目的: 看护漫画平台(JM/PK)“用户清单列表”契约，确保返回虚拟收藏夹清单而不依赖远程真实清单接口。
+    - 用例目的: 看护漫画平台“用户清单列表”契约，确保返回虚拟收藏夹清单而不依赖远程真实清单接口。
     - 测试步骤:
-      1. 调用 GET /api/v1/list/platform/lists?platform=JM。
+      1. 调用 GET /api/v1/list/platform/lists?platform=CA。
       2. 校验返回清单列表结构和 favorites 固定清单。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -28,7 +33,7 @@ def test_list_platform_lists_jm_returns_virtual_favorites(third_party_client):
     """
     client = third_party_client["client"]
 
-    response = client.get("/api/v1/list/platform/lists", query_string={"platform": "JM"})
+    response = client.get("/api/v1/list/platform/lists", query_string={"platform": "CA"})
     payload = response.get_json()
 
     assert response.status_code == 200
@@ -37,19 +42,19 @@ def test_list_platform_lists_jm_returns_virtual_favorites(third_party_client):
 
 
 @pytest.mark.integration
-def test_list_platform_lists_javdb_forwards_protocol_collection_list_contract(third_party_client, monkeypatch):
+def test_list_platform_lists_video_forwards_protocol_collection_list_contract(third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护视频平台(JAVDB)用户清单列表改走协议能力 `collection.list`，防止宿主继续依赖 PlatformService/平台枚举。
+    - 用例目的: 看护视频平台用户清单列表改走协议能力 `collection.list`，防止宿主继续依赖 PlatformService/平台枚举。
     - 测试步骤:
       1. mock list_service._execute_platform_capability，记录 plugin/capability。
-      2. 调用 GET /api/v1/list/platform/lists?platform=JAVDB。
+      2. 调用 GET /api/v1/list/platform/lists?platform=VA。
       3. 校验调用参数与返回结构。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
-      2. 宿主调用 `video.javdb` 插件的 `collection.list` 能力。
+      2. 宿主调用 fake 视频插件的 `collection.list` 能力。
     - 历史变更:
-      - 2026-03-23: 初始创建，覆盖 JAVDB 清单列表第三方调用契约。
+      - 2026-03-23: 初始创建，覆盖视频清单列表第三方调用契约。
     """
     client = third_party_client["client"]
     list_api = third_party_client["list_api"]
@@ -63,12 +68,12 @@ def test_list_platform_lists_javdb_forwards_protocol_collection_list_contract(th
 
     monkeypatch.setattr(list_api.list_service, "_execute_platform_capability", fake_execute)
 
-    response = client.get("/api/v1/list/platform/lists", query_string={"platform": "JAVDB"})
+    response = client.get("/api/v1/list/platform/lists", query_string={"platform": "VA"})
     payload = response.get_json()
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert calls["plugin_id"] == "video.javdb"
+    assert calls["plugin_id"] == "video.alpha"
     assert calls["capability"] == "collection.list"
     assert calls["params"] == {}
     assert payload["data"]["lists"][0]["list_id"] == "L-1"
@@ -78,10 +83,10 @@ def test_list_platform_lists_javdb_forwards_protocol_collection_list_contract(th
 def test_list_platform_favorites_detail_maps_album_fields(third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护 JM/PK favorites 详情接口对 get_favorites_basic 的字段映射契约，防止 album_id/comic_id/title 映射回归。
+    - 用例目的: 看护漫画 favorites 详情接口对 get_favorites_basic 的字段映射契约，防止 album_id/comic_id/title 映射回归。
     - 测试步骤:
       1. mock get_favorites_basic 返回一条 album。
-      2. 调用 GET /api/v1/list/platform/list/detail?platform=JM&list_id=favorites。
+      2. 调用 GET /api/v1/list/platform/list/detail?platform=CA&list_id=favorites。
       3. 校验 works 中字段映射和 total。
     - 预期结果:
       1. HTTP 200 且业务 code=200。
@@ -93,7 +98,7 @@ def test_list_platform_favorites_detail_maps_album_fields(third_party_client, mo
     list_api = third_party_client["list_api"]
 
     def fake_execute(manifest, capability, params=None):
-        assert manifest.plugin_id == "comic.jmcomic"
+        assert manifest.plugin_id == "comic.alpha"
         assert capability == "collection.favorites_basic"
         return {
             "albums": [
@@ -111,7 +116,7 @@ def test_list_platform_favorites_detail_maps_album_fields(third_party_client, mo
 
     response = client.get(
         "/api/v1/list/platform/list/detail",
-        query_string={"platform": "JM", "list_id": "favorites"},
+        query_string={"platform": "CA", "list_id": "favorites"},
     )
     payload = response.get_json()
 
@@ -121,14 +126,14 @@ def test_list_platform_favorites_detail_maps_album_fields(third_party_client, mo
     assert payload["data"]["works"][0]["album_id"] == "88001"
     assert payload["data"]["works"][0]["comic_id"] == "88001"
     assert payload["data"]["works"][0]["title"] == "Fav Album"
-    assert payload["data"]["works"][0]["plugin_id"] == "comic.jmcomic"
+    assert payload["data"]["works"][0]["plugin_id"] == "comic.alpha"
 
 
 @pytest.mark.integration
-def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_party_client, monkeypatch):
+def test_list_import_platform_list_video_creates_tracking_and_imports(third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护“导入平台清单(JAVDB)”主链路，确保会创建/更新本地跟踪清单并把 works 透传到通用视频导入器。
+    - 用例目的: 看护“导入视频平台清单”主链路，确保会创建/更新本地跟踪清单并把 works 透传到通用视频导入器。
     - 测试步骤:
       1. mock get_list_detail 返回远程 works。
       2. mock _import_platform_videos 记录入参。
@@ -167,14 +172,14 @@ def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_part
                 "extra_data": extra_data,
             }
         )
-        return "task-list-javdb-001"
+        return "task-list-video-001"
 
     monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
 
     response = client.post(
         "/api/v1/list/import",
         json={
-            "platform": "JAVDB",
+            "platform": "VA",
             "platform_list_id": "remote-list-7",
             "platform_list_name": "My Remote",
             "source": "local",
@@ -184,9 +189,9 @@ def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_part
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert payload["data"]["task_id"] == "task-list-javdb-001"
+    assert payload["data"]["task_id"] == "task-list-video-001"
     assert payload["data"]["content_type"] == "video"
-    assert captured["platform"] == "JAVDB"
+    assert captured["platform"] == "VA"
     assert captured["import_type"] == "by_platform_list"
     assert captured["target"] == "recommendation"
     assert captured["comic_id"] == "remote-list-7"
@@ -201,10 +206,10 @@ def test_list_import_platform_list_javdb_creates_tracking_and_imports(third_part
 
 
 @pytest.mark.integration
-def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client, monkeypatch):
+def test_list_sync_platform_list_video_imports_only_new_codes(third_party_client, monkeypatch):
     """
     用例描述:
-    - 用例目的: 看护 JAVDB 清单同步去重逻辑，确保仅把“远程新增 code”传给通用视频导入器，防止重复导入。
+    - 用例目的: 看护视频清单同步去重逻辑，确保仅把“远程新增 code”传给通用视频导入器，防止重复导入。
     - 测试步骤:
       1. 在隔离库中创建一个旧版 local 远程跟踪清单，并让预览库已存在视频绑定该清单。
       2. mock get_list_detail 返回“一个已存在 code + 一个新 code”。
@@ -220,19 +225,19 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
     client = third_party_client["client"]
     list_api = third_party_client["list_api"]
     meta_dir = third_party_client["meta_dir"]
-    list_id = "list_remote_javdb_sync"
+    list_id = "list_remote_video_sync"
     captured = {}
 
     lists_payload = load_json(meta_dir / "lists_database.json")
     lists_payload.setdefault("lists", []).append(
         {
             "id": list_id,
-            "name": "Remote JAVDB Sync List",
+            "name": "Remote Video Sync List",
             "desc": "remote sync",
             "content_type": "video",
             "is_default": False,
             "create_time": "2026-03-23T10:00:00",
-            "platform": "JAVDB",
+            "platform": "VA",
             "platform_list_id": "remote-sync-88",
             "import_source": "local",
             "last_sync_time": "",
@@ -244,7 +249,7 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
     preview_videos = preview_videos_payload.setdefault("video_recommendations", [])
     preview_videos.append(
         {
-            "id": "JAVDB900001",
+            "id": "VA900001",
             "title": "Existing",
             "code": "TEST-900001",
             "list_ids": [list_id],
@@ -268,7 +273,7 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
             ]
         }
 
-    def fake_import(works, target_list_id, source, platform_str="JAVDB"):
+    def fake_import(works, target_list_id, source, platform_str="VA"):
         captured["works"] = works
         captured["target_list_id"] = target_list_id
         captured["source"] = source
@@ -283,11 +288,11 @@ def test_list_sync_platform_list_javdb_imports_only_new_codes(third_party_client
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert captured["plugin_id"] == "video.javdb"
+    assert captured["plugin_id"] == "video.alpha"
     assert captured["remote_list_id"] == "remote-sync-88"
     assert captured["target_list_id"] == list_id
     assert captured["source"] == "preview"
-    assert captured["platform_str"] == "JAVDB"
+    assert captured["platform_str"] == "VA"
     assert len(captured["works"]) == 1
     assert captured["works"][0]["code"] == "TEST-900099"
     assert payload["data"]["list_id"] == list_id
@@ -304,7 +309,7 @@ def test_list_sync_platform_list_comic_legacy_local_source_is_forced_to_preview(
     Case Description:
     - Purpose: Guard remote comic list sync against legacy tracking lists saved with import_source=local.
     - Steps:
-      1. Create a JM remote tracking list whose persisted import_source is local.
+      1. Create a fake comic remote tracking list whose persisted import_source is local.
       2. Bind one existing comic in recommendations_database.json to that list.
       3. Mock the remote list payload with one existing and one new album.
       4. Call POST /api/v1/list/sync.
@@ -316,19 +321,19 @@ def test_list_sync_platform_list_comic_legacy_local_source_is_forced_to_preview(
     client = third_party_client["client"]
     list_api = third_party_client["list_api"]
     meta_dir = third_party_client["meta_dir"]
-    list_id = "list_remote_jm_sync_legacy_local"
+    list_id = "list_remote_comic_sync_legacy_local"
     captured = {}
 
     lists_payload = load_json(meta_dir / "lists_database.json")
     lists_payload.setdefault("lists", []).append(
         {
             "id": list_id,
-            "name": "Remote JM Sync List",
+            "name": "Remote Comic Sync List",
             "desc": "remote sync",
             "content_type": "comic",
             "is_default": False,
             "create_time": "2026-03-23T10:00:00",
-            "platform": "JM",
+            "platform": "CA",
             "platform_list_id": "favorites",
             "import_source": "local",
             "last_sync_time": "",
@@ -340,7 +345,7 @@ def test_list_sync_platform_list_comic_legacy_local_source_is_forced_to_preview(
     recommendations = rec_payload.setdefault("recommendations", [])
     recommendations.append(
         {
-            "id": "JM100001",
+            "id": "CA100001",
             "title": "Existing",
             "author": "A",
             "cover_path": "",
@@ -383,12 +388,12 @@ def test_list_sync_platform_list_comic_legacy_local_source_is_forced_to_preview(
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert captured["plugin_id"] == "comic.jmcomic"
+    assert captured["plugin_id"] == "comic.alpha"
     assert captured["remote_list_id"] == "favorites"
     assert captured["target_list_id"] == list_id
     assert captured["source"] == "preview"
-    assert captured["platform"] == "JM"
-    assert captured["platform_str"] == "JM"
+    assert captured["platform"] == "CA"
+    assert captured["platform_str"] == "CA"
     assert len(captured["works"]) == 1
     assert captured["works"][0]["album_id"] == "100099"
     synced_list = next(
@@ -430,29 +435,29 @@ def test_list_favorites_routes_forward_platform_and_validate_input(third_party_c
         or _ok_result({"imported_count": 1, "skipped_count": 0, "total_count": 3}),
     )
 
-    import_resp = client.post("/api/v1/list/import/favorites", json={"platform": "jm", "source": "preview"})
+    import_resp = client.post("/api/v1/list/import/favorites", json={"platform": "ca", "source": "preview"})
     import_payload = import_resp.get_json()
     assert import_resp.status_code == 200
     assert import_payload["code"] == 200
-    assert calls["import"] == [("JM", "preview")]
+    assert calls["import"] == [("CA", "preview")]
 
-    sync_resp = client.post("/api/v1/list/sync/favorites", json={"platform": "PK", "source": "local"})
+    sync_resp = client.post("/api/v1/list/sync/favorites", json={"platform": "CB", "source": "local"})
     sync_payload = sync_resp.get_json()
     assert sync_resp.status_code == 200
     assert sync_payload["code"] == 200
-    assert calls["sync"] == [("PK", "local")]
+    assert calls["sync"] == [("CB", "local")]
 
-    invalid_resp = client.post("/api/v1/list/import/favorites", json={"platform": "JAVBUS"})
+    invalid_resp = client.post("/api/v1/list/import/favorites", json={"platform": "VB"})
     invalid_payload = invalid_resp.get_json()
     assert invalid_resp.status_code == 200
     assert invalid_payload["code"] == 400
 
 
 @pytest.mark.integration
-def test_list_import_favorites_jm_uses_platform_favorites_and_creates_tracking_list(third_party_client, monkeypatch):
+def test_list_import_favorites_comic_uses_platform_favorites_and_creates_tracking_list(third_party_client, monkeypatch):
     """
     Case Description:
-    - Purpose: Guard JM favorites import chain beyond route forwarding: favorites fetch mapping + tracking list creation.
+    - Purpose: Guard comic favorites import chain beyond route forwarding: favorites fetch mapping + tracking list creation.
     - Steps:
       1. Mock platform service `get_favorites_basic` to return two albums.
       2. Keep real `import_platform_favorites -> import_platform_list` chain, mock only `_import_comics`.
@@ -460,8 +465,8 @@ def test_list_import_favorites_jm_uses_platform_favorites_and_creates_tracking_l
       4. Verify mapped works, platform argument, and persisted tracking list fields.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. `_import_comics` receives mapped favorites works and protocol platform string `JM`.
-      3. `lists_database.json` includes tracking list with `platform=JM` and `platform_list_id=favorites`.
+      2. `_import_comics` receives mapped favorites works and protocol platform string.
+      3. `lists_database.json` includes tracking list with the fake comic platform and `platform_list_id=favorites`.
     - History:
       - 2026-03-23: Added strong guard for comic favorites import chain.
     """
@@ -471,7 +476,7 @@ def test_list_import_favorites_jm_uses_platform_favorites_and_creates_tracking_l
     captured = {}
 
     def fake_execute(manifest, capability, params=None):
-        assert manifest.plugin_id == "comic.jmcomic"
+        assert manifest.plugin_id == "comic.alpha"
         assert capability == "collection.favorites_basic"
         return {
             "albums": [
@@ -492,42 +497,42 @@ def test_list_import_favorites_jm_uses_platform_favorites_and_creates_tracking_l
     monkeypatch.setattr(list_api.list_service, "_execute_platform_capability", fake_execute)
     monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import_comics)
 
-    response = client.post("/api/v1/list/import/favorites", json={"platform": "JM", "source": "local"})
+    response = client.post("/api/v1/list/import/favorites", json={"platform": "CA", "source": "local"})
     payload = response.get_json()
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert captured["platform"] == "JM"
+    assert captured["platform"] == "CA"
     assert captured["platform_is_string"] is True
-    assert captured["platform_str"] == "JM"
+    assert captured["platform_str"] == "CA"
     assert captured["source"] == "local"
     assert len(captured["works"]) == 2
     assert captured["works"][0]["album_id"] == "100001"
     assert captured["works"][1]["comic_id"] == "100777"
-    assert captured["works"][0]["plugin_id"] == "comic.jmcomic"
+    assert captured["works"][0]["plugin_id"] == "comic.alpha"
 
     lists = load_json(meta_dir / "lists_database.json").get("lists", [])
     created = next((item for item in lists if item.get("id") == captured["target_list_id"]), None)
     assert created is not None
-    assert created["platform"] == "JM"
+    assert created["platform"] == "CA"
     assert created["platform_list_id"] == "favorites"
     assert created["import_source"] == "local"
 
 
 @pytest.mark.integration
-def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monkeypatch):
+def test_list_sync_favorites_comic_imports_only_new_comics(third_party_client, monkeypatch):
     """
     Case Description:
-    - Purpose: Guard JM favorites sync de-dup logic so only newly discovered comics are passed to importer.
+    - Purpose: Guard comic favorites sync de-dup logic so only newly discovered comics are passed to importer.
     - Steps:
-      1. Create JM favorites tracking list via real import chain (mock importer only).
+      1. Create fake comic favorites tracking list via real import chain (mock importer only).
       2. Bind existing preview-library comic to that list in isolated metadata.
       3. Mock favorites source to return one existing + one new album.
       4. Call `POST /api/v1/list/sync/favorites` and verify importer input.
     - Expected:
       1. HTTP 200 with business `code=200`.
       2. Importer receives only the new album.
-      3. Target list id remains the existing JM favorites tracking list.
+      3. Target list id remains the existing fake comic favorites tracking list.
     - History:
       - 2026-03-23: Added comic favorites sync de-dup guard.
     """
@@ -538,7 +543,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     sync_captured = {}
 
     def fake_execute_import(manifest, capability, params=None):
-        assert manifest.plugin_id == "comic.jmcomic"
+        assert manifest.plugin_id == "comic.alpha"
         assert capability == "collection.favorites_basic"
         return {"albums": [{"album_id": "100001", "title": "Existing", "author": "A", "cover_url": "u1", "tags": []}]}
 
@@ -553,7 +558,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     monkeypatch.setattr(list_api.list_service, "_execute_platform_capability", fake_execute_import)
     monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import_comics_for_create)
 
-    create_resp = client.post("/api/v1/list/import/favorites", json={"platform": "JM", "source": "local"})
+    create_resp = client.post("/api/v1/list/import/favorites", json={"platform": "CA", "source": "local"})
     create_payload = create_resp.get_json()
     assert create_resp.status_code == 200
     assert create_payload["code"] == 200
@@ -563,7 +568,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     recommendations = rec_payload.setdefault("recommendations", [])
     recommendations.append(
         {
-            "id": "JM100001",
+            "id": "CA100001",
             "title": "Existing",
             "author": "A",
             "cover_path": "",
@@ -581,7 +586,7 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     save_json(meta_dir / "recommendations_database.json", rec_payload)
 
     def fake_execute_sync(manifest, capability, params=None):
-        assert manifest.plugin_id == "comic.jmcomic"
+        assert manifest.plugin_id == "comic.alpha"
         assert capability == "collection.favorites_basic"
         return {
             "albums": [
@@ -602,33 +607,33 @@ def test_list_sync_favorites_jm_imports_only_new_comics(third_party_client, monk
     monkeypatch.setattr(list_api.list_service, "_execute_platform_capability", fake_execute_sync)
     monkeypatch.setattr(list_api.list_service, "_import_comics", fake_import_comics_for_sync)
 
-    sync_resp = client.post("/api/v1/list/sync/favorites", json={"platform": "JM", "source": "local"})
+    sync_resp = client.post("/api/v1/list/sync/favorites", json={"platform": "CA", "source": "local"})
     sync_payload = sync_resp.get_json()
 
     assert sync_resp.status_code == 200
     assert sync_payload["code"] == 200
     assert sync_captured["target_list_id"] == favorites_list_id
-    assert sync_captured["platform"] == "JM"
+    assert sync_captured["platform"] == "CA"
     assert sync_captured["platform_is_string"] is True
-    assert sync_captured["platform_str"] == "JM"
+    assert sync_captured["platform_str"] == "CA"
     assert sync_captured["source"] == "preview"
     assert len(sync_captured["works"]) == 1
     assert sync_captured["works"][0]["album_id"] == "100889"
 
 
 @pytest.mark.integration
-def test_list_platform_list_detail_javdb_forwards_get_list_detail_contract(third_party_client, monkeypatch):
+def test_list_platform_list_detail_video_forwards_get_list_detail_contract(third_party_client, monkeypatch):
     """
     Case Description:
-    - Purpose: Guard `/api/v1/list/platform/list/detail` non-favorites branch for JAVDB:
+    - Purpose: Guard `/api/v1/list/platform/list/detail` non-favorites branch for fake video platform:
       route/service must forward `list_id` into protocol `collection.detail`.
     - Steps:
       1. Mock `list_service._execute_platform_capability` and record plugin/capability/list_id.
-      2. Call `GET /api/v1/list/platform/list/detail?platform=JAVDB&list_id=remote-l-11`.
+      2. Call `GET /api/v1/list/platform/list/detail?platform=VA&list_id=remote-l-11`.
       3. Assert forwarded arguments and response payload.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. Third-party call receives `video.javdb / collection.detail / remote-l-11`.
+      2. Third-party call receives fake video plugin / collection.detail / remote-l-11.
       3. Response data contains mocked works list.
     - History:
       - 2026-03-23: Added non-favorites list-detail third-party contract guard.
@@ -655,39 +660,39 @@ def test_list_platform_list_detail_javdb_forwards_get_list_detail_contract(third
 
     response = client.get(
         "/api/v1/list/platform/list/detail",
-        query_string={"platform": "JAVDB", "list_id": "remote-l-11"},
+        query_string={"platform": "VA", "list_id": "remote-l-11"},
     )
     payload = response.get_json()
 
     assert response.status_code == 200
     assert payload["code"] == 200
     assert captured == {
-        "plugin_id": "video.javdb",
+        "plugin_id": "video.alpha",
         "capability": "collection.detail",
         "list_id": "remote-l-11",
     }
     assert payload["data"]["works"][0]["code"] == "TP-9911"
     assert payload["data"]["total"] == 2
-    assert payload["data"]["works"][0]["plugin_id"] == "video.javdb"
+    assert payload["data"]["works"][0]["plugin_id"] == "video.alpha"
 
 
 @pytest.mark.integration
-def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_contract(third_party_client, monkeypatch):
+def test_list_import_platform_list_comic_favorites_branch_forwards_import_comics_contract(third_party_client, monkeypatch):
     """
     Case Description:
-    - Purpose: Guard `/api/v1/list/import` comic favorites branch (`platform=JM`, `platform_list_id=favorites`):
+    - Purpose: Guard `/api/v1/list/import` comic favorites branch (`platform=CA`, `platform_list_id=favorites`):
       favorites fetch mapping and importer invocation contract.
     - Steps:
       1. Mock platform service `get_favorites_basic`.
       2. Mock `list_service._import_comics` to capture args.
-      3. Call `POST /api/v1/list/import` for JM favorites.
+      3. Call `POST /api/v1/list/import` for fake comic favorites.
       4. Assert mapped works, platform/source args, and tracking-list persistence.
     - Expected:
       1. HTTP 200 with business `code=200`.
-      2. `_import_comics` receives mapped favorites works and protocol platform string `JM`.
-      3. Persisted tracking list includes `platform=JM`, `platform_list_id=favorites`, `import_source=preview`.
+      2. `_import_comics` receives mapped favorites works and protocol platform string.
+      3. Persisted tracking list includes fake comic platform, `platform_list_id=favorites`, `import_source=preview`.
     - History:
-      - 2026-03-23: Added JM favorites branch contract guard for platform list import API.
+      - 2026-03-23: Added comic favorites branch contract guard for platform list import API.
     """
     client = third_party_client["client"]
     task_manager_module = importlib.import_module("infrastructure.task_manager")
@@ -715,14 +720,14 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
                 "extra_data": extra_data,
             }
         )
-        return "task-list-jm-favorites-001"
+        return "task-list-comic-favorites-001"
 
     monkeypatch.setattr(task_manager_module.task_manager, "create_task", fake_create_task)
 
     response = client.post(
         "/api/v1/list/import",
         json={
-            "platform": "JM",
+            "platform": "CA",
             "platform_list_id": "favorites",
             "platform_list_name": "MyFav",
             "source": "preview",
@@ -732,9 +737,9 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
 
     assert response.status_code == 200
     assert payload["code"] == 200
-    assert payload["data"]["task_id"] == "task-list-jm-favorites-001"
+    assert payload["data"]["task_id"] == "task-list-comic-favorites-001"
     assert payload["data"]["content_type"] == "comic"
-    assert captured["platform"] == "JM"
+    assert captured["platform"] == "CA"
     assert captured["import_type"] == "by_platform_list"
     assert captured["target"] == "recommendation"
     assert captured["comic_id"] == "favorites"
@@ -752,10 +757,10 @@ def test_list_import_platform_list_jm_favorites_branch_forwards_import_comics_co
 @pytest.mark.parametrize(
     ("platform", "expected_content_type"),
     [
-        ("JM", "comic"),
-        ("PK", "comic"),
-        ("JAVDB", "video"),
-        ("JAVBUS", "video"),
+        ("CA", "comic"),
+        ("CB", "comic"),
+        ("VA", "video"),
+        ("VB", "video"),
     ],
 )
 def test_list_import_route_async_task_matrix_by_platform(third_party_client, monkeypatch, platform, expected_content_type):
@@ -769,7 +774,7 @@ def test_list_import_route_async_task_matrix_by_platform(third_party_client, mon
     - Expected:
       1. Route always creates async task (`by_platform_list`).
       2. Route always enforces `target=recommendation` and `extra_data.source=preview`.
-      3. `content_type` maps by platform (`JM/PK=comic`, `JAVDB/JAVBUS=video`).
+      3. `content_type` maps by fake platform (`CA/CB=comic`, `VA/VB=video`).
     """
     client = third_party_client["client"]
     task_manager_module = importlib.import_module("infrastructure.task_manager")

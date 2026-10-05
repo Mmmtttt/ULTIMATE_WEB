@@ -9,6 +9,11 @@ from core.constants import (
     THIRD_PARTY_CONFIG_PATH,
     normalize_to_data_dir,
 )
+from .space_access import (
+    PRIVATE_ENABLED_PLUGIN_IDS_KEY,
+    invalidate_private_access_cache,
+    normalize_private_enabled_plugin_ids,
+)
 
 
 class ProtocolConfigStore:
@@ -43,6 +48,20 @@ class ProtocolConfigStore:
             or binding.get("field")
             or ""
         ).strip()
+
+    @staticmethod
+    def _resolve_enabled_field_name(manifest) -> str:
+        configuration = getattr(manifest, "configuration", {}) or {}
+        credential = configuration.get("credential") if isinstance(configuration, dict) else {}
+        candidate = str((credential or {}).get("enabled_field") or "enabled").strip() or "enabled"
+        try:
+            fields = manifest.list_configuration_fields()
+        except Exception:
+            fields = []
+        for field in fields or []:
+            if str((field or {}).get("key") or "").strip() == candidate and str((field or {}).get("type") or "").strip() == "boolean":
+                return candidate
+        return ""
 
     @classmethod
     def _resolve_binding_default_abs_path(cls, manifest, binding: Dict[str, object]) -> str:
@@ -106,6 +125,13 @@ class ProtocolConfigStore:
             defaults = {}
 
         normalized_defaults = dict(defaults or {})
+        enabled_field = cls._resolve_enabled_field_name(manifest)
+        plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip().lower()
+        # 存储/备份类插件（storage.*）保持默认启用：它们是核心备份链路的一部分，
+        # 且服务层默认值（如 TeleDriveConfig.enabled=True）也是启用。
+        # 只有内容查询类平台才默认停用，需用户显式开启。
+        if enabled_field and not plugin_id.startswith("storage."):
+            normalized_defaults[enabled_field] = False
         for binding in manifest.list_data_dir_bindings():
             field_name = cls._resolve_binding_field_name(binding)
             default_abs = cls._resolve_binding_default_abs_path(manifest, binding)
@@ -136,6 +162,18 @@ class ProtocolConfigStore:
             self._config = {}
             changed = True
 
+        space_access = self._config.get("space_access")
+        if not isinstance(space_access, dict):
+            space_access = {}
+            self._config["space_access"] = space_access
+            changed = True
+        normalized_private_ids = normalize_private_enabled_plugin_ids(
+            space_access.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+        )
+        if space_access.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) != normalized_private_ids:
+            space_access[PRIVATE_ENABLED_PLUGIN_IDS_KEY] = normalized_private_ids
+            changed = True
+
         adapters = self._config.get("adapters")
         if not isinstance(adapters, dict):
             adapters = {}
@@ -157,6 +195,7 @@ class ProtocolConfigStore:
                 existing_config = {}
                 adapters[config_key] = existing_config
                 changed = True
+            raw_existing_config = dict(existing_config)
 
             try:
                 gateway = self._get_protocol_gateway()
@@ -177,6 +216,11 @@ class ProtocolConfigStore:
             for field_name, field_value in defaults.items():
                 if field_name not in merged:
                     merged[field_name] = field_value
+            # 与 _build_manifest_default_config 保持一致：存储类插件默认启用。
+            plugin_id = str(getattr(manifest, "plugin_id", "") or "").strip().lower()
+            enabled_field = self._resolve_enabled_field_name(manifest)
+            if enabled_field and enabled_field not in raw_existing_config and not plugin_id.startswith("storage."):
+                merged[enabled_field] = False
 
             if merged != existing_config:
                 adapters[config_key] = merged
@@ -221,6 +265,9 @@ class ProtocolConfigStore:
         self._config = {
             "default_adapter": "",
             "adapters": {},
+            "space_access": {
+                PRIVATE_ENABLED_PLUGIN_IDS_KEY: [],
+            },
         }
         self._merge_protocol_defaults()
         return dict(self._config)
@@ -242,6 +289,28 @@ class ProtocolConfigStore:
             self._config = self._get_default_config()
             self._save_config()
         self._loaded = True
+
+    def get_space_access(self) -> Dict[str, object]:
+        self._ensure_loaded()
+        raw = self._config.get("space_access")
+        if not isinstance(raw, dict):
+            return {PRIVATE_ENABLED_PLUGIN_IDS_KEY: []}
+        return {
+            PRIVATE_ENABLED_PLUGIN_IDS_KEY: normalize_private_enabled_plugin_ids(
+                raw.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+            ),
+        }
+
+    def set_space_access(self, payload: Dict[str, object]) -> None:
+        self._ensure_loaded()
+        raw = payload if isinstance(payload, dict) else {}
+        self._config["space_access"] = {
+            PRIVATE_ENABLED_PLUGIN_IDS_KEY: normalize_private_enabled_plugin_ids(
+                raw.get(PRIVATE_ENABLED_PLUGIN_IDS_KEY) or []
+            ),
+        }
+        self._save_config()
+        invalidate_private_access_cache()
 
     def _ensure_loaded(self) -> None:
         if not self._loaded:

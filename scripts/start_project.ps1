@@ -54,28 +54,14 @@ if (-not (Test-Path "comic_frontend\package.json")) {
     exit 1
 }
 
-# 启动后端服务
-Write-Host "`nStarting backend service..." -ForegroundColor Cyan
-$backendPath = Join-Path $rootDir "comic_backend"
-Start-Process -FilePath "powershell" -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; python app.py" -WorkingDirectory $backendPath
-
-# 等待后端服务启动
-Write-Host "Waiting for backend service to start..." -ForegroundColor Cyan
-Start-Sleep -Seconds 5
-
-# 启动前端服务
-Write-Host "Starting frontend service..." -ForegroundColor Cyan
-$frontendPath = Join-Path $rootDir "comic_frontend"
-Start-Process -FilePath "powershell" -ArgumentList "-NoExit", "-Command", "cd '$frontendPath'; npm run dev" -WorkingDirectory $frontendPath
-
-# 等待前端服务启动
-Write-Host "Waiting for frontend service to start..." -ForegroundColor Cyan
-Start-Sleep -Seconds 8
-
-# 显示服务状态
-Write-Host "`n=== Services Started ===" -ForegroundColor Green
-Write-Host "Backend: $($backendProtocol)://127.0.0.1:$backendPort" -ForegroundColor Yellow
-Write-Host "Frontend: $($backendProtocol)://localhost:$frontendPort/" -ForegroundColor Yellow
-Write-Host "" -ForegroundColor Green
-Write-Host "To stop services, run: .\scripts\stop_services.ps1" -ForegroundColor Yellow
-Write-Host "To view status, run: .\scripts\view_status.ps1" -ForegroundColor Yellow
+# 启动 Windows 控制中心，由控制中心负责服务生命周期和日志显示
+Write-Host "`nStarting Windows control center..." -ForegroundColor Cyan
+$launcherPath = Join-Path $rootDir "scripts\windows_launcher.py"
+$launcherArgs = '"{0}" --root "{1}" --mode dev --open-browser' -f $launcherPath, $rootDir
+$pythonw = Get-Command "pythonw.exe" -ErrorAction SilentlyContinue
+if ($pythonw) {
+    Start-Process -FilePath $pythonw.Source -ArgumentList $launcherArgs -WorkingDirectory $rootDir -WindowStyle Hidden
+} else {
+    Start-Process -FilePath "python.exe" -ArgumentList $launcherArgs -WorkingDirectory $rootDir -WindowStyle Hidden
+}
+Write-Host "Control center started. Closing it will stop the backend and frontend." -ForegroundColor Green

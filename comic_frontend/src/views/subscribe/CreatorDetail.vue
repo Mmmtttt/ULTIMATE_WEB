@@ -366,12 +366,12 @@ async function confirmImport(target) {
     })
 
     let taskCount = 0
-    for (const [platform, comicIds] of Object.entries(itemsByPlatform)) {
+    for (const [platform, itemIds] of Object.entries(itemsByPlatform)) {
       const params = {
         import_type: 'by_list',
         target,
         platform: isVideoMode.value ? String(platform).toUpperCase() : platform,
-        comic_ids: comicIds,
+        item_ids: itemIds,
         content_type: isVideoMode.value ? 'video' : 'comic'
       }
       const created = await importTaskStore.createImportTask(params)
@@ -414,6 +414,9 @@ onMounted(async () => {
 </script>
 <style scoped>
 .creator-detail-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   background: transparent;
 }
 
@@ -446,6 +449,7 @@ onMounted(async () => {
 }
 
 .works-area {
+  flex: 1;
   padding: 16px;
 }
 
@@ -455,7 +459,9 @@ onMounted(async () => {
 }
 
 .works-pagination {
-  margin-top: 14px;
+  margin-top: auto;
+  padding: 8px 16px 12px;
+  background: var(--surface-1);
 }
 
 .remote-select-bar {

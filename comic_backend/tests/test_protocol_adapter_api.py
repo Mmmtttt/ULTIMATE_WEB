@@ -11,7 +11,7 @@ from protocol.adapter_api import ProtocolAdapterAPI
 
 
 class _FakeConfigStore:
-    def __init__(self, default_adapter="jmcomic", configs=None, config_keys=None):
+    def __init__(self, default_adapter="comic_alpha", configs=None, config_keys=None):
         self._default_adapter = default_adapter
         self._configs = dict(configs or {})
         self._config_keys = list(config_keys or [])
@@ -103,18 +103,18 @@ def _make_manifest(plugin_id, config_key, lookup_names):
 def test_protocol_adapter_api_uses_default_adapter_for_search():
     gateway = _FakeGateway(
         manifests=[
-            _make_manifest("comic.jmcomic", "jmcomic", ["jmcomic", "JM"]),
+            _make_manifest("comic.alpha", "comic_alpha", ["comic_alpha", "CA"]),
         ]
     )
-    config_store = _FakeConfigStore(default_adapter="jmcomic")
+    config_store = _FakeConfigStore(default_adapter="comic_alpha")
     api = ProtocolAdapterAPI(gateway=gateway, config_store=config_store)
 
     result = api.search_albums("keyword", page=2, max_pages=3, fast_mode=True)
 
-    assert result["plugin_id"] == "comic.jmcomic"
+    assert result["plugin_id"] == "comic.alpha"
     assert gateway.executed == [
         {
-            "plugin_id": "comic.jmcomic",
+            "plugin_id": "comic.alpha",
             "capability": "catalog.search",
             "params": {
                 "keyword": "keyword",
@@ -130,16 +130,16 @@ def test_protocol_adapter_api_uses_default_adapter_for_search():
 def test_protocol_adapter_api_lists_manifest_and_config_keys_without_duplicates():
     gateway = _FakeGateway(
         manifests=[
-            _make_manifest("comic.jmcomic", "jmcomic", ["jmcomic"]),
-            _make_manifest("comic.picacomic", "picacomic", ["picacomic"]),
-            _make_manifest("video.javdb", "javdb", ["javdb"]),
+            _make_manifest("comic.alpha", "comic_alpha", ["comic_alpha"]),
+            _make_manifest("comic.beta", "comic_beta", ["comic_beta"]),
+            _make_manifest("video.alpha", "video_alpha", ["video_alpha"]),
             _make_manifest("video.no-config", "", ["video.no-config"]),
         ]
     )
-    config_store = _FakeConfigStore(config_keys=["jmcomic", "picacomic", "config_only"])
+    config_store = _FakeConfigStore(config_keys=["comic_alpha", "comic_beta", "config_only"])
     api = ProtocolAdapterAPI(gateway=gateway, config_store=config_store)
 
-    assert api.list_available_adapters() == ["config_only", "javdb", "jmcomic", "picacomic"]
+    assert api.list_available_adapters() == ["comic_alpha", "comic_beta", "config_only", "video_alpha"]
 
 
 def test_protocol_adapter_api_reset_adapter_refreshes_runtime_caches():
@@ -148,7 +148,8 @@ def test_protocol_adapter_api_reset_adapter_refreshes_runtime_caches():
     api = ProtocolAdapterAPI(gateway=gateway, config_store=config_store)
     original_store = api.get_config_manager()
 
-    api.reset_adapter("jmcomic")
+    api.reset_adapter("comic_alpha")
 
-    assert config_store.reset_calls == [["jmcomic"]]
+    assert config_store.reset_calls == [["comic_alpha"]]
     assert api.get_config_manager() is not original_store
+

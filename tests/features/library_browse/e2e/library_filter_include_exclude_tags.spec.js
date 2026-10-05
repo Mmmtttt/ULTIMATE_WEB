@@ -31,10 +31,10 @@ test("library filter include and exclude tags returns expected comics", async ({
   const apiRequests = startApiRequestRecorder(page);
   const allComics = [
     {
-      id: "JM100001",
+      id: "COMIC_ALPHA100001",
       title: "E2E Comic Alpha",
       author: "Tester A",
-      cover_path: "/static/mock/JM100001.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100001.jpg",
       total_page: 3,
       current_page: 1,
       score: 8.5,
@@ -43,10 +43,10 @@ test("library filter include and exclude tags returns expected comics", async ({
       list_ids: [],
     },
     {
-      id: "JM100003",
+      id: "COMIC_ALPHA100003",
       title: "E2E Comic Gamma",
       author: "Tester C",
-      cover_path: "/static/mock/JM100003.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100003.jpg",
       total_page: 5,
       current_page: 5,
       score: 9.8,
@@ -55,10 +55,10 @@ test("library filter include and exclude tags returns expected comics", async ({
       list_ids: [],
     },
     {
-      id: "JM100005",
+      id: "COMIC_ALPHA100005",
       title: "E2E Comic Epsilon",
       author: "Tester B",
-      cover_path: "/static/mock/JM100005.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100005.jpg",
       total_page: 3,
       current_page: 1,
       score: 4.1,

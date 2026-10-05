@@ -294,7 +294,7 @@ onUnmounted(() => {
 .import-tasks-page {
   min-height: 95vh;
   background: transparent;
-  padding-bottom: 64px;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }
 
 .tasks-container {
@@ -535,6 +535,17 @@ onUnmounted(() => {
   .hero-stats {
     width: 100%;
     min-width: 0;
+  }
+
+  .task-header,
+  .section-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .task-actions .van-button,
+  .section-header .van-button {
+    width: 100%;
   }
 }
 </style>

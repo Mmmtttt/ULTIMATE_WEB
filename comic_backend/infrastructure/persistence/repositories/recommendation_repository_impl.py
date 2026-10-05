@@ -1,12 +1,15 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from domain.recommendation import Recommendation, RecommendationRepository
 from infrastructure.persistence.json_storage import JsonStorage
+from infrastructure.persistence.repositories.base_repository_impl import JsonRepositoryBatchMixin
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_date
 
 
-class RecommendationJsonRepository(RecommendationRepository):
+class RecommendationJsonRepository(JsonRepositoryBatchMixin[Recommendation], RecommendationRepository):
     """推荐漫画 JSON 仓库实现 - 使用独立的 JSON 文件存储"""
+    _data_key = "recommendations"
+    _total_key = "total_recommendations"
     
     def __init__(self, storage: JsonStorage = None):
         if storage is not None:
@@ -15,6 +18,13 @@ class RecommendationJsonRepository(RecommendationRepository):
             from core.constants import RECOMMENDATION_JSON_FILE as ACTIVE_RECOMMENDATION_JSON_FILE
 
             self._storage = JsonStorage(ACTIVE_RECOMMENDATION_JSON_FILE)
+
+    def _get_entity_class(self):
+        return Recommendation
+
+    def _touch_data(self, data: Dict[str, Any], recommendations: List[Dict[str, Any]]) -> None:
+        data["total_recommendations"] = len(recommendations)
+        data["last_updated"] = get_current_date()
     
     def get_by_id(self, recommendation_id: str) -> Optional[Recommendation]:
         """根据ID获取推荐漫画"""
@@ -49,7 +59,7 @@ class RecommendationJsonRepository(RecommendationRepository):
                 data["last_updated"] = get_current_date()
                 return data
             
-            result = self._storage.atomic_update(update_data)
+            result = self._storage.atomic_update(update_data, catalog_index_changed_ids=[recommendation.id])
             app_logger.info(f"[RecommendationRepo.save] 写入结果: {result}")
             return result
         except Exception as e:
@@ -67,7 +77,7 @@ class RecommendationJsonRepository(RecommendationRepository):
                 data["last_updated"] = get_current_date()
                 return data
             
-            return self._storage.atomic_update(update_data)
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[recommendation_id])
         except Exception as e:
             error_logger.error(f"删除推荐漫画失败: {e}")
             return False

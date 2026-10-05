@@ -27,10 +27,10 @@ test("library sort by score keeps UI order consistent with backend sorting", asy
   const apiRequests = startApiRequestRecorder(page);
   const unsortedComics = [
     {
-      id: "JM100001",
+      id: "COMIC_ALPHA100001",
       title: "E2E Comic Alpha",
       author: "Tester A",
-      cover_path: "/static/mock/JM100001.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100001.jpg",
       total_page: 3,
       current_page: 1,
       score: 8.5,
@@ -40,10 +40,10 @@ test("library sort by score keeps UI order consistent with backend sorting", asy
       source: "local",
     },
     {
-      id: "JM100003",
+      id: "COMIC_ALPHA100003",
       title: "E2E Comic Gamma",
       author: "Tester C",
-      cover_path: "/static/mock/JM100003.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100003.jpg",
       total_page: 5,
       current_page: 5,
       score: 9.8,
@@ -53,10 +53,10 @@ test("library sort by score keeps UI order consistent with backend sorting", asy
       source: "local",
     },
     {
-      id: "JM100002",
+      id: "COMIC_ALPHA100002",
       title: "E2E Comic Beta",
       author: "Tester B",
-      cover_path: "/static/mock/JM100002.jpg",
+      cover_path: "/static/mock/COMIC_ALPHA100002.jpg",
       total_page: 2,
       current_page: 1,
       score: 7.0,

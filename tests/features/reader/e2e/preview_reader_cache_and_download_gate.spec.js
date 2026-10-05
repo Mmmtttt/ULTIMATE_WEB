@@ -9,8 +9,9 @@ const {
 } = require("../../../shared/e2e_helpers");
 
 const BACKEND_BASE_URL = process.env.E2E_BACKEND_BASE_URL || "http://127.0.0.1:5010";
-const CACHED_RECOMMENDATION_ID = "JM910001";
-const UNCACHED_RECOMMENDATION_ID = "JM910002";
+const CACHED_RECOMMENDATION_ID = "CA910001";
+const UNCACHED_RECOMMENDATION_ID = "CA910002";
+const PARTIAL_CACHE_RECOMMENDATION_ID = "CA910006";
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgN6QHdwAAAAASUVORK5CYII=",
   "base64",
@@ -76,7 +77,9 @@ async function addRecommendation(
       total_page: totalPage,
       current_page: currentPage,
       score: 8.5,
-      cover_path: "/static/cover/JM/100001.png",
+      cover_path: "/static/cover/CA/100001.png",
+      storage_path_relative: `recommendation_cache/comic/CA/${recommendationId.replace(/^CA/, "")}`,
+      storage_path_kind: "preview_cache_dir",
       tag_ids: ["tag_action"],
     },
   });
@@ -86,12 +89,12 @@ async function addRecommendation(
 }
 
 async function seedRecommendationCache(runtimeDataDir, recommendationId, pageCount) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.mkdir(cacheDir, { recursive: true });
@@ -102,12 +105,12 @@ async function seedRecommendationCache(runtimeDataDir, recommendationId, pageCou
 }
 
 async function seedRecommendationCachePage(runtimeDataDir, recommendationId, pageNum) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.mkdir(cacheDir, { recursive: true });
@@ -116,12 +119,12 @@ async function seedRecommendationCachePage(runtimeDataDir, recommendationId, pag
 }
 
 async function clearRecommendationCache(runtimeDataDir, recommendationId) {
-  const originalId = recommendationId.replace(/^JM/, "");
+  const originalId = recommendationId.replace(/^CA/, "");
   const cacheDir = path.join(
     runtimeDataDir,
     "recommendation_cache",
     "comic",
-    "JM",
+    "CA",
     originalId,
   );
   await fs.rm(cacheDir, { recursive: true, force: true });
@@ -236,6 +239,49 @@ test("preview reader uses cached pages and skips full download call", async ({
 
 /**
  * 用例描述:
+ * - 用例目的: 看护“预览阅读页命中部分缓存”分支，确保缺页续下必须由详情页检查更新手动触发。
+ * - 测试步骤:
+ *   1. 新增 total_page=5 的预览漫画，并只写入 3 页缓存图片。
+ *   2. 打开 /recommendation-reader/{id}?page=2。
+ *   3. 校验阅读页可直接显示已缓存页，并提示缓存不完整。
+ *   4. 校验请求链路不触发 /api/v1/recommendation/cache/download。
+ * - 预期结果:
+ *   1. 阅读页直接可读，当前可读页码为 2/3。
+ *   2. 页面提示缓存不完整。
+ *   3. 不自动续下、不触发整本下载。
+ * - 历史变更:
+ *   - 2026-09-09: 将部分缓存续下调整为详情页检查更新手动触发。
+ */
+test("preview reader shows partial cache without auto resume download", async ({
+  page,
+  request,
+}) => {
+  await setReaderDefaultConfig(page, { defaultPageMode: "left_right" });
+  const runtimeDataDir = await getRuntimeDataDir(request);
+  await addRecommendation(request, PARTIAL_CACHE_RECOMMENDATION_ID, "Reader Gate Partial Cache", 5);
+  await seedRecommendationCache(runtimeDataDir, PARTIAL_CACHE_RECOMMENDATION_ID, 3);
+
+  const apiRequests = startApiRequestRecorder(page);
+  await openReaderAndShowMenu(
+    page,
+    `/recommendation-reader/${PARTIAL_CACHE_RECOMMENDATION_ID}?page=2`,
+  );
+  await waitPageIndicator(page, "2/3");
+
+  await expect(page.locator(".download-progress-inline")).toContainText("缓存不完整");
+
+  expect(
+    hasApiCall(
+      apiRequests,
+      (item) =>
+        item.method === "POST" &&
+        item.url.includes("/api/v1/recommendation/cache/download"),
+    ),
+  ).toBeFalsy();
+});
+
+/**
+ * 用例描述:
  * - 用例目的: 看护当前“未缓存 + 第三方关闭”下的失败回退行为，防止阅读页卡死或无提示。
  * - 测试步骤:
  *   1. 新增一个未缓存的预览漫画。
@@ -267,7 +313,7 @@ test("preview reader single-page mode keeps centered snap paging", async ({
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910004";
+  const recommendationId = "CA910004";
 
   await setReaderDefaultConfig(page, {
     defaultPageMode: "left_right",
@@ -358,7 +404,7 @@ test("preview reader progressively renders cached pages before download call fin
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910005";
+  const recommendationId = "CA910005";
 
   await addRecommendation(request, recommendationId, "Reader Gate Progressive Cache", 5, {
     currentPage: 2,
@@ -473,7 +519,7 @@ test("recommendation detail continue reading opens reader at saved progress", as
   request,
 }) => {
   const runtimeDataDir = await getRuntimeDataDir(request);
-  const recommendationId = "JM910003";
+  const recommendationId = "CA910003";
 
   await addRecommendation(request, recommendationId, "Reader Gate Detail Continue", 3, {
     currentPage: 2,

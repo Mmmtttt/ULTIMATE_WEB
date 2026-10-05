@@ -33,7 +33,7 @@ def test_move_data_dir_merges_into_existing_data_dir():
     target_dir = case_dir / "target"
 
     _write_text(source_dir / "meta_data" / "comics_database.json", '{"comics": []}')
-    _write_text(source_dir / "comic" / "JM" / "1001" / "001.jpg", "page")
+    _write_text(source_dir / "comic" / "CA" / "1001" / "001.jpg", "page")
     _write_text(target_dir / "meta_data" / "existing.json", "{}")
 
     result = config_api._move_data_dir(str(source_dir), str(target_dir))
@@ -42,7 +42,7 @@ def test_move_data_dir_merges_into_existing_data_dir():
     assert result["mode"] == "move"
     assert not source_dir.exists()
     assert (target_dir / "meta_data" / "comics_database.json").exists()
-    assert (target_dir / "comic" / "JM" / "1001" / "001.jpg").exists()
+    assert (target_dir / "comic" / "CA" / "1001" / "001.jpg").exists()
 
 
 def test_move_data_dir_moves_active_runtime_and_skips_logs(monkeypatch):

@@ -11,7 +11,9 @@ services:
     container_name: ultimate-web
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      # 默认只发布到宿主机本机，避免局域网设备绕过前端直连后端。
+      # 如需局域网访问，请改为 "5000:5000" 并同时开启后端鉴权。
+      - "127.0.0.1:5000:5000"
     environment:
       SERVER_CONFIG_PATH: /app/server_config.json
       THIRD_PARTY_CONFIG_PATH: /app/comic_backend/third_party_config.json
@@ -24,6 +26,7 @@ services:
       - ./server_config.json:/app/server_config.json:rw
       - ./comic_backend/third_party_config.json:/app/comic_backend/third_party_config.json:rw
       - ./data:/app/comic_backend/data
+      - ./plugins:/app/plugins
       # 在 NAS 上挂载媒体目录后，服务端路径导入要填写容器内路径，例如:
       # - /volume1/library/comics:/library/comics:rw
       # - /volume1/library/videos:/library/videos:rw

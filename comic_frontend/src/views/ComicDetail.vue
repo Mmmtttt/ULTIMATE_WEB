@@ -16,10 +16,10 @@
             :title="isFavorited ? '取消收藏' : '收藏'"
           />
           <van-icon
-            name="delete-o"
+            name="ellipsis"
             class="nav-icon"
-            @click="handleMoveToTrash"
-            title="移入回收站"
+            @click="showActionSheet = true"
+            title="更多操作"
           />
         </template>
       </template>
@@ -99,6 +99,7 @@
               <span class="storage-path-label">Path:</span>
               <span class="storage-path-value">{{ comicStoragePath }}</span>
             </div>
+
           </div>
         </div>
 
@@ -140,7 +141,7 @@
             size="medium" 
             type="primary"
             class="tag tag-add"
-            @click="showAddTag = true"
+            @click="openAddTagPopup"
           >
             <van-icon name="plus" size="12" />
           </van-tag>
@@ -264,6 +265,23 @@
         <van-button v-else type="primary" size="large" @click="startReading" class="read-button">
           {{ comic.current_page > 1 ? '继续阅读' : '开始阅读' }}
         </van-button>
+        <div v-if="!isThirdPartyMode" class="detail-action-strip">
+          <van-button
+            size="small"
+            type="warning"
+            :icon="isFavorited ? 'star' : 'star-o'"
+            :loading="favoriteLoading"
+            @click="handleToggleFavorite"
+          >
+            {{ isFavorited ? '已收藏' : '收藏' }}
+          </van-button>
+          <van-button size="small" type="primary" icon="records-o" @click="openListManager">
+            加入清单
+          </van-button>
+          <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
+            删除
+          </van-button>
+        </div>
       </div>
     </div>
     
@@ -385,7 +403,28 @@
       <div class="edit-popup">
         <van-nav-bar title="添加标签" left-text="取消" @click-left="showAddTag = false" />
         <div class="tag-add-content">
-          <van-field v-model="newTagName" placeholder="输入标签名称" clearable @keyup.enter="handleAddTag" />
+          <van-search
+            v-model="newTagName"
+            shape="round"
+            placeholder="搜索已有标签，或输入新标签"
+            clearable
+            @search="handleAddTag"
+          />
+          <div v-if="filteredAddTagOptions.length > 0" class="tag-option-list">
+            <button
+              v-for="tag in filteredAddTagOptions"
+              :key="tag.id"
+              type="button"
+              class="tag-option"
+              @click="bindExistingTag(tag)"
+            >
+              <span class="tag-option-name">{{ tag.name }}</span>
+              <span class="tag-option-count">{{ tag.comic_count || 0 }} 项</span>
+            </button>
+          </div>
+          <div v-else class="tag-option-empty">
+            {{ newTagName.trim() ? '没有匹配的已有标签，可直接新建。' : '输入关键词后会实时显示可选标签。' }}
+          </div>
           <van-button type="primary" block :loading="tagAdding" @click="handleAddTag" style="margin-top:12px">
             添加
           </van-button>
@@ -400,7 +439,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useComicStore, useTagStore, useListStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { authorApi, comicApi } from '@/api'
+import { authorApi, comicApi, historyApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
@@ -433,9 +472,14 @@ const downloadLoading = ref(false)
 const subscribing = ref(false)
 const isSubscribed = ref(false)
 const refreshingLocalMetadata = ref(false)
+const repairCoverLoading = ref(false)
 
 const isThirdPartyMode = computed(() => {
   return Boolean(route.query.platform)
+})
+const isLocalImportedComic = computed(() => {
+  const id = String(comic.value?.id || '').trim().toUpperCase()
+  return !isThirdPartyMode.value && id.startsWith('LOCAL') && comic.value?.source !== 'preview'
 })
 const importing = ref(false)
 const thirdPartyError = ref('')
@@ -449,14 +493,21 @@ const editForm = ref({
 const actions = computed(() => {
   const menuActions = [
     { name: '下载漫画', value: 'download' },
-    { name: '检查更新并下载', value: 'check_update' },
-    { name: '绑定标签', value: 'tags' }
+    { name: '检查更新', value: 'check_update' },
+    { name: '修复封面', value: 'repair_cover', loading: repairCoverLoading.value }
   ]
+  if (isLocalImportedComic.value) {
+    menuActions.push({
+      name: '补全信息',
+      value: 'refresh_local_metadata',
+      loading: refreshingLocalMetadata.value
+    })
+  }
   menuActions.push({ name: '移入回收站', value: 'trash', color: '#ee0a24' })
   return menuActions
 })
 const coverUrl = computed(() => {
-  return comic.value ? buildCoverUrl(comic.value.cover_path) : ''
+  return comic.value ? buildCoverUrl(comic.value.cover_url || comic.value.cover_path) : ''
 })
 
 const progressPercent = computed(() => {
@@ -530,6 +581,34 @@ const isFavorited = computed(() => {
 })
 
 const customLists = computed(() => listStore.lists || [])
+const currentTagIdSet = computed(() => {
+  const ids = [
+    ...(comic.value?.tag_ids || []),
+    ...((comic.value?.tags || []).map(tag => tag?.id))
+  ]
+  return new Set(ids.filter(Boolean).map(id => String(id)))
+})
+
+const filteredAddTagOptions = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  return allTags.value
+    .filter(tag => tag?.id && !currentTagIdSet.value.has(String(tag.id)))
+    .filter(tag => {
+      if (!keyword) return true
+      return String(tag.name || '').toLowerCase().includes(keyword)
+    })
+    .slice(0, 32)
+})
+
+const exactExistingAddTag = computed(() => {
+  const keyword = newTagName.value.trim().toLowerCase()
+  if (!keyword) return null
+  return allTags.value.find(tag => {
+    return tag?.id &&
+      !currentTagIdSet.value.has(String(tag.id)) &&
+      String(tag.name || '').trim().toLowerCase() === keyword
+  }) || null
+})
 
 const isRead = computed(() => {
   if (!comic.value) return false
@@ -596,6 +675,7 @@ async function fetchComicDetail() {
     const detail = await comicStore.fetchComicDetail(comicId)
     if (detail) {
       comic.value = detail
+      recordReadingHistory(detail)
       scoreValue.value = detail.score || 6
       selectedTagIds.value = detail.tag_ids || []
       editForm.value = {
@@ -610,6 +690,18 @@ async function fetchComicDetail() {
   } finally {
     isLoading.value = false
   }
+}
+
+function recordReadingHistory(detail) {
+  const contentId = detail?.id || route.params.id
+  if (!contentId || isThirdPartyMode.value) return
+  historyApi.recordVisit({
+    contentType: 'comic',
+    contentId,
+    source: 'local'
+  }).catch((error) => {
+    console.warn('写入漫画阅读记录失败:', error)
+  })
 }
 
 async function fetchThirdPartyDetail(comicId) {
@@ -799,11 +891,59 @@ function onActionSelect(action) {
     handleDownload()
   } else if (action.value === 'check_update') {
     handleCheckAndDownloadUpdate()
+  } else if (action.value === 'repair_cover') {
+    handleRepairCover()
+  } else if (action.value === 'refresh_local_metadata') {
+    refreshLocalMetadata()
   } else if (action.value === 'tags') {
     showTagPopup.value = true
   } else if (action.value === 'trash') {
     handleMoveToTrash()
   }
+}
+
+function openListManager() {
+  selectedListIds.value = [...(comic.value?.list_ids || [])]
+  showListPopup.value = true
+}
+
+async function handleRepairCover() {
+  if (!comic.value?.id || repairCoverLoading.value) return
+
+  try {
+    await showConfirmDialog({
+      title: '修复封面',
+      message: '将只修复当前漫画的封面，可能会联网重新下载封面或从本地第一页生成封面，是否继续？'
+    })
+  } catch (error) {
+    if (error === 'cancel') return
+    showFailToast(error?.message || '修复封面失败')
+    return
+  }
+
+  repairCoverLoading.value = true
+  try {
+    const response = await comicStore.repairCover(comic.value.id)
+    if (response.code !== 200) {
+      showFailToast(response.msg || '修复封面失败')
+      return
+    }
+    await fetchComicDetail()
+    showSuccessToast(response.msg || '封面修复完成')
+  } catch (error) {
+    console.error('修复封面失败:', error)
+    showFailToast(error?.message || '修复封面失败')
+  } finally {
+    repairCoverLoading.value = false
+  }
+}
+
+async function openAddTagPopup() {
+  newTagName.value = ''
+  if (allTags.value.length === 0) {
+    await fetchAllTags()
+  }
+  showAddTag.value = true
 }
 
 async function refreshLocalMetadata() {
@@ -1054,18 +1194,45 @@ async function markAsRead() {
 async function handleAddTag() {
   const name = newTagName.value.trim()
   if (!name) { showFailToast('请输入标签名称'); return }
+  if ((comic.value?.tags || []).some(tag => String(tag.name || '').trim().toLowerCase() === name.toLowerCase())) {
+    showFailToast('标签已存在')
+    return
+  }
+  const existing = exactExistingAddTag.value
+  if (existing) {
+    await bindExistingTag(existing)
+    return
+  }
   tagAdding.value = true
   try {
     const res = await tagApi.add(name, 'comic')
-    if (res.code === 200 && res.data?.tag_id) {
-      await tagApi.batchAddTags([{ id: comic.value.id, source: comic.value.source || 'local' }], [res.data.tag_id])
+    const tagId = res.data?.tag_id || res.data?.id
+    if (res.code === 200 && tagId) {
+      await tagApi.batchAddTags([{ id: comic.value.id, source: comic.value.source || 'local' }], [tagId])
       await fetchComicDetail()
+      await fetchAllTags()
       newTagName.value = ''
       showAddTag.value = false
       showSuccessToast('标签已添加')
     } else {
       showFailToast('添加失败')
     }
+  } catch (e) {
+    showFailToast('添加失败')
+  } finally {
+    tagAdding.value = false
+  }
+}
+
+async function bindExistingTag(tag) {
+  if (!tag?.id || currentTagIdSet.value.has(String(tag.id))) return
+  tagAdding.value = true
+  try {
+    await tagApi.batchAddTags([{ id: comic.value.id, source: comic.value.source || 'local' }], [tag.id])
+    await fetchComicDetail()
+    newTagName.value = ''
+    showAddTag.value = false
+    showSuccessToast('标签已添加')
   } catch (e) {
     showFailToast('添加失败')
   } finally {
@@ -1162,6 +1329,59 @@ watch(showListPopup, async (val) => {
   padding: 16px;
 }
 
+.tag-add-content :deep(.van-search) {
+  padding: 0;
+  background: transparent;
+}
+
+.tag-add-content :deep(.van-search__content) {
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+}
+
+.tag-option-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.tag-option {
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tag-option-name {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-option-count,
+.tag-option-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.tag-option-empty {
+  padding: 16px 2px 4px;
+  text-align: center;
+}
+
 .detail-content {
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
@@ -1236,6 +1456,7 @@ watch(showListPopup, async (val) => {
   font-weight: 600;
   margin: 0 0 8px 0;
   line-height: 1.3;
+  padding-right: 34px;
 }
 
 .author {
@@ -1299,6 +1520,21 @@ watch(showListPopup, async (val) => {
   min-width: 0;
   word-break: break-all;
   opacity: 0.9;
+}
+
+.detail-action-strip {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px auto 0;
+}
+
+.detail-action-strip :deep(.van-button) {
+  min-width: 112px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 10px 20px rgba(17, 27, 45, 0.12);
 }
 
 .score-section {
@@ -1740,6 +1976,19 @@ watch(showListPopup, async (val) => {
 
   .score-rate {
     --van-rate-icon-size: 17px;
+  }
+
+  .detail-action-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+
+  .detail-action-strip :deep(.van-button) {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 6px;
   }
 
   .action-buttons {

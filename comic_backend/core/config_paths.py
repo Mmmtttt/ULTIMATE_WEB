@@ -25,7 +25,7 @@ DEFAULT_SERVER_CONFIG = {
     "auth": {
         "enabled": False,
         "password": "",
-        "private_data_dir": "./../UltimateData_private",
+        "private_data_dir": "UltimateData_private",
         "private_port": 5000,
         "normal_port": 5001,
         "secret_key": "ultimate-web-default-secret-key-change-me",

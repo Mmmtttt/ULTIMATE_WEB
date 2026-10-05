@@ -11,6 +11,7 @@ import requests
 
 from tests.shared.test_constants import INTEGRATION_BACKEND_PORT, INTEGRATION_PROFILE, REPO_ROOT
 from tests.tools.prepare_test_env import prepare_profile
+from tests.features.third_party_integration.integration.conftest import _write_fake_protocol_plugins
 
 
 def _wait_for_backend(base_url: str, timeout_seconds: int = 60) -> None:
@@ -29,6 +30,8 @@ def _wait_for_backend(base_url: str, timeout_seconds: int = 60) -> None:
 @pytest.fixture(scope="session")
 def integration_runtime() -> dict:
     prepared = prepare_profile(INTEGRATION_PROFILE, clean=True)
+    fake_plugin_root = Path(prepared["runtime_root"]) / "fake_protocol_plugins"
+    _write_fake_protocol_plugins(fake_plugin_root)
 
     env = os.environ.copy()
     fake_deps_dir = Path(REPO_ROOT) / "tests" / "shared" / "fake_deps"
@@ -46,6 +49,8 @@ def integration_runtime() -> dict:
             "BACKEND_PORT": str(INTEGRATION_BACKEND_PORT),
             "BACKEND_DEBUG": "0",
             "BACKEND_ENABLE_THIRD_PARTY": "0",
+            "ULTIMATE_PLUGIN_ROOTS": str(fake_plugin_root),
+            "ULTIMATE_PLUGIN_ROOTS_ONLY": "1",
             "BACKEND_SSL_ENABLED": "0",
             "PYTHONUNBUFFERED": "1",
         }

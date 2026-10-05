@@ -90,53 +90,57 @@ class TagJsonRepository(TagRepository):
     
     def save(self, tag: Tag) -> bool:
         try:
-            data = self._read_with_normalized_tags()
-            tags = data.get("tags", [])
-            
-            index = next((i for i, t in enumerate(tags) if t["id"] == tag.id), -1)
-            
-            if index >= 0:
-                tags[index] = tag.to_dict()
-            else:
-                tags.append(tag.to_dict())
-            
-            data["tags"] = tags
-            data["last_updated"] = get_current_time()
-            
-            return self._storage.write(data)
+            def update_data(data):
+                data, _changed = self._normalize_tags_schema(data)
+                tags = data.get("tags", [])
+
+                index = next((i for i, t in enumerate(tags) if t["id"] == tag.id), -1)
+
+                if index >= 0:
+                    tags[index] = tag.to_dict()
+                else:
+                    tags.append(tag.to_dict())
+
+                data["tags"] = tags
+                data["last_updated"] = get_current_time()
+                return data
+
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[tag.id])
         except Exception as e:
             error_logger.error(f"保存标签失败: {e}")
             return False
     
     def delete(self, tag_id: str) -> bool:
         try:
-            data = self._read_with_normalized_tags()
-            tags = data.get("tags", [])
-            comics = data.get("comics", [])
-            videos = data.get("videos", [])
-            recommendations = data.get("recommendations", [])
-            
-            tags = [t for t in tags if t["id"] != tag_id]
-            
-            for comic in comics:
-                if tag_id in comic.get("tag_ids", []):
-                    comic["tag_ids"] = [t for t in comic.get("tag_ids", []) if t != tag_id]
-            
-            for video in videos:
-                if tag_id in video.get("tag_ids", []):
-                    video["tag_ids"] = [t for t in video.get("tag_ids", []) if t != tag_id]
-            
-            for rec in recommendations:
-                if tag_id in rec.get("tag_ids", []):
-                    rec["tag_ids"] = [t for t in rec.get("tag_ids", []) if t != tag_id]
-            
-            data["tags"] = tags
-            data["comics"] = comics
-            data["videos"] = videos
-            data["recommendations"] = recommendations
-            data["last_updated"] = get_current_time()
-            
-            return self._storage.write(data)
+            def update_data(data):
+                data, _changed = self._normalize_tags_schema(data)
+                tags = data.get("tags", [])
+                comics = data.get("comics", [])
+                videos = data.get("videos", [])
+                recommendations = data.get("recommendations", [])
+
+                tags = [t for t in tags if t["id"] != tag_id]
+
+                for comic in comics:
+                    if tag_id in comic.get("tag_ids", []):
+                        comic["tag_ids"] = [t for t in comic.get("tag_ids", []) if t != tag_id]
+
+                for video in videos:
+                    if tag_id in video.get("tag_ids", []):
+                        video["tag_ids"] = [t for t in video.get("tag_ids", []) if t != tag_id]
+
+                for rec in recommendations:
+                    if tag_id in rec.get("tag_ids", []):
+                        rec["tag_ids"] = [t for t in rec.get("tag_ids", []) if t != tag_id]
+
+                data["tags"] = tags
+                data["comics"] = comics
+                data["videos"] = videos
+                data["recommendations"] = recommendations
+                data["last_updated"] = get_current_time()
+                return data
+
+            return self._storage.atomic_update(update_data, catalog_index_changed_ids=[tag_id])
         except Exception as e:
             error_logger.error(f"删除标签失败: {e}")
             return False

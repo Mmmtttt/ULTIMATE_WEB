@@ -40,6 +40,7 @@ export const useComicStore = defineStore('comic', () => {
   
   // 是否正在筛选
   const isFiltering = ref(false)
+  let listFetchSeq = 0
   
   // ============ Getters ============
   
@@ -113,6 +114,7 @@ export const useComicStore = defineStore('comic', () => {
       }
     }
     
+    const requestSeq = ++listFetchSeq
     loading.value = true
     error.value = null
     
@@ -128,6 +130,9 @@ export const useComicStore = defineStore('comic', () => {
         params.sort_order = sortOrderToUse
       }
       const response = await comicApi.getList(params)
+      if (requestSeq !== listFetchSeq) {
+        return comics.value
+      }
       console.log('[Comic] API响应:', response)
       const payload = response.data
       if (payload && typeof payload === 'object' && Array.isArray(payload.items)) {
@@ -136,7 +141,11 @@ export const useComicStore = defineStore('comic', () => {
         currentPageState.value = Number(payload.page) || 1
         pageSizeState.value = Number(payload.page_size) || comics.value.length || 0
         totalPagesState.value = Number(payload.total_pages) || 1
-        availableAuthors.value = Array.isArray(payload.available_authors) ? payload.available_authors : extractAuthors(comics.value)
+        if (Array.isArray(payload.available_authors)) {
+          availableAuthors.value = payload.available_authors
+        } else if (availableAuthors.value.length === 0) {
+          availableAuthors.value = extractAuthors(comics.value)
+        }
       } else {
         comics.value = Array.isArray(payload) ? payload : []
         totalCountState.value = comics.value.length
@@ -154,11 +163,15 @@ export const useComicStore = defineStore('comic', () => {
       
       return comics.value
     } catch (err) {
-      error.value = err.message
+      if (requestSeq === listFetchSeq) {
+        error.value = err.message
+      }
       console.error('[Comic] 获取漫画列表失败:', err)
       return []
     } finally {
-      loading.value = false
+      if (requestSeq === listFetchSeq) {
+        loading.value = false
+      }
     }
   }
   
@@ -366,20 +379,19 @@ export const useComicStore = defineStore('comic', () => {
       isFiltering.value = false
       return comics.value
     }
-    
-    loading.value = true
-    
+
     try {
       console.log('[Comic] 搜索漫画:', keyword)
-      const response = await comicApi.search(keyword.trim())
-      filteredComics.value = response.data || []
-      isFiltering.value = true
-      return filteredComics.value
+      return await fetchComics(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        keyword: keyword.trim()
+      })
     } catch (err) {
       console.error('[Comic] 搜索漫画失败:', err)
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -395,19 +407,19 @@ export const useComicStore = defineStore('comic', () => {
       return comics.value
     }
     
-    loading.value = true
-    
     try {
       console.log('[Comic] 按标签筛选:', { includeTags, excludeTags })
-      const response = await comicApi.filter(includeTags, excludeTags)
-      filteredComics.value = response.data || []
-      isFiltering.value = true
-      return filteredComics.value
+      return await fetchComics(true, {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120,
+        include_tag_ids: [...includeTags],
+        exclude_tag_ids: [...excludeTags]
+      })
     } catch (err) {
       console.error('[Comic] 筛选漫画失败:', err)
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -432,32 +444,41 @@ export const useComicStore = defineStore('comic', () => {
       return comics.value
     }
     
-    loading.value = true
-    
     try {
       console.log('[Comic] 综合筛选:', { includeTags, excludeTags, authors, listIds, minScore: scoreThreshold, unreadOnly: hasUnreadFilter })
-      let result = []
-
-      if (hasMultiFilter) {
-        const response = await comicApi.filter(includeTags, excludeTags, authors, listIds)
-        result = response.data || []
-      } else {
-        result = comics.value
+      const params = {
+        paginate: 1,
+        summary: 1,
+        page: 1,
+        page_size: 120
+      }
+      if (includeTags.length > 0) {
+        params.include_tag_ids = [...includeTags]
+      }
+      if (excludeTags.length > 0) {
+        params.exclude_tag_ids = [...excludeTags]
+      }
+      if (authors.length > 0) {
+        params.authors = [...authors]
+      }
+      if (listIds.length > 0) {
+        params.list_ids = [...listIds]
+      }
+      if (scoreThreshold > 0) {
+        params.min_score = scoreThreshold
+      }
+      if (hasUnreadFilter) {
+        params.unread_only = 1
+      }
+      if (sortType) {
+        params.sort_type = sortType
+        params.sort_order = sortOrder
       }
 
-      result = filterItemsByMinScore(result, scoreThreshold)
-      filteredComics.value = sortContentItems(
-        filterItemsByUnread(result, hasUnreadFilter),
-        sortType,
-        sortOrder
-      )
-      isFiltering.value = true
-      return filteredComics.value
+      return await fetchComics(true, params)
     } catch (err) {
       console.error('[Comic] 综合筛选漫画失败:', err)
       return []
-    } finally {
-      loading.value = false
     }
   }
   
@@ -510,6 +531,9 @@ export const useComicStore = defineStore('comic', () => {
       ...options,
       summary: 1
     })
+    if (response.data && typeof response.data === 'object' && Array.isArray(response.data.items)) {
+      return response.data.items
+    }
     return Array.isArray(response.data) ? response.data : []
   }
 
@@ -527,6 +551,15 @@ export const useComicStore = defineStore('comic', () => {
       console.error('[Comic] 更新本地详情失败:', err)
       throw err
     }
+  }
+
+  async function repairCover(id, source = 'local') {
+    const response = await comicApi.repairCover(id, source)
+    if (response.code === 200) {
+      cacheStore.clearCache('detail', id)
+      cacheStore.clearCache('list')
+    }
+    return response
   }
 
   async function download(id, title = '') {
@@ -689,6 +722,7 @@ export const useComicStore = defineStore('comic', () => {
     editComic,
     refreshLocalMetadata,
     download,
+    repairCover,
     checkUpdate,
     downloadUpdate,
     moveToTrash,

@@ -1,5 +1,5 @@
 <template>
-  <div class="preview-page">
+  <div class="preview-page" :class="{ 'is-manage-mode': isManageMode }">
     <!-- Filter & Sort Bar -->
     <div class="toolbar">
       <van-search
@@ -86,6 +86,7 @@
         :selectable="isManageMode"
         :selected-ids="selectedIds"
         :show-progress="!isVideoMode"
+        virtual
         @click="onItemClick"
         @toggle-favorite="toggleSave"
         @select="toggleSelection"
@@ -106,11 +107,11 @@
       <div v-if="isManageMode" class="manage-bar">
         <div class="selection-info">已选 {{ selectedIds.length }} 项</div>
         <div class="manage-btns">
-          <van-button size="small" @click="isManageMode = false">取消</van-button>
+          <van-button size="small" @click="exitManageMode">取消</van-button>
           <van-button size="small" plain @click="toggleSelectAllItems">
-            {{ isAllItemsSelected ? '取消全选' : '全选' }}
+            {{ isAllItemsSelected ? '取消全选' : '全选全部' }}
           </van-button>
-          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="showBatchListPopup = true">
+          <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="openBatchListPopup">
             加入清单
           </van-button>
           <van-button size="small" type="primary" :disabled="selectedIds.length === 0" @click="batchImportToLocal">
@@ -277,6 +278,7 @@ const showBatchListPopup = ref(false)
 const showCustomOrderEditor = ref(false)
 const isManageMode = ref(false)
 const selectedIds = ref([])
+const selectedItemMap = ref({})
 const batchSelectedListIds = ref([])
 const showFilterPanel = ref(false)
 const searchKeyword = ref('')
@@ -421,13 +423,15 @@ function sanitizeFilterStateForCurrentMode() {
   tempExcludeTags.value = tempExcludeTags.value.filter((tagId) => availableTagIds.has(tagId))
 }
 
-function buildListQueryParams() {
+function buildListQueryParams(options = {}) {
   const params = {
     paginate: 1,
     summary: 1,
-    include_available_authors: 1,
     page: currentPage.value,
     page_size: pageSize.value,
+  }
+  if (options.includeAvailableAuthors) {
+    params.include_available_authors = 1
   }
 
   if (currentSortField.value) {
@@ -516,7 +520,13 @@ const totalItems = computed(() => {
   const total = isVideoMode.value ? videoRecStore.queryTotalCount : comicRecStore.queryTotalCount
   return Number(total) || 0
 })
-const pagedItems = computed(() => items.value)
+const pagedItems = computed(() => {
+  if (items.value.length > pageSize.value && totalItems.value === items.value.length) {
+    const start = (currentPage.value - 1) * pageSize.value
+    return items.value.slice(start, start + pageSize.value)
+  }
+  return items.value
+})
 
 const isLoading = computed(() => currentStore.value.loading)
 
@@ -541,10 +551,13 @@ const availableAuthors = computed(() => {
 })
 
 const availableLists = computed(() => {
-  return listStore.lists.map(list => ({
-    ...list,
-    item_count: list.item_ids?.length || 0
-  }))
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  return listStore.lists
+    .filter(list => list.content_type === contentType)
+    .map(list => ({
+      ...list,
+      item_count: list.item_ids?.length || 0
+    }))
 })
 
 const activeFilters = computed(() => {
@@ -619,8 +632,10 @@ const menuActions = [
 const sortOptions = computed(() => buildSortOptions(isVideoMode.value))
 
 const isAllItemsSelected = computed(() => {
-  const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
-  return isAllSelected(selectedIds.value, scopeItems, (item) => item.id)
+  if (selectionScopeItems.value.length === 0) {
+    return false
+  }
+  return isAllSelected(selectedIds.value, selectionScopeItems.value, (item) => item.id)
 })
 
 // Methods
@@ -652,8 +667,12 @@ function toggleSelection(item) {
   const id = item.id
   if (selectedIds.value.includes(id)) {
     selectedIds.value = selectedIds.value.filter(i => i !== id)
+    const nextMap = { ...selectedItemMap.value }
+    delete nextMap[id]
+    selectedItemMap.value = nextMap
   } else {
     selectedIds.value.push(id)
+    selectedItemMap.value = { ...selectedItemMap.value, [id]: item }
   }
 }
 
@@ -665,10 +684,46 @@ async function toggleSelectAllItems() {
     }
     const scopeItems = selectionScopeItems.value.length > 0 ? selectionScopeItems.value : displayItems.value
     toggleSelectAll(selectedIds, scopeItems, (item) => item.id)
+    rememberSelectedItems(scopeItems)
   } catch (error) {
     console.error('加载全选范围失败:', error)
     showToast('加载列表失败，请稍后重试')
   }
+}
+
+function rememberSelectedItems(items = []) {
+  const selectedIdSet = new Set(selectedIds.value)
+  const nextMap = { ...selectedItemMap.value }
+  for (const item of Array.isArray(items) ? items : []) {
+    const id = String(item?.id || '').trim()
+    if (id && selectedIdSet.has(id)) {
+      nextMap[id] = item
+    }
+  }
+  selectedItemMap.value = nextMap
+}
+
+function clearSelection() {
+  selectedIds.value = []
+  selectedItemMap.value = {}
+  selectionScopeItems.value = []
+}
+
+function exitManageMode() {
+  clearSelection()
+  isManageMode.value = false
+}
+
+async function openBatchListPopup() {
+  if (selectedIds.value.length === 0) {
+    return
+  }
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  await listStore.fetchLists(contentType)
+  batchSelectedListIds.value = batchSelectedListIds.value.filter((listId) =>
+    availableLists.value.some((list) => list.id === listId)
+  )
+  showBatchListPopup.value = true
 }
 
 function setViewMode(mode) {
@@ -717,7 +772,7 @@ async function batchImportToLocal() {
   importTaskStore.startPolling()
   showToast('任务已创建，请到“我的-任务中心”查看进度')
 
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
 }
 
@@ -739,7 +794,7 @@ async function batchTrash() {
   }
   
   showToast('已移入回收站')
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
   await loadData(true)
 }
@@ -777,8 +832,7 @@ async function batchAddToLists() {
 
     showBatchListPopup.value = false
     batchSelectedListIds.value = []
-    selectedIds.value = []
-    selectionScopeItems.value = []
+    clearSelection()
     isManageMode.value = false
     const contentType = isVideoMode.value ? 'video' : 'comic'
     await listStore.fetchLists(contentType)
@@ -796,10 +850,10 @@ async function clearAllFilters() {
   tempSelectedListIds.value = []
   tempMinScore.value = 0
   tempUnreadOnly.value = false
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   await loadData()
-  selectionScopeItems.value = []
   await persistViewState()
 }
 
@@ -808,6 +862,7 @@ function clearSearchKeyword() {
 }
 
 async function removeFilter(filter) {
+  clearSelection()
   if (filter.type === 'includeTag') {
     tempIncludeTags.value = tempIncludeTags.value.filter(id => id !== filter.value)
   } else if (filter.type === 'excludeTag') {
@@ -830,6 +885,7 @@ async function onSortConfirm({ selectedOptions }) {
   currentSortField.value = isSortFieldSupported(nextSort.sortField) ? nextSort.sortField : ''
   currentSortOrder.value = nextSort.sortOrder
   currentStore.value.setSortType(currentSortField.value || null, currentSortOrder.value)
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   const customSortSelected = currentSortField.value === 'custom'
@@ -890,8 +946,10 @@ async function applyFilterAndClose() {
 }
 
 async function loadSupportData(force = false) {
-  if (force || listStore.lists.length === 0) {
-    await listStore.fetchLists()
+  const contentType = isVideoMode.value ? 'video' : 'comic'
+  const hasCurrentTypeLists = listStore.lists.some((list) => list.content_type === contentType)
+  if (force || !hasCurrentTypeLists) {
+    await listStore.fetchLists(contentType)
   }
   if (isVideoMode.value) {
     if (force || tagStore.videoTags.length === 0) {
@@ -902,16 +960,26 @@ async function loadSupportData(force = false) {
   }
 }
 
-async function loadData(force = false) {
+async function loadData(force = false, options = {}) {
   await loadSupportData(force)
-  await currentStore.value.fetchRecommendations(force, buildListQueryParams())
+  await currentStore.value.fetchRecommendations(
+    force,
+    buildListQueryParams({
+      includeAvailableAuthors: options.includeAvailableAuthors === true || shouldRequestAvailableAuthors(),
+    })
+  )
   ensureWithinRange(isVideoMode.value ? videoRecStore.queryTotalPages : comicRecStore.queryTotalPages)
+}
+
+function shouldRequestAvailableAuthors() {
+  return (isVideoMode.value ? videoRecStore.availableAuthors : comicRecStore.availableAuthors).length === 0
 }
 
 async function applyCurrentFilters(options = {}) {
   const shouldResetPage = options.resetPage !== false
   const shouldPersistState = options.persist !== false
   if (shouldResetPage) {
+    clearSelection()
     skipNextPageFetch.value = currentPage.value !== 1
     goFirst()
   }
@@ -932,7 +1000,7 @@ async function initializePage(force = false) {
     tempIncludeTags.value = [route.query.tagId]
   }
 
-  await loadData(force)
+  await loadData(force, { includeAvailableAuthors: true })
   sanitizeFilterStateForCurrentMode()
   if (currentVersion !== initVersion.value) {
     return
@@ -942,7 +1010,7 @@ async function initializePage(force = false) {
 
 // Lifecycle
 watch(() => modeStore.currentMode, async () => {
-  selectedIds.value = []
+  clearSelection()
   isManageMode.value = false
   await initializePage(false)
 })
@@ -964,8 +1032,7 @@ watch(() => route.query.tagId, async (newTagId) => {
 watch(
   () => pagedItems.value.map((item) => item.id),
   () => {
-    selectedIds.value = []
-    selectionScopeItems.value = []
+    rememberSelectedItems(pagedItems.value)
   }
 )
 
@@ -991,6 +1058,7 @@ watch(searchKeyword, () => {
   if (suppressSearchStateWatch.value) {
     return
   }
+  clearSelection()
   skipNextPageFetch.value = currentPage.value !== 1
   goFirst()
   debouncedSearchRefresh()
@@ -1005,6 +1073,18 @@ onMounted(async () => {
 .preview-page {
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  --manage-bar-reserved-space: 0px;
+  padding-bottom: var(--manage-bar-reserved-space);
+  transition: padding-bottom 180ms var(--ease-standard);
+}
+
+.preview-page.is-manage-mode {
+  --manage-bar-reserved-space: 112px;
+}
+
+.preview-page.is-manage-mode .content-pagination {
+  margin-bottom: 92px;
 }
 
 .active-filters {
@@ -1053,7 +1133,7 @@ onMounted(async () => {
   padding: 0;
   background: transparent;
   --van-search-background: transparent;
-  --van-search-content-background: transparent;
+  --van-search-content-background: var(--surface-1);
   --van-field-input-text-color: var(--text-primary);
 }
 
@@ -1061,7 +1141,7 @@ onMounted(async () => {
   height: 40px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
-  background: transparent;
+  background: var(--surface-1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
@@ -1116,9 +1196,7 @@ onMounted(async () => {
 }
 
 .content-pagination {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  margin-top: auto;
   padding: 8px 8px 12px;
   background: var(--surface-1);
 }
@@ -1214,6 +1292,21 @@ onMounted(async () => {
   .manage-bar {
     bottom: 58px;
     padding: 10px 12px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manage-btns :deep(.van-button) {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 74px;
+  }
+
+  .preview-page.is-manage-mode {
+    --manage-bar-reserved-space: 156px;
+  }
+
+  .preview-page.is-manage-mode .content-pagination {
+    margin-bottom: 136px;
   }
 }
 

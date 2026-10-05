@@ -21,3 +21,11 @@ export function logout() {
     method: 'post'
   })
 }
+
+export function updateProjectPassword(password) {
+  return request({
+    url: '/v1/auth/password',
+    method: 'put',
+    data: { password }
+  })
+}

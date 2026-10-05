@@ -39,7 +39,9 @@ export const useRuntimeStore = defineStore('runtime', () => {
       return runtime.value
     } catch (_error) {
       runtime.value = defaultRuntimePayload()
-      loaded.value = true
+      // Android may render before the embedded backend is ready. Do not cache
+      // that transient failure as a permanent "third-party disabled" state.
+      loaded.value = false
       return runtime.value
     } finally {
       loading.value = false

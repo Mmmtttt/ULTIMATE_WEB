@@ -10,6 +10,7 @@ from infrastructure.persistence.repositories import ListJsonRepository, ComicJso
 from infrastructure.persistence.repositories.video_repository_impl import VideoJsonRepository
 from infrastructure.persistence.repositories.recommendation_repository_impl import RecommendationJsonRepository
 from infrastructure.persistence.repositories.video_recommendation_repository_impl import VideoRecommendationJsonRepository
+from infrastructure.persistence.json_storage import JsonStorage
 from infrastructure.common.result import ServiceResult
 from infrastructure.logger import app_logger, error_logger
 from core.utils import get_current_time, generate_id, generate_uuid, normalize_total_page
@@ -18,6 +19,7 @@ from core.runtime_profile import is_third_party_enabled, get_runtime_profile
 from core.constants import RECOMMENDATION_JSON_FILE, VIDEO_RECOMMENDATION_JSON_FILE
 from protocol.gateway import get_protocol_gateway
 from protocol.presentation import annotate_items
+from infrastructure.persistence.catalog_index import CatalogIndex
 
 
 class ListAppService:
@@ -52,6 +54,78 @@ class ListAppService:
             "video_recommendations",
             "total_video_recommendations",
         )
+
+    @staticmethod
+    def _batch_update_repo(repo, entity_ids: ListType[str], mutator: Callable) -> int:
+        if hasattr(repo, "update_many_by_ids"):
+            return int(repo.update_many_by_ids(entity_ids, mutator) or 0)
+
+        updated_count = 0
+        for entity_id in entity_ids:
+            entity = repo.get_by_id(entity_id)
+            if entity:
+                should_save = mutator(entity)
+                if should_save is False:
+                    continue
+                if repo.save(entity):
+                    updated_count += 1
+        return updated_count
+
+    def _get_list_member_counts(self, lists: ListType[List]) -> Optional[Dict[str, Dict[str, int]]]:
+        list_ids = [lst.id for lst in lists if str(getattr(lst, "id", "") or "").strip()]
+        if not list_ids:
+            return {}
+        try:
+            return CatalogIndex().count_list_members(list_ids)
+        except Exception as exc:
+            error_logger.warning(f"通过 catalog index 统计清单内容数量失败，将回退 JSON: {exc}")
+            return None
+
+    def _get_list_detail_content_from_index(self, list_id: str) -> Optional[Dict[str, ListType[Dict[str, Any]]]]:
+        try:
+            indexed_members = CatalogIndex().load_list_members(list_id)
+        except Exception as exc:
+            error_logger.warning(f"通过 catalog index 获取清单详情失败，将回退 JSON: {exc}")
+            return None
+        if indexed_members is None:
+            return None
+
+        comic_list: ListType[Dict[str, Any]] = []
+        video_list: ListType[Dict[str, Any]] = []
+        for member in indexed_members:
+            item = dict(member.get("payload") or {})
+            media_type = str(member.get("media_type") or "").strip().lower()
+            source = str(member.get("source") or "local").strip().lower()
+            if media_type == "comic":
+                comic_list.append({
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "cover_path": item.get("cover_path", ""),
+                    "total_page": item.get("total_page", 0),
+                    "current_page": item.get("current_page", 1),
+                    "score": item.get("score"),
+                    "tag_ids": item.get("tag_ids", []),
+                    "last_read_time": item.get("last_read_time") or item.get("last_access_time", ""),
+                    "create_time": item.get("create_time", ""),
+                    "content_type": "comic",
+                    "source": "preview" if source == "preview" else "local",
+                })
+            elif media_type == "video":
+                video_list.append({
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "cover_path": item.get("cover_path", ""),
+                    "score": item.get("score"),
+                    "tag_ids": item.get("tag_ids", []),
+                    "last_read_time": item.get("last_access_time", ""),
+                    "create_time": item.get("create_time", ""),
+                    "content_type": "video",
+                    "source": "preview" if source == "preview" else "local",
+                    "code": item.get("code", ""),
+                    "actors": item.get("actors", []),
+                })
+
+        return {"comics": comic_list, "videos": video_list}
 
     def _get_platform_service(self):
         if not is_third_party_enabled():
@@ -320,23 +394,30 @@ class ListAppService:
             repo = self._comic_repo if source == "local" else self._rec_repo
 
             cleared_count = 0
-            if clear_previous:
-                for comic in repo.get_all():
-                    if tag_id in (comic.tag_ids or []):
-                        comic.remove_tags([tag_id])
-                        if repo.save(comic):
-                            cleared_count += 1
+            with JsonStorage.defer_catalog_index_sync():
+                if clear_previous:
+                    clearing_ids = [
+                        comic.id
+                        for comic in repo.get_all()
+                        if tag_id in (comic.tag_ids or [])
+                    ]
+                    cleared_count = self._batch_update_repo(
+                        repo,
+                        clearing_ids,
+                        lambda comic: comic.remove_tags([tag_id]),
+                    )
 
-            updated_count = 0
-            for comic_id in target_ids:
-                comic = repo.get_by_id(comic_id)
-                if not comic:
-                    continue
-                if tag_id in (comic.tag_ids or []):
-                    continue
-                comic.add_tags([tag_id])
-                if repo.save(comic):
-                    updated_count += 1
+                def add_recent_import_tag(comic) -> bool | None:
+                    if tag_id in (comic.tag_ids or []):
+                        return False
+                    comic.add_tags([tag_id])
+                    return None
+
+                updated_count = self._batch_update_repo(
+                    repo,
+                    target_ids,
+                    add_recent_import_tag,
+                )
 
             app_logger.info(
                 f"更新漫画最近导入标签完成: source={source}, tag_id={tag_id}, "
@@ -520,6 +601,7 @@ class ListAppService:
                     pass
             
             lists = self._list_repo.get_all(content_type)
+            indexed_counts = self._get_list_member_counts(lists)
             
             result = []
             for lst in lists:
@@ -538,8 +620,13 @@ class ListAppService:
                     self._list_repo.save(lst)
                     app_logger.info(f"已修正远程跟踪清单导入目标为预览库: {lst.id}")
                 
-                comic_count = self._list_repo.get_comic_count(lst.id)
-                video_count = self._list_repo.get_video_count(lst.id)
+                counts = indexed_counts.get(lst.id) if indexed_counts is not None else None
+                if counts is None:
+                    comic_count = self._list_repo.get_comic_count(lst.id)
+                    video_count = self._list_repo.get_video_count(lst.id)
+                else:
+                    comic_count = int(counts.get("comic_count", 0) or 0)
+                    video_count = int(counts.get("video_count", 0) or 0)
                 list_data = {
                     "id": lst.id,
                     "name": lst.name,
@@ -570,6 +657,29 @@ class ListAppService:
             lst = self._list_repo.get_by_id(list_id)
             if not lst:
                 return ServiceResult.error("清单不存在")
+
+            indexed_content = self._get_list_detail_content_from_index(list_id)
+            if indexed_content is not None:
+                comic_list = indexed_content["comics"]
+                video_list = indexed_content["videos"]
+                result = {
+                    "id": lst.id,
+                    "name": lst.name,
+                    "desc": lst.desc,
+                    "content_type": lst.content_type.value,
+                    "is_default": lst.is_default,
+                    "comic_count": len(comic_list),
+                    "video_count": len(video_list),
+                    "create_time": lst.create_time,
+                    "platform": lst.platform,
+                    "platform_list_id": lst.platform_list_id,
+                    "import_source": lst.import_source,
+                    "last_sync_time": lst.last_sync_time,
+                    "comics": comic_list,
+                    "videos": video_list
+                }
+                app_logger.info(f"通过 SQLite 索引获取清单详情成功: {list_id}")
+                return ServiceResult.ok(result)
             
             comics = self._comic_repo.get_all()
             list_comics = [c for c in comics if list_id in c.list_ids and not c.is_deleted]
@@ -752,21 +862,12 @@ class ListAppService:
                 app_logger.error(f"[bind_comics] 清单不存在: {list_id}")
                 return ServiceResult.error("清单不存在")
             
-            updated_count = 0
             repo = self._comic_repo if source == "local" else self._rec_repo
-            
-            for comic_id in comic_ids:
-                comic = repo.get_by_id(comic_id)
-                if comic:
-                    app_logger.info(f"[bind_comics] 找到漫画: {comic_id}, 当前list_ids={comic.list_ids}")
-                    comic.add_to_list(list_id)
-                    app_logger.info(f"[bind_comics] 添加后list_ids={comic.list_ids}")
-                    save_result = repo.save(comic)
-                    app_logger.info(f"[bind_comics] 保存结果: {save_result}")
-                    if save_result:
-                        updated_count += 1
-                else:
-                    app_logger.warning(f"[bind_comics] 漫画不存在: {comic_id}")
+            updated_count = self._batch_update_repo(
+                repo,
+                comic_ids,
+                lambda comic: comic.add_to_list(list_id),
+            )
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -786,15 +887,12 @@ class ListAppService:
             if not lst:
                 return ServiceResult.error("清单不存在")
             
-            updated_count = 0
             repo = self._comic_repo if source == "local" else self._rec_repo
-            
-            for comic_id in comic_ids:
-                comic = repo.get_by_id(comic_id)
-                if comic:
-                    comic.remove_from_list(list_id)
-                    if repo.save(comic):
-                        updated_count += 1
+            updated_count = self._batch_update_repo(
+                repo,
+                comic_ids,
+                lambda comic: comic.remove_from_list(list_id),
+            )
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的漫画")
@@ -860,21 +958,12 @@ class ListAppService:
                 app_logger.error(f"[bind_videos] 清单不存在: {list_id}")
                 return ServiceResult.error("清单不存在")
             
-            updated_count = 0
             repo = self._video_repo if source == "local" else self._video_rec_repo
-            
-            for video_id in video_ids:
-                video = repo.get_by_id(video_id)
-                if video:
-                    app_logger.info(f"[bind_videos] 找到视频: {video_id}, 当前list_ids={video.list_ids}")
-                    video.add_to_list(list_id)
-                    app_logger.info(f"[bind_videos] 添加后list_ids={video.list_ids}")
-                    save_result = repo.save(video)
-                    app_logger.info(f"[bind_videos] 保存结果: {save_result}")
-                    if save_result:
-                        updated_count += 1
-                else:
-                    app_logger.warning(f"[bind_videos] 视频不存在: {video_id}")
+            updated_count = self._batch_update_repo(
+                repo,
+                video_ids,
+                lambda video: video.add_to_list(list_id),
+            )
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的视频")
@@ -894,15 +983,12 @@ class ListAppService:
             if not lst:
                 return ServiceResult.error("清单不存在")
             
-            updated_count = 0
             repo = self._video_repo if source == "local" else self._video_rec_repo
-            
-            for video_id in video_ids:
-                video = repo.get_by_id(video_id)
-                if video:
-                    video.remove_from_list(list_id)
-                    if repo.save(video):
-                        updated_count += 1
+            updated_count = self._batch_update_repo(
+                repo,
+                video_ids,
+                lambda video: video.remove_from_list(list_id),
+            )
             
             if updated_count == 0:
                 return ServiceResult.error("没有找到有效的视频")

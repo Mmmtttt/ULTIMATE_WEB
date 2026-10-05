@@ -18,6 +18,7 @@ from core.constants import (
 )
 from infrastructure.logger import app_logger, error_logger
 from infrastructure.persistence.repositories import JsonDocumentRepository
+from infrastructure.persistence.json_storage import JsonStorage
 
 
 class TaskStatus(Enum):
@@ -222,6 +223,7 @@ class TaskManager:
     
     def _process_task(self, task: ImportTask):
         """处理单个任务"""
+        started_at = time.monotonic()
         app_logger.info(f"开始处理任务: {task.task_id}, 类型: {task.content_type}, 标题: {task.title}")
         
         # 更新任务状态
@@ -233,6 +235,13 @@ class TaskManager:
         
         try:
             # 执行导入
+            app_logger.info(
+                "[task] execute task_id=%s type=%s content_type=%s item_id=%s",
+                task.task_id,
+                task.import_type,
+                task.content_type,
+                task.comic_id or "",
+            )
             result = self._execute_import(task)
 
             if result.get('cancelled'):
@@ -240,27 +249,44 @@ class TaskManager:
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.result = result
                 task.message = result.get('message', '任务已取消')
-                app_logger.info(f"任务取消完成: {task.task_id}")
+                app_logger.info("任务取消完成: task_id=%s elapsed_ms=%.3f", task.task_id, (time.monotonic() - started_at) * 1000)
             elif result.get('success'):
                 task.status = TaskStatus.COMPLETED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.progress = 100
                 task.message = result.get('message', "任务完成" if self._is_batch_task_type(task.import_type) else "导入完成")
                 task.result = result
-                app_logger.info(f"任务完成: {task.task_id}")
+                app_logger.info(
+                    "任务完成: task_id=%s elapsed_ms=%.3f success=%s failed=%s skipped=%s",
+                    task.task_id,
+                    (time.monotonic() - started_at) * 1000,
+                    (result or {}).get("success_count", "-"),
+                    (result or {}).get("failed_count", "-"),
+                    (result or {}).get("skipped_count", "-"),
+                )
             else:
                 task.status = TaskStatus.FAILED
                 task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
                 task.error_msg = result.get('error', '导入失败')
                 task.message = f"{'任务失败' if self._is_batch_task_type(task.import_type) else '导入失败'}: {task.error_msg}"
-                error_logger.error(f"任务失败: {task.task_id}, 错误: {task.error_msg}")
+                error_logger.error(
+                    "任务失败: task_id=%s elapsed_ms=%.3f error=%s",
+                    task.task_id,
+                    (time.monotonic() - started_at) * 1000,
+                    task.error_msg,
+                )
                 
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.complete_time = time.strftime("%Y-%m-%dT%H:%M:%S")
             task.error_msg = str(e)
             task.message = f"导入异常: {str(e)}"
-            error_logger.error(f"任务异常: {task.task_id}, 错误: {e}")
+            error_logger.exception(
+                "任务异常: task_id=%s elapsed_ms=%.3f error=%s",
+                task.task_id,
+                (time.monotonic() - started_at) * 1000,
+                e,
+            )
         
         self._save_tasks()
     
@@ -582,6 +608,11 @@ class TaskManager:
         )
 
     def _execute_comic_import(self, task: ImportTask) -> Dict:
+        # 批量任务期间延迟并合并 catalog index 同步，避免逐条触发索引同步/重建
+        with JsonStorage.defer_catalog_index_sync():
+            return self._execute_comic_import_impl(task)
+
+    def _execute_comic_import_impl(self, task: ImportTask) -> Dict:
         """执行漫画导入操作"""
         import sys
         import os
@@ -744,6 +775,11 @@ class TaskManager:
         return str(resolved_platform or "").strip().lower(), str(resolved_video_id or "").strip()
 
     def _execute_video_import(self, task: ImportTask) -> Dict:
+        # 批量任务期间延迟并合并 catalog index 同步；落库通过 import_videos 批量写
+        with JsonStorage.defer_catalog_index_sync():
+            return self._execute_video_import_impl(task)
+
+    def _execute_video_import_impl(self, task: ImportTask) -> Dict:
         """执行视频导入操作"""
         try:
             from application.video_app_service import VideoAppService
@@ -816,6 +852,10 @@ class TaskManager:
             failed_items = []
             imported_ids = []
             total_items = len(lookups)
+            local_video_cache = None
+            pending_video_imports = []
+            if task.target == "home" and hasattr(video_service, "_build_local_video_duplicate_cache"):
+                local_video_cache = video_service._build_local_video_duplicate_cache()
 
             for idx, raw_lookup in enumerate(lookups):
                 task.message = f"正在处理第 {idx + 1}/{total_items} 个视频..."
@@ -845,8 +885,17 @@ class TaskManager:
                     video_id_full = build_video_host_id(resolved_platform, resolved_lookup)
 
                     if task.target == "home":
-                        existing = video_service.get_video_by_code(video_code)
-                        if existing.success and existing.data:
+                        duplicate_id = None
+                        find_duplicate = getattr(video_service, "_find_local_video_duplicate", None)
+                        if callable(find_duplicate):
+                            normalize_code = getattr(video_service, "_normalize_code_for_storage", None)
+                            normalized_code = normalize_code(video_code) if callable(normalize_code) else video_code
+                            duplicate_id = find_duplicate(
+                                video_id_full,
+                                normalized_code,
+                                local_video_cache=local_video_cache,
+                            )
+                        if duplicate_id:
                             skipped_count += 1
                             continue
                     else:
@@ -911,24 +960,8 @@ class TaskManager:
                         error_logger.error(f"刷新视频存储路径元数据失败: {video_id_full}, 错误: {persisted_error}")
 
                     if task.target == "home":
-                        import_result = video_service.import_video(video_data)
-                        if not import_result.success:
-                            failed_count += 1
-                            failed_items.append({"lookup": raw_lookup, "reason": import_result.message or "导入失败"})
-                            continue
-                        schedule_video_asset_cache(
-                            video_id=video_data["id"],
-                            source="local",
-                            cover_url=cover_url,
-                            preview_video=video_data.get("preview_video", ""),
-                            thumbnail_images=video_data.get("thumbnail_images", []),
-                            allow_cover=True,
-                            allow_preview_video=platform_allows_preview_video_download(
-                                platform=resolved_platform,
-                                video_id=video_data["id"],
-                            ),
-                            video_service=video_service,
-                        )
+                        # 本地库批量落库：先收集，循环结束后一次写入 + 一次索引同步
+                        pending_video_imports.append((video_data, resolved_platform, cover_url))
                     else:
                         now = get_current_time()
                         video_data["create_time"] = now
@@ -951,12 +984,81 @@ class TaskManager:
                         )
 
                     task.title = str(detail.get("title", "") or task.title or "视频导入")
-                    imported_ids.append(video_id_full)
-                    imported_count += 1
+                    if task.target != "home":
+                        # home 路径改为批量落库成功后统一计入
+                        imported_ids.append(video_id_full)
+                        imported_count += 1
                 except Exception as item_error:
                     failed_count += 1
                     failed_items.append({"lookup": raw_lookup, "reason": str(item_error)})
                     error_logger.error(f"导入视频失败: {raw_lookup}, 错误: {item_error}")
+
+            if pending_video_imports:
+                import_videos = getattr(video_service, "import_videos", None)
+                if callable(import_videos):
+                    import_result = import_videos(
+                        [item[0] for item in pending_video_imports],
+                        local_video_cache=local_video_cache,
+                    )
+                else:
+                    imported_videos = []
+                    failed_import_items = []
+                    for video_data, _resolved_platform, _cover_url in pending_video_imports:
+                        result = video_service.import_video(video_data)
+                        if result.success:
+                            imported_videos.append(result.data or video_data)
+                        else:
+                            failed_import_items.append(
+                                {
+                                    "lookup": video_data.get("code") or video_data.get("id") or "-",
+                                    "reason": result.message or "导入失败",
+                                }
+                            )
+                    import_result = type(
+                        "_BatchImportResult",
+                        (),
+                        {
+                            "success": bool(imported_videos),
+                            "message": "" if imported_videos else "批量导入视频失败",
+                            "data": {
+                                "videos": imported_videos,
+                                "failed_items": failed_import_items,
+                            },
+                        },
+                    )()
+                if not import_result.success:
+                    failed_count += len(pending_video_imports)
+                    failed_items.append(
+                        {"lookup": "-", "reason": import_result.message or "批量导入视频失败"}
+                    )
+                else:
+                    imported_map = {
+                        str(item.get("id") or ""): item
+                        for item in ((import_result.data or {}).get("videos") or [])
+                    }
+                    for video_data, resolved_platform, cover_url in pending_video_imports:
+                        video_id_key = str(video_data.get("id") or "")
+                        if video_id_key not in imported_map:
+                            failed_count += 1
+                            failed_items.append(
+                                {"lookup": video_data.get("code") or video_id_key, "reason": "保存视频失败"}
+                            )
+                            continue
+                        imported_ids.append(video_id_key)
+                        imported_count += 1
+                        schedule_video_asset_cache(
+                            video_id=video_id_key,
+                            source="local",
+                            cover_url=cover_url,
+                            preview_video=video_data.get("preview_video", ""),
+                            thumbnail_images=video_data.get("thumbnail_images", []),
+                            allow_cover=True,
+                            allow_preview_video=platform_allows_preview_video_download(
+                                platform=resolved_platform,
+                                video_id=video_id_key,
+                            ),
+                            video_service=video_service,
+                        )
 
             if preview_dirty and preview_storage:
                 if not preview_storage.write_document(preview_db_data):

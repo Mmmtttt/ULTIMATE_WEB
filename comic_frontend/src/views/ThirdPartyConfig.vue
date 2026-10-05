@@ -2,6 +2,119 @@
   <div class="third-party-page desktop-page-shell">
     <van-nav-bar title="第三方平台配置" left-text="返回" left-arrow @click-left="$router.back()" />
 
+    <div class="extension-panel">
+      <van-cell-group inset>
+        <van-cell title="扩展包" label="安装本地 .zip 扩展包，安装后需要重启应用才会生效">
+          <template #right-icon>
+            <van-button size="small" type="primary" :loading="installingExtension" @click="selectExtensionPackage">
+              安装
+            </van-button>
+          </template>
+        </van-cell>
+        <van-field
+          v-model="githubExtensionUrl"
+          label="GitHub"
+          placeholder="https://github.com/owner/repo"
+          clearable
+        >
+          <template #button>
+            <van-button size="small" type="primary" :loading="installingGithubExtension" @click="installGithubExtension">
+              安装
+            </van-button>
+          </template>
+        </van-field>
+        <van-cell
+          v-for="item in installedExtensions"
+          :key="item.plugin_id || item.directory"
+          :title="item.name || item.plugin_id || item.directory"
+          :label="extensionLabel(item)"
+        >
+          <template #right-icon>
+            <div class="extension-actions">
+              <van-button
+                v-if="item.source?.url"
+                size="mini"
+                plain
+                type="primary"
+                :loading="Boolean(extensionActionMap[item.plugin_id])"
+                @click="reinstallExtension(item.plugin_id)"
+              >
+                更新
+              </van-button>
+              <van-button
+                size="mini"
+                plain
+                type="danger"
+                :loading="Boolean(extensionActionMap[item.plugin_id])"
+                @click="deleteExtension(item.plugin_id)"
+              >
+                删除
+              </van-button>
+            </div>
+          </template>
+        </van-cell>
+        <van-cell
+          v-for="item in savedExtensionSources"
+          :key="`source-${item.plugin_id}`"
+          :title="item.plugin_id"
+          :label="sourceLabel(item)"
+        >
+          <template #right-icon>
+            <van-button
+              size="small"
+              type="primary"
+              :loading="Boolean(extensionActionMap[item.plugin_id])"
+              @click="reinstallExtension(item.plugin_id)"
+            >
+              安装
+            </van-button>
+          </template>
+        </van-cell>
+        <van-cell v-if="installedExtensions.length === 0 && savedExtensionSources.length === 0" title="未安装扩展" label="集成模式下可能已内置平台；扩展模式下可从这里安装" />
+      </van-cell-group>
+      <input
+        ref="extensionFileInput"
+        class="extension-file-input"
+        type="file"
+        accept=".zip,application/zip"
+        @change="installSelectedExtension"
+      />
+    </div>
+
+    <div class="space-access-panel">
+      <van-cell-group inset>
+        <van-cell
+          title="隐私空间可用范围"
+          label="插件代码和配置仍由正常空间统一管理；这里只控制哪些插件允许在隐私空间参与搜索、导入和播放。"
+        />
+        <van-cell
+          v-for="plugin in privateAccessPlugins"
+          :key="plugin.plugin_id"
+          :title="plugin.name || plugin.plugin_id"
+          :label="plugin.plugin_id"
+        >
+          <template #right-icon>
+            <van-switch
+              :model-value="isPrivatePluginEnabled(plugin.plugin_id)"
+              @update:model-value="setPrivatePluginEnabled(plugin.plugin_id, $event)"
+            />
+          </template>
+        </van-cell>
+        <div class="space-access-save">
+          <van-button
+            type="primary"
+            block
+            round
+            :loading="savingSpaceAccess"
+            :disabled="privateAccessPlugins.length === 0"
+            @click="saveSpaceAccess"
+          >
+            保存隐私空间授权
+          </van-button>
+        </div>
+      </van-cell-group>
+    </div>
+
     <div v-if="displayAdapters.length === 0" class="empty-hint">
       <van-empty description="暂无可配置的第三方平台" />
     </div>
@@ -73,7 +186,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { showFailToast, showSuccessToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { openExternalUrl } from '@/runtime/browser'
@@ -86,6 +199,25 @@ const thirdPartySchema = ref({})
 const thirdPartyAdapters = ref({})
 const thirdPartyAdapterOrder = ref([])
 const adapterForms = ref({})
+const extensionFileInput = ref(null)
+const installingExtension = ref(false)
+const installingGithubExtension = ref(false)
+const githubExtensionUrl = ref('')
+const extensionState = ref({ installed: [] })
+const extensionActionMap = ref({})
+const privateAccessPlugins = ref([])
+const privateEnabledPluginIds = ref([])
+const savingSpaceAccess = ref(false)
+
+const installedExtensions = computed(() => {
+  return Array.isArray(extensionState.value?.installed) ? extensionState.value.installed : []
+})
+
+const savedExtensionSources = computed(() => {
+  const sources = Array.isArray(extensionState.value?.saved_sources) ? extensionState.value.saved_sources : []
+  const installedIds = new Set(installedExtensions.value.map((item) => item.plugin_id).filter(Boolean))
+  return sources.filter((item) => item?.plugin_id && !installedIds.has(item.plugin_id))
+})
 
 const displayAdapters = computed(() => {
   if (Array.isArray(thirdPartyAdapterOrder.value) && thirdPartyAdapterOrder.value.length > 0) {
@@ -141,9 +273,157 @@ async function loadThirdPartyConfig() {
     thirdPartySchema.value = data.schema || {}
     thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
     thirdPartyAdapters.value = data.adapters || {}
+    extensionState.value = data.extensions || { installed: [] }
+    privateAccessPlugins.value = Array.isArray(data.plugins) ? data.plugins : []
+    privateEnabledPluginIds.value = Array.isArray(data.space_access?.private_enabled_plugin_ids)
+      ? [...data.space_access.private_enabled_plugin_ids]
+      : []
     ensureAdapterFormShape()
   } catch (error) {
     showFailToast(error?.message || '加载第三方配置失败')
+  }
+}
+
+function isPrivatePluginEnabled(pluginId) {
+  return privateEnabledPluginIds.value.includes(pluginId)
+}
+
+function setPrivatePluginEnabled(pluginId, enabled) {
+  const current = new Set(privateEnabledPluginIds.value)
+  if (enabled) {
+    current.add(pluginId)
+  } else {
+    current.delete(pluginId)
+  }
+  privateEnabledPluginIds.value = Array.from(current)
+}
+
+async function saveSpaceAccess() {
+  savingSpaceAccess.value = true
+  try {
+    const response = await comicApi.saveThirdPartyConfig({
+      space_access: {
+        private_enabled_plugin_ids: privateEnabledPluginIds.value,
+      },
+    })
+    if (response.code === 200) {
+      showSuccessToast('隐私空间授权已保存')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '隐私空间授权保存失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '隐私空间授权保存失败')
+  } finally {
+    savingSpaceAccess.value = false
+  }
+}
+
+function extensionLabel(item) {
+  const version = item?.version ? `版本 ${item.version}` : ''
+  const directory = item?.directory ? `目录 ${item.directory}` : ''
+  const source = item?.source?.url ? `来源 ${item.source.url}` : ''
+  return [version, directory, source].filter(Boolean).join(' · ') || '重启后生效'
+}
+
+function sourceLabel(item) {
+  return item?.url || [item?.owner, item?.repo].filter(Boolean).join('/') || '已保存安装来源'
+}
+
+function selectExtensionPackage() {
+  extensionFileInput.value?.click()
+}
+
+async function installSelectedExtension(event) {
+  const file = event?.target?.files?.[0]
+  if (!file) return
+  installingExtension.value = true
+  try {
+    const response = await comicApi.installThirdPartyExtension(file)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    installingExtension.value = false
+    if (event?.target) {
+      event.target.value = ''
+    }
+  }
+}
+
+async function installGithubExtension() {
+  const url = githubExtensionUrl.value.trim()
+  if (!url) {
+    showFailToast('请输入 GitHub 仓库链接')
+    return
+  }
+  installingGithubExtension.value = true
+  try {
+    const response = await comicApi.installThirdPartyExtensionFromGithub(url)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      githubExtensionUrl.value = ''
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    installingGithubExtension.value = false
+  }
+}
+
+function setExtensionAction(pluginId, loading) {
+  extensionActionMap.value = { ...extensionActionMap.value, [pluginId]: loading }
+}
+
+async function reinstallExtension(pluginId) {
+  if (!pluginId) return
+  setExtensionAction(pluginId, true)
+  try {
+    const response = await comicApi.reinstallThirdPartyExtension(pluginId)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '扩展安装失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '扩展安装失败')
+  } finally {
+    setExtensionAction(pluginId, false)
+  }
+}
+
+async function deleteExtension(pluginId) {
+  if (!pluginId) return
+  try {
+    await showConfirmDialog({
+      title: '删除扩展代码',
+      message: '只会删除扩展代码，已保存的安装链接和平台配置会保留。删除后需要重启应用才会生效。'
+    })
+  } catch {
+    return
+  }
+  setExtensionAction(pluginId, true)
+  try {
+    const response = await comicApi.deleteThirdPartyExtension(pluginId)
+    if (response.code === 200) {
+      showSuccessToast(response.data?.message || '扩展代码已删除，重启后生效')
+      await loadThirdPartyConfig()
+    } else {
+      showFailToast(response.msg || '删除扩展失败')
+    }
+  } catch (error) {
+    showFailToast(error?.message || '删除扩展失败')
+  } finally {
+    setExtensionAction(pluginId, false)
   }
 }
 
@@ -212,8 +492,62 @@ onMounted(() => {
   padding-top: 60px;
 }
 
+.extension-panel {
+  padding: 12px 0 4px;
+}
+
+.space-access-panel {
+  padding: 8px 0 4px;
+}
+
+.space-access-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.space-access-save {
+  padding: 12px 16px 16px;
+}
+
+.extension-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.extension-file-input {
+  display: none;
+}
+
+.extension-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .adapter-panel {
   padding: 12px 0 20px;
+}
+
+.adapter-panel :deep(.van-cell-group) {
+  margin: 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.adapter-panel :deep(.van-cell),
+.adapter-panel :deep(.van-field) {
+  background: transparent;
 }
 
 .adapter-actions {
@@ -224,7 +558,7 @@ onMounted(() => {
 
 .adapter-action-card {
   padding: 14px;
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--surface-2);
   border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-xs);
@@ -239,5 +573,16 @@ onMounted(() => {
 
 .save-area {
   padding: 16px;
+}
+
+@media (max-width: 767px) {
+  .adapter-panel :deep(.van-cell-group),
+  .adapter-actions {
+    margin-inline: 10px;
+  }
+
+  .save-area {
+    padding-inline: 10px;
+  }
 }
 </style>

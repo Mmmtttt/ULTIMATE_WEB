@@ -269,7 +269,7 @@ def test_comic_detail_returns_full_info(integration_runtime):
     用例描述:
     - 用例目的: 验证漫画详情接口返回完整的漫画信息。
     - 测试步骤:
-      1. 调用 GET /api/v1/comic/detail?comic_id=JM100001。
+      1. 调用 GET /api/v1/comic/detail?comic_id=COMIC_ALPHA100001。
       2. 检查返回数据完整性。
     - 预期结果:
       1. HTTP 200，业务 code=200。
@@ -320,7 +320,7 @@ def test_comic_detail_can_skip_chapter_outline_for_reader_boot(integration_runti
     用例描述:
     - 用例目的: 看护阅读页轻量详情契约，避免进入阅读页时为大体量漫画重复解析章节。
     - 测试步骤:
-      1. 调用 GET /api/v1/comic/detail?comic_id=JM100001&include_chapters=false。
+      1. 调用 GET /api/v1/comic/detail?comic_id=COMIC_ALPHA100001&include_chapters=false。
       2. 检查基础详情仍返回，但不包含 chapters 字段。
     - 预期结果:
       1. HTTP 200，业务 code=200。

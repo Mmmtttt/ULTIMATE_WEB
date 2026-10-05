@@ -62,7 +62,7 @@ def test_refresh_persisted_metadata_backfills_comic_relative_storage_path(integr
     comics_path = meta_dir / "comics_database.json"
 
     original = load_json(comics_path)
-    comic_dir = data_dir / "comic" / "JM" / "1436655"
+    comic_dir = data_dir / "comic" / "CA" / "1436655"
     _write_test_image(comic_dir / "001.jpg", (90, 140), (220, 40, 40))
 
     try:
@@ -75,10 +75,10 @@ def test_refresh_persisted_metadata_backfills_comic_relative_storage_path(integr
                 "last_updated": "2026-05-08",
                 "comics": [
                     {
-                        "id": "JM1436655",
+                        "id": "CA1436655",
                         "title": "协议回填漫画",
                         "author": "作者A",
-                        "cover_path": "/static/cover/JM/1436655.jpg",
+                        "cover_path": "/static/cover/CA/1436655.jpg",
                         "total_page": 1,
                         "current_page": 1,
                         "tag_ids": [],
@@ -99,9 +99,9 @@ def test_refresh_persisted_metadata_backfills_comic_relative_storage_path(integr
         assert payload["code"] == 200
 
         refreshed = load_json(comics_path).get("comics") or []
-        record = find_by_id(refreshed, "JM1436655")
+        record = find_by_id(refreshed, "CA1436655")
         assert record is not None
-        assert record.get("storage_path_relative") == "comic/JM/1436655"
+        assert record.get("storage_path_relative") == "comic/CA/1436655"
         assert record.get("storage_path_kind") == "local_dir"
     finally:
         save_json(comics_path, original)
@@ -115,13 +115,13 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
     videos_path = meta_dir / "videos_database.json"
 
     original = load_json(videos_path)
-    source_file = data_dir / "video" / "JAVDB" / "BACKFILL001" / "source.mp4"
+    source_file = data_dir / "video" / "VA" / "BACKFILL001" / "source.mp4"
     source_file.parent.mkdir(parents=True, exist_ok=True)
     source_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     local_source_file = data_dir / "video" / "LOCAL" / "BACKFILL_LOCAL" / "source.mp4"
     local_source_file.parent.mkdir(parents=True, exist_ok=True)
     local_source_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
-    _write_test_image(data_dir / "static" / "cover" / "JAVDB" / "BACKFILL001.jpg", (160, 90), (40, 40, 220))
+    _write_test_image(data_dir / "static" / "cover" / "VA" / "BACKFILL001.jpg", (160, 90), (40, 40, 220))
 
     try:
         save_json(
@@ -133,11 +133,11 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
                 "last_updated": "2026-05-08",
                 "videos": [
                     {
-                        "id": "JAVDBBACKFILL001",
+                        "id": "VABACKFILL001",
                         "title": "协议回填视频",
                         "code": "ABP-123",
-                        "cover_path": "/static/cover/JAVDB/BACKFILL001.jpg",
-                        "local_video_path": "/media/video/JAVDB/BACKFILL001/source.mp4",
+                        "cover_path": "/static/cover/VA/BACKFILL001.jpg",
+                        "local_video_path": "/media/video/VA/BACKFILL001/source.mp4",
                         "local_source_path": str(source_file),
                         "preview_video": "",
                         "thumbnail_images": [],
@@ -176,9 +176,9 @@ def test_refresh_persisted_metadata_backfills_video_display_and_relative_path(in
         assert payload["code"] == 200
 
         refreshed = load_json(videos_path).get("videos") or []
-        record = find_by_id(refreshed, "JAVDBBACKFILL001")
+        record = find_by_id(refreshed, "VABACKFILL001")
         assert record is not None
-        assert record.get("storage_path_relative") == "video/JAVDB/BACKFILL001/source.mp4"
+        assert record.get("storage_path_relative") == "video/VA/BACKFILL001/source.mp4"
         assert record.get("storage_path_kind") == "local_file"
         cover_display = ((record.get("display") or {}).get("cover") or {})
         assert cover_display.get("aspect_ratio") == "16 / 9"
@@ -223,9 +223,9 @@ def test_deduplicate_by_title_keeps_different_chapter_records(integration_runtim
             "total_recommendations": 3,
             "last_updated": "2026-04-01",
             "recommendations": [
-                {"id": "JM900001", "title": "预览样本 第1卷", "is_deleted": False},
-                {"id": "JM900002", "title": "预览样本【修订】第1卷", "is_deleted": False},
-                {"id": "JM900003", "title": "预览样本 第2卷", "is_deleted": False},
+                {"id": "CA900001", "title": "预览样本 第1卷", "is_deleted": False},
+                {"id": "CA900002", "title": "预览样本【修订】第1卷", "is_deleted": False},
+                {"id": "CA900003", "title": "预览样本 第2卷", "is_deleted": False},
             ],
         }
         save_json(home_path, home_data)
@@ -253,9 +253,9 @@ def test_deduplicate_by_title_keeps_different_chapter_records(integration_runtim
         assert find_by_id(home_comics, "LOCAL_B")["is_deleted"] is True
         assert find_by_id(home_comics, "LOCAL_C")["is_deleted"] is False
 
-        assert find_by_id(recommendation_comics, "JM900001")["is_deleted"] is False
-        assert find_by_id(recommendation_comics, "JM900002")["is_deleted"] is True
-        assert find_by_id(recommendation_comics, "JM900003")["is_deleted"] is False
+        assert find_by_id(recommendation_comics, "CA900001")["is_deleted"] is False
+        assert find_by_id(recommendation_comics, "CA900002")["is_deleted"] is True
+        assert find_by_id(recommendation_comics, "CA900003")["is_deleted"] is False
     finally:
         save_json(home_path, original_home)
         save_json(recommendation_path, original_recommendation)
@@ -291,9 +291,9 @@ def test_video_deduplicate_by_code_moves_duplicates_to_trash(integration_runtime
             "total_video_recommendations": 3,
             "last_updated": "2026-04-01",
             "video_recommendations": [
-                {"id": "JAVDB_A", "code": "IPX-001", "title": "A", "is_deleted": False},
-                {"id": "JAVDB_B", "code": "ipx001", "title": "B", "is_deleted": False},
-                {"id": "JAVBUS_C", "code": "SSIS-777", "title": "C", "is_deleted": False},
+                {"id": "VA_A", "code": "IPX-001", "title": "A", "is_deleted": False},
+                {"id": "VA_B", "code": "ipx001", "title": "B", "is_deleted": False},
+                {"id": "VB_C", "code": "SSIS-777", "title": "C", "is_deleted": False},
             ],
         }
         save_json(home_path, home_data)
@@ -319,9 +319,9 @@ def test_video_deduplicate_by_code_moves_duplicates_to_trash(integration_runtime
         assert find_by_id(refreshed_home, "LOCALV_C")["is_deleted"] is False
         assert find_by_id(refreshed_home, "LOCALV_D")["is_deleted"] is True
 
-        assert find_by_id(refreshed_recommendation, "JAVDB_A")["is_deleted"] is False
-        assert find_by_id(refreshed_recommendation, "JAVDB_B")["is_deleted"] is True
-        assert find_by_id(refreshed_recommendation, "JAVBUS_C")["is_deleted"] is False
+        assert find_by_id(refreshed_recommendation, "VA_A")["is_deleted"] is False
+        assert find_by_id(refreshed_recommendation, "VA_B")["is_deleted"] is True
+        assert find_by_id(refreshed_recommendation, "VB_C")["is_deleted"] is False
     finally:
         save_json(home_path, original_home)
         save_json(recommendation_path, original_recommendation)
@@ -547,7 +547,7 @@ def test_video_local_import_duplicate_non_local_without_source_attaches_source(i
                 "last_updated": "2026-04-01",
                 "videos": [
                     {
-                        "id": "JAVDB900001",
+                        "id": "VA900001",
                         "code": "ABP_123",
                         "title": "remote only",
                         "local_video_path": "",
@@ -569,15 +569,15 @@ def test_video_local_import_duplicate_non_local_without_source_attaches_source(i
         data = payload["data"] or {}
         assert data.get("imported_count") == 1
         assert data.get("attached_source_count") == 1
-        assert data.get("imported_ids") == ["JAVDB900001"]
+        assert data.get("imported_ids") == ["VA900001"]
 
         refreshed = load_json(videos_path).get("videos") or []
         assert len(refreshed) == 1
-        record = find_by_id(refreshed, "JAVDB900001")
+        record = find_by_id(refreshed, "VA900001")
         assert record is not None
-        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/abp 123 from_local/abp 123 from_local.")
+        assert str(record.get("local_video_path") or "").startswith("/media/video/VA/abp 123 from_local/abp 123 from_local.")
         assert str(record.get("local_source_path") or "").endswith(
-            os.path.join("video", "JAVDB", "abp 123 from_local", "abp 123 from_local.mp4")
+            os.path.join("video", "VA", "abp 123 from_local", "abp 123 from_local.mp4")
         )
         assert record.get("local_asset_dir_name") == "abp 123 from_local"
         assert record.get("local_source_filename") == "abp 123 from_local.mp4"
@@ -609,7 +609,7 @@ def test_video_local_import_duplicate_non_local_with_source_appends_episode(inte
     incoming_file = source_root / "ABP123 another.mp4"
     incoming_file.write_bytes(b"\x00\x00\x00\x18ftypmp42")
 
-    existing_source_rel = "video/JAVDB/JAVDB900001/source.mp4"
+    existing_source_rel = "video/VA/VA900001/source.mp4"
     existing_source_abs = data_dir / existing_source_rel.replace("/", os.sep)
     existing_source_abs.parent.mkdir(parents=True, exist_ok=True)
     existing_source_abs.write_bytes(b"\x00\x00\x00\x18ftypmp42")
@@ -624,10 +624,10 @@ def test_video_local_import_duplicate_non_local_with_source_appends_episode(inte
                 "last_updated": "2026-04-01",
                 "videos": [
                     {
-                        "id": "JAVDB900001",
+                        "id": "VA900001",
                         "code": "ABP-123",
                         "title": "remote with source",
-                        "local_video_path": "/media/video/JAVDB/JAVDB900001/source.mp4",
+                        "local_video_path": "/media/video/VA/VA900001/source.mp4",
                         "local_source_path": str(existing_source_abs),
                         "source_origin": "magnet_download",
                         "is_deleted": False,
@@ -647,17 +647,17 @@ def test_video_local_import_duplicate_non_local_with_source_appends_episode(inte
         data = payload["data"] or {}
         assert data.get("imported_count") == 1
         assert data.get("attached_source_count") == 1
-        assert data.get("imported_ids") == ["JAVDB900001"]
+        assert data.get("imported_ids") == ["VA900001"]
 
         refreshed = load_json(videos_path).get("videos") or []
-        record = find_by_id(refreshed, "JAVDB900001")
+        record = find_by_id(refreshed, "VA900001")
         assert record is not None
         assert record.get("total_units") == 2
         episodes = ((record.get("display") or {}).get("local_episodes") or [])
         assert [item.get("name") for item in episodes] == ["source.mp4", "ABP123 another.mp4"]
-        assert str(record.get("local_video_path") or "").startswith("/media/video/JAVDB/JAVDB900001/source.")
-        assert str(record.get("local_source_path") or "").endswith(os.path.join("video", "JAVDB", "JAVDB900001", "source.mp4"))
-        appended_media_rel = "video/JAVDB/JAVDB900001/ABP123 another.mp4".replace("/", os.sep)
+        assert str(record.get("local_video_path") or "").startswith("/media/video/VA/VA900001/source.")
+        assert str(record.get("local_source_path") or "").endswith(os.path.join("video", "VA", "VA900001", "source.mp4"))
+        appended_media_rel = "video/VA/VA900001/ABP123 another.mp4".replace("/", os.sep)
         assert (data_dir / appended_media_rel).exists()
         assert not incoming_file.exists()
     finally:
