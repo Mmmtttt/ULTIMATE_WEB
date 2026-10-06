@@ -1756,7 +1756,12 @@ async function dispatchMagnet(text, engine, index) {
     }
   } catch (error) {
     console.error('投递磁力链接失败:', error)
-    showFailToast(error?.response?.data?.msg || '投递失败，请检查下载引擎配置')
+    // 后端的 error_response 是「HTTP 200 + body.code」，请求层用 new Error(res.msg)
+    // 拒绝，所以消息在 error.message 上；response.data.msg 只在真正的 HTTP 错误时
+    // 存在。只读后者会把后端的具体原因吞掉，用户只能看到一句笼统兜底。
+    showFailToast(
+      error?.response?.data?.msg || error?.message || '投递失败，请检查下载引擎配置'
+    )
   } finally {
     magnetSendingIndex.value = -1
   }
