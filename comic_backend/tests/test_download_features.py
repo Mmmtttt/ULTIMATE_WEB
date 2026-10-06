@@ -121,6 +121,17 @@ def test_auto_organize_requires_migrate_capability():
     assert with_migrate["auto_organize"] is True
 
 
+def test_target_dir_requires_declared_download_dir_field():
+    """能否指定落盘目录，取决于引擎是否暴露 dir 配置项。
+
+    aria2 / qBittorrent 接受目标目录参数，所以声明 dir；链式交接给外部客户端的
+    引擎落盘位置由对方决定，不声明 dir —— 调用方据此跳过子文件夹而不是报错。
+    """
+    capabilities = ["download.magnet.add"]
+    assert resolve_download_features(capabilities, [])["target_dir"] is False
+    assert resolve_download_features(capabilities, ["dir"])["target_dir"] is True
+
+
 def test_auto_import_requires_declared_config_field():
     """引擎未声明开关字段时，用户无从开启，该功能不算可用。"""
     capabilities = ["download.magnet.add", "download.task.list"]
@@ -220,6 +231,8 @@ def test_host_service_engines_expose_features(tmp_path):
     assert features["migrate"] is True
     assert features["auto_import"] is True
     assert features["auto_organize"] is True
+    # aria2 暴露了「默认下载目录」配置项，因此支持指定落盘目录
+    assert features["target_dir"] is True
 
     # features 与 status 是两件事：默认停用不影响「能做什么」的判定
     assert set(features.keys()) == set(DOWNLOAD_FEATURE_ORDER)

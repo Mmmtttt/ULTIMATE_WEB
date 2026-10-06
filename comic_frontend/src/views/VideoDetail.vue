@@ -1742,15 +1742,27 @@ async function onEngineSelect(action) {
 async function dispatchMagnet(text, engine, index) {
   magnetSendingIndex.value = index
   try {
-    // 有番号时自动下载到 下载根目录\<番号> 子文件夹，无需下载完再归集
+    // 有番号时自动下载到 下载根目录\<番号> 子文件夹，无需下载完再归集。
+    // 但引擎可能不支持指定落盘目录（例如链式交接给外部客户端，位置由对方决定）：
+    // 这种情况不要发子文件夹，否则等于下了一个对方无法执行的指令。
     const code = (video.value?.code || '').trim()
+    const supportsTargetDir = engine?.features?.target_dir !== false
     const res = await downloadApi.addMagnet({
       magnet: text,
       engine: engine.plugin_id,
-      dir_subfolder: code || undefined
+      dir_subfolder: supportsTargetDir ? (code || undefined) : undefined
     })
-    if (res?.data?.added) {
-      showSuccessToast(`已投递到 ${engine.name}（gid: ${res.data.gid || '未知'}）`)
+    const payload = res?.data || {}
+    if (payload.added) {
+      if (payload.handoff) {
+        // 交接型引擎没有 gid，确认与落盘都由对方管理：如实说明，不假装已排队
+        showToast(`已交给 ${engine.name}，请在它里面确认后开始下载`)
+      } else {
+        showSuccessToast(`已投递到 ${engine.name}（gid: ${payload.gid || '未知'}）`)
+      }
+      if (payload.warning) {
+        showToast(String(payload.warning))
+      }
     } else {
       showFailToast(res?.msg || '投递失败')
     }

@@ -12,6 +12,7 @@
 """
 import os
 import re
+from typing import Optional
 
 from flask import Blueprint, request, jsonify
 
@@ -34,16 +35,34 @@ def _sanitize_subfolder(segment: str) -> str:
     return seg
 
 
+def _engine_supports_target_dir(host_service, engine: str) -> Optional[bool]:
+    """引擎能否指定落盘目录。``None`` 表示信息未知（保留原有严格校验）。"""
+    try:
+        features = host_service.get_download_engine_features(engine) or {}
+    except Exception:
+        return None
+    if not features:
+        return None
+    return features.get("target_dir") is True
+
+
 def _resolve_target_dir(host_service, engine: str, body: dict) -> str:
     """解析本次投递的目标下载目录。
 
     优先级：body.dir（绝对路径）> body.dir_subfolder 拼接引擎根目录 > 空（沿用引擎默认）。
+
+    引擎明确不支持指定落盘目录时（例如链式交接给外部下载客户端，位置由对方决定），
+    子文件夹请求不再报错，而是忽略并沿用引擎默认。原因：前端在视频有番号时会**自动**
+    带上 dir_subfolder，若在此硬报错，这类引擎就完全无法投递——把一个可选的锦上添花
+    变成了一票否决。被忽略的事实由引擎在响应里如实回报（ignored_params / warning）。
     """
     dir_value = str(body.get("dir") or "").strip()
     if dir_value:
         return dir_value
     subfolder = _sanitize_subfolder(str(body.get("dir_subfolder") or "").strip())
     if not subfolder:
+        return ""
+    if _engine_supports_target_dir(host_service, engine) is False:
         return ""
     base_dir = host_service.get_download_engine_base_dir(engine).rstrip("/\\")
     if not base_dir:

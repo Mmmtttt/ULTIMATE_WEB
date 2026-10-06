@@ -31,6 +31,10 @@ DOWNLOAD_TASK_MIGRATE_CAPABILITY = "download.task.migrate"
 # 引擎没声明该字段时用户根本无从开启，功能也就不存在。
 DOWNLOAD_FEATURE_REQUIREMENTS: Dict[str, Dict[str, Tuple[str, ...]]] = {
     "submit_magnet": {"capabilities": (DOWNLOAD_ENGINE_CAPABILITY,), "fields": ()},
+    # 能否指定落盘目录（下载根目录 + 子文件夹）。判据是引擎是否暴露了 dir 配置项：
+    # aria2 / qBittorrent 这类接受目标目录参数的引擎为 True；链式交接给外部客户端
+    # （落盘位置由对方决定）的引擎为 False——调用方据此跳过子文件夹，而不是报错。
+    "target_dir": {"capabilities": (), "fields": ("dir",)},
     "task_list": {"capabilities": (DOWNLOAD_TASK_LIST_CAPABILITY,), "fields": ()},
     "task_status": {"capabilities": ("download.task.status",), "fields": ()},
     "pause": {"capabilities": ("download.task.pause",), "fields": ()},
@@ -51,6 +55,7 @@ DOWNLOAD_FEATURE_REQUIREMENTS: Dict[str, Dict[str, Tuple[str, ...]]] = {
 # 稳定的输出顺序，便于测试与前端渲染。
 DOWNLOAD_FEATURE_ORDER: Tuple[str, ...] = (
     "submit_magnet",
+    "target_dir",
     "task_list",
     "task_status",
     "pause",

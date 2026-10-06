@@ -538,6 +538,27 @@ class ProtocolHostService:
             ],
         }
 
+    def get_download_engine_features(self, engine_name: str = "") -> Dict[str, bool]:
+        """取指定下载引擎的功能矩阵（按引擎名/别名解析，缺省用默认引擎）。
+
+        供调用方在**真正投递之前**判断该引擎支持什么：例如引擎不支持指定落盘目录
+        （链式交接给外部客户端）时，就不应因为它没有「下载目录」配置而阻断投递。
+        引擎名解析失败或没有可用引擎时返回空字典，表示「信息未知」。
+        """
+        manifest = None
+        name = str(engine_name or "").strip()
+        if name:
+            manifest = self._find_manifest(name, capability=DOWNLOAD_ENGINE_CAPABILITY)
+        if manifest is None:
+            manifests = list(self._gateway.list_manifests(capability=DOWNLOAD_ENGINE_CAPABILITY))
+            manifest = manifests[0] if manifests else None
+        if manifest is None:
+            return {}
+        return resolve_download_features(
+            manifest.capability_keys,
+            manifest_config_field_keys(manifest),
+        )
+
     def get_download_engine_base_dir(self, engine_name: str = "") -> str:
         """获取指定下载引擎配置的下载根目录（dir 字段）。"""
         client = self.get_download_client(engine_name)
