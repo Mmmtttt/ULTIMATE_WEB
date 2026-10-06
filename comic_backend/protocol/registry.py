@@ -320,6 +320,17 @@ class PluginRegistry:
             manifests = [item for item in manifests if item.has_capability(capability)]
         return sorted(manifests, key=lambda item: (item.order, item.plugin_id))
 
+    def list_all_manifests(self) -> List[PluginManifest]:
+        """不受空间门禁影响的完整插件清单。
+
+        仅供应给「配置 / 授权」类界面使用。隐私空间的授权列表必须能看到全部插件：
+        否则该列表本身就取自被门禁过滤的结果，在隐私空间里恒为空，用户永远无法
+        完成授权（死锁）——必须在正常空间授权、隐私空间生效，而界面又只允许在
+        隐私空间之外操作，等于无解。
+        """
+        self._ensure_loaded()
+        return sorted(self._manifests.values(), key=lambda item: (item.order, item.plugin_id))
+
     def get_manifest(self, plugin_id: str) -> PluginManifest:
         self._ensure_loaded()
         plugin_key = str(plugin_id or "").strip()

@@ -88,3 +88,37 @@ def test_space_access_config_is_normalized_and_persisted(tmp_path):
     assert store.get_space_access() == {
         "private_enabled_plugin_ids": ["video.demo.one", "42"]
     }
+
+
+def test_private_space_without_allowlist_can_still_list_authorizable_plugins(monkeypatch, tmp_path):
+    """白名单为空时，隐私空间里的授权界面仍必须能看到插件。
+
+    授权列表若取自被空间门禁过滤的结果，在隐私空间里恒为空——用户必须先授权
+    才能看到条目、又必须看到条目才能授权，形成死锁。因此授权列表要改用
+    list_all_manifests()。
+    """
+    config_path = tmp_path / "third_party_config.json"
+    config_path.write_text(
+        json.dumps({"space_access": {"private_enabled_plugin_ids": []}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(space_access, "THIRD_PARTY_CONFIG_PATH", str(config_path))
+
+    registry = PluginRegistry(search_root=str(tmp_path / "missing"))
+    registry._manifests = {
+        "download.libretorrent": _manifest("download.libretorrent"),
+        "video.demo.other": _manifest("video.demo.other"),
+    }
+    registry._loaded = True
+
+    set_current_space_mode(SPACE_MODE_PRIVATE)
+    try:
+        # 受门禁的业务查询：隐私空间下确实什么都不可用
+        assert registry.list_manifests() == []
+        # 授权界面专用清单：不受门禁影响，否则无法完成授权
+        assert [item.plugin_id for item in registry.list_all_manifests()] == [
+            "download.libretorrent",
+            "video.demo.other",
+        ]
+    finally:
+        set_current_space_mode(SPACE_MODE_NORMAL)

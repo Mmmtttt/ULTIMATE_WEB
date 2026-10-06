@@ -117,6 +117,12 @@ class PluginConfigService:
             "helper_urls": helper_urls,
             "plugins": [manifest.to_public_descriptor() for manifest in manifests],
             "configurable_plugins": [manifest.to_public_descriptor() for manifest in configurable],
+            # 授权列表专用：不做空间门禁过滤。隐私空间下 "plugins" 会被过滤成空，
+            # 若授权界面用它渲染，隐私空间里就没有可授权的条目（死锁）。
+            "authorizable_plugins": [
+                manifest.to_public_descriptor()
+                for manifest in self._gateway.registry.list_all_manifests()
+            ],
             "space_access": self._config_store.get_space_access(),
         }
         try:
