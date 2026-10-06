@@ -1,7 +1,8 @@
 """下载能力 API 路由（磁力链接下载）。
 
 调用声明 `download.*` 能力的第三方插件（如 Aria2）：
-- GET    /api/v1/download/engines        列出可用下载引擎
+- GET    /api/v1/download/engines        列出可用下载引擎（含 capabilities/features）
+- GET    /api/v1/download/features       下载功能可用性矩阵（按引擎 + 汇总）
 - POST   /api/v1/download/magnet         投递磁力链接到下载引擎
 - GET    /api/v1/download/task           按 gid 查询任务状态
 - GET    /api/v1/download/tasks          查询任务列表
@@ -78,13 +79,33 @@ def _host_service():
 @download_bp.route('/engines', methods=['GET'])
 @require_third_party(error_response)
 def list_engines():
-    """列出声明了 download.magnet.add 能力的下载引擎及其就绪状态。"""
+    """列出声明了 download.magnet.add 能力的下载引擎及其就绪状态。
+
+    每项含 ``features``——该引擎能提供哪些功能，界面据此裁剪操作按钮。
+    """
     try:
         engines = _host_service().list_download_engines()
     except Exception as exc:
         error_logger.error(f"download engines list failed: {exc}")
         return error_response(500, f"获取下载引擎失败: {exc}")
     return success_response({"engines": engines})
+
+
+@download_bp.route('/features', methods=['GET'])
+@require_third_party(error_response)
+def list_features():
+    """下载功能的可用性矩阵。
+
+    ``features``：任意引擎支持即可用的汇总视图（决定整体入口是否展示）。
+    ``engines``：逐引擎明细——任务面板里每个任务属于某个引擎，按钮可用性
+    必须按任务所属引擎判定，不能只看汇总。
+    """
+    try:
+        payload = _host_service().list_download_features()
+    except Exception as exc:
+        error_logger.error(f"download features list failed: {exc}")
+        return error_response(500, f"获取下载功能矩阵失败: {exc}")
+    return success_response(payload)
 
 
 @download_bp.route('/magnet', methods=['POST'])

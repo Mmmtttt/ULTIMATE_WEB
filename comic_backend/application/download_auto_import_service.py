@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.constants import DATA_DIR
 from core.storage_layout import set_current_space_mode
 from infrastructure.logger import app_logger, error_logger
+from protocol.download_features import resolve_download_features
 
 AUTO_IMPORT_STATE_FILENAME = "download_auto_import_state.json"
 DEFAULT_POLL_INTERVAL_SECONDS = 60.0
@@ -190,15 +191,40 @@ class DownloadAutoImportService:
             error_logger.error(f"无法获取协议宿主服务: {exc}")
             return None
 
+    def _engine_features(self, engine: Dict[str, Any]) -> Dict[str, bool]:
+        """取引擎的功能矩阵。
+
+        宿主 ``list_download_engines`` 已按 manifest 算好 features；这里保留一个
+        基于 capabilities 的兜底，避免调用方传入手工构造的引擎字典时炸掉。
+        兜底拿不到配置字段信息，因此 auto_import / auto_organize 会判为不可用。
+        """
+        features = engine.get("features")
+        if isinstance(features, dict):
+            return dict(features)
+        capabilities = engine.get("capabilities")
+        if capabilities:
+            return resolve_download_features(capabilities)
+        return {}
+
     def _process_engine(self, host, engine: Dict[str, Any]) -> None:
         config_key = str(engine.get("config_key") or "").strip()
         engine_id = str(engine.get("plugin_id") or "").strip()
         if not engine_id:
             return
 
+        features = self._engine_features(engine)
+        # 引擎未声明任务列表能力 → 自动归集无从谈起，静默跳过（不打错误日志：
+        # 「只支持投递」的引擎是合法形态，不是故障）。
+        if features and features.get("task_list") is not True:
+            return
+
         plugin_config = self._read_plugin_config(host, config_key)
         auto_import = _as_bool(plugin_config.get("auto_import_enabled"), False)
         auto_organize = _as_bool(plugin_config.get("auto_organize_enabled"), False)
+        # 用户开了开关但引擎不具备对应能力时，按不支持处理，避免调用必然失败的能力。
+        if features:
+            auto_import = auto_import and features.get("auto_import") is True
+            auto_organize = auto_organize and features.get("auto_organize") is True
         if not auto_import and not auto_organize:
             return
 
@@ -609,8 +635,27 @@ class DownloadAutoImportService:
                     self._pending.insert(0, record)
             return False, f"归集失败: {exc}"
 
+    def _engine_features_map(self, host) -> Dict[str, Dict[str, bool]]:
+        """引擎 plugin_id -> features；取不到时返回空映射（表示信息未知）。"""
+        try:
+            engines = host.list_download_engines() or []
+        except Exception as exc:
+            app_logger.info(f"自动归集迁移：获取引擎功能矩阵失败，按未知处理: {exc}")
+            return {}
+        mapping: Dict[str, Dict[str, bool]] = {}
+        for engine in engines:
+            plugin_id = str((engine or {}).get("plugin_id") or "").strip()
+            if plugin_id:
+                mapping[plugin_id] = self._engine_features(engine)
+        return mapping
+
     def _migrate_related_tasks(self, related_keys: List[str], target_dir: str) -> int:
-        """把归集涉及的任务迁移到目标目录；返回成功迁移数量。"""
+        """把归集涉及的任务迁移到目标目录；返回成功迁移数量。
+
+        引擎未声明 download.task.migrate 时静默跳过：文件已由本地移动完成，
+        迁移动作用来同步下载器里的任务状态，引擎不支持只是少了一步同步，
+        不是故障——因此不打错误日志。信息未知（引擎已卸载）时保持原有行为。
+        """
         host = self._host
         if host is None:
             try:
@@ -619,10 +664,17 @@ class DownloadAutoImportService:
             except Exception as exc:
                 error_logger.error(f"自动归集迁移：无法获取宿主服务: {exc}")
                 return 0
+        features_map = self._engine_features_map(host)
         migrated = 0
         for key in related_keys:
             engine_id, _, gid = str(key or "").partition(":")
             if not engine_id or not gid:
+                continue
+            features = features_map.get(engine_id)
+            if features and features.get("migrate") is not True:
+                app_logger.info(
+                    f"自动归集迁移：引擎 {engine_id} 未声明 download.task.migrate，跳过任务 {gid} 的迁移"
+                )
                 continue
             try:
                 host.execute_download_capability(

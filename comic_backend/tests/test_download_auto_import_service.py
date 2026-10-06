@@ -8,6 +8,8 @@
 - 任务 dir 为空时回退到插件配置的 dir
 - 导入模式归一化（soft -> softlink_ref）
 - 状态持久化与重新加载
+- 能力裁剪：引擎未声明 download.task.list 时整段跳过；未声明
+  download.task.migrate 时只跳过迁移（文件本地移动不受影响）
 """
 import sys
 from pathlib import Path
@@ -20,6 +22,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import application.download_auto_import_service as das
+from protocol.download_features import resolve_download_features
 
 
 class FakeConfigStore:
@@ -771,3 +774,188 @@ def test_confirm_with_auto_import_imports_target_folder(tmp_path, monkeypatch):
     # 确认后立即导入目标文件夹（而非依赖迁移任务再次下载完成才导入）
     assert import_calls == [str(folder)]
     assert "download.qbittorrent:abc123" in service._processed
+
+
+# ---------- 能力裁剪（功能由引擎声明的能力决定） ----------
+
+FULL_ENGINE_CAPABILITIES = [
+    "download.magnet.add",
+    "download.task.status",
+    "download.task.list",
+    "download.task.pause",
+    "download.task.resume",
+    "download.task.remove",
+    "download.task.migrate",
+    "health.query.status",
+]
+FULL_ENGINE_FIELDS = ["auto_import_enabled", "auto_organize_enabled"]
+
+
+def _engine_with_feature_matrix(features, **overrides):
+    engine = _engine(**overrides)
+    engine["features"] = dict(features)
+    engine["capabilities"] = []
+    return engine
+
+
+def _engine_with_capabilities(capabilities, fields=(), **overrides):
+    """不带 features 的引擎：走 capabilities 兜底路径。"""
+    engine = _engine(**overrides)
+    engine["capabilities"] = list(capabilities)
+    return engine
+
+
+def test_engine_without_task_list_capability_is_skipped(tmp_path, monkeypatch):
+    """只支持投递的引擎（如外部客户端桥接插件）不该被自动归集轮询触碰。"""
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+    features = resolve_download_features(["download.magnet.add"], [])
+    host = FakeHost(
+        engines=[_engine_with_feature_matrix(features)],
+        plugin_configs={
+            "qbittorrent": {"auto_import_enabled": True, "auto_import_mode": "softlink_ref"}
+        },
+        completed_tasks=[_task(gid="abc123", dir_path=str(download_dir))],
+    )
+    calls = []
+
+    def fake_import(source_path, import_mode):
+        calls.append(source_path)
+        return SimpleNamespace(success=True, message="ok")
+
+    monkeypatch.setattr(
+        das.DownloadAutoImportService, "_import_video", staticmethod(fake_import)
+    )
+
+    service = _service(host, str(tmp_path / "state.json"))
+    service.run_once()
+
+    assert calls == []
+    assert not service._processed
+
+
+def test_capabilities_fallback_also_gates_without_features_field(tmp_path, monkeypatch):
+    """引擎字典只带 capabilities 时，兜底路径同样完成裁剪。"""
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+    host = FakeHost(
+        engines=[_engine_with_capabilities(["download.magnet.add"])],
+        plugin_configs={
+            "qbittorrent": {"auto_import_enabled": True, "auto_import_mode": "softlink_ref"}
+        },
+        completed_tasks=[_task(gid="abc123", dir_path=str(download_dir))],
+    )
+    calls = []
+
+    def fake_import(source_path, import_mode):
+        calls.append(source_path)
+        return SimpleNamespace(success=True, message="ok")
+
+    monkeypatch.setattr(
+        das.DownloadAutoImportService, "_import_video", staticmethod(fake_import)
+    )
+
+    service = _service(host, str(tmp_path / "state.json"))
+    service.run_once()
+
+    assert calls == []
+
+
+def test_auto_import_switch_ignored_when_engine_lacks_feature(tmp_path, monkeypatch):
+    """用户打开了开关，但引擎未声明该功能 —— 不执行，也不报错。"""
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+    # 有 task.list，但没有 auto_import_enabled 字段 -> auto_import 功能不可用
+    features = resolve_download_features(
+        ["download.magnet.add", "download.task.list"], []
+    )
+    assert features["auto_import"] is False
+    host = FakeHost(
+        engines=[_engine_with_feature_matrix(features)],
+        plugin_configs={
+            "qbittorrent": {"auto_import_enabled": True, "auto_import_mode": "softlink_ref"}
+        },
+        completed_tasks=[_task(gid="abc123", dir_path=str(download_dir))],
+    )
+    calls = []
+
+    def fake_import(source_path, import_mode):
+        calls.append(source_path)
+        return SimpleNamespace(success=True, message="ok")
+
+    monkeypatch.setattr(
+        das.DownloadAutoImportService, "_import_video", staticmethod(fake_import)
+    )
+
+    service = _service(host, str(tmp_path / "state.json"))
+    service.run_once()
+
+    assert calls == []
+
+
+def test_migrate_related_tasks_skips_engine_without_migrate_feature(tmp_path):
+    """引擎未声明 download.task.migrate 时跳过迁移（文件本地移动已完成，不是故障）。"""
+    features = resolve_download_features(
+        ["download.magnet.add", "download.task.list"], []
+    )
+    assert features["migrate"] is False
+    host = FakeHost(
+        engines=[_engine_with_feature_matrix(features)],
+        plugin_configs={},
+        completed_tasks=[],
+    )
+    service = _service(host, str(tmp_path / "state.json"))
+    target = str(tmp_path / "target")
+
+    migrated = service._migrate_related_tasks(["download.qbittorrent:abc123"], target)
+
+    assert migrated == 0
+    assert host.migrate_calls == []
+
+
+def test_migrate_related_tasks_proceeds_when_feature_unknown(tmp_path):
+    """引擎信息未知（未带 features/capabilities）时保持原有行为，不静默丢功能。"""
+    host = FakeHost(
+        engines=[_engine()],
+        plugin_configs={},
+        completed_tasks=[],
+    )
+    service = _service(host, str(tmp_path / "state.json"))
+    target = str(tmp_path / "target")
+
+    migrated = service._migrate_related_tasks(["download.qbittorrent:abc123"], target)
+
+    assert migrated == 1
+    assert host.migrate_calls == [{
+        "engine_id": "download.qbittorrent",
+        "gid": "abc123",
+        "dir": target,
+    }]
+
+
+def test_full_capability_engine_still_auto_imports(tmp_path, monkeypatch):
+    """声明了全套能力的引擎行为不变（能力裁剪不误伤正常引擎）。"""
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir()
+    features = resolve_download_features(FULL_ENGINE_CAPABILITIES, FULL_ENGINE_FIELDS)
+    host = FakeHost(
+        engines=[_engine_with_feature_matrix(features)],
+        plugin_configs={
+            "qbittorrent": {"auto_import_enabled": True, "auto_import_mode": "softlink_ref"}
+        },
+        completed_tasks=[_task(gid="abc123", dir_path=str(download_dir))],
+    )
+    calls = []
+
+    def fake_import(source_path, import_mode):
+        calls.append((source_path, import_mode))
+        return SimpleNamespace(success=True, message="ok")
+
+    monkeypatch.setattr(
+        das.DownloadAutoImportService, "_import_video", staticmethod(fake_import)
+    )
+
+    service = _service(host, str(tmp_path / "state.json"))
+    service.run_once()
+
+    assert calls == [(str(download_dir), "softlink_ref")]

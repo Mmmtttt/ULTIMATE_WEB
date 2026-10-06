@@ -89,6 +89,14 @@
         </van-empty>
       </div>
 
+      <div v-else-if="!loading && taskListEngines.length === 0" class="empty-wrap">
+        <van-empty description="已安装的下载引擎未声明任务列表能力（download.task.list），无法展示任务">
+          <van-button type="primary" size="small" plain @click="goToConfig">
+            前往第三方插件配置
+          </van-button>
+        </van-empty>
+      </div>
+
       <template v-else>
         <section class="hero-card">
           <div class="hero-copy">
@@ -144,7 +152,7 @@
                   </van-tag>
                   <div class="task-actions">
                     <button
-                      v-if="task.status === 'paused'"
+                      v-if="task.status === 'paused' && taskSupports(task, 'resume')"
                       class="icon-btn"
                       :disabled="taskActionGid === task.gid"
                       title="继续下载"
@@ -153,7 +161,7 @@
                       <van-icon name="play-circle-o" size="20" />
                     </button>
                     <button
-                      v-else
+                      v-else-if="task.status !== 'paused' && taskSupports(task, 'pause')"
                       class="icon-btn"
                       :disabled="taskActionGid === task.gid"
                       title="暂停下载"
@@ -162,6 +170,7 @@
                       <van-icon name="pause-circle-o" size="20" />
                     </button>
                     <button
+                      v-if="taskSupports(task, 'remove')"
                       class="icon-btn danger"
                       :disabled="taskActionGid === task.gid"
                       title="删除任务"
@@ -183,6 +192,10 @@
                   <span v-if="task.upload_speed > 0">↑ {{ formatSpeed(task.upload_speed) }}</span>
                   <span>{{ formatBytes(task.completed_length) }} / {{ formatBytes(task.total_length) }}</span>
                 </div>
+              </div>
+
+              <div v-if="taskCapabilityNote(task)" class="task-capability-note">
+                {{ taskCapabilityNote(task) }}
               </div>
             </article>
           </div>
@@ -227,6 +240,7 @@
                   </van-tag>
                   <div class="task-actions">
                     <button
+                      v-if="taskSupports(task, 'remove')"
                       class="icon-btn danger"
                       :disabled="taskActionGid === task.gid"
                       title="删除记录"
@@ -246,6 +260,10 @@
               <div v-if="task.error_message" class="error-message">
                 <van-icon name="warning-o" />
                 <span>{{ task.error_message }}</span>
+              </div>
+
+              <div v-if="taskCapabilityNote(task)" class="task-capability-note">
+                {{ taskCapabilityNote(task) }}
               </div>
             </article>
             </div>
@@ -287,12 +305,82 @@ const engineSummary = computed(() => {
   return names.length > 0 ? names.join('、') : ''
 })
 
+// 功能标签：只用于向用户解释「为什么这里没有这个按钮」，属于展示层语义。
+const FEATURE_LABELS = {
+  task_list: '任务列表',
+  task_status: '任务详情',
+  pause: '暂停',
+  resume: '继续',
+  remove: '删除任务',
+  migrate: '任务迁移',
+  auto_import: '自动导入',
+  auto_organize: '自动归集'
+}
+const TASK_CONTROL_FEATURES = ['pause', 'resume', 'remove']
+
+// 引擎 plugin_id -> features。features 由后端按插件 manifest 计算，
+// 描述引擎「能做什么」（静态），与 status「现在能不能用」（运行时）是两件事。
+const engineFeatures = computed(() => {
+  const map = {}
+  engines.value.forEach(engine => {
+    if (engine?.plugin_id && engine.features) {
+      map[engine.plugin_id] = engine.features
+    }
+  })
+  return map
+})
+
+function engineSupports(engine, feature) {
+  // 后端未返回 features 时不做裁剪，保持旧行为（不因字段缺失而隐藏既有功能）
+  if (!engine?.features) {
+    return true
+  }
+  return engine.features[feature] === true
+}
+
+function featuresOfTask(task) {
+  return task?.engine ? engineFeatures.value[task.engine] || null : null
+}
+
+// 按任务所属引擎判定，而不是全局判定：同一屏里可能同时存在
+// 「支持暂停」和「不支持暂停」两种引擎的任务。
+function taskSupports(task, feature) {
+  const features = featuresOfTask(task)
+  if (!features) {
+    return true
+  }
+  return features[feature] === true
+}
+
+function taskCapabilityNote(task) {
+  const features = featuresOfTask(task)
+  if (!features) {
+    return ''
+  }
+  const missing = TASK_CONTROL_FEATURES.filter(name => features[name] !== true)
+  if (missing.length === 0) {
+    return ''
+  }
+  const names = missing.map(name => FEATURE_LABELS[name] || name)
+  return `${task.engine_name || '该引擎'} 未提供能力：${names.join('、')}`
+}
+
+// 只有声明了 download.magnet.add 的引擎才能投递（引擎发现本就以此为准）
+const submittableEngines = computed(() =>
+  engines.value.filter(engine => engineSupports(engine, 'submit_magnet'))
+)
+
+// 只有声明了 download.task.list 的引擎才能拉任务列表；否则每轮轮询都会白报错
+const taskListEngines = computed(() =>
+  engines.value.filter(engine => engineSupports(engine, 'task_list'))
+)
+
 const selectedEngine = computed(() =>
-  engines.value[selectedEngineIndex.value] || engines.value[0] || null
+  submittableEngines.value[selectedEngineIndex.value] || submittableEngines.value[0] || null
 )
 
 const enginePickerActions = computed(() =>
-  engines.value.map(engine => ({
+  submittableEngines.value.map(engine => ({
     name: engine.name,
     plugin_id: engine.plugin_id
   }))
@@ -382,10 +470,10 @@ async function loadEngines() {
     const res = await downloadApi.listEngines()
     const list = res?.data?.engines || []
     engines.value = list
-    if (selectedEngineIndex.value >= list.length) {
+    if (selectedEngineIndex.value >= submittableEngines.value.length) {
       selectedEngineIndex.value = 0
     }
-    if (list.length === 0) {
+    if (taskListEngines.value.length === 0) {
       tasks.value = []
     }
   } catch (error) {
@@ -394,7 +482,7 @@ async function loadEngines() {
 }
 
 async function loadTasks(force = false) {
-  const engineList = engines.value
+  const engineList = taskListEngines.value
   if ((loading.value && !force) || engineList.length === 0) {
     return
   }
@@ -485,7 +573,7 @@ function goToConfig() {
 }
 
 const canAddLinks = computed(() => {
-  return manualLinks.value.trim().length > 0 && engines.value.length > 0
+  return manualLinks.value.trim().length > 0 && submittableEngines.value.length > 0
 })
 
 function openAddPopup() {
@@ -493,17 +581,21 @@ function openAddPopup() {
     showFailToast('未配置下载引擎，请先到第三方插件配置启用下载引擎')
     return
   }
+  if (submittableEngines.value.length === 0) {
+    showFailToast('当前下载引擎均未声明投递能力（download.magnet.add），无法创建任务')
+    return
+  }
   showAddPopup.value = true
 }
 
 function openEnginePicker() {
-  if (engines.value.length > 1) {
+  if (submittableEngines.value.length > 1) {
     showEnginePicker.value = true
   }
 }
 
 function onEngineSelect(action) {
-  const index = engines.value.findIndex(
+  const index = submittableEngines.value.findIndex(
     engine => engine.plugin_id === action.plugin_id
   )
   if (index >= 0) {
@@ -910,6 +1002,13 @@ onUnmounted(() => {
   gap: 10px;
   margin-top: 8px;
   font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.task-capability-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text-tertiary);
 }
 
