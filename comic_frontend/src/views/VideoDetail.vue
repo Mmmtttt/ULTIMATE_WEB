@@ -265,16 +265,24 @@
           >
             <template #right-icon>
               <span class="magnet-actions" @click.stop>
-                <van-button
-                  size="mini"
-                  plain
-                  type="primary"
-                  :loading="magnetSendingIndex === index"
+                <van-loading
+                  v-if="magnetSendingIndex === index"
+                  size="16"
+                  class="magnet-send-loading"
+                />
+                <van-icon
+                  v-else
+                  name="down"
+                  class="magnet-action-icon magnet-send-icon"
+                  title="发送到下载器"
                   @click="sendMagnetToDownloader(magnet, index)"
-                >
-                  发送到下载器
-                </van-button>
-                <van-icon name="description" class="magnet-copy-icon" />
+                />
+                <van-icon
+                  name="description"
+                  class="magnet-action-icon magnet-copy-icon"
+                  title="复制磁力链接"
+                  @click="copyMagnet(magnet)"
+                />
               </span>
             </template>
           </van-cell>
@@ -2951,14 +2959,32 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+/* 磁力行操作：改用图标而非文字按钮。
+   发送用「下载」含义的 down 图标并沿用原 plain primary 的主色；复制保持次要色。
+   padding 用来把小图标撑到接近原来按钮(24px)的点击面积。 */
+.magnet-action-icon {
+  padding: 3px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.magnet-action-icon:active {
+  opacity: 0.55;
+}
+
+.magnet-send-icon {
+  color: var(--brand-600);
+}
+
 .magnet-copy-icon {
   color: var(--text-3);
 }
 
-.magnet-actions .van-button {
-  height: 24px;
-  padding: 0 8px;
-  font-size: 12px;
+.magnet-send-loading {
+  display: flex;
+  align-items: center;
+  padding: 3px;
 }
 
 .preview-video-section {
