@@ -27,6 +27,7 @@
 | --- | --- | --- |
 | Aria2（下载引擎） | https://github.com/niaonhu001/aria2_for_ultimate | `comic_backend/third_party/Aria2/` |
 | qBittorrent（下载引擎） | https://github.com/niaonhu001/qbtorrent_for_ultimate | `comic_backend/third_party/qBittorrent/` |
+| LibreTorrent（下载引擎，Android 专用） | https://github.com/niaonhu001/libretorrent_for_ultimate | `comic_backend/third_party/LibreTorrent/` |
 | JavBus | https://github.com/niaonhu001/javbus_for_ultimate | `comic_backend/third_party/javbus/` |
 | NHentai | https://github.com/niaonhu001/nhentai_for_ultimate | `comic_backend/third_party/NHentai/` |
 | Hanime1 | https://github.com/niaonhu001/Hanime1_for_ultimate-Public- | `comic_backend/third_party/hanime1/` |
