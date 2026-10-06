@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -31,6 +33,20 @@ from protocol.registry import PluginRegistry
 from protocol.runtime_config import ProtocolConfigStore
 
 THIRD_PARTY_ROOT = BACKEND_ROOT / "third_party"
+
+# 下载引擎（Aria2 / qBittorrent）是外部插件：仓库独立维护，按需检出到 third_party。
+# 本机未安装时，依赖真实插件目录的宿主集成用例自动跳过（纯映射逻辑用例不受影响）。
+DOWNLOAD_ENGINE_PLUGIN_DIRS = (
+    THIRD_PARTY_ROOT / "Aria2",
+    THIRD_PARTY_ROOT / "qBittorrent",
+)
+requires_download_engine_plugin = pytest.mark.skipif(
+    not any(
+        (plugin_dir / "ultimate-plugin.json").is_file()
+        for plugin_dir in DOWNLOAD_ENGINE_PLUGIN_DIRS
+    ),
+    reason="未检出外部下载引擎插件（comic_backend/third_party/{Aria2,qBittorrent}）",
+)
 
 FULL_ENGINE_CAPABILITIES = [
     "download.magnet.add",
@@ -186,6 +202,7 @@ def test_manifest_config_field_keys_duck_typing():
 # ---------- 宿主集成 ----------
 
 
+@requires_download_engine_plugin
 def test_host_service_engines_expose_features(tmp_path):
     host = _make_host_service(tmp_path)
     engines = host.list_download_engines()
@@ -208,6 +225,7 @@ def test_host_service_engines_expose_features(tmp_path):
     assert set(features.keys()) == set(DOWNLOAD_FEATURE_ORDER)
 
 
+@requires_download_engine_plugin
 def test_host_service_feature_matrix_shape(tmp_path):
     host = _make_host_service(tmp_path)
     payload = host.list_download_features()
@@ -222,6 +240,7 @@ def test_host_service_feature_matrix_shape(tmp_path):
         assert set(item["features"].keys()) == set(DOWNLOAD_FEATURE_ORDER)
 
 
+@requires_download_engine_plugin
 def test_feature_matrix_reflects_engine_capabilities(tmp_path):
     """汇总视图必须与逐引擎明细一致（任意引擎支持即可用）。"""
     host = _make_host_service(tmp_path)

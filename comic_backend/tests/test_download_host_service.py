@@ -32,6 +32,14 @@ from protocol.runtime_config import ProtocolConfigStore
 ARIA2_PLUGIN_ID = "download.aria2"
 THIRD_PARTY_ROOT = BACKEND_ROOT / "third_party"
 
+# Aria2 是外部插件：仓库独立维护（aria2_for_ultimate），按需检出到 third_party。
+# 本机未安装时，依赖真实插件目录的宿主编排用例自动跳过。
+ARIA2_PLUGIN_DIR = THIRD_PARTY_ROOT / "Aria2"
+requires_aria2_plugin = pytest.mark.skipif(
+    not (ARIA2_PLUGIN_DIR / "ultimate-plugin.json").is_file(),
+    reason="未检出外部插件 comic_backend/third_party/Aria2",
+)
+
 # 方案 A：引擎默认停用，用例必须显式开启后才能执行下载能力。
 ARIA2_ENABLED_CONFIG = {
     "enabled": True,
@@ -100,6 +108,7 @@ def _host_service_with_aria2_enabled(tmp_path) -> ProtocolHostService:
     return _make_host_service(tmp_path, adapters={"aria2": dict(ARIA2_ENABLED_CONFIG)})
 
 
+@requires_aria2_plugin
 def test_list_download_engines_discovers_aria2(tmp_path):
     host = _host_service_with_aria2_enabled(tmp_path)
     engines = host.list_download_engines()
@@ -114,6 +123,7 @@ def test_list_download_engines_discovers_aria2(tmp_path):
     assert isinstance(aria2["base_dir"], str)
 
 
+@requires_aria2_plugin
 def test_download_engine_disabled_by_default_until_user_enables_it(tmp_path):
     """锁定 main 的默认策略：下载引擎未显式开启时处于停用状态。
 
@@ -134,6 +144,7 @@ def test_download_engine_disabled_by_default_until_user_enables_it(tmp_path):
         )
 
 
+@requires_aria2_plugin
 def test_get_download_client_by_name_and_default(tmp_path):
     host = _host_service_with_aria2_enabled(tmp_path)
     by_name = host.get_download_client("aria2")
@@ -150,6 +161,7 @@ def test_get_download_client_by_name_and_default(tmp_path):
     assert fallback.plugin_id == ARIA2_PLUGIN_ID
 
 
+@requires_aria2_plugin
 def test_execute_download_capability_full_chain(monkeypatch, tmp_path):
     rpc = FakeAria2Rpc()
     rpc.register("aria2.addUri", result="gid-101")
@@ -170,6 +182,7 @@ def test_execute_download_capability_full_chain(monkeypatch, tmp_path):
     assert rpc.calls[0]["params"][0] == ["magnet:?xt=urn:btih:abc"]
 
 
+@requires_aria2_plugin
 def test_execute_download_task_remove(monkeypatch, tmp_path):
     rpc = FakeAria2Rpc()
     rpc.register("aria2.tellStatus", result={"gid": "gid-101", "status": "active"})
