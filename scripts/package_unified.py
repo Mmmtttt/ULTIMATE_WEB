@@ -414,6 +414,88 @@ def collect_android_packaged_plugin_ids(third_party_root: Path, packager_cfg: Di
     return plugin_ids
 
 
+def _xml_attr(value: object) -> str:
+    text = str(value if value is not None else "")
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def normalize_android_manifest_queries(raw: object) -> Dict[str, Any]:
+    """归一化插件声明的 ``packaging.android.manifest_queries``。
+
+    插件用声明式数据描述它需要访问哪些外部应用/Intent；宿主只负责原样搬进
+    AndroidManifest.xml，不识别任何具体插件或平台。
+    """
+    if not isinstance(raw, dict):
+        return {"intents": [], "packages": []}
+    intents: List[Dict[str, Any]] = []
+    for item in raw.get("intents") or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip()
+        schemes = sorted({str(value).strip() for value in (item.get("schemes") or []) if str(value).strip()})
+        mime_types = sorted(
+            {str(value).strip() for value in (item.get("mime_types") or []) if str(value).strip()}
+        )
+        if not action and not schemes and not mime_types:
+            continue
+        intents.append({"action": action, "schemes": schemes, "mime_types": mime_types})
+    packages = sorted(
+        {str(value).strip() for value in (raw.get("packages") or []) if str(value).strip()}
+    )
+    return {"intents": intents, "packages": packages}
+
+
+def collect_android_manifest_queries(third_party_root: Path, packager_cfg: Dict) -> Dict[str, Any]:
+    """汇总所有「会被打进 APK」的插件所声明的 queries。"""
+    merged: Dict[str, Any] = {"intents": [], "packages": []}
+    if not third_party_root or not Path(third_party_root).exists():
+        return merged
+    seen_intents = set()
+    packages = set()
+    for payload in collect_android_manifest_payloads(third_party_root, packager_cfg):
+        spec = normalize_android_manifest_queries(
+            _manifest_android_packaging(payload).get("manifest_queries")
+        )
+        for intent in spec["intents"]:
+            key = (intent["action"], tuple(intent["schemes"]), tuple(intent["mime_types"]))
+            if key in seen_intents:
+                continue
+            seen_intents.add(key)
+            merged["intents"].append(intent)
+        packages.update(spec["packages"])
+    merged["packages"] = sorted(packages)
+    return merged
+
+
+def render_android_queries_block(spec: Dict[str, Any]) -> str:
+    """渲染 ``<queries>`` 片段；无声明时返回空串。"""
+    intents = (spec or {}).get("intents") or []
+    packages = (spec or {}).get("packages") or []
+    if not intents and not packages:
+        return ""
+    lines = ["    <!-- ULTIMATE_PLUGIN_QUERIES_START -->", "    <queries>"]
+    for intent in intents:
+        lines.append("        <intent>")
+        if intent.get("action"):
+            lines.append(f'            <action android:name="{_xml_attr(intent["action"])}" />')
+        for scheme in intent.get("schemes") or []:
+            lines.append(f'            <data android:scheme="{_xml_attr(scheme)}" />')
+        for mime_type in intent.get("mime_types") or []:
+            lines.append(f'            <data android:mimeType="{_xml_attr(mime_type)}" />')
+        lines.append("        </intent>")
+    for package in packages:
+        lines.append(f'        <package android:name="{_xml_attr(package)}" />')
+    lines.append("    </queries>")
+    lines.append("    <!-- ULTIMATE_PLUGIN_QUERIES_END -->")
+    return "\n".join(lines)
+
+
 def normalize_pip_install_entry(raw: object) -> Optional[List[str]]:
     if isinstance(raw, str):
         text = raw.strip()
@@ -919,7 +1001,11 @@ def ensure_android_project_chaquopy_root(android_project_dir: Path, chaquopy_ver
         write_text(build_gradle, patched)
 
 
-def ensure_android_manifest_network(android_project_dir: Path) -> None:
+def ensure_android_manifest_network(
+    android_project_dir: Path,
+    third_party_root: Optional[Path] = None,
+    packager_cfg: Optional[Dict] = None,
+) -> None:
     manifest = android_project_dir / "app" / "src" / "main" / "AndroidManifest.xml"
     if not manifest.exists():
         return
@@ -971,6 +1057,33 @@ def ensure_android_manifest_network(android_project_dir: Path) -> None:
             if archive_intent_marker not in body:
                 new_body = body.rstrip() + "\n" + archive_intent_block + "        "
                 patched = patched[:match.start(2)] + new_body + patched[match.end(2):]
+
+    # 插件声明的 <queries>（例如下载引擎插件需要访问外部 BT 客户端）。
+    # 宿主只搬运声明式数据，不识别具体插件；Android 11+ 的软件包可见性要求
+    # 访问/解析外部应用前先声明目标。
+    queries_block = render_android_queries_block(
+        collect_android_manifest_queries(third_party_root, packager_cfg or {})
+        if third_party_root
+        else {"intents": [], "packages": []}
+    )
+    # 先无条件清掉旧声明（含它与 <application> 之间的空行），再按固定格式插入。
+    # 这样「已注入过」「插件被移除」两种重复打包场景都收敛到同一结果。
+    patched = re.sub(
+        r"[ \t]*<!-- ULTIMATE_PLUGIN_QUERIES_START -->.*?"
+        r"<!-- ULTIMATE_PLUGIN_QUERIES_END -->\n\n",
+        "",
+        patched,
+        flags=re.DOTALL,
+    )
+    if queries_block:
+        if "    <application" in patched:
+            patched = patched.replace(
+                "    <application", queries_block + "\n\n    <application", 1
+            )
+        elif "<application" in patched:
+            patched = patched.replace(
+                "<application", queries_block + "\n\n    <application", 1
+            )
 
     if patched != raw:
         write_text(manifest, patched)
@@ -2468,7 +2581,13 @@ def inject_android_embedded_backend(
     chaquopy_version = str(packager_cfg.get("chaquopy_version", "17.0.0")).strip() or "17.0.0"
     patch_android_min_sdk(android_project_dir, min_sdk)
     ensure_android_project_chaquopy_root(android_project_dir, chaquopy_version)
-    ensure_android_manifest_network(android_project_dir)
+    # 插件声明的 <queries> 需要汇总后写入 manifest，因此这里把后端源码目录传下去，
+    # 让注入逻辑只依赖「插件声明的声明式数据」，不识别具体插件。
+    ensure_android_manifest_network(
+        android_project_dir,
+        third_party_root=workspace_dir / get_android_workspace_backend_dir(packager_cfg) / "third_party",
+        packager_cfg=packager_cfg,
+    )
     ensure_android_project_chaquopy_app(android_project_dir, workspace_dir, packager_cfg, app_version)
 
 
