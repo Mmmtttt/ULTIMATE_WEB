@@ -274,7 +274,11 @@ async function loadThirdPartyConfig() {
     thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
     thirdPartyAdapters.value = data.adapters || {}
     extensionState.value = data.extensions || { installed: [] }
-    privateAccessPlugins.value = Array.isArray(data.plugins) ? data.plugins : []
+    // 授权列表用不做空间门禁的清单：隐私空间下 data.plugins 会被过滤成空，
+    // 用它渲染会导致「在隐私空间里没有可授权的条目」这个死锁。
+    privateAccessPlugins.value = Array.isArray(data.authorizable_plugins)
+      ? data.authorizable_plugins
+      : (Array.isArray(data.plugins) ? data.plugins : [])
     privateEnabledPluginIds.value = Array.isArray(data.space_access?.private_enabled_plugin_ids)
       ? [...data.space_access.private_enabled_plugin_ids]
       : []

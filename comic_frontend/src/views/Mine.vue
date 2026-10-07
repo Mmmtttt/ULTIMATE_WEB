@@ -27,6 +27,7 @@
           </van-tag>
         </template>
       </van-cell>
+      <van-cell title="下载任务" icon="down" to="/download-tasks" is-link />
       <van-cell v-if="!isVideoMode" title="本地漫画导入" icon="description" to="/comic-local-import" is-link />
       <van-cell v-else title="本地视频导入" icon="description" to="/video-local-import" is-link />
     </van-cell-group>

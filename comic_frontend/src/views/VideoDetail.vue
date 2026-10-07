@@ -232,11 +232,28 @@
       <div v-if="video.magnets && video.magnets.length > 0" class="magnets-section">
         <van-cell
           class="magnets-toggle"
-          :title="`磁力链接（${video.magnets.length}）`"
-          :value="showMagnets ? '收起' : '展开'"
-          is-link
           @click="showMagnets = !showMagnets"
-        />
+        >
+          <template #title>
+            <span>磁力链接（{{ video.magnets.length }}）</span>
+          </template>
+          <template #right-icon>
+            <span class="magnet-toggle-actions">
+              <van-button
+                size="mini"
+                plain
+                type="default"
+                @click.stop="goToDownloadTasks"
+              >
+                下载任务
+              </van-button>
+              <van-icon
+                :name="showMagnets ? 'arrow-up' : 'arrow-down'"
+                @click.stop="showMagnets = !showMagnets"
+              />
+            </span>
+          </template>
+        </van-cell>
         <van-cell-group v-show="showMagnets">
           <van-cell 
             v-for="(magnet, index) in video.magnets" 
@@ -247,10 +264,36 @@
             @click="copyMagnet(magnet)"
           >
             <template #right-icon>
-              <van-icon name="description" />
+              <span class="magnet-actions" @click.stop>
+                <van-loading
+                  v-if="magnetSendingIndex === index"
+                  size="16"
+                  class="magnet-send-loading"
+                />
+                <van-icon
+                  v-else
+                  name="down"
+                  class="magnet-action-icon magnet-send-icon"
+                  title="发送到下载器"
+                  @click="sendMagnetToDownloader(magnet, index)"
+                />
+                <van-icon
+                  name="description"
+                  class="magnet-action-icon magnet-copy-icon"
+                  title="复制磁力链接"
+                  @click="copyMagnet(magnet)"
+                />
+              </span>
             </template>
           </van-cell>
         </van-cell-group>
+        <van-action-sheet
+          v-model:show="showEnginePicker"
+          :actions="enginePickerActions"
+          cancel-text="取消"
+          close-on-click-action
+          @select="onEngineSelect"
+        />
       </div>
 
       <div v-if="video" class="preview-video-section">
@@ -607,6 +650,7 @@ import { showToast, showSuccessToast, showFailToast, showConfirmDialog, showImag
 import { useVideoStore, useListStore, useActorStore, useTagStore } from '@/stores'
 import { tagApi } from '@/api/tag'
 import { videoApi } from '@/api/video'
+import { downloadApi } from '@/api/download'
 import { historyApi } from '@/api/history'
 import { EmptyState } from '@/components'
 import { useDevice } from '@/composables/useDevice'
@@ -1631,6 +1675,115 @@ async function copyMagnet(magnet) {
   } catch (error) {
     console.error('复制磁力链接失败:', error)
     showFailToast('复制失败，请手动复制')
+  }
+}
+
+const magnetSendingIndex = ref(-1)
+const downloadEngines = ref([])
+const availableEngines = ref([])
+const showEnginePicker = ref(false)
+const pendingMagnet = ref(null)
+
+const enginePickerActions = computed(() =>
+  availableEngines.value.map(engine => ({ name: engine.name, plugin_id: engine.plugin_id }))
+)
+
+function goToDownloadTasks() {
+  router.push({ name: 'DownloadTasks' })
+}
+
+async function ensureDownloadEngines() {
+  if (downloadEngines.value.length > 0) {
+    availableEngines.value = downloadEngines.value.filter(
+      engine => engine.status?.configured !== false
+    )
+    return downloadEngines.value
+  }
+  try {
+    const res = await downloadApi.listEngines()
+    const engines = res?.data?.engines || []
+    downloadEngines.value = engines
+    availableEngines.value = engines.filter(
+      engine => engine.status?.configured !== false
+    )
+    return engines
+  } catch (error) {
+    console.error('获取下载引擎失败:', error)
+    return []
+  }
+}
+
+async function sendMagnetToDownloader(magnet, index) {
+  const text = getMagnetText(magnet)
+  if (!text) {
+    showFailToast('磁力链接为空')
+    return
+  }
+
+  await ensureDownloadEngines()
+  if (availableEngines.value.length === 0) {
+    showFailToast('未配置可用的下载引擎，请到系统设置启用下载引擎')
+    return
+  }
+
+  // 多个可用引擎时弹出选择，单个引擎直接投递
+  if (availableEngines.value.length === 1) {
+    await dispatchMagnet(text, availableEngines.value[0], index)
+    return
+  }
+  pendingMagnet.value = { text, index }
+  showEnginePicker.value = true
+}
+
+async function onEngineSelect(action) {
+  const engine = availableEngines.value.find(
+    item => item.plugin_id === action.plugin_id
+  )
+  const pending = pendingMagnet.value
+  pendingMagnet.value = null
+  if (!engine || !pending) {
+    return
+  }
+  await dispatchMagnet(pending.text, engine, pending.index)
+}
+
+async function dispatchMagnet(text, engine, index) {
+  magnetSendingIndex.value = index
+  try {
+    // 有番号时自动下载到 下载根目录\<番号> 子文件夹，无需下载完再归集。
+    // 但引擎可能不支持指定落盘目录（例如链式交接给外部客户端，位置由对方决定）：
+    // 这种情况不要发子文件夹，否则等于下了一个对方无法执行的指令。
+    const code = (video.value?.code || '').trim()
+    const supportsTargetDir = engine?.features?.target_dir !== false
+    const res = await downloadApi.addMagnet({
+      magnet: text,
+      engine: engine.plugin_id,
+      dir_subfolder: supportsTargetDir ? (code || undefined) : undefined
+    })
+    const payload = res?.data || {}
+    if (payload.added) {
+      if (payload.handoff) {
+        // 交接型引擎没有 gid，确认与落盘都由对方管理：如实说明，不假装已排队
+        showToast(`已交给 ${engine.name}，请在它里面确认后开始下载`)
+      } else {
+        showSuccessToast(`已投递到 ${engine.name}（gid: ${payload.gid || '未知'}）`)
+      }
+      if (payload.warning) {
+        showToast(String(payload.warning))
+      }
+    } else {
+      showFailToast(res?.msg || '投递失败')
+    }
+  } catch (error) {
+    console.error('投递磁力链接失败:', error)
+    // 后端的 error_response 是「HTTP 200 + body.code」，请求层用 new Error(res.msg)
+    // 拒绝，所以消息在 error.message 上；response.data.msg 只在真正的 HTTP 错误时
+    // 存在。只读后者会把后端的具体原因吞掉，用户只能看到一句笼统兜底。
+    showFailToast(
+      error?.response?.data?.msg || error?.message || '投递失败，请检查下载引擎配置'
+    )
+  } finally {
+    magnetSendingIndex.value = -1
   }
 }
 
@@ -2785,6 +2938,53 @@ onUnmounted(() => {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   overflow: hidden;
+}
+
+.magnet-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.magnet-toggle-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+}
+
+.magnet-toggle-actions .van-button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+/* 磁力行操作：改用图标而非文字按钮。
+   发送用「下载」含义的 down 图标并沿用原 plain primary 的主色；复制保持次要色。
+   padding 用来把小图标撑到接近原来按钮(24px)的点击面积。 */
+.magnet-action-icon {
+  padding: 3px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.magnet-action-icon:active {
+  opacity: 0.55;
+}
+
+.magnet-send-icon {
+  color: var(--brand-600);
+}
+
+.magnet-copy-icon {
+  color: var(--text-3);
+}
+
+.magnet-send-loading {
+  display: flex;
+  align-items: center;
+  padding: 3px;
 }
 
 .preview-video-section {

@@ -4,6 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.runtime_profile import get_runtime_profile, is_third_party_enabled
 
+from .download_features import (
+    DOWNLOAD_ENGINE_CAPABILITY,
+    aggregate_download_features,
+    manifest_config_field_keys,
+    resolve_download_features,
+)
 from .gateway import ProtocolGateway, get_protocol_gateway
 from .platform_meta import (
     build_prefixed_id,
@@ -470,6 +476,126 @@ class ProtocolHostService:
 
     def get_preview_request_client(self, *args, **kwargs) -> ProtocolVideoClient:
         return self.get_video_client("", *args, capability="transport.http.request", **kwargs)
+
+    # ---------- 下载能力（磁力/种子，Aria2 等） ----------
+
+    def list_download_engines(self) -> List[Dict[str, Any]]:
+        """列出声明了 download.magnet.add 能力的下载插件及其就绪状态。
+
+        每一项都带 ``features``——该引擎**能提供哪些功能**（由 manifest 的
+        capabilities 与配置字段静态决定）。界面据此裁剪按钮，宿主据此跳过
+        引擎不支持的能力调用，两者都不需要认识具体引擎。
+        """
+        engines: List[Dict[str, Any]] = []
+        for manifest in self._gateway.list_manifests(capability=DOWNLOAD_ENGINE_CAPABILITY):
+            try:
+                status = self._gateway.get_query_status(manifest.plugin_id) or {}
+            except Exception:
+                status = {}
+            try:
+                plugin_config = self._config_store.get_plugin_config(manifest.config_key) or {}
+            except Exception:
+                plugin_config = {}
+            engines.append({
+                "plugin_id": manifest.plugin_id,
+                "name": manifest.name,
+                "config_key": manifest.config_key,
+                "platform_label": _resolve_canonical_platform_name(manifest, fallback=manifest.name),
+                "capabilities": [
+                    key
+                    for key in manifest.capability_keys
+                    if key.startswith("download.") or key == "health.query.status"
+                ],
+                "features": resolve_download_features(
+                    manifest.capability_keys,
+                    manifest_config_field_keys(manifest),
+                ),
+                "status": dict(status) if isinstance(status, dict) else {},
+                "base_dir": str(plugin_config.get("dir") or "").strip(),
+            })
+        return engines
+
+    def list_download_features(self) -> Dict[str, Any]:
+        """下载功能的可用性矩阵。
+
+        ``features`` 是「任意引擎支持即可用」的汇总视图，用于决定整体入口是否
+        展示；``engines`` 提供逐引擎明细，因为同一个界面里不同任务属于不同引擎，
+        按钮可用性必须按任务所属引擎判定，不能只看汇总。
+        """
+        engines = self.list_download_engines()
+        return {
+            "features": aggregate_download_features(
+                engine.get("features") for engine in engines
+            ),
+            "engines": [
+                {
+                    "plugin_id": engine.get("plugin_id"),
+                    "name": engine.get("name"),
+                    "features": dict(engine.get("features") or {}),
+                    "status": dict(engine.get("status") or {}),
+                }
+                for engine in engines
+            ],
+        }
+
+    def get_download_engine_features(self, engine_name: str = "") -> Dict[str, bool]:
+        """取指定下载引擎的功能矩阵（按引擎名/别名解析，缺省用默认引擎）。
+
+        供调用方在**真正投递之前**判断该引擎支持什么：例如引擎不支持指定落盘目录
+        （链式交接给外部客户端）时，就不应因为它没有「下载目录」配置而阻断投递。
+        引擎名解析失败或没有可用引擎时返回空字典，表示「信息未知」。
+        """
+        manifest = None
+        name = str(engine_name or "").strip()
+        if name:
+            manifest = self._find_manifest(name, capability=DOWNLOAD_ENGINE_CAPABILITY)
+        if manifest is None:
+            manifests = list(self._gateway.list_manifests(capability=DOWNLOAD_ENGINE_CAPABILITY))
+            manifest = manifests[0] if manifests else None
+        if manifest is None:
+            return {}
+        return resolve_download_features(
+            manifest.capability_keys,
+            manifest_config_field_keys(manifest),
+        )
+
+    def get_download_engine_base_dir(self, engine_name: str = "") -> str:
+        """获取指定下载引擎配置的下载根目录（dir 字段）。"""
+        client = self.get_download_client(engine_name)
+        config = self._config_store.get_plugin_config(client.manifest.config_key) or {}
+        return str(config.get("dir") or "").strip()
+
+    def get_download_client(
+        self,
+        engine_name: str = "",
+        capability: str = DOWNLOAD_ENGINE_CAPABILITY,
+    ) -> ProtocolVideoClient:
+        """按引擎名（或默认第一个）解析下载插件，返回可执行 client。"""
+        manifest = None
+        name = str(engine_name or "").strip()
+        if name:
+            manifest = self._find_manifest(name, capability=capability)
+        if manifest is None:
+            manifests = list(self._gateway.list_manifests(capability=capability))
+            manifest = manifests[0] if manifests else None
+        if manifest is None:
+            raise ValueError(f"未找到支持 {capability} 的下载插件")
+        return ProtocolVideoClient(
+            gateway=self._gateway,
+            manifest=manifest,
+            platform_name=_resolve_canonical_platform_name(manifest, fallback=manifest.name),
+        )
+
+    def execute_download_capability(
+        self,
+        engine_name: str,
+        capability: str,
+        params: Optional[Dict[str, Any]] = None,
+    ):
+        """执行下载能力，返回 (plugin_id, platform_label, payload)。"""
+        client = self.get_download_client(engine_name, capability=capability)
+        payload = client.execute(capability, dict(params or {}))
+        return client.plugin_id, client.platform_name, payload
 
 
 _host_service_singleton: Optional[ProtocolHostService] = None

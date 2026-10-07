@@ -126,6 +126,15 @@ const routes = [
         meta: { title: '任务中心' }
       },
       {
+        path: 'download-tasks',
+        name: 'DownloadTasks',
+        component: () => import('@/views/DownloadTasks.vue'),
+        // 下载引擎属于正常空间的插件资产：隐私空间下注册表会过滤掉全部插件，
+        // 页面只会显示「未找到可用的下载引擎」，把用户引向错误方向。
+        // 与第三方平台配置页保持一致，直接拦在正常空间之外。
+        meta: { title: '下载任务', requiresNormalSpace: true }
+      },
+      {
         path: 'comic-local-import',
         name: 'ComicLocalImport',
         component: () => import('@/views/ComicLocalImport.vue'),

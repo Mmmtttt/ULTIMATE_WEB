@@ -6,6 +6,7 @@ from .v1 import (
     backup_bp,
     comic_bp,
     config_bp,
+    download_bp,
     feed_bp,
     list_bp,
     organize_bp,
@@ -38,6 +39,7 @@ def register_blueprints(app):
     app.register_blueprint(ui_state_bp, url_prefix='/api/v1/ui-state')
     app.register_blueprint(teledrive_bp, url_prefix='/api/v1/teledrive')
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
+    app.register_blueprint(download_bp, url_prefix='/api/v1/download')
     app.register_blueprint(performance_bp, url_prefix='/api/v1/performance')
     app.register_blueprint(history_bp, url_prefix='/api/v1/history')
     app.register_blueprint(transfer_bp, url_prefix='/api/v1/transfer')
