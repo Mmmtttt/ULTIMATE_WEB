@@ -20,11 +20,6 @@
     </div>
     
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
-      <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
-    </van-cell-group>
-
-    <van-cell-group class="mine-menu" inset>
       <van-cell title="通过ID导入" icon="add-o" @click="showImportDialog = true" is-link />
       <van-cell title="任务中心" icon="clock-o" to="/import-tasks" is-link>
         <template #value>
@@ -206,6 +201,7 @@ import { showFailToast, showConfirmDialog, showSuccessToast } from 'vant'
 import { openReleasePage } from '@/services/appUpdate'
 import { fetchProtocolPlatformOptions } from '@/utils'
 import { useDevice } from '@/composables/useDevice'
+import { comicApi, videoApi } from '@/api'
 
 const router = useRouter()
 const modeStore = useModeStore()
@@ -255,12 +251,38 @@ const stats = computed(() => {
 
 const tagManagePath = '/tags'
 
+const favoritesPath = computed(() => (
+  isVideoMode.value ? '/list/list_favorites_video' : '/list/list_favorites_comic'
+))
+
+const favoritesCount = computed(() => {
+  const list = listStore.favoritesList
+  if (!list) return '—'
+  return Number(isVideoMode.value ? (list.video_count || 0) : (list.comic_count || 0))
+})
+
+const trashCount = ref(null)
+
 const statCards = computed(() => [
   { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容', to: '/library', hint: '进入本地库' },
   { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读', to: '/history', hint: '进入阅读记录' },
   { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签', to: tagManagePath, hint: '进入标签管理' },
-  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单', to: '/lists', hint: '进入我的清单' }
+  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单', to: '/lists', hint: '进入我的清单' },
+  { key: 'favorites', icon: 'star-o', value: favoritesCount.value, label: '收藏', to: favoritesPath.value, hint: '进入我的收藏' },
+  { key: 'trash', icon: 'delete-o', value: trashCount.value === null ? '—' : trashCount.value, label: '回收站', to: '/trash', hint: '进入回收站' }
 ])
+
+async function loadTrashCount() {
+  try {
+    const api = isVideoMode.value ? videoApi : comicApi
+    const response = await api.getTrashList()
+    const data = response?.data
+    const items = Array.isArray(data) ? data : (Array.isArray(data?.list) ? data.list : [])
+    trashCount.value = items.length
+  } catch (_) {
+    trashCount.value = null
+  }
+}
 
 function openStat(item) {
   if (!item?.to) return
@@ -295,10 +317,6 @@ function handleOpenReleasePage() {
   openReleasePage(updateReleaseUrl.value)
 }
 
-function goToFavorites() {
-  const favoritesListId = isVideoMode.value ? 'list_favorites_video' : 'list_favorites_comic'
-  router.push(`/list/${favoritesListId}`)
-}
 
 async function handleLogout() {
   try {
@@ -520,10 +538,12 @@ onMounted(async () => {
   await listStore.fetchLists()
   await importTaskStore.fetchTasks()
   await loadImportPlatformOptions()
+  loadTrashCount()
 })
 
 watch(() => modeStore.currentMode, async () => {
   await loadImportPlatformOptions()
+  loadTrashCount()
 })
 </script>
 
@@ -543,8 +563,14 @@ watch(() => modeStore.currentMode, async () => {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+@media (min-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
 }
 
 .stat-card {
