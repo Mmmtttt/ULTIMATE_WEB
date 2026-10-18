@@ -2,20 +2,26 @@
   <div class="mine-page">
     <div class="stats-overview">
       <div class="stats-grid">
-        <div v-for="item in statCards" :key="item.key" class="stat-card">
+        <button
+          v-for="item in statCards"
+          :key="item.key"
+          type="button"
+          class="stat-card"
+          :title="item.hint"
+          :aria-label="`${item.label} ${item.value}，${item.hint}`"
+          @click="openStat(item)"
+        >
           <span class="stat-icon"><van-icon :name="item.icon" /></span>
           <span class="stat-value">{{ item.value }}</span>
           <span class="stat-label">{{ item.label }}</span>
-        </div>
+          <van-icon name="arrow" class="stat-arrow" />
+        </button>
       </div>
     </div>
     
     <van-cell-group class="mine-menu" inset>
-      <van-cell title="我的清单" icon="orders-o" to="/lists" is-link />
       <van-cell title="我的收藏" icon="star-o" @click="goToFavorites" is-link />
       <van-cell title="回收站" icon="delete-o" to="/trash" is-link />
-      <van-cell title="标签管理" icon="label-o" :to="tagManagePath" is-link />
-      <van-cell title="阅读记录" icon="clock-o" to="/history" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>
@@ -247,15 +253,21 @@ const stats = computed(() => {
   }
 })
 
+const tagManagePath = '/tags'
+
 const statCards = computed(() => [
-  { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容' },
-  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读' },
-  { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签' },
-  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单' }
+  { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容', to: '/library', hint: '进入本地库' },
+  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读', to: '/history', hint: '进入阅读记录' },
+  { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签', to: tagManagePath, hint: '进入标签管理' },
+  { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单', to: '/lists', hint: '进入我的清单' }
 ])
 
+function openStat(item) {
+  if (!item?.to) return
+  router.push(item.to)
+}
+
 const activeTaskCount = computed(() => importTaskStore.activeTaskCount)
-const tagManagePath = '/tags'
 const appVersionLabel = computed(() => String(import.meta.env.VITE_APP_VERSION || '0.0.0').trim() || '0.0.0')
 const updateChecking = computed(() => appUpdateStore.checking)
 const hasNewVersion = computed(() => appUpdateStore.hasUpdate)
@@ -549,6 +561,37 @@ watch(() => modeStore.currentMode, async () => {
   align-items: center;
   column-gap: 8px;
   padding: 10px;
+  position: relative;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.12s ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(89, 160, 255, 0.45);
+  background: var(--surface-3);
+}
+
+.stat-card:active {
+  transform: scale(0.98);
+}
+
+.stat-card:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+}
+
+.stat-arrow {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  opacity: 0.5;
 }
 
 .stat-icon {
