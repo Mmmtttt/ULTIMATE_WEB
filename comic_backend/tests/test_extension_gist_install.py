@@ -95,6 +95,9 @@ def _install(monkeypatch, document, url: str = GIST_URL):
         "aa5a315d61ae9438b18d",
         "https://gist.github.com/user/aa5a315d61ae9438b18d/raw/deadbeef/provider.py",
         "https://gist.github.com/user/AA5A315D61AE9438B18D.json",
+        # git clone 链接（.git 后缀）
+        "https://gist.github.com/aa5a315d61ae9438b18d.git",
+        "https://gist.github.com/niaonhu001/aa5a315d61ae9438b18d.git",
     ],
 )
 def test_parse_gist_url_variants(raw):

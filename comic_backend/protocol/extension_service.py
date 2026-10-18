@@ -210,6 +210,9 @@ def _parse_gist_url(value: str) -> str:
         candidates.append(parts[0])
     for part in candidates:
         candidate = part[:-5] if part.lower().endswith(".json") else part
+        # git 克隆链接形如 /{user}/{id}.git，与 .json 一样是后缀噪声，必须剥掉
+        if candidate.lower().endswith(".git"):
+            candidate = candidate[:-4]
         if _GIST_ID_PATTERN.fullmatch(candidate):
             return candidate.lower()
     raise ValueError("Gist 链接里没有找到 gist id")
