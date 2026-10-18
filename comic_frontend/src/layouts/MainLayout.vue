@@ -67,6 +67,8 @@
     <header v-if="mobileHeaderVisible" class="mobile-header">
       <div class="header-content">
         <div class="page-title">{{ pageTitle }}</div>
+        <!-- 非悬浮模式：顶栏保留原来的内容切换开关 -->
+        <ModeSwitch class="header-mode-switch" />
       </div>
     </header>
 
@@ -572,6 +574,11 @@ async function loadTeleDriveNavState() {
   font-size: 19px;
   font-weight: 700;
   color: var(--text-strong);
+}
+
+.header-mode-switch {
+  transform: scale(0.84);
+  transform-origin: right center;
 }
 
 .main-content {
