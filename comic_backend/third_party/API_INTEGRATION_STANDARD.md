@@ -470,6 +470,14 @@ https://github.com/owner/repo/tree/main
 
 当前实现不处理私有仓库授权，也不会在安装扩展时动态安装新 pip 依赖；依赖仍必须由主程序包的通用依赖池预置。
 
+也支持粘贴 GitHub Gist 链接安装扩展，**包括 Secret Gist**：gist 匿名即可读取，安装时不需要 token。由于 gist 没有目录结构，其中的文件会被平铺写入插件目录，因此 `ultimate-plugin.json` 与 Provider 代码必须直接放在 gist 根目录，同样要求有且只有一个 `ultimate-plugin.json`。例如：
+
+```text
+https://gist.github.com/owner/aa5a315d61ae9438b18d
+```
+
+安装成功后来源会记录为 `type: "gist"`（含 `gist_id` 与文件清单），配置页的「更新」按钮可按同一链接重装。注意 Secret Gist 只是「不公开列出」，任何拿到链接的人都能读取，不应把它当作保密分发通道；需要真正私密分发时请使用本地 `.zip` 扩展包。
+
 ## 9. 新增插件流程
 
 1. 创建独立插件目录和 `ultimate-plugin.json`。

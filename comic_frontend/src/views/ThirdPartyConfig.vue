@@ -13,8 +13,8 @@
         </van-cell>
         <van-field
           v-model="githubExtensionUrl"
-          label="GitHub"
-          placeholder="https://github.com/owner/repo"
+          label="仓库 / Gist"
+          placeholder="https://github.com/owner/repo 或 https://gist.github.com/user/id"
           clearable
         >
           <template #button>
@@ -363,7 +363,7 @@ async function installSelectedExtension(event) {
 async function installGithubExtension() {
   const url = githubExtensionUrl.value.trim()
   if (!url) {
-    showFailToast('请输入 GitHub 仓库链接')
+    showFailToast('请输入 GitHub 仓库或 Gist 链接')
     return
   }
   installingGithubExtension.value = true
