@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { login as loginApi, getAuthStatus, logout as logoutApi, updateProjectPassword } from '@/api/auth'
 import { getConfiguredSpaceApiBaseUrl } from '@/runtime/endpoint'
+import { waitForBackendReady } from '@/runtime/backendReady'
 
 function setRuntimeApiBase(url) {
   try {
@@ -44,6 +45,7 @@ function prepareAuthStatusProbe() {
   if (hasRuntimeSpaceEndpoints) applySpaceApiBase('private')
 }
 
+// 就绪门之后再探测：这几个重试只是网络抖动时的兜底，不再用来等冷启动。
 const AUTH_STATUS_RETRY_DELAYS_MS = [0, 250, 500, 750, 1000, 1500]
 
 function waitForAuthStatusRetry(delayMs) {
@@ -69,11 +71,14 @@ export const useAuthStore = defineStore('auth', {
         prepareAuthStatusProbe()
         this.authStatusProbePrepared = true
       }
+      // 先等内嵌后端就绪（安卓冷启动时 Chaquopy 还在启动），再发认证状态探测，
+      // 避免把「端口还没 listen」当成用户可见的网络错误。
+      await waitForBackendReady()
       let lastError = null
       for (const delayMs of AUTH_STATUS_RETRY_DELAYS_MS) {
         await waitForAuthStatusRetry(delayMs)
         try {
-          const res = await getAuthStatus()
+          const res = await getAuthStatus({ silentToast: true })
           if (res.code === 200) {
             this.enabled = res.data.enabled
             this.authenticated = res.data.authenticated

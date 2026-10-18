@@ -8,10 +8,12 @@ export function login(password) {
   })
 }
 
-export function getAuthStatus() {
+export function getAuthStatus(options = {}) {
   return request({
     url: '/v1/auth/status',
-    method: 'get'
+    method: 'get',
+    // 启动期探测由就绪门兜底，失败时只写诊断日志，不弹用户提示。
+    silentToast: options.silentToast === true
   })
 }
 

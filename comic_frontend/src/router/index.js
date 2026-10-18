@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { showFailToast } from 'vant'
 import { setDocumentTitle } from '@/runtime/browser'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useModeStore } from '@/stores/mode'
@@ -240,6 +241,8 @@ router.beforeEach(async (to, from, next) => {
     } catch (e) {
       // 未确认认证状态前禁止进入业务页，避免启动慢时绕过登录。
       authChecked = true
+      // 就绪门等待超时后只保留这一条明确提示，替代启动期连续的连接失败弹窗。
+      showFailToast('后端服务暂不可用，请稍后重试')
     }
   }
 

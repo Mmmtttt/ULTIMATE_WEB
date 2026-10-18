@@ -79,6 +79,14 @@ request.interceptors.response.use(
       // Diagnostics must never replace the original request error.
     }
 
+    // 启动期探测（以及调用方显式标记的请求）只记录诊断，不弹提示：
+    // 内嵌后端尚未就绪时的连接失败属于预期内的瞬态，由就绪门统一处理。
+    const silentToast = Boolean(error.config?.silentToast)
+    const canceled = error.code === 'ERR_CANCELED'
+    if (silentToast || canceled) {
+      return Promise.reject(error)
+    }
+
     if (status === 401) {
       console.warn('[request] 401 Unauthorized - 未认证或 session 已过期')
       // 不自动跳转，让页面自己处理
