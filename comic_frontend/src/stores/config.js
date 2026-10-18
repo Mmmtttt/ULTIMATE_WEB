@@ -18,6 +18,7 @@ export const useConfigStore = defineStore('config', () => {
   const showPageNumber = ref(DEFAULT_CONFIG.SHOW_PAGE_NUMBER)
   const autoDownloadPreviewImportAssets = ref(DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS)
   const singlePageBrowsing = ref(DEFAULT_CONFIG.SINGLE_PAGE_BROWSING)
+  const showFloatingModeSwitch = ref(DEFAULT_CONFIG.SHOW_FLOATING_MODE_SWITCH)
   const listPageSize = ref(DEFAULT_CONFIG.LIST_PAGE_SIZE)
   const leftRightReadingReversed = ref(DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED)
   const debugMode = ref(DEFAULT_CONFIG.DEBUG_MODE)
@@ -73,6 +74,7 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber: showPageNumber.value,
     autoDownloadPreviewImportAssets: autoDownloadPreviewImportAssets.value,
     singlePageBrowsing: singlePageBrowsing.value,
+    showFloatingModeSwitch: showFloatingModeSwitch.value,
     listPageSize: listPageSize.value,
     leftRightReadingReversed: leftRightReadingReversed.value,
     debugMode: debugMode.value
@@ -120,6 +122,10 @@ export const useConfigStore = defineStore('config', () => {
       DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     )
     singlePageBrowsing.value = saved.singlePageBrowsing ?? DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
+    showFloatingModeSwitch.value = (
+      saved.showFloatingModeSwitch ??
+      DEFAULT_CONFIG.SHOW_FLOATING_MODE_SWITCH
+    ) !== false
     listPageSize.value = normalizeListPageSize(
       saved.listPageSize ??
       saved.pageSize ??
@@ -242,6 +248,11 @@ export const useConfigStore = defineStore('config', () => {
     saveConfig()
   }
 
+  function setShowFloatingModeSwitch(value) {
+    showFloatingModeSwitch.value = value !== false
+    saveConfig()
+  }
+
   function setListPageSize(size) {
     listPageSize.value = normalizeListPageSize(size)
     saveConfig()
@@ -259,6 +270,7 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber.value = DEFAULT_CONFIG.SHOW_PAGE_NUMBER
     autoDownloadPreviewImportAssets.value = DEFAULT_CONFIG.AUTO_DOWNLOAD_PREVIEW_IMPORT_ASSETS
     singlePageBrowsing.value = DEFAULT_CONFIG.SINGLE_PAGE_BROWSING
+    showFloatingModeSwitch.value = DEFAULT_CONFIG.SHOW_FLOATING_MODE_SWITCH
     listPageSize.value = DEFAULT_CONFIG.LIST_PAGE_SIZE
     leftRightReadingReversed.value = DEFAULT_CONFIG.LEFT_RIGHT_READING_REVERSED
     debugMode.value = DEFAULT_CONFIG.DEBUG_MODE
@@ -307,6 +319,7 @@ export const useConfigStore = defineStore('config', () => {
     showPageNumber,
     autoDownloadPreviewImportAssets,
     singlePageBrowsing,
+    showFloatingModeSwitch,
     listPageSize,
     leftRightReadingReversed,
     debugMode,
@@ -332,6 +345,7 @@ export const useConfigStore = defineStore('config', () => {
     setShowPageNumber,
     setAutoDownloadPreviewImportAssets,
     setSinglePageBrowsing,
+    setShowFloatingModeSwitch,
     setListPageSize,
     setLeftRightReadingReversed,
     resetConfig,

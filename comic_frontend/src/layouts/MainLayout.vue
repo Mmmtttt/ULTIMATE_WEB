@@ -105,7 +105,7 @@
     </van-tabbar>
 
     <!-- 移动端内容类型切换：悬浮、可拖拽、四边吸附 -->
-    <FloatingModeSwitch v-if="isMobile && mobileChromeEnabled" />
+    <FloatingModeSwitch v-if="isMobile && mobileChromeEnabled && configStore.showFloatingModeSwitch" />
   </div>
 </template>
 
@@ -116,11 +116,12 @@ import { useDevice } from '@/composables/useDevice'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 import FloatingModeSwitch from '@/components/common/FloatingModeSwitch.vue'
 import { comicApi } from '@/api/comic'
-import { useRuntimeStore } from '@/stores'
+import { useConfigStore, useRuntimeStore } from '@/stores'
 
 const { isDesktop, isMobile } = useDevice()
 const route = useRoute()
 const runtimeStore = useRuntimeStore()
+const configStore = useConfigStore()
 
 // keep-alive 缓存的视图：从详情页返回时不重新请求数据
 const cachedViewNames = ['Library', 'Preview', 'RandomFeed', 'Subscribe', 'Mine']
