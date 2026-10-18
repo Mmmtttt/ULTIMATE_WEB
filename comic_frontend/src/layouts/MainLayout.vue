@@ -67,7 +67,6 @@
     <header v-if="isMobile && mobileChromeEnabled" class="mobile-header">
       <div class="header-content">
         <div class="page-title">{{ pageTitle }}</div>
-        <ModeSwitch class="header-mode-switch" />
       </div>
     </header>
 
@@ -104,6 +103,9 @@
       <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
       <van-tabbar-item to="/mine" icon="user-o">管理</van-tabbar-item>
     </van-tabbar>
+
+    <!-- 移动端内容类型切换：悬浮、可拖拽、四边吸附 -->
+    <FloatingModeSwitch v-if="isMobile && mobileChromeEnabled" />
   </div>
 </template>
 
@@ -112,6 +114,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
+import FloatingModeSwitch from '@/components/common/FloatingModeSwitch.vue'
 import { comicApi } from '@/api/comic'
 import { useRuntimeStore } from '@/stores'
 
@@ -562,11 +565,6 @@ async function loadTeleDriveNavState() {
   font-size: 19px;
   font-weight: 700;
   color: var(--text-strong);
-}
-
-.header-mode-switch {
-  transform: scale(0.84);
-  transform-origin: right center;
 }
 
 .main-content {
