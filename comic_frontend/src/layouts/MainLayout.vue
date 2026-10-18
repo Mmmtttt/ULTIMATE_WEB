@@ -4,7 +4,8 @@
     :class="{
       dragging: isDragging,
       'mobile-chrome-hidden': mobileChromeHidden,
-      'mobile-chrome-disabled': !mobileChromeEnabled
+      'mobile-chrome-disabled': !mobileChromeEnabled,
+      'mobile-header-off': isMobile && !mobileHeaderVisible
     }"
   >
     <!-- Desktop Sidebar -->
@@ -716,6 +717,12 @@ async function loadTeleDriveNavState() {
     width: 100%;
     padding: 0;
   }
+}
+
+/* 顶栏不渲染时（悬浮按钮模式），把「顶栏偏移」收回到安全区，
+   让页内 sticky 搜索栏直接贴上来，而不是留着一条空档。 */
+.main-layout.mobile-header-off {
+  --mobile-header-offset: var(--mobile-safe-top);
 }
 
 @media (min-width: 1024px) and (max-width: 1400px) {
