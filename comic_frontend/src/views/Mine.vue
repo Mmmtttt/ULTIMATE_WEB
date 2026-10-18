@@ -11,9 +11,11 @@
           :aria-label="`${item.label} ${item.value}，${item.hint}`"
           @click="openStat(item)"
         >
+          <!-- 纵向排列时自上而下必须是：图标 → 文字说明 → 数据，所以 DOM 顺序按此写，
+               横向排版再靠 grid-template-areas 把数据放回说明上方。 -->
           <span class="stat-icon"><van-icon :name="item.icon" /></span>
-          <span class="stat-value">{{ item.value }}</span>
           <span class="stat-label">{{ item.label }}</span>
+          <span class="stat-value">{{ item.value }}</span>
           <van-icon name="arrow" class="stat-arrow" />
         </button>
       </div>
@@ -874,10 +876,11 @@ watch(() => modeStore.currentMode, async () => {
 
   .stat-card {
     min-height: 56px;
+    /* 纵向排列时自上而下：图标 → 文字说明 → 数据 */
     grid-template-areas:
       "icon"
-      "value"
-      "label";
+      "label"
+      "value";
     grid-template-columns: 1fr;
     justify-items: center;
     row-gap: 3px;
