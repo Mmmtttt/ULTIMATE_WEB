@@ -109,6 +109,12 @@ const routes = [
         meta: { title: '第三方平台配置', requiresNormalSpace: true }
       },
       {
+        path: 'config/third-party/:pluginKey',
+        name: 'ThirdPartyPluginConfig',
+        component: () => import('@/views/ThirdPartyPluginConfig.vue'),
+        meta: { title: '插件配置', requiresNormalSpace: true }
+      },
+      {
         path: 'sync',
         name: 'SyncCenter',
         component: () => import('@/views/SyncCenter.vue'),

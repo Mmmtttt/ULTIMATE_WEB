@@ -2,59 +2,43 @@
   <div class="third-party-page desktop-page-shell">
     <van-nav-bar title="第三方平台配置" left-text="返回" left-arrow @click-left="$router.back()" />
 
-    <div class="extension-panel">
+    <div class="panel">
       <van-cell-group inset>
-        <van-cell title="扩展包" label="安装本地 .zip 扩展包，安装后需要重启应用才会生效">
+        <van-cell
+          title="安装扩展包"
+          label="安装本地 .zip，或从 GitHub 仓库 / Gist 安装；安装后需要重启应用才会生效"
+        />
+        <van-cell title="本地扩展包">
           <template #right-icon>
-            <van-button size="small" type="primary" :loading="installingExtension" @click="selectExtensionPackage">
-              安装
+            <van-button
+              size="small"
+              type="primary"
+              :loading="store.installingPackage"
+              @click="selectExtensionPackage"
+            >
+              选择 .zip
             </van-button>
           </template>
         </van-cell>
         <van-field
           v-model="githubExtensionUrl"
           label="仓库 / Gist"
-          placeholder="https://github.com/owner/repo 或 https://gist.github.com/user/id"
+          placeholder="仓库地址或 Gist 链接"
           clearable
         >
           <template #button>
-            <van-button size="small" type="primary" :loading="installingGithubExtension" @click="installGithubExtension">
+            <van-button
+              size="small"
+              type="primary"
+              :loading="store.installingGithub"
+              @click="installGithubExtension"
+            >
               安装
             </van-button>
           </template>
         </van-field>
         <van-cell
-          v-for="item in installedExtensions"
-          :key="item.plugin_id || item.directory"
-          :title="item.name || item.plugin_id || item.directory"
-          :label="extensionLabel(item)"
-        >
-          <template #right-icon>
-            <div class="extension-actions">
-              <van-button
-                v-if="item.source?.url"
-                size="mini"
-                plain
-                type="primary"
-                :loading="Boolean(extensionActionMap[item.plugin_id])"
-                @click="reinstallExtension(item.plugin_id)"
-              >
-                更新
-              </van-button>
-              <van-button
-                size="mini"
-                plain
-                type="danger"
-                icon="cross"
-                title="删除"
-                :loading="Boolean(extensionActionMap[item.plugin_id])"
-                @click="deleteExtension(item.plugin_id)"
-              />
-            </div>
-          </template>
-        </van-cell>
-        <van-cell
-          v-for="item in savedExtensionSources"
+          v-for="item in store.savedExtensionSources"
           :key="`source-${item.plugin_id}`"
           :title="item.plugin_id"
           :label="sourceLabel(item)"
@@ -63,14 +47,13 @@
             <van-button
               size="small"
               type="primary"
-              :loading="Boolean(extensionActionMap[item.plugin_id])"
-              @click="reinstallExtension(item.plugin_id)"
+              :loading="store.isExtensionBusy(item.plugin_id)"
+              @click="store.reinstallExtension(item.plugin_id)"
             >
               安装
             </van-button>
           </template>
         </van-cell>
-        <van-cell v-if="installedExtensions.length === 0 && savedExtensionSources.length === 0" title="未安装扩展" label="集成模式下可能已内置平台；扩展模式下可从这里安装" />
       </van-cell-group>
       <input
         ref="extensionFileInput"
@@ -81,22 +64,102 @@
       />
     </div>
 
-    <div class="space-access-panel">
+    <div class="panel">
+      <div class="section-head">
+        <span class="section-title">插件</span>
+        <span class="section-hint">开关即时生效 · 点条目进配置</span>
+      </div>
+      <div v-if="!store.loaded && store.loading" class="panel-loading">
+        <van-loading size="20px">正在加载插件…</van-loading>
+      </div>
+      <van-cell-group v-else-if="store.pluginRows.length > 0" inset>
+        <van-cell
+          v-for="row in store.pluginRows"
+          :key="row.key"
+          :title="row.label"
+          :label="pluginMeta(row)"
+          is-link
+          center
+          class="plugin-cell"
+          @click="openPlugin(row)"
+        >
+          <template #right-icon>
+            <span class="plugin-trailing">
+              <span class="plugin-switch" @click.stop>
+                <van-switch
+                  v-if="row.hasEnabled"
+                  :model-value="row.enabled"
+                  :loading="store.isEnabledSaving(row.key)"
+                  size="20px"
+                  @update:model-value="togglePlugin(row, $event)"
+                />
+              </span>
+              <van-icon name="arrow" class="plugin-arrow" />
+            </span>
+          </template>
+        </van-cell>
+      </van-cell-group>
+      <van-empty v-else description="暂无可配置的第三方平台" />
+    </div>
+
+    <div v-if="store.pendingExtensions.length > 0" class="panel">
+      <div class="section-head">
+        <span class="section-title">待重启生效</span>
+        <span class="section-hint">已安装，当前进程尚未加载</span>
+      </div>
       <van-cell-group inset>
         <van-cell
-          title="隐私空间可用范围"
-          label="插件代码和配置仍由正常空间统一管理；这里只控制哪些插件允许在隐私空间参与搜索、导入和播放。"
+          v-for="item in store.pendingExtensions"
+          :key="item.plugin_id"
+          :title="item.name || item.plugin_id"
+          :label="pendingLabel(item)"
+        >
+          <template #right-icon>
+            <div class="pending-actions" @click.stop>
+              <van-button
+                v-if="item.source?.url"
+                size="mini"
+                plain
+                type="primary"
+                :loading="store.isExtensionBusy(item.plugin_id)"
+                @click="store.reinstallExtension(item.plugin_id)"
+              >
+                更新
+              </van-button>
+              <van-button
+                size="mini"
+                plain
+                type="danger"
+                icon="cross"
+                title="删除"
+                :loading="store.isExtensionBusy(item.plugin_id)"
+                @click="store.deleteExtension(item.plugin_id)"
+              />
+            </div>
+          </template>
+        </van-cell>
+      </van-cell-group>
+    </div>
+
+    <div class="panel">
+      <div class="section-head">
+        <span class="section-title">隐私空间可用范围</span>
+      </div>
+      <van-cell-group inset>
+        <van-cell
+          title="插件代码和配置仍由正常空间统一管理"
+          label="这里只控制哪些插件允许在隐私空间参与搜索、导入和播放。"
         />
         <van-cell
-          v-for="plugin in privateAccessPlugins"
+          v-for="plugin in store.authorizablePlugins"
           :key="plugin.plugin_id"
           :title="plugin.name || plugin.plugin_id"
           :label="plugin.plugin_id"
         >
           <template #right-icon>
             <van-switch
-              :model-value="isPrivatePluginEnabled(plugin.plugin_id)"
-              @update:model-value="setPrivatePluginEnabled(plugin.plugin_id, $event)"
+              :model-value="store.isPrivatePluginEnabled(plugin.plugin_id)"
+              @update:model-value="store.setPrivatePluginEnabled(plugin.plugin_id, $event)"
             />
           </template>
         </van-cell>
@@ -105,231 +168,45 @@
             type="primary"
             block
             round
-            :loading="savingSpaceAccess"
-            :disabled="privateAccessPlugins.length === 0"
-            @click="saveSpaceAccess"
+            :loading="store.savingSpaceAccess"
+            :disabled="store.authorizablePlugins.length === 0"
+            @click="store.saveSpaceAccess()"
           >
             保存隐私空间授权
           </van-button>
         </div>
       </van-cell-group>
     </div>
-
-    <div v-if="displayAdapters.length === 0" class="empty-hint">
-      <van-empty description="暂无可配置的第三方平台" />
-    </div>
-
-    <van-tabs v-else v-model:active="activeAdapter" animated>
-      <van-tab
-        v-for="adapterName in displayAdapters"
-        :key="adapterName"
-        :name="adapterName"
-        :title="adapterLabel(adapterName)"
-      >
-        <div class="adapter-panel">
-          <van-cell-group inset>
-            <template v-for="field in adapterFields(adapterName)" :key="`${adapterName}-${field.key}`">
-              <van-cell v-if="field.type === 'boolean'" :title="field.label">
-                <template #right-icon>
-                  <van-switch v-model="adapterForms[adapterName][field.key]" />
-                </template>
-              </van-cell>
-
-              <van-field
-                v-else-if="field.type === 'textarea'"
-                v-model="adapterForms[adapterName][field.key]"
-                type="textarea"
-                autosize
-                :label="field.label"
-                :placeholder="field.placeholder || ''"
-              />
-
-              <van-field
-                v-else
-                v-model="adapterForms[adapterName][field.key]"
-                :type="field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text')"
-                :label="field.label"
-                :placeholder="field.placeholder || ''"
-              />
-            </template>
-          </van-cell-group>
-
-          <div v-if="adapterActions(adapterName).length > 0" class="adapter-actions">
-            <div
-              v-for="action in adapterActions(adapterName)"
-              :key="`${adapterName}-${action.key || action.label}`"
-              class="adapter-action-card"
-            >
-              <div v-if="action.description" class="adapter-action-text">{{ action.description }}</div>
-              <van-button plain type="primary" block @click="runAdapterAction(action)">
-                {{ action.label || action.key || '执行动作' }}
-              </van-button>
-            </div>
-          </div>
-
-          <div class="save-area">
-            <van-button
-              type="primary"
-              block
-              round
-              :loading="Boolean(savingAdapterMap[adapterName])"
-              @click="saveAdapterConfig(adapterName)"
-            >
-              保存 {{ adapterLabel(adapterName) }} 配置
-            </van-button>
-          </div>
-        </div>
-      </van-tab>
-    </van-tabs>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-import { comicApi } from '@/api/comic'
-import { openExternalUrl } from '@/runtime/browser'
-import { resolveBackendApiUrl } from '@/runtime/endpoint'
+import { useThirdPartyStore } from '@/stores/thirdParty'
 
-const savingAdapterMap = ref({})
-const activeAdapter = ref('')
+const store = useThirdPartyStore()
+const router = useRouter()
 
-const thirdPartySchema = ref({})
-const thirdPartyAdapters = ref({})
-const thirdPartyAdapterOrder = ref([])
-const adapterForms = ref({})
 const extensionFileInput = ref(null)
-const installingExtension = ref(false)
-const installingGithubExtension = ref(false)
 const githubExtensionUrl = ref('')
-const extensionState = ref({ installed: [] })
-const extensionActionMap = ref({})
-const privateAccessPlugins = ref([])
-const privateEnabledPluginIds = ref([])
-const savingSpaceAccess = ref(false)
 
-const installedExtensions = computed(() => {
-  return Array.isArray(extensionState.value?.installed) ? extensionState.value.installed : []
-})
-
-const savedExtensionSources = computed(() => {
-  const sources = Array.isArray(extensionState.value?.saved_sources) ? extensionState.value.saved_sources : []
-  const installedIds = new Set(installedExtensions.value.map((item) => item.plugin_id).filter(Boolean))
-  return sources.filter((item) => item?.plugin_id && !installedIds.has(item.plugin_id))
-})
-
-const displayAdapters = computed(() => {
-  if (Array.isArray(thirdPartyAdapterOrder.value) && thirdPartyAdapterOrder.value.length > 0) {
-    return thirdPartyAdapterOrder.value
-  }
-  const schemaKeys = Object.keys(thirdPartySchema.value || {})
-  if (schemaKeys.length > 0) {
-    return schemaKeys
-  }
-  return Object.keys(thirdPartyAdapters.value || {})
-})
-
-function adapterLabel(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.label || adapterName
+function pluginMeta(row) {
+  const parts = []
+  if (row.version) parts.push(`v${row.version}`)
+  if (row.sourceType === 'gist') parts.push('Gist 安装')
+  else if (row.sourceType === 'github') parts.push('GitHub 安装')
+  else parts.push('内置')
+  if (row.pluginId) parts.push(row.pluginId)
+  return parts.join(' · ')
 }
 
-function adapterFields(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.fields || []
-}
-
-function adapterActions(adapterName) {
-  return thirdPartySchema.value?.[adapterName]?.actions || []
-}
-
-function ensureAdapterFormShape() {
-  const forms = {}
-  const adapters = thirdPartyAdapters.value || {}
-
-  displayAdapters.value.forEach((adapterName) => {
-    const source = adapters[adapterName] || {}
-    forms[adapterName] = { ...source }
-
-    adapterFields(adapterName).forEach((field) => {
-      if (forms[adapterName][field.key] === undefined || forms[adapterName][field.key] === null) {
-        forms[adapterName][field.key] = field.type === 'boolean' ? false : ''
-      }
-    })
-  })
-
-  adapterForms.value = forms
-
-  if (!activeAdapter.value && displayAdapters.value.length > 0) {
-    activeAdapter.value = displayAdapters.value[0]
-  }
-}
-
-async function loadThirdPartyConfig() {
-  try {
-    const response = await comicApi.getThirdPartyConfig()
-    if (response.code !== 200) return
-
-    const data = response.data || {}
-    thirdPartySchema.value = data.schema || {}
-    thirdPartyAdapterOrder.value = data.config_order || data.adapter_order || []
-    thirdPartyAdapters.value = data.adapters || {}
-    extensionState.value = data.extensions || { installed: [] }
-    // 授权列表用不做空间门禁的清单：隐私空间下 data.plugins 会被过滤成空，
-    // 用它渲染会导致「在隐私空间里没有可授权的条目」这个死锁。
-    privateAccessPlugins.value = Array.isArray(data.authorizable_plugins)
-      ? data.authorizable_plugins
-      : (Array.isArray(data.plugins) ? data.plugins : [])
-    privateEnabledPluginIds.value = Array.isArray(data.space_access?.private_enabled_plugin_ids)
-      ? [...data.space_access.private_enabled_plugin_ids]
-      : []
-    ensureAdapterFormShape()
-  } catch (error) {
-    showFailToast(error?.message || '加载第三方配置失败')
-  }
-}
-
-function isPrivatePluginEnabled(pluginId) {
-  return privateEnabledPluginIds.value.includes(pluginId)
-}
-
-function setPrivatePluginEnabled(pluginId, enabled) {
-  const current = new Set(privateEnabledPluginIds.value)
-  if (enabled) {
-    current.add(pluginId)
-  } else {
-    current.delete(pluginId)
-  }
-  privateEnabledPluginIds.value = Array.from(current)
-}
-
-async function saveSpaceAccess() {
-  savingSpaceAccess.value = true
-  try {
-    const response = await comicApi.saveThirdPartyConfig({
-      space_access: {
-        private_enabled_plugin_ids: privateEnabledPluginIds.value,
-      },
-    })
-    if (response.code === 200) {
-      showSuccessToast('隐私空间授权已保存')
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '隐私空间授权保存失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '隐私空间授权保存失败')
-  } finally {
-    savingSpaceAccess.value = false
-  }
-}
-
-function extensionLabel(item) {
-  const version = item?.version ? `版本 ${item.version}` : ''
-  const directory = item?.directory ? `目录 ${item.directory}` : ''
-  const sourceType = item?.source?.type === 'gist'
-    ? '来源 Gist'
-    : (item?.source?.type === 'github' ? '来源 GitHub' : '')
-  return [version, directory, sourceType].filter(Boolean).join(' · ') || '重启后生效'
+function pendingLabel(item) {
+  const parts = []
+  if (item?.version) parts.push(`v${item.version}`)
+  parts.push('重启应用后生效')
+  return parts.join(' · ')
 }
 
 function sourceLabel(item) {
@@ -346,147 +223,28 @@ function selectExtensionPackage() {
 async function installSelectedExtension(event) {
   const file = event?.target?.files?.[0]
   if (!file) return
-  installingExtension.value = true
-  try {
-    const response = await comicApi.installThirdPartyExtension(file)
-    if (response.code === 200) {
-      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '扩展安装失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '扩展安装失败')
-  } finally {
-    installingExtension.value = false
-    if (event?.target) {
-      event.target.value = ''
-    }
+  await store.installExtensionPackage(file)
+  if (event?.target) {
+    event.target.value = ''
   }
 }
 
 async function installGithubExtension() {
-  const url = githubExtensionUrl.value.trim()
-  if (!url) {
-    showFailToast('请输入 GitHub 仓库或 Gist 链接')
-    return
-  }
-  installingGithubExtension.value = true
-  try {
-    const response = await comicApi.installThirdPartyExtensionFromGithub(url)
-    if (response.code === 200) {
-      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
-      githubExtensionUrl.value = ''
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '扩展安装失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '扩展安装失败')
-  } finally {
-    installingGithubExtension.value = false
-  }
+  const installed = await store.installExtensionFromGithub(githubExtensionUrl.value)
+  if (installed) githubExtensionUrl.value = ''
 }
 
-function setExtensionAction(pluginId, loading) {
-  extensionActionMap.value = { ...extensionActionMap.value, [pluginId]: loading }
+function openPlugin(row) {
+  if (!row?.key) return
+  router.push({ name: 'ThirdPartyPluginConfig', params: { pluginKey: row.key } })
 }
 
-async function reinstallExtension(pluginId) {
-  if (!pluginId) return
-  setExtensionAction(pluginId, true)
-  try {
-    const response = await comicApi.reinstallThirdPartyExtension(pluginId)
-    if (response.code === 200) {
-      showSuccessToast(response.data?.message || '扩展安装成功，重启后生效')
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '扩展安装失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '扩展安装失败')
-  } finally {
-    setExtensionAction(pluginId, false)
-  }
-}
-
-async function deleteExtension(pluginId) {
-  if (!pluginId) return
-  try {
-    await showConfirmDialog({
-      title: '删除扩展代码',
-      message: '只会删除扩展代码，已保存的安装链接和平台配置会保留。删除后需要重启应用才会生效。'
-    })
-  } catch {
-    return
-  }
-  setExtensionAction(pluginId, true)
-  try {
-    const response = await comicApi.deleteThirdPartyExtension(pluginId)
-    if (response.code === 200) {
-      showSuccessToast(response.data?.message || '扩展代码已删除，重启后生效')
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '删除扩展失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '删除扩展失败')
-  } finally {
-    setExtensionAction(pluginId, false)
-  }
-}
-
-async function saveAdapterConfig(adapterName) {
-  const form = adapterForms.value?.[adapterName]
-  if (!form) {
-    showFailToast('配置数据为空')
-    return
-  }
-
-  savingAdapterMap.value = { ...savingAdapterMap.value, [adapterName]: true }
-
-  try {
-    const payload = { ...form }
-    adapterFields(adapterName).forEach((field) => {
-      if (field.type === 'number') {
-        const value = payload[field.key]
-        if (value !== '' && value !== null && value !== undefined) {
-          const num = Number(value)
-          payload[field.key] = Number.isFinite(num) ? num : value
-        }
-      }
-    })
-
-    const response = await comicApi.saveThirdPartyConfig({ adapter: adapterName, config: payload })
-    if (response.code === 200) {
-      showSuccessToast(`${adapterLabel(adapterName)} 配置已保存`)
-      await loadThirdPartyConfig()
-    } else {
-      showFailToast(response.msg || '保存失败')
-    }
-  } catch (error) {
-    showFailToast(error?.message || '保存失败')
-  } finally {
-    savingAdapterMap.value = { ...savingAdapterMap.value, [adapterName]: false }
-  }
-}
-
-function runAdapterAction(action) {
-  const kind = String(action?.kind || '').trim().toLowerCase()
-  const rawUrl = String(action?.url || '').trim()
-  if (kind !== 'open_url' || !rawUrl) {
-    showFailToast('当前动作暂不支持')
-    return
-  }
-  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : resolveBackendApiUrl(rawUrl)
-  const win = openExternalUrl(url, '_blank')
-  if (!win) {
-    showFailToast('浏览器拦截了弹窗，请允许后重试')
-  }
+function togglePlugin(row, nextEnabled) {
+  store.setPluginEnabled(row, nextEnabled)
 }
 
 onMounted(() => {
-  loadThirdPartyConfig()
+  store.loadConfig()
 })
 </script>
 
@@ -497,19 +255,31 @@ onMounted(() => {
   padding-bottom: 24px;
 }
 
-.empty-hint {
-  padding-top: 60px;
+.panel {
+  padding: 10px 0 2px;
 }
 
-.extension-panel {
-  padding: 12px 0 4px;
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 24px 8px;
 }
 
-.space-access-panel {
-  padding: 8px 0 4px;
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
 }
 
-.space-access-panel :deep(.van-cell-group) {
+.section-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.panel :deep(.van-cell-group) {
   margin: 0 16px;
   overflow: hidden;
   border: 1px solid var(--border-soft);
@@ -518,80 +288,60 @@ onMounted(() => {
   box-shadow: var(--shadow-sm);
 }
 
-.space-access-save {
-  padding: 12px 16px 16px;
+.plugin-cell :deep(.van-cell__title) {
+  min-width: 0;
 }
 
-.extension-panel :deep(.van-cell-group) {
-  margin: 0 16px;
+.plugin-cell :deep(.van-cell__label) {
   overflow: hidden;
-  border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  background: var(--surface-2);
-  box-shadow: var(--shadow-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-switch {
+  display: inline-flex;
+  align-items: center;
+}
+
+.plugin-arrow {
+  font-size: 14px;
+  color: var(--text-tertiary);
+}
+
+.pending-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.panel-loading {
+  display: flex;
+  justify-content: center;
+  padding: 26px 0;
+  color: var(--text-secondary);
 }
 
 .extension-file-input {
   display: none;
 }
 
-.extension-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.adapter-panel {
-  padding: 12px 0 20px;
-}
-
-.adapter-panel :deep(.van-cell-group) {
-  margin: 0 16px;
-  overflow: hidden;
-  border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  background: var(--surface-2);
-  box-shadow: var(--shadow-sm);
-}
-
-.adapter-panel :deep(.van-cell),
-.adapter-panel :deep(.van-field) {
-  background: transparent;
-}
-
-.adapter-actions {
-  margin: 12px 16px 0;
-  display: grid;
-  gap: 10px;
-}
-
-.adapter-action-card {
-  padding: 14px;
-  border-radius: 16px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-xs);
-}
-
-.adapter-action-text {
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-  margin-bottom: 10px;
-}
-
-.save-area {
-  padding: 16px;
+.space-access-save {
+  padding: 12px 16px 16px;
 }
 
 @media (max-width: 767px) {
-  .adapter-panel :deep(.van-cell-group),
-  .adapter-actions {
+  .panel :deep(.van-cell-group) {
     margin-inline: 10px;
   }
 
-  .save-area {
-    padding-inline: 10px;
+  .section-head {
+    padding-inline: 16px;
   }
 }
 </style>

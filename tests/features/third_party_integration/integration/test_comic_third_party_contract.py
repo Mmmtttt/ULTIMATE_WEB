@@ -107,6 +107,7 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     - 历史变更:
       - 2026-03-23: 初始创建。
       - 2026-09-02: adapter_order 改为子集断言避免插件集合硬编码。
+      - 2026-10-18: schema 增加 enabled_field，看护插件条目的启用开关能定位到字段。
     """
     client = third_party_client["client"]
 
@@ -131,6 +132,10 @@ def test_comic_third_party_config_get_exposes_protocol_plugin_metadata(third_par
     video_alpha_actions = (((data.get("schema") or {}).get("video_alpha") or {}).get("actions") or [])
     cookie_guide_action = next(action for action in video_alpha_actions if action.get("key") == "auth.open_cookie_guide")
     assert cookie_guide_action.get("url") == helper_url
+
+    schema = data.get("schema") or {}
+    for config_key in ("comic_alpha", "comic_beta", "video_alpha"):
+        assert (((schema.get(config_key) or {}).get("enabled_field")) or "") == "enabled"
 
     helper_response = client.get(helper_url)
     assert helper_response.status_code == 200

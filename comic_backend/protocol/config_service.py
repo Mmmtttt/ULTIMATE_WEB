@@ -37,6 +37,14 @@ class PluginConfigService:
         return f"/api/v1/config/plugin-helpers/{normalized_config_key}/{normalized_helper_key}/"
 
     @staticmethod
+    def _resolve_enabled_field(manifest) -> str:
+        """插件声明的启用字段（与 credential_guard / runtime_config 保持同一口径）。"""
+        credential = manifest.configuration.get("credential") or {}
+        if not isinstance(credential, dict):
+            return "enabled"
+        return str(credential.get("enabled_field") or "enabled").strip() or "enabled"
+
+    @staticmethod
     def _is_adapter_order_plugin(manifest) -> bool:
         capability_keys = set(manifest.capability_keys)
         return any(
@@ -86,6 +94,8 @@ class PluginConfigService:
                 "label": manifest.configuration.get("label") or manifest.name,
                 "fields": fields,
                 "actions": actions,
+                # 前端把「启用」开关提到插件条目上，需要知道哪个字段才是启用位。
+                "enabled_field": self._resolve_enabled_field(manifest),
             }
 
             raw_config = self._config_store.get_plugin_config(config_key) or {}
