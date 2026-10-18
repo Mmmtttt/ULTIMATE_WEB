@@ -63,8 +63,8 @@
       </button>
     </aside>
 
-    <!-- Mobile Top Navbar -->
-    <header v-if="isMobile && mobileChromeEnabled" class="mobile-header">
+    <!-- Mobile Top Navbar（悬浮切换按钮开启时不渲染，把空间让给内容） -->
+    <header v-if="mobileHeaderVisible" class="mobile-header">
       <div class="header-content">
         <div class="page-title">{{ pageTitle }}</div>
       </div>
@@ -77,9 +77,9 @@
         'with-sidebar': isDesktop,
         'sidebar-collapsed-layout': isDesktop && sidebarCollapsed,
         'sidebar-hidden-layout': isDesktop && sidebarHidden,
-        'with-header': isMobile && mobileChromeEnabled,
+        'with-header': mobileHeaderVisible,
         'with-tabbar': isMobile && mobileChromeEnabled,
-        'mobile-safe-content': isMobile && !mobileChromeEnabled && !isReaderRoute,
+        'mobile-safe-content': isMobile && !mobileHeaderVisible && !isReaderRoute,
         'reader-immersive': isReaderRoute,
         'random-feed-immersive': isRandomFeedRoute
       }"
@@ -162,6 +162,11 @@ const mobileChromeRoutes = new Set([
 const mobileChromeEnabled = computed(() => {
   return isMobile.value && mobileChromeRoutes.has(String(route.name || ''))
 })
+
+// 悬浮切换按钮在场时顶栏只剩标题，干脆让位给内容；关掉悬浮窗才恢复顶栏。
+const mobileHeaderVisible = computed(() => (
+  mobileChromeEnabled.value && !configStore.showFloatingModeSwitch
+))
 
 const pageTitle = computed(() => {
   const title = route.meta?.title
@@ -265,7 +270,8 @@ function resetMobileChrome() {
 }
 
 function onMobileScroll() {
-  if (!mobileChromeEnabled.value) {
+  // 顶栏不渲染时（悬浮切换按钮开启）没有可隐藏的 chrome，别再联动隐藏 tabbar
+  if (!mobileChromeEnabled.value || !mobileHeaderVisible.value) {
     mobileChromeHidden.value = false
     return
   }

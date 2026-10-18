@@ -12,7 +12,6 @@
     @contextmenu.prevent
   >
     <van-icon :name="mode === 'video' ? 'video-o' : 'photo-o'" class="fms-icon" />
-    <span class="fms-label">{{ mode === 'video' ? '视频' : '漫画' }}</span>
   </button>
 </template>
 
@@ -47,8 +46,17 @@ function viewportSize() {
 function layoutInsets() {
   const header = document.querySelector('.mobile-header')
   const tabbar = document.querySelector('.van-tabbar')
+  let top = 0
+  if (header) {
+    top = header.getBoundingClientRect().height
+  } else {
+    // 顶栏被移除时（悬浮按钮开启），用内容区顶部的安全留白避开状态栏
+    const main = document.querySelector('.main-content')
+    const paddingTop = main ? Number.parseFloat(window.getComputedStyle(main).paddingTop) : 0
+    top = Number.isFinite(paddingTop) ? paddingTop : 0
+  }
   return {
-    top: header ? header.getBoundingClientRect().height : 0,
+    top,
     bottom: tabbar ? tabbar.getBoundingClientRect().height : 0
   }
 }
@@ -223,17 +231,15 @@ onBeforeUnmount(() => {
   z-index: 120;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 14px;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
   border: 1px solid var(--border-soft);
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--surface-2);
   box-shadow: var(--shadow-md);
   color: var(--text-strong);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -267,7 +273,7 @@ onBeforeUnmount(() => {
 }
 
 .fms-icon {
-  font-size: 16px;
+  font-size: 20px;
 }
 
 .floating-mode-switch.is-comic .fms-icon {
@@ -276,9 +282,5 @@ onBeforeUnmount(() => {
 
 .floating-mode-switch.is-video .fms-icon {
   color: #1989fa;
-}
-
-.fms-label {
-  line-height: 1;
 }
 </style>
