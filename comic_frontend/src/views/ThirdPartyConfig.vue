@@ -45,11 +45,11 @@
                 size="mini"
                 plain
                 type="danger"
+                icon="cross"
+                title="删除"
                 :loading="Boolean(extensionActionMap[item.plugin_id])"
                 @click="deleteExtension(item.plugin_id)"
-              >
-                删除
-              </van-button>
+              />
             </div>
           </template>
         </van-cell>
@@ -326,12 +326,17 @@ async function saveSpaceAccess() {
 function extensionLabel(item) {
   const version = item?.version ? `版本 ${item.version}` : ''
   const directory = item?.directory ? `目录 ${item.directory}` : ''
-  const source = item?.source?.url ? `来源 ${item.source.url}` : ''
-  return [version, directory, source].filter(Boolean).join(' · ') || '重启后生效'
+  const sourceType = item?.source?.type === 'gist'
+    ? '来源 Gist'
+    : (item?.source?.type === 'github' ? '来源 GitHub' : '')
+  return [version, directory, sourceType].filter(Boolean).join(' · ') || '重启后生效'
 }
 
 function sourceLabel(item) {
-  return item?.url || [item?.owner, item?.repo].filter(Boolean).join('/') || '已保存安装来源'
+  if (item?.type === 'gist') return 'Gist 扩展来源'
+  const repo = [item?.owner, item?.repo].filter(Boolean).join('/')
+  if (repo) return `GitHub · ${repo}`
+  return '已保存安装来源'
 }
 
 function selectExtensionPackage() {
