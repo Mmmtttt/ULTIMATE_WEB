@@ -116,7 +116,7 @@ def _safe_extract(zip_path: Path, target_dir: Path) -> None:
 def _parse_github_repo_url(url: str) -> Tuple[str, str, str]:
     parsed = urllib.parse.urlparse(str(url or "").strip())
     if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != "github.com":
-        raise ValueError("只支持 GitHub 仓库链接")
+        raise ValueError("只支持 GitHub 仓库链接或 Gist 链接")
     parts = [urllib.parse.unquote(item) for item in parsed.path.strip("/").split("/") if item]
     if len(parts) < 2:
         raise ValueError("GitHub 链接缺少 owner/repo")
@@ -163,6 +163,158 @@ def _resolve_github_default_branch(owner: str, repo: str) -> str:
         return branch or "main"
     except Exception:
         return "main"
+
+
+# ---------- Gist 扩展源（Secret Gist 匿名可读，无需 token） ----------
+
+_INSTALLER_USER_AGENT = "ULTIMATE_WEB-PluginInstaller/1.0"
+_GIST_API_ACCEPT = "application/vnd.github+json"
+_GIST_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{8,}$")
+_GIST_FILE_MAX_BYTES = 5 * 1024 * 1024
+_GIST_TOTAL_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _normalize_extension_url(value: str) -> str:
+    """允许用户省略协议头粘贴 gist.github.com/... 。"""
+    text = str(value or "").strip()
+    if text and "://" not in text and text.lower().startswith("gist.github.com"):
+        return "https://" + text
+    return text
+
+
+def _is_gist_url(value: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(_normalize_extension_url(value))
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "gist.github.com"
+
+
+def _parse_gist_url(value: str) -> str:
+    """接受 gist.github.com/{user}/{id}、带 /raw 后缀的链接或裸 gist id，返回 gist id。"""
+    text = _normalize_extension_url(value)
+    if not text:
+        raise ValueError("缺少 Gist 链接")
+    if _GIST_ID_PATTERN.fullmatch(text):
+        return text.lower()
+    if not _is_gist_url(text):
+        raise ValueError("只支持 https://gist.github.com/{user}/{id} 形式的 Gist 链接")
+    parsed = urllib.parse.urlparse(text)
+    parts = [urllib.parse.unquote(item) for item in parsed.path.strip("/").split("/") if item]
+    # 形如 /{user}/{id}/raw/{revision}/{file} 时，第二个路径段才是 gist id；
+    # /raw/ 后面的 revision 也是十六进制，不能从后往前扫。
+    candidates: List[str] = []
+    if len(parts) >= 2:
+        candidates.append(parts[1])
+    if parts:
+        candidates.append(parts[0])
+    for part in candidates:
+        candidate = part[:-5] if part.lower().endswith(".json") else part
+        # git 克隆链接形如 /{user}/{id}.git，与 .json 一样是后缀噪声，必须剥掉
+        if candidate.lower().endswith(".git"):
+            candidate = candidate[:-4]
+        if _GIST_ID_PATTERN.fullmatch(candidate):
+            return candidate.lower()
+    raise ValueError("Gist 链接里没有找到 gist id")
+
+
+def _open_json_url(url: str, *, accept: str, timeout: int, error_label: str) -> Dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": _INSTALLER_USER_AGENT, "Accept": accept},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise ValueError(f"{error_label}不存在或不可访问") from exc
+        raise ValueError(f"{error_label}获取失败: HTTP {exc.code}") from exc
+    except Exception as exc:
+        raise ValueError(f"{error_label}获取失败: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{error_label}返回格式不正确")
+    return payload
+
+
+def _download_bytes(url: str, *, limit: int, error_label: str) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": _INSTALLER_USER_AGENT, "Accept": "*/*"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            data = response.read(limit + 1)
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"{error_label}获取失败: HTTP {exc.code}") from exc
+    except Exception as exc:
+        raise ValueError(f"{error_label}获取失败: {exc}") from exc
+    if len(data) > limit:
+        raise ValueError(f"{error_label}超过单个文件体积上限")
+    return data
+
+
+def _fetch_gist_document(gist_id: str) -> Dict[str, Any]:
+    api_url = f"https://api.github.com/gists/{urllib.parse.quote(gist_id, safe='')}"
+    return _open_json_url(api_url, accept=_GIST_API_ACCEPT, timeout=20, error_label="Gist ")
+
+
+def _write_gist_files(document: Dict[str, Any], target_dir: Path) -> List[str]:
+    """把 gist 文件平铺写入目录（gist 没有目录结构，文件名只取 basename）。"""
+    files = document.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("Gist 里没有文件")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    written: List[str] = []
+    total_bytes = 0
+    for raw_name, entry in files.items():
+        name = Path(_safe_member_name(str(raw_name or "").strip())).name
+        if not name:
+            continue
+        data = b""
+        if isinstance(entry, dict):
+            if not entry.get("truncated") and isinstance(entry.get("content"), str):
+                data = str(entry.get("content") or "").encode("utf-8")
+            elif str(entry.get("raw_url") or "").strip():
+                data = _download_bytes(
+                    str(entry.get("raw_url") or "").strip(),
+                    limit=_GIST_FILE_MAX_BYTES,
+                    error_label=f"Gist 文件 {name} ",
+                )
+        if not data:
+            continue
+        total_bytes += len(data)
+        if total_bytes > _GIST_TOTAL_MAX_BYTES:
+            raise ValueError("Gist 扩展包体积超过上限")
+        (target_dir / name).write_bytes(data)
+        written.append(name)
+    if not written:
+        raise ValueError("Gist 中没有可写入的扩展文件")
+    return written
+
+
+def install_extension_from_gist(url: str) -> Dict[str, Any]:
+    """从 GitHub Gist（含 Secret Gist）安装扩展。匿名读取，不需要 token。"""
+    gist_id = _parse_gist_url(url)
+    document = _fetch_gist_document(gist_id)
+    root = _install_root(create=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=".gist-", dir=str(root))).resolve()
+    try:
+        work_dir = temp_dir / "extension"
+        written = _write_gist_files(document, work_dir)
+        result = _install_extension_from_directory(work_dir)
+        source = {
+            "type": "gist",
+            "url": str(url or "").strip(),
+            "gist_id": gist_id,
+            "files": written,
+            "secret": not bool(document.get("public", False)),
+        }
+        result["source"] = source
+        _save_extension_source(str(result.get("plugin_id") or ""), source)
+        return result
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _plugin_id(payload: Dict[str, Any]) -> str:
@@ -298,6 +450,38 @@ def list_extensions() -> Dict[str, Any]:
     }
 
 
+def _install_extension_from_directory(source_root: Path) -> Dict[str, Any]:
+    """把已解包/已落盘的目录安装成扩展（zip、GitHub 仓库、Gist 共用同一套校验）。"""
+    root = _install_root(create=True)
+    source_root = Path(source_root)
+    manifests = sorted(source_root.rglob("ultimate-plugin.json"))
+    if not manifests:
+        raise ValueError("扩展包缺少 ultimate-plugin.json")
+    manifest_path = _select_manifest(source_root, manifests)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    plugin_id = _plugin_id(payload)
+    if not plugin_id:
+        raise ValueError("扩展 manifest 缺少 plugin.id")
+    _validate_platform(payload)
+    _validate_dependency_pool(payload)
+
+    source_dir = manifest_path.parent.resolve()
+    ignored_manifests = _disable_nested_manifests(source_dir, manifest_path)
+    target_dir = (root / _safe_dir_name(plugin_id)).resolve()
+    if root not in target_dir.parents:
+        raise ValueError("扩展安装目录越界")
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.move(str(source_dir), str(target_dir))
+    return {
+        "plugin_id": plugin_id,
+        "directory": target_dir.name,
+        "ignored_manifests": ignored_manifests,
+        "requires_restart": True,
+        "message": "扩展安装成功，重启后生效",
+    }
+
+
 def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
     root = _install_root(create=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=".install-", dir=str(root))).resolve()
@@ -305,33 +489,7 @@ def _install_extension_zip_path(zip_path: Path) -> Dict[str, Any]:
         extract_dir = temp_dir / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
         _safe_extract(zip_path, extract_dir)
-
-        manifests = sorted(extract_dir.rglob("ultimate-plugin.json"))
-        if not manifests:
-            raise ValueError("扩展包缺少 ultimate-plugin.json")
-        manifest_path = _select_manifest(extract_dir, manifests)
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        plugin_id = _plugin_id(payload)
-        if not plugin_id:
-            raise ValueError("扩展 manifest 缺少 plugin.id")
-        _validate_platform(payload)
-        _validate_dependency_pool(payload)
-
-        source_dir = manifest_path.parent.resolve()
-        ignored_manifests = _disable_nested_manifests(source_dir, manifest_path)
-        target_dir = (root / _safe_dir_name(plugin_id)).resolve()
-        if root not in target_dir.parents:
-            raise ValueError("扩展安装目录越界")
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        shutil.move(str(source_dir), str(target_dir))
-        return {
-            "plugin_id": plugin_id,
-            "directory": target_dir.name,
-            "ignored_manifests": ignored_manifests,
-            "requires_restart": True,
-            "message": "扩展安装成功，重启后生效",
-        }
+        return _install_extension_from_directory(extract_dir)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -352,6 +510,9 @@ def install_extension_zip(file_storage) -> Dict[str, Any]:
 
 
 def install_extension_from_github(url: str) -> Dict[str, Any]:
+    # Gist 链接复用同一入口：前端与 /extensions/install-github 接口无需区分来源
+    if _is_gist_url(url):
+        return install_extension_from_gist(url)
     owner, repo, ref = _parse_github_repo_url(url)
     resolved_ref = ref or _resolve_github_default_branch(owner, repo)
     archive_url = f"https://codeload.github.com/{owner}/{repo}/zip/{urllib.parse.quote(resolved_ref, safe='/')}"
@@ -378,9 +539,15 @@ def install_extension_from_github(url: str) -> Dict[str, Any]:
 def reinstall_saved_extension(plugin_id: str) -> Dict[str, Any]:
     normalized_plugin_id = str(plugin_id or "").strip()
     source = _load_extension_sources().get(normalized_plugin_id) or {}
-    if str(source.get("type") or "").strip().lower() != "github" or not str(source.get("url") or "").strip():
+    url = str(source.get("url") or "").strip()
+    source_type = str(source.get("type") or "").strip().lower()
+    if source_type == "gist" or _is_gist_url(url):
+        if not url:
+            raise ValueError("该扩展没有已保存的 Gist 安装链接")
+        return install_extension_from_gist(url)
+    if source_type != "github" or not url:
         raise ValueError("该扩展没有已保存的 GitHub 安装链接")
-    return install_extension_from_github(str(source.get("url") or "").strip())
+    return install_extension_from_github(url)
 
 
 def delete_extension(plugin_id: str) -> Dict[str, Any]:
