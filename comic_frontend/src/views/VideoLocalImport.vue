@@ -1,6 +1,7 @@
 <template>
-  <div class="video-local-import-page desktop-page-shell">
+  <div class="video-local-import-page desktop-page-shell" :class="{ 'is-embedded': embedded }">
     <van-nav-bar
+      v-if="!embedded"
       title="本地视频导入"
       left-arrow
       @click-left="$router.back()"
@@ -159,6 +160,11 @@ import { useVideoStore } from '@/stores'
 
 const videoStore = useVideoStore()
 
+// 嵌入「导入」页的选项卡时隐藏自带导航栏
+defineProps({
+  embedded: { type: Boolean, default: false }
+})
+
 const sourcePath = ref('')
 const importing = ref(false)
 const result = ref(null)
@@ -237,6 +243,11 @@ async function runImport() {
   min-height: 95vh;
   background: transparent;
   padding-bottom: 80px;
+}
+
+.video-local-import-page.is-embedded {
+  min-height: auto;
+  padding-bottom: 24px;
 }
 
 .card-surface {

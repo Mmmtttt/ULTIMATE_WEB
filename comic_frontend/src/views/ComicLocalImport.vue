@@ -1,6 +1,7 @@
 <template>
-  <div class="comic-local-import-page desktop-page-shell">
+  <div class="comic-local-import-page desktop-page-shell" :class="{ 'is-embedded': embedded }">
     <van-nav-bar
+      v-if="!embedded"
       title="本地漫画导入"
       left-arrow
       @click-left="$router.back()"
@@ -287,6 +288,11 @@ import { useComicStore, useTagStore } from '@/stores'
 
 const STORAGE_KEY = 'comic_local_import_session_v1'
 const ARCHIVE_INTENT_SESSION_KEY = 'ultimate_android_open_archive_path'
+
+// 嵌入「导入」页的选项卡时隐藏自带导航栏
+defineProps({
+  embedded: { type: Boolean, default: false }
+})
 
 const comicStore = useComicStore()
 const tagStore = useTagStore()
@@ -997,6 +1003,11 @@ watch(
   min-height: 95vh;
   background: transparent;
   padding-bottom: 80px;
+}
+
+.comic-local-import-page.is-embedded {
+  min-height: auto;
+  padding-bottom: 24px;
 }
 
 .card-surface {

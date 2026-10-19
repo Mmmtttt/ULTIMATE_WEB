@@ -133,6 +133,12 @@ const routes = [
         meta: { title: '任务中心' }
       },
       {
+        path: 'import',
+        name: 'ImportCenter',
+        component: () => import('@/views/ImportCenter.vue'),
+        meta: { title: '导入' }
+      },
+      {
         path: 'download-tasks',
         name: 'DownloadTasks',
         component: () => import('@/views/DownloadTasks.vue'),
