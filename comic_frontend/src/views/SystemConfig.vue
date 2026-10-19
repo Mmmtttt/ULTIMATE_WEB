@@ -47,7 +47,6 @@
             <ModeSwitch class="settings-mode-switch" />
           </template>
         </van-cell>
-        <van-cell :title="`当前模式：${currentModeLabel}`" class="mode-status-cell" />
         <van-cell
           v-if="isMobile"
           title="悬浮切换按钮"
@@ -284,12 +283,11 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
 import { reloadPage } from '@/runtime/browser'
-import { useAuthStore, useConfigStore, useModeStore } from '@/stores'
+import { useAuthStore, useConfigStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 import { useDevice } from '@/composables/useDevice'
 
 const configStore = useConfigStore()
-const modeStore = useModeStore()
 const authStore = useAuthStore()
 const { isMobile } = useDevice()
 
@@ -367,7 +365,6 @@ const savingConfigDir = ref(false)
 const projectPassword = ref('')
 const projectPasswordConfirm = ref('')
 const savingProjectPassword = ref(false)
-const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
 const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
 const canChangeProjectPassword = computed(() => (
   authStore.authenticated && (authStore.mode === 'normal' || !authStore.enabled)
@@ -794,11 +791,6 @@ onUnmounted(() => {
   margin-top: 4px;
   color: var(--text-tertiary);
   line-height: 1.5;
-}
-
-.mode-status-cell :deep(.van-cell__title) {
-  color: var(--text-tertiary);
-  font-size: 12px;
 }
 
 .select-row {
