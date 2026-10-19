@@ -1,5 +1,12 @@
 <template>
-  <van-popup v-model:show="store.showAddPopup" round position="bottom" class="add-popup">
+  <van-popup
+    v-model:show="store.showAddPopup"
+    round
+    teleport="body"
+    :position="popupPosition"
+    class="add-popup"
+    :class="{ 'add-popup--center': !isMobile }"
+  >
     <div class="add-popup-content">
       <div class="add-popup-header">
         <span class="add-popup-title">手动添加下载链接</span>
@@ -18,8 +25,8 @@
       />
       <van-field
         v-model="store.manualSubfolder"
-        label="保存到子文件夹"
-        placeholder="可选，如 ABC-123 或剧名，留空用下载目录根路径"
+        label="子文件夹"
+        placeholder="可选，如 ABC-123，留空用根目录"
         clearable
       />
       <van-field
@@ -52,14 +59,25 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useDownloadTaskStore } from '@/stores/downloadTask'
+import { useDevice } from '@/composables/useDevice'
 
 const store = useDownloadTaskStore()
+const { isMobile } = useDevice()
+
+// 电脑端从屏幕中间弹出，手机端仍从底部弹出
+const popupPosition = computed(() => (isMobile.value ? 'bottom' : 'center'))
 </script>
 
 <style scoped>
 .add-popup-content {
   padding: 16px 16px 20px;
+}
+
+/* 居中弹窗需要固定宽度，否则会被内容撑成一条 */
+.add-popup--center .add-popup-content {
+  width: min(92vw, 440px);
 }
 
 .add-popup-header {
