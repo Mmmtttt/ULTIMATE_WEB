@@ -14,45 +14,40 @@
             导入、本地补全、缩略图生成与下载任务都会在这里持续更新进度。
           </div>
         </div>
-        <div class="hero-row">
-          <div class="hero-stats">
-            <div class="hero-stat">
-              <span class="hero-stat-value">{{ activeTotal }}</span>
-              <span class="hero-stat-label">进行中</span>
-            </div>
-            <div class="hero-stat">
-              <span class="hero-stat-value">{{ historyTotal }}</span>
-              <span class="hero-stat-label">已结束</span>
-            </div>
-            <div v-if="isNormalSpace" class="hero-stat">
-              <span class="hero-stat-value speed">{{ downloadStore.totalDownloadSpeedText }}</span>
-              <span class="hero-stat-label">下载速度</span>
-            </div>
+        <div class="hero-cards">
+          <div class="hero-mini">
+            <span class="hero-mini-value">{{ activeTotal }}</span>
+            <span class="hero-mini-label">进行中</span>
           </div>
-
-          <div v-if="isNormalSpace" class="hero-actions">
-          <van-button
-            size="small"
-            icon="plus"
-            class="hero-action"
+          <div class="hero-mini">
+            <span class="hero-mini-value">{{ historyTotal }}</span>
+            <span class="hero-mini-label">已结束</span>
+          </div>
+          <div v-if="isNormalSpace" class="hero-mini">
+            <span class="hero-mini-value speed">{{ downloadStore.totalDownloadSpeedText }}</span>
+            <span class="hero-mini-label">下载速度</span>
+          </div>
+          <button
+            v-if="isNormalSpace"
+            type="button"
+            class="hero-mini hero-mini-action"
             title="添加下载链接"
             aria-label="添加下载链接"
             @click="downloadStore.openAddPopup"
           >
-            添加下载链接
-          </van-button>
-          <van-button
-            size="small"
-            icon="replay"
-            class="hero-action"
+            <van-icon name="plus" size="18" />
+          </button>
+          <button
+            v-if="isNormalSpace"
+            type="button"
+            class="hero-mini hero-mini-action"
+            :class="{ 'is-refreshing': manualRefreshing }"
             title="刷新"
             aria-label="刷新"
-            :loading="manualRefreshing"
             @click="handleManualRefresh"
           >
-            刷新
-          </van-button>
-          </div>
+            <van-icon name="replay" size="18" />
+          </button>
         </div>
       </section>
 
@@ -402,35 +397,35 @@ onUnmounted(() => {
   color: rgba(235, 242, 255, 0.76);
 }
 
-.hero-row {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.hero-stats {
-  flex: 1 1 300px;
+/* 右对齐的一排小卡片：三个统计 + 两个操作，五个等大 */
+.hero-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: 84px;
   gap: 10px;
-  min-width: 0;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
-.hero-stat {
+.hero-mini {
+  height: 62px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 2px;
   min-width: 0;
-  padding: 12px 10px;
+  padding: 0 6px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f3f7ff;
   text-align: center;
 }
 
-.hero-stat-value {
-  font-size: clamp(18px, 5.4vw, 24px);
+.hero-mini-value {
+  max-width: 100%;
+  font-size: 18px;
   font-weight: 700;
   color: #fff;
   white-space: nowrap;
@@ -438,31 +433,38 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.hero-stat-value.speed {
-  font-size: clamp(13px, 4.2vw, 24px);
-}
-
-.hero-actions {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.hero-action {
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  color: #f3f7ff;
-}
-
-.hero-action :deep(.van-button__icon),
-.hero-action :deep(.van-button__text) {
-  color: #f3f7ff;
-}
-
-.hero-stat-label {
-  margin-top: 4px;
+.hero-mini-value.speed {
   font-size: 12px;
+}
+
+.hero-mini-label {
+  font-size: 11px;
   color: rgba(235, 242, 255, 0.72);
+}
+
+.hero-mini-action {
+  cursor: pointer;
+  font: inherit;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hero-mini-action:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.hero-mini-action:active {
+  transform: scale(0.96);
+}
+
+.hero-mini-action.is-refreshing :deep(.van-icon) {
+  animation: hero-spin 0.8s linear infinite;
+}
+
+@keyframes hero-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .section {
@@ -639,33 +641,35 @@ onUnmounted(() => {
 @media (max-width: 767px) {
   .hero-card {
     flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
   }
 
-  .hero-stats {
-    min-width: 0;
-  }
-
-  /* 窄屏上按钮只留图标，保证统计卡片与按钮仍在同一行 */
-  .hero-actions {
+  /* 窄屏：五个小卡片等分整行 */
+  .hero-cards {
+    width: 100%;
     margin-left: 0;
-    flex: 0 0 auto;
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  .hero-action {
-    min-width: 34px;
-    padding: 0 8px;
+  .hero-mini {
+    height: 58px;
+    padding: 0 2px;
   }
 
-  .hero-action :deep(.van-button__text) {
-    display: none;
+  .hero-mini-value {
+    font-size: 15px;
   }
 
-  .hero-stat-value.speed {
-    font-size: clamp(11px, 3.2vw, 24px);
+  .hero-mini-value.speed {
+    font-size: 10px;
   }
 
-  .hero-stat {
-    padding: 8px 4px;
+  .hero-mini-label {
+    font-size: 10px;
   }
 
   .task-header,
