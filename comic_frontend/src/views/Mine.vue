@@ -267,7 +267,7 @@ const trashCount = ref(null)
 
 const statCards = computed(() => [
   { key: 'count', icon: 'photo-o', value: stats.value.count, label: '内容', to: '/library', hint: '进入本地库' },
-  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '已读', to: '/history', hint: '进入阅读记录' },
+  { key: 'read', icon: 'bookmark-o', value: stats.value.read, label: '历史', to: '/history', hint: '进入阅读记录' },
   { key: 'tags', icon: 'label-o', value: stats.value.tags, label: '标签', to: tagManagePath, hint: '进入标签管理' },
   { key: 'lists', icon: 'orders-o', value: stats.value.lists, label: '清单', to: '/lists', hint: '进入我的清单' },
   { key: 'favorites', icon: 'star-o', value: favoritesCount.value, label: '收藏', to: favoritesPath.value, hint: '进入我的收藏' },
