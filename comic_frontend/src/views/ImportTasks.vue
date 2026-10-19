@@ -10,21 +10,48 @@
       <section class="hero-card">
         <div class="hero-copy">
           <div class="hero-title">后台任务</div>
-          <div class="hero-subtitle">导入、本地补全、缩略图生成都会在这里持续更新进度。</div>
+          <div class="hero-subtitle">
+            导入、本地补全、缩略图生成与下载任务都会在这里持续更新进度。
+          </div>
         </div>
         <div class="hero-stats">
           <div class="hero-stat">
-            <span class="hero-stat-value">{{ activeTaskCount }}</span>
+            <span class="hero-stat-value">{{ activeTotal }}</span>
             <span class="hero-stat-label">进行中</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-value">{{ completedTasks.length }}</span>
-            <span class="hero-stat-label">历史任务</span>
+            <span class="hero-stat-value">{{ historyTotal }}</span>
+            <span class="hero-stat-label">已结束</span>
+          </div>
+          <div v-if="isNormalSpace" class="hero-stat">
+            <span class="hero-stat-value speed">{{ downloadStore.totalDownloadSpeedText }}</span>
+            <span class="hero-stat-label">下载速度</span>
           </div>
         </div>
       </section>
 
-      <div v-if="activeTasks.length > 0" class="section active-section">
+      <div v-if="isNormalSpace" class="task-toolbar">
+        <van-button
+          size="small"
+          type="primary"
+          plain
+          icon="plus"
+          @click="downloadStore.openAddPopup"
+        >
+          添加下载链接
+        </van-button>
+        <van-button
+          size="small"
+          plain
+          icon="replay"
+          :loading="downloadStore.loading"
+          @click="downloadStore.refreshAll"
+        >
+          刷新
+        </van-button>
+      </div>
+
+      <div v-if="activeTotal > 0" class="section active-section">
         <div class="section-title">
           <van-icon name="clock-o" />
           <span>进行中</span>
@@ -75,6 +102,12 @@
               </van-button>
             </div>
           </article>
+
+          <DownloadTaskCard
+            v-for="task in downloadStore.activeTasks"
+            :key="`download-${task.gid}`"
+            :task="task"
+          />
         </div>
       </div>
 
@@ -99,7 +132,7 @@
           </van-button>
         </div>
 
-        <div v-if="completedTasks.length === 0" class="empty-state">
+        <div v-if="historyTotal === 0" class="empty-state">
           <van-empty description="暂无历史任务" />
         </div>
 
@@ -136,6 +169,13 @@
               <span>{{ task.error_msg }}</span>
             </div>
           </article>
+
+          <DownloadTaskCard
+            v-for="task in downloadStore.historyTasks"
+            :key="`download-${task.gid}`"
+            :task="task"
+            history
+          />
         </div>
       </div>
     </div>
@@ -145,28 +185,31 @@
       <span>任务会在后台持续执行，离开当前页面也不会中断。</span>
     </div>
 
-    <!-- 下载任务直接排在同一页下面，不再分选项卡 -->
-    <div v-if="isNormalSpace" class="download-section">
-      <DownloadTasks embedded />
-    </div>
+    <DownloadComposer v-if="isNormalSpace" />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
 import { showConfirmDialog } from 'vant'
-import { useImportTaskStore, useAuthStore } from '@/stores'
-import DownloadTasks from '@/views/DownloadTasks.vue'
+import { useAuthStore, useDownloadTaskStore, useImportTaskStore } from '@/stores'
+import DownloadTaskCard from '@/components/download/DownloadTaskCard.vue'
+import DownloadComposer from '@/components/download/DownloadComposer.vue'
 
 const taskStore = useImportTaskStore()
 const authStore = useAuthStore()
+const downloadStore = useDownloadTaskStore()
 
-// 下载引擎属于正常空间资产：隐私空间下不展示下载任务区块
+// 下载引擎属于正常空间资产：隐私空间下不展示下载任务
 const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
 
 const activeTasks = computed(() => taskStore.activeTasks)
 const activeTaskCount = computed(() => taskStore.activeTaskCount)
 const completedTasks = computed(() => taskStore.completedTasks)
+
+// 导入任务与下载任务合在同一条列表里，只是卡片不同
+const activeTotal = computed(() => activeTaskCount.value + downloadStore.activeTasks.length)
+const historyTotal = computed(() => completedTasks.value.length + downloadStore.historyTasks.length)
 
 const batchTaskTypes = new Set([
   'comic_local_metadata_refresh',
@@ -293,10 +336,14 @@ onMounted(async () => {
   if (taskStore.hasActiveTasks) {
     taskStore.startPolling()
   }
+  if (isNormalSpace.value) {
+    await downloadStore.init()
+  }
 })
 
 onUnmounted(() => {
   taskStore.stopPolling()
+  downloadStore.stopPolling()
 })
 </script>
 
@@ -307,11 +354,12 @@ onUnmounted(() => {
   padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }
 
-/* 下载任务区块：与导入任务拉开距离并加一条细分隔线 */
-.download-section {
-  margin-top: 6px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border-soft);
+/* 任务操作行：添加下载链接 / 刷新 */
+.task-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 14px;
 }
 
 .tasks-container {
