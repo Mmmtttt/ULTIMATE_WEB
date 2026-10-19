@@ -1,0 +1,76 @@
+{
+  "protocol_version": "1.0",
+  "plugin": {
+    "id": "download.libretorrent",
+    "name": "LibreTorrent",
+    "version": "0.1.0",
+    "entrypoint": "./ultimate_provider.py:LibreTorrentProvider",
+    "config_key": "libretorrent"
+  },
+  "media_types": ["video", "comic"],
+  "identity": {
+    "content_type": "video",
+    "host_id_prefix": "LIBRETORRENT",
+    "platform_label": "LibreTorrent",
+    "aliases": ["libretorrent", "libre", "lt"]
+  },
+  "capabilities": [
+    { "key": "download.magnet.add" }
+  ],
+  "configuration": {
+    "order": 80,
+    "label": "LibreTorrent",
+    "credential": {
+      "enabled_field": "enabled",
+      "required_fields": [],
+      "unconfigured_message": "LibreTorrent 引擎未就绪。",
+      "disabled_message": "LibreTorrent 引擎未启用，无法创建下载任务。"
+    },
+    "sections": [
+      {
+        "id": "basic",
+        "label": "基础配置",
+        "fields": [
+          {
+            "key": "enabled",
+            "label": "启用",
+            "type": "boolean",
+            "default": false
+          },
+          {
+            "key": "package_name",
+            "label": "LibreTorrent 包名",
+            "type": "text",
+            "placeholder": "org.proninyaroslav.libretorrent"
+          }
+        ]
+      }
+    ]
+  },
+  "presentation": {
+    "media_card": {
+      "badge": {
+        "show_platform_label": true,
+        "label": "LibreTorrent"
+      }
+    }
+  },
+  "packaging": {
+    "android": {
+      "enabled": true,
+      "pip_options": [],
+      "pip_requirements": [],
+      "pip_install_args": [],
+      "manifest_queries": {
+        "intents": [
+          {
+            "action": "android.intent.action.VIEW",
+            "schemes": ["magnet"],
+            "mime_types": ["application/x-bittorrent"]
+          }
+        ],
+        "packages": ["org.proninyaroslav.libretorrent"]
+      }
+    }
+  }
+}

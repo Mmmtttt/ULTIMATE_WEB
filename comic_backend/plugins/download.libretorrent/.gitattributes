@@ -1,0 +1,7 @@
+# 统一行尾：仓库内一律 LF，避免 Windows / Linux 检出产生无意义 diff
+* text=auto eol=lf
+
+# 显式声明二进制类型（如有）
+*.png binary
+*.jpg binary
+*.zip binary
