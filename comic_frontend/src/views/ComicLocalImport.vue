@@ -1,5 +1,9 @@
 <template>
-  <div class="comic-local-import-page desktop-page-shell" :class="{ 'is-embedded': embedded }">
+  <!-- 嵌入导入页时不再自带 desktop-page-shell（否则会带上 980px 最小宽度并溢出父容器） -->
+  <div
+    class="comic-local-import-page"
+    :class="embedded ? 'is-embedded' : 'desktop-page-shell'"
+  >
     <van-nav-bar
       v-if="!embedded"
       title="本地漫画导入"
@@ -1006,6 +1010,7 @@ watch(
 }
 
 .comic-local-import-page.is-embedded {
+  width: 100%;
   min-height: auto;
   padding-bottom: 24px;
 }
