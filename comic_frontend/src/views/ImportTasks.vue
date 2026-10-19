@@ -138,7 +138,7 @@
           <van-empty description="暂无历史任务" />
         </div>
 
-        <div v-else class="task-list">
+        <div v-else class="task-list history-list">
           <article
             v-for="task in completedTasks"
             :key="task.task_id"
@@ -495,6 +495,32 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 任务历史过长时在区域内滚动，不把整页撑长 */
+.history-list {
+  max-height: min(520px, 58vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong, rgba(69, 95, 153, 0.28));
+  border-radius: 3px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }
 
 .task-card {
