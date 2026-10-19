@@ -28,28 +28,27 @@
             <span class="hero-stat-label">下载速度</span>
           </div>
         </div>
-      </section>
 
-      <div v-if="isNormalSpace" class="task-toolbar">
-        <van-button
-          size="small"
-          type="primary"
-          plain
-          icon="plus"
-          @click="downloadStore.openAddPopup"
-        >
-          添加下载链接
-        </van-button>
-        <van-button
-          size="small"
-          plain
-          icon="replay"
-          :loading="downloadStore.loading"
-          @click="downloadStore.refreshAll"
-        >
-          刷新
-        </van-button>
-      </div>
+        <div v-if="isNormalSpace" class="hero-actions">
+          <van-button
+            size="small"
+            icon="plus"
+            class="hero-action"
+            @click="downloadStore.openAddPopup"
+          >
+            添加下载链接
+          </van-button>
+          <van-button
+            size="small"
+            icon="replay"
+            class="hero-action"
+            :loading="manualRefreshing"
+            @click="handleManualRefresh"
+          >
+            刷新
+          </van-button>
+        </div>
+      </section>
 
       <div v-if="activeTotal > 0" class="section active-section">
         <div class="section-title">
@@ -190,7 +189,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { showConfirmDialog } from 'vant'
 import { useAuthStore, useDownloadTaskStore, useImportTaskStore } from '@/stores'
 import DownloadTaskCard from '@/components/download/DownloadTaskCard.vue'
@@ -210,6 +209,19 @@ const completedTasks = computed(() => taskStore.completedTasks)
 // 导入任务与下载任务合在同一条列表里，只是卡片不同
 const activeTotal = computed(() => activeTaskCount.value + downloadStore.activeTasks.length)
 const historyTotal = computed(() => completedTasks.value.length + downloadStore.historyTasks.length)
+
+// 按钮上的转圈只在用户主动点「刷新」时出现，后台轮询不触发
+const manualRefreshing = ref(false)
+
+async function handleManualRefresh() {
+  if (manualRefreshing.value) return
+  manualRefreshing.value = true
+  try {
+    await downloadStore.refreshAll()
+  } finally {
+    manualRefreshing.value = false
+  }
+}
 
 const batchTaskTypes = new Set([
   'comic_local_metadata_refresh',
@@ -354,21 +366,14 @@ onUnmounted(() => {
   padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }
 
-/* 任务操作行：添加下载链接 / 刷新 */
-.task-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
+/* 任务操作行已并入 hero 卡片，这里只保留旧类名兼容 */
 .tasks-container {
   padding: 14px 12px 0;
 }
 
 .hero-card {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 14px;
   margin-bottom: 18px;
   padding: 18px;
@@ -393,16 +398,17 @@ onUnmounted(() => {
 
 .hero-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(74px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  min-width: 176px;
+  min-width: 0;
 }
 
 .hero-stat {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 12px 10px;
+  min-width: 0;
+  padding: 10px 6px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -410,9 +416,33 @@ onUnmounted(() => {
 }
 
 .hero-stat-value {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
   color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-stat-value.speed {
+  font-size: 15px;
+}
+
+.hero-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hero-action {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #f3f7ff;
+}
+
+.hero-action :deep(.van-button__icon),
+.hero-action :deep(.van-button__text) {
+  color: #f3f7ff;
 }
 
 .hero-stat-label {
