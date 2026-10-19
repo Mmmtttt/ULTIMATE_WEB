@@ -35,7 +35,8 @@
             aria-label="添加下载链接"
             @click="downloadStore.openAddPopup"
           >
-            <van-icon name="plus" size="18" />
+            <van-icon name="plus" size="16" />
+            <span class="hero-mini-label">添加链接</span>
           </button>
           <button
             v-if="isNormalSpace"
@@ -46,7 +47,8 @@
             aria-label="刷新"
             @click="handleManualRefresh"
           >
-            <van-icon name="replay" size="18" />
+            <van-icon name="replay" size="16" />
+            <span class="hero-mini-label">刷新</span>
           </button>
         </div>
       </section>
@@ -374,8 +376,9 @@ onUnmounted(() => {
 
 .hero-card {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 18px;
   padding: 18px;
   border-radius: 18px;
