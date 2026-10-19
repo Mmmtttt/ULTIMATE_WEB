@@ -31,7 +31,6 @@
           </van-tag>
         </template>
       </van-cell>
-      <van-cell title="下载任务" icon="down" to="/download-tasks" is-link />
     </van-cell-group>
 
     <van-cell-group class="mine-menu" inset>

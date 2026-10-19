@@ -6,6 +6,8 @@
       @click-left="$router.back()"
     />
 
+    <van-tabs ref="tabsRef" v-model:active="activeTab" class="task-tabs">
+      <van-tab title="导入任务" name="import">
     <div class="tasks-container">
       <section class="hero-card">
         <div class="hero-copy">
@@ -144,15 +146,40 @@
       <van-icon name="info-o" />
       <span>任务会在后台持续执行，离开当前页面也不会中断。</span>
     </div>
+      </van-tab>
+
+      <van-tab v-if="isNormalSpace" title="下载任务" name="download">
+        <DownloadTasks embedded />
+      </van-tab>
+    </van-tabs>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { showConfirmDialog } from 'vant'
-import { useImportTaskStore } from '@/stores/importTask'
+import { useRoute } from 'vue-router'
+import { useImportTaskStore, useAuthStore } from '@/stores'
+import { useTabsResize } from '@/composables/useTabsResize'
+import DownloadTasks from '@/views/DownloadTasks.vue'
 
+const route = useRoute()
 const taskStore = useImportTaskStore()
+const authStore = useAuthStore()
+
+// 下载引擎属于正常空间资产：隐私空间下不提供下载任务选项卡
+const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
+const activeTab = ref(
+  String(route.query.tab || '') === 'download' && isNormalSpace.value ? 'download' : 'import'
+)
+const tabsRef = ref(null)
+useTabsResize(tabsRef, '.task-tabs')
+
+watch(isNormalSpace, (normal) => {
+  if (!normal && activeTab.value === 'download') {
+    activeTab.value = 'import'
+  }
+})
 
 const activeTasks = computed(() => taskStore.activeTasks)
 const activeTaskCount = computed(() => taskStore.activeTaskCount)
@@ -295,6 +322,16 @@ onUnmounted(() => {
   min-height: 95vh;
   background: transparent;
   padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+
+/* 导入任务 / 下载任务两个选项卡平分内容区宽度 */
+.task-tabs :deep(.van-tab) {
+  flex: 1;
+  font-size: 14px;
+}
+
+.task-tabs :deep(.van-tab--active) {
+  font-weight: 600;
 }
 
 .tasks-container {

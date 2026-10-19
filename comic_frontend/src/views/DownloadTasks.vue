@@ -1,6 +1,11 @@
 <template>
-  <div class="download-tasks-page desktop-page-shell">
+  <!-- 嵌入任务中心时不再自带 desktop-page-shell 与导航栏 -->
+  <div
+    class="download-tasks-page"
+    :class="embedded ? 'is-embedded' : 'desktop-page-shell'"
+  >
     <van-nav-bar
+      v-if="!embedded"
       title="下载任务"
       left-arrow
       @click-left="$router.back()"
@@ -81,6 +86,15 @@
     </van-popup>
 
     <div class="tasks-container">
+      <div v-if="embedded" class="embedded-actions">
+        <van-button size="small" type="primary" plain icon="plus" @click="openAddPopup">
+          添加链接
+        </van-button>
+        <van-button size="small" plain icon="replay" :loading="loading" @click="refreshAll">
+          刷新
+        </van-button>
+      </div>
+
       <div v-if="!loading && engines.length === 0" class="empty-wrap">
         <van-empty description="未找到可用的下载引擎">
           <van-button type="primary" size="small" plain @click="goToConfig">
@@ -281,6 +295,11 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { downloadApi } from '@/api/download'
 
 const router = useRouter()
+
+// 作为「任务中心」的选项卡嵌入时，隐藏自带导航栏并把操作收进内容区
+defineProps({
+  embedded: { type: Boolean, default: false }
+})
 
 const engines = ref([])
 const tasks = ref([])
@@ -735,6 +754,19 @@ onUnmounted(() => {
   min-height: 95vh;
   background: transparent;
   padding-bottom: 64px;
+}
+
+.download-tasks-page.is-embedded {
+  width: 100%;
+  min-height: auto;
+  padding-bottom: 12px;
+}
+
+.embedded-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 0 12px;
 }
 
 .nav-actions {

@@ -15,10 +15,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { useModeStore } from '@/stores'
+import { useTabsResize } from '@/composables/useTabsResize'
 import ComicLocalImport from '@/views/ComicLocalImport.vue'
 import VideoLocalImport from '@/views/VideoLocalImport.vue'
 import OnlineImportPanel from '@/components/import/OnlineImportPanel.vue'
@@ -31,45 +32,13 @@ const isVideoMode = computed(() => modeStore.isVideoMode)
 const activeTab = ref(String(route.query.tab || '') === 'id' ? 'id' : 'local')
 
 const tabsRef = ref(null)
-let resizeObserver = null
-let resizeFrame = 0
-
-// 侧边导航栏收起/展开会改变内容区宽度，Vant 只在 window resize 时重算下划线，
-// 这里监听容器尺寸变化，让选项卡宽度与下划线都跟着内容区自适应。
-function scheduleTabResize() {
-  if (resizeFrame) return
-  resizeFrame = window.requestAnimationFrame(() => {
-    resizeFrame = 0
-    tabsRef.value?.resize?.()
-  })
-}
+// 侧边导航栏收起/展开会改变内容区宽度，让选项卡下划线跟着重算
+useTabsResize(tabsRef, '.import-tabs')
 
 function goBack() {
   if (window.history.length > 1) router.back()
   else router.push('/mine')
 }
-
-onMounted(() => {
-  window.addEventListener('resize', scheduleTabResize)
-  if (typeof ResizeObserver !== 'undefined') {
-    const target = document.querySelector('.import-tabs')
-    if (target) {
-      resizeObserver = new ResizeObserver(scheduleTabResize)
-      resizeObserver.observe(target)
-    }
-  }
-  scheduleTabResize()
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', scheduleTabResize)
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  if (resizeFrame) {
-    window.cancelAnimationFrame(resizeFrame)
-    resizeFrame = 0
-  }
-})
 </script>
 
 <style scoped>
