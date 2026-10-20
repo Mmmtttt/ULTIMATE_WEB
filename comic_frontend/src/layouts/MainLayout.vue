@@ -98,14 +98,16 @@
     </main>
 
     <!-- Mobile Bottom Tabbar -->
-    <van-tabbar v-if="isMobile && mobileChromeEnabled" route fixed>
-      <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
-      <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
-      <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
-      <van-tabbar-item v-if="showTeleDriveNav" to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
-      <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
-      <van-tabbar-item to="/mine" icon="user-o">管理</van-tabbar-item>
-    </van-tabbar>
+    <transition name="tabbar-slide">
+      <van-tabbar v-if="isMobile && mobileChromeEnabled" route fixed>
+        <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
+        <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
+        <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
+        <van-tabbar-item v-if="showTeleDriveNav" to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
+        <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
+        <van-tabbar-item to="/mine" icon="user-o">管理</van-tabbar-item>
+      </van-tabbar>
+    </transition>
 
     <!-- 移动端内容类型切换：悬浮、可拖拽、四边吸附 -->
     <FloatingModeSwitch v-if="isMobile && mobileChromeEnabled && configStore.showFloatingModeSwitch" />
@@ -642,8 +644,11 @@ async function loadTeleDriveNavState() {
     padding-top: var(--mobile-safe-top);
   }
 
-  .slide-left-enter-active,
-.slide-left-leave-active {
+/* 用 .main-content 前缀提高选择器权重：本地库/预览库等页面根节点自带
+   transition: padding-bottom …，权重相同时会把这里的 transition 覆盖掉，
+   结果就是切这两页时完全没有过渡动画。 */
+.main-content .slide-left-enter-active,
+.main-content .slide-left-leave-active {
   transition:
     opacity var(--motion-base) var(--ease-standard),
     transform var(--motion-base) var(--ease-standard);
@@ -657,6 +662,20 @@ async function loadTeleDriveNavState() {
 .slide-left-leave-to {
   opacity: 0;
   transform: translateX(-12px);
+}
+
+/* 底部导航栏进出场：向下滑走 / 从下方滑回 */
+.tabbar-slide-enter-active,
+.tabbar-slide-leave-active {
+  transition:
+    transform 240ms var(--ease-standard),
+    opacity 240ms var(--ease-standard);
+}
+
+.tabbar-slide-enter-from,
+.tabbar-slide-leave-to {
+  transform: translateY(calc(100% + env(safe-area-inset-bottom, 0px)));
+  opacity: 0;
 }
 
 :deep(.van-tabbar) {
@@ -721,14 +740,14 @@ async function loadTeleDriveNavState() {
 
   /* 手机端切页：淡入 + 轻微上浮。不做横向位移——横向超出会让移动端重算布局
      视口（整页缩放再弹回），底部导航栏就会跳一下。 */
-  .slide-left-enter-active {
+  .main-content .slide-left-enter-active {
     transition:
       opacity 200ms var(--ease-standard),
       transform 260ms var(--ease-standard);
     will-change: opacity, transform;
   }
 
-  .slide-left-leave-active {
+  .main-content .slide-left-leave-active {
     transition:
       opacity 130ms var(--ease-standard),
       transform 160ms var(--ease-standard);
