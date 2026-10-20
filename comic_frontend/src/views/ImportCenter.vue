@@ -44,6 +44,7 @@ function goBack() {
 <style scoped>
 .import-center {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: 24px;
 }

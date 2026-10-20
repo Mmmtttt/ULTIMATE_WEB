@@ -628,6 +628,7 @@ function formatBytes(value) {
   max-width: 1180px;
   min-width: 0;
   min-height: 95vh;
+  min-height: 95dvh;
   margin: 0 auto;
   padding: 0 0 80px;
   overflow-x: hidden;

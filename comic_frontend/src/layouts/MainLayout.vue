@@ -704,8 +704,10 @@ async function loadTeleDriveNavState() {
     --mobile-tabbar-offset: calc(54px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
-    height: 100dvh;
-    min-height: 0;
+    /* 用 min-height 而不是固定 height：安卓地址栏/输入法收起时 dvh 会变，
+       固定高度会让整页随视口重排（滚动时上下抖）。 */
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .main-content {

@@ -305,6 +305,7 @@ watch(activeTab, () => {
 <style scoped>
 .base-tag-detail {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--surface-0);
 }
 

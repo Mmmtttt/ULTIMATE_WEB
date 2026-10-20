@@ -518,6 +518,7 @@ watch(currentContentType, () => {
 <style scoped>
 .list-manage {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: 18px;
 }

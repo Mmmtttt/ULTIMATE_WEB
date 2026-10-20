@@ -365,6 +365,7 @@ onUnmounted(() => {
 <style scoped>
 .import-tasks-page {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }

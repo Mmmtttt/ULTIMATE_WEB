@@ -230,7 +230,18 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  // 切页时滚动位置原本没人管，浏览器会把旧位置夹到新页面高度内，安卓上就是
+  // 「切换时上下跳一下」。统一处理：后退/前进恢复原位置，其余一律回顶部。
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition
+    }
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth' }
+    }
+    return { top: 0, left: 0 }
+  }
 })
 
 // 路由守卫：更新页面标题 + 认证检查

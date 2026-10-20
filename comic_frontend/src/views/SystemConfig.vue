@@ -711,6 +711,7 @@ onUnmounted(() => {
 .system-config {
   width: min(100%, 1080px);
   min-height: 95vh;
+  min-height: 95dvh;
   margin: 0 auto;
   background: transparent;
   padding: 0 var(--page-gutter) calc(28px + env(safe-area-inset-bottom, 0px));

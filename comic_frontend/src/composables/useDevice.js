@@ -5,10 +5,13 @@ const MOBILE_BREAKPOINT = 768
 const TABLET_BREAKPOINT = 1024
 
 export function useDevice() {
-  const isMobile = ref(false)
-  const isTablet = ref(false)
-  const isDesktop = ref(true)
-  const windowWidth = ref(getViewportWidth())
+  // 初值直接按当前视口算，别先按桌面渲染再在 onMounted 纠正：
+  // 那样移动端首帧会先排一遍桌面布局，挂载后才补移动端内容，页面会跳一下。
+  const initialWidth = getViewportWidth()
+  const isMobile = ref(initialWidth < MOBILE_BREAKPOINT)
+  const isTablet = ref(initialWidth >= MOBILE_BREAKPOINT && initialWidth < TABLET_BREAKPOINT)
+  const isDesktop = ref(initialWidth >= TABLET_BREAKPOINT)
+  const windowWidth = ref(initialWidth)
   let removeResizeListener = null
 
   function updateDeviceType() {

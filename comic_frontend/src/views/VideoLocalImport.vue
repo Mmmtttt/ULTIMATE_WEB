@@ -245,6 +245,7 @@ async function runImport() {
 <style scoped>
 .video-local-import-page {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: 80px;
 }
