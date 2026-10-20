@@ -719,11 +719,29 @@ async function loadTeleDriveNavState() {
     flex: 1;
   }
 
-  /* 手机端切页只用淡入淡出：横向位移会让内容超出视口宽度，进而触发移动端
-     布局视口重算（整页缩放再弹回），底部导航栏就会上下跳一下。 */
-  .slide-left-enter-from,
+  /* 手机端切页：淡入 + 轻微上浮。不做横向位移——横向超出会让移动端重算布局
+     视口（整页缩放再弹回），底部导航栏就会跳一下。 */
+  .slide-left-enter-active {
+    transition:
+      opacity 200ms var(--ease-standard),
+      transform 260ms var(--ease-standard);
+    will-change: opacity, transform;
+  }
+
+  .slide-left-leave-active {
+    transition:
+      opacity 130ms var(--ease-standard),
+      transform 160ms var(--ease-standard);
+  }
+
+  .slide-left-enter-from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
   .slide-left-leave-to {
-    transform: none;
+    opacity: 0;
+    transform: translateY(-8px);
   }
 
   .with-sidebar {
