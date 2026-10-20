@@ -10,21 +10,50 @@
       <section class="hero-card">
         <div class="hero-copy">
           <div class="hero-title">后台任务</div>
-          <div class="hero-subtitle">导入、本地补全、缩略图生成都会在这里持续更新进度。</div>
+          <div class="hero-subtitle">
+            导入、本地补全、缩略图生成与下载任务都会在这里持续更新进度。
+          </div>
         </div>
-        <div class="hero-stats">
-          <div class="hero-stat">
-            <span class="hero-stat-value">{{ activeTaskCount }}</span>
-            <span class="hero-stat-label">进行中</span>
+        <div class="hero-cards">
+          <div class="hero-mini">
+            <span class="hero-mini-value">{{ activeTotal }}</span>
+            <span class="hero-mini-label">进行中</span>
           </div>
-          <div class="hero-stat">
-            <span class="hero-stat-value">{{ completedTasks.length }}</span>
-            <span class="hero-stat-label">历史任务</span>
+          <div class="hero-mini">
+            <span class="hero-mini-value">{{ historyTotal }}</span>
+            <span class="hero-mini-label">已结束</span>
           </div>
+          <div v-if="isNormalSpace" class="hero-mini">
+            <span class="hero-mini-value speed">{{ downloadStore.totalDownloadSpeedText }}</span>
+            <span class="hero-mini-label">下载速度</span>
+          </div>
+          <button
+            v-if="isNormalSpace"
+            type="button"
+            class="hero-mini hero-mini-action"
+            title="添加下载链接"
+            aria-label="添加下载链接"
+            @click="downloadStore.openAddPopup"
+          >
+            <van-icon name="plus" size="16" />
+            <span class="hero-mini-label">添加链接</span>
+          </button>
+          <button
+            v-if="isNormalSpace"
+            type="button"
+            class="hero-mini hero-mini-action"
+            :class="{ 'is-refreshing': manualRefreshing }"
+            title="刷新"
+            aria-label="刷新"
+            @click="handleManualRefresh"
+          >
+            <van-icon name="replay" size="16" />
+            <span class="hero-mini-label">刷新</span>
+          </button>
         </div>
       </section>
 
-      <div v-if="activeTasks.length > 0" class="section active-section">
+      <div v-if="activeTotal > 0" class="section active-section">
         <div class="section-title">
           <van-icon name="clock-o" />
           <span>进行中</span>
@@ -75,6 +104,12 @@
               </van-button>
             </div>
           </article>
+
+          <DownloadTaskCard
+            v-for="task in downloadStore.activeTasks"
+            :key="`download-${task.gid}`"
+            :task="task"
+          />
         </div>
       </div>
 
@@ -99,11 +134,11 @@
           </van-button>
         </div>
 
-        <div v-if="completedTasks.length === 0" class="empty-state">
+        <div v-if="historyTotal === 0" class="empty-state">
           <van-empty description="暂无历史任务" />
         </div>
 
-        <div v-else class="task-list">
+        <div v-else class="task-list history-list">
           <article
             v-for="task in completedTasks"
             :key="task.task_id"
@@ -136,6 +171,13 @@
               <span>{{ task.error_msg }}</span>
             </div>
           </article>
+
+          <DownloadTaskCard
+            v-for="task in downloadStore.historyTasks"
+            :key="`download-${task.gid}`"
+            :task="task"
+            history
+          />
         </div>
       </div>
     </div>
@@ -144,19 +186,45 @@
       <van-icon name="info-o" />
       <span>任务会在后台持续执行，离开当前页面也不会中断。</span>
     </div>
+
+    <DownloadComposer v-if="isNormalSpace" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { showConfirmDialog } from 'vant'
-import { useImportTaskStore } from '@/stores/importTask'
+import { useAuthStore, useDownloadTaskStore, useImportTaskStore } from '@/stores'
+import DownloadTaskCard from '@/components/download/DownloadTaskCard.vue'
+import DownloadComposer from '@/components/download/DownloadComposer.vue'
 
 const taskStore = useImportTaskStore()
+const authStore = useAuthStore()
+const downloadStore = useDownloadTaskStore()
+
+// 下载引擎属于正常空间资产：隐私空间下不展示下载任务
+const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
 
 const activeTasks = computed(() => taskStore.activeTasks)
 const activeTaskCount = computed(() => taskStore.activeTaskCount)
 const completedTasks = computed(() => taskStore.completedTasks)
+
+// 导入任务与下载任务合在同一条列表里，只是卡片不同
+const activeTotal = computed(() => activeTaskCount.value + downloadStore.activeTasks.length)
+const historyTotal = computed(() => completedTasks.value.length + downloadStore.historyTasks.length)
+
+// 按钮上的转圈只在用户主动点「刷新」时出现，后台轮询不触发
+const manualRefreshing = ref(false)
+
+async function handleManualRefresh() {
+  if (manualRefreshing.value) return
+  manualRefreshing.value = true
+  try {
+    await downloadStore.refreshAll()
+  } finally {
+    manualRefreshing.value = false
+  }
+}
 
 const batchTaskTypes = new Set([
   'comic_local_metadata_refresh',
@@ -283,28 +351,35 @@ onMounted(async () => {
   if (taskStore.hasActiveTasks) {
     taskStore.startPolling()
   }
+  if (isNormalSpace.value) {
+    await downloadStore.init()
+  }
 })
 
 onUnmounted(() => {
   taskStore.stopPolling()
+  downloadStore.stopPolling()
 })
 </script>
 
 <style scoped>
 .import-tasks-page {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
 }
 
+/* 任务操作行已并入 hero 卡片，这里只保留旧类名兼容 */
 .tasks-container {
   padding: 14px 12px 0;
 }
 
 .hero-card {
   display: flex;
-  justify-content: space-between;
-  gap: 14px;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 18px;
   padding: 18px;
   border-radius: 18px;
@@ -326,34 +401,74 @@ onUnmounted(() => {
   color: rgba(235, 242, 255, 0.76);
 }
 
-.hero-stats {
+/* 右对齐的一排小卡片：三个统计 + 两个操作，五个等大 */
+.hero-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(74px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: 84px;
   gap: 10px;
-  min-width: 176px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
-.hero-stat {
+.hero-mini {
+  height: 62px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  padding: 12px 10px;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 6px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f3f7ff;
   text-align: center;
 }
 
-.hero-stat-value {
-  font-size: 24px;
+.hero-mini-value {
+  max-width: 100%;
+  font-size: 18px;
   font-weight: 700;
   color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.hero-stat-label {
-  margin-top: 4px;
+.hero-mini-value.speed {
   font-size: 12px;
+}
+
+.hero-mini-label {
+  font-size: 11px;
   color: rgba(235, 242, 255, 0.72);
+}
+
+.hero-mini-action {
+  cursor: pointer;
+  font: inherit;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hero-mini-action:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.hero-mini-action:active {
+  transform: scale(0.96);
+}
+
+.hero-mini-action.is-refreshing :deep(.van-icon) {
+  animation: hero-spin 0.8s linear infinite;
+}
+
+@keyframes hero-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .section {
@@ -381,6 +496,32 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 任务历史过长时在区域内滚动，不把整页撑长 */
+.history-list {
+  max-height: min(520px, 58vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong, rgba(69, 95, 153, 0.28));
+  border-radius: 3px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }
 
 .task-card {
@@ -530,11 +671,35 @@ onUnmounted(() => {
 @media (max-width: 767px) {
   .hero-card {
     flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
   }
 
-  .hero-stats {
+  /* 窄屏：五个小卡片等分整行 */
+  .hero-cards {
     width: 100%;
-    min-width: 0;
+    margin-left: 0;
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .hero-mini {
+    height: 58px;
+    padding: 0 2px;
+  }
+
+  .hero-mini-value {
+    font-size: 15px;
+  }
+
+  .hero-mini-value.speed {
+    font-size: 10px;
+  }
+
+  .hero-mini-label {
+    font-size: 10px;
   }
 
   .task-header,

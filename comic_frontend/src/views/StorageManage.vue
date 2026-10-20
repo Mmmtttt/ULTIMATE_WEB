@@ -400,6 +400,7 @@ onMounted(loadOverview)
 <style scoped>
 .storage-page {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   color: var(--text-primary);
   padding-bottom: 24px;

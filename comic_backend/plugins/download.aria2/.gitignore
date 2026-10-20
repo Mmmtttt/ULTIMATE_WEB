@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+
+# 插件不携带任何本机运行期状态
+config.json
+third_party_config.json
+comics_database.json
+download_progress.json
+favorite_comics.txt
+pictures/
+downloads/
+*.log

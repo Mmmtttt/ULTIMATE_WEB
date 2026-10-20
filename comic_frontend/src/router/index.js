@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { showFailToast } from 'vant'
 import { setDocumentTitle } from '@/runtime/browser'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useModeStore } from '@/stores/mode'
@@ -108,6 +109,12 @@ const routes = [
         meta: { title: '第三方平台配置', requiresNormalSpace: true }
       },
       {
+        path: 'config/third-party/:pluginKey',
+        name: 'ThirdPartyPluginConfig',
+        component: () => import('@/views/ThirdPartyPluginConfig.vue'),
+        meta: { title: '插件配置', requiresNormalSpace: true }
+      },
+      {
         path: 'sync',
         name: 'SyncCenter',
         component: () => import('@/views/SyncCenter.vue'),
@@ -126,13 +133,17 @@ const routes = [
         meta: { title: '任务中心' }
       },
       {
+        path: 'import',
+        name: 'ImportCenter',
+        component: () => import('@/views/ImportCenter.vue'),
+        meta: { title: '导入' }
+      },
+      {
         path: 'download-tasks',
         name: 'DownloadTasks',
-        component: () => import('@/views/DownloadTasks.vue'),
-        // 下载引擎属于正常空间的插件资产：隐私空间下注册表会过滤掉全部插件，
-        // 页面只会显示「未找到可用的下载引擎」，把用户引向错误方向。
-        // 与第三方平台配置页保持一致，直接拦在正常空间之外。
-        meta: { title: '下载任务', requiresNormalSpace: true }
+        // 下载任务已并入任务中心，旧入口/深链统一跳过去
+        redirect: { name: 'ImportTasks' },
+        meta: { title: '任务中心', requiresNormalSpace: true }
       },
       {
         path: 'comic-local-import',
@@ -219,7 +230,18 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  // 切页时滚动位置原本没人管，浏览器会把旧位置夹到新页面高度内，安卓上就是
+  // 「切换时上下跳一下」。统一处理：后退/前进恢复原位置，其余一律回顶部。
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition
+    }
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth' }
+    }
+    return { top: 0, left: 0 }
+  }
 })
 
 // 路由守卫：更新页面标题 + 认证检查
@@ -240,6 +262,8 @@ router.beforeEach(async (to, from, next) => {
     } catch (e) {
       // 未确认认证状态前禁止进入业务页，避免启动慢时绕过登录。
       authChecked = true
+      // 就绪门等待超时后只保留这一条明确提示，替代启动期连续的连接失败弹窗。
+      showFailToast('后端服务暂不可用，请稍后重试')
     }
   }
 

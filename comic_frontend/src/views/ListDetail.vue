@@ -1255,6 +1255,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--surface-0);
   padding-bottom: 0;
 }

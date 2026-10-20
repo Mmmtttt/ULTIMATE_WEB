@@ -4,7 +4,8 @@
     :class="{
       dragging: isDragging,
       'mobile-chrome-hidden': mobileChromeHidden,
-      'mobile-chrome-disabled': !mobileChromeEnabled
+      'mobile-chrome-disabled': !mobileChromeEnabled,
+      'mobile-header-off': isMobile && !mobileHeaderVisible
     }"
   >
     <!-- Desktop Sidebar -->
@@ -63,10 +64,11 @@
       </button>
     </aside>
 
-    <!-- Mobile Top Navbar -->
-    <header v-if="isMobile && mobileChromeEnabled" class="mobile-header">
+    <!-- Mobile Top Navbar（悬浮切换按钮开启时不渲染，把空间让给内容） -->
+    <header v-if="mobileHeaderVisible" class="mobile-header">
       <div class="header-content">
         <div class="page-title">{{ pageTitle }}</div>
+        <!-- 非悬浮模式：顶栏保留原来的内容切换开关 -->
         <ModeSwitch class="header-mode-switch" />
       </div>
     </header>
@@ -78,9 +80,9 @@
         'with-sidebar': isDesktop,
         'sidebar-collapsed-layout': isDesktop && sidebarCollapsed,
         'sidebar-hidden-layout': isDesktop && sidebarHidden,
-        'with-header': isMobile && mobileChromeEnabled,
+        'with-header': mobileHeaderVisible,
         'with-tabbar': isMobile && mobileChromeEnabled,
-        'mobile-safe-content': isMobile && !mobileChromeEnabled && !isReaderRoute,
+        'mobile-safe-content': isMobile && !mobileHeaderVisible && !isReaderRoute,
         'reader-immersive': isReaderRoute,
         'random-feed-immersive': isRandomFeedRoute
       }"
@@ -96,14 +98,19 @@
     </main>
 
     <!-- Mobile Bottom Tabbar -->
-    <van-tabbar v-if="isMobile && mobileChromeEnabled" route fixed>
-      <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
-      <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
-      <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
-      <van-tabbar-item v-if="showTeleDriveNav" to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
-      <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
-      <van-tabbar-item to="/mine" icon="user-o">管理</van-tabbar-item>
-    </van-tabbar>
+    <transition name="tabbar-slide">
+      <van-tabbar v-if="isMobile && mobileChromeEnabled" route fixed>
+        <van-tabbar-item to="/library" icon="home-o">本地库</van-tabbar-item>
+        <van-tabbar-item to="/preview" icon="eye-o">预览库</van-tabbar-item>
+        <van-tabbar-item to="/random-feed" icon="fire-o">随机流</van-tabbar-item>
+        <van-tabbar-item v-if="showTeleDriveNav" to="/teledrive-import" icon="exchange">TeleDrive</van-tabbar-item>
+        <van-tabbar-item to="/subscribe" icon="star-o">订阅</van-tabbar-item>
+        <van-tabbar-item to="/mine" icon="user-o">管理</van-tabbar-item>
+      </van-tabbar>
+    </transition>
+
+    <!-- 移动端内容类型切换：悬浮、可拖拽、四边吸附 -->
+    <FloatingModeSwitch v-if="isMobile && mobileChromeEnabled && configStore.showFloatingModeSwitch" />
   </div>
 </template>
 
@@ -112,12 +119,14 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
+import FloatingModeSwitch from '@/components/common/FloatingModeSwitch.vue'
 import { comicApi } from '@/api/comic'
-import { useRuntimeStore } from '@/stores'
+import { useConfigStore, useRuntimeStore } from '@/stores'
 
 const { isDesktop, isMobile } = useDevice()
 const route = useRoute()
 const runtimeStore = useRuntimeStore()
+const configStore = useConfigStore()
 
 // keep-alive 缓存的视图：从详情页返回时不重新请求数据
 const cachedViewNames = ['Library', 'Preview', 'RandomFeed', 'Subscribe', 'Mine']
@@ -158,6 +167,11 @@ const mobileChromeRoutes = new Set([
 const mobileChromeEnabled = computed(() => {
   return isMobile.value && mobileChromeRoutes.has(String(route.name || ''))
 })
+
+// 悬浮切换按钮在场时顶栏只剩标题，干脆让位给内容；关掉悬浮窗才恢复顶栏。
+const mobileHeaderVisible = computed(() => (
+  mobileChromeEnabled.value && !configStore.showFloatingModeSwitch
+))
 
 const pageTitle = computed(() => {
   const title = route.meta?.title
@@ -261,7 +275,8 @@ function resetMobileChrome() {
 }
 
 function onMobileScroll() {
-  if (!mobileChromeEnabled.value) {
+  // 顶栏不渲染时（悬浮切换按钮开启）没有可隐藏的 chrome，别再联动隐藏 tabbar
+  if (!mobileChromeEnabled.value || !mobileHeaderVisible.value) {
     mobileChromeHidden.value = false
     return
   }
@@ -573,6 +588,11 @@ async function loadTeleDriveNavState() {
   flex: 1;
   width: 100%;
   min-width: 0;
+  /* 切页动画的 translateX 会把内容撑出视口右侧，移动端浏览器会据此扩大布局视口
+     （innerWidth/innerHeight 一起变），整页缩放一下再弹回，表现为底部导航栏上下跳。
+     横向裁掉，且用 clip 不产生滚动容器，纵向滚动与 sticky 都不受影响。 */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .main-content.random-feed-immersive {
@@ -624,8 +644,11 @@ async function loadTeleDriveNavState() {
     padding-top: var(--mobile-safe-top);
   }
 
-  .slide-left-enter-active,
-.slide-left-leave-active {
+/* 用 .main-content 前缀提高选择器权重：本地库/预览库等页面根节点自带
+   transition: padding-bottom …，权重相同时会把这里的 transition 覆盖掉，
+   结果就是切这两页时完全没有过渡动画。 */
+.main-content .slide-left-enter-active,
+.main-content .slide-left-leave-active {
   transition:
     opacity var(--motion-base) var(--ease-standard),
     transform var(--motion-base) var(--ease-standard);
@@ -639,6 +662,20 @@ async function loadTeleDriveNavState() {
 .slide-left-leave-to {
   opacity: 0;
   transform: translateX(-12px);
+}
+
+/* 底部导航栏进出场：向下滑走 / 从下方滑回 */
+.tabbar-slide-enter-active,
+.tabbar-slide-leave-active {
+  transition:
+    transform 240ms var(--ease-standard),
+    opacity 240ms var(--ease-standard);
+}
+
+.tabbar-slide-enter-from,
+.tabbar-slide-leave-to {
+  transform: translateY(calc(100% + env(safe-area-inset-bottom, 0px)));
+  opacity: 0;
 }
 
 :deep(.van-tabbar) {
@@ -691,12 +728,39 @@ async function loadTeleDriveNavState() {
     --mobile-tabbar-offset: calc(54px + env(safe-area-inset-bottom, 0px));
     display: flex;
     flex-direction: column;
-    height: 100dvh;
-    min-height: 0;
+    /* 用 min-height 而不是固定 height：安卓地址栏/输入法收起时 dvh 会变，
+       固定高度会让整页随视口重排（滚动时上下抖）。 */
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .main-content {
     flex: 1;
+  }
+
+  /* 手机端切页：淡入 + 轻微上浮。不做横向位移——横向超出会让移动端重算布局
+     视口（整页缩放再弹回），底部导航栏就会跳一下。 */
+  .main-content .slide-left-enter-active {
+    transition:
+      opacity 200ms var(--ease-standard),
+      transform 260ms var(--ease-standard);
+    will-change: opacity, transform;
+  }
+
+  .main-content .slide-left-leave-active {
+    transition:
+      opacity 130ms var(--ease-standard),
+      transform 160ms var(--ease-standard);
+  }
+
+  .slide-left-enter-from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  .slide-left-leave-to {
+    opacity: 0;
+    transform: translateY(-8px);
   }
 
   .with-sidebar {
@@ -704,6 +768,12 @@ async function loadTeleDriveNavState() {
     width: 100%;
     padding: 0;
   }
+}
+
+/* 顶栏不渲染时（悬浮按钮模式），把「顶栏偏移」收回到安全区，
+   让页内 sticky 搜索栏直接贴上来，而不是留着一条空档。 */
+.main-layout.mobile-header-off {
+  --mobile-header-offset: var(--mobile-safe-top);
 }
 
 @media (min-width: 1024px) and (max-width: 1400px) {

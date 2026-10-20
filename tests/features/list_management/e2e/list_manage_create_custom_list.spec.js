@@ -17,6 +17,7 @@ const {
  *   2. 页面显示刚创建的清单名称。
  * - 历史变更:
  *   - 2026-03-23: 初始创建，覆盖清单创建主路径。
+ *   - 2026-10-18: 管理页入口改为统计卡，改为点击「清单」统计卡进入我的清单。
  */
 test("list management creates custom comic list", async ({ page }) => {
   const apiRequests = startApiRequestRecorder(page);
@@ -24,7 +25,8 @@ test("list management creates custom comic list", async ({ page }) => {
   const listDesc = "created by e2e gate";
 
   await page.goto("/mine");
-  await page.getByText("我的清单").click();
+  // 管理页入口已从菜单改为统计卡：「清单」卡跳 /lists
+  await page.getByRole("button", { name: /进入我的清单/ }).click();
   await expect(page).toHaveURL(/\/lists$/);
 
   await page.getByRole("button", { name: "新建" }).click();

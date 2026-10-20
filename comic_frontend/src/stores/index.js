@@ -51,6 +51,12 @@ export { useHistoryStore } from './history'
 // 导入任务管理
 export { useImportTaskStore } from './importTask'
 
+// 下载任务（下载引擎插件）
+export { useDownloadTaskStore } from './downloadTask'
+
+// 第三方插件配置
+export { useThirdPartyStore } from './thirdParty'
+
 // 随机流推荐
 export { useRandomFeedStore } from './randomFeed'
 

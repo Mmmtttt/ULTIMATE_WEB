@@ -47,7 +47,18 @@
             <ModeSwitch class="settings-mode-switch" />
           </template>
         </van-cell>
-        <van-cell :title="`当前模式：${currentModeLabel}`" class="mode-status-cell" />
+        <van-cell
+          v-if="isMobile"
+          title="悬浮切换按钮"
+          label="在页面上显示可拖拽的漫画/视频切换按钮，点击切换、拖动移动、松手吸附到屏幕边缘"
+        >
+          <template #right-icon>
+            <van-switch
+              :model-value="configStore.showFloatingModeSwitch"
+              @update:model-value="updateFloatingModeSwitch"
+            />
+          </template>
+        </van-cell>
         <div class="select-row" @click.stop="toggleDropdown('pageSize', $event)">
           <div class="setting-copy">
             <span class="select-label">列表分页数量</span>
@@ -272,12 +283,13 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
 import { reloadPage } from '@/runtime/browser'
-import { useAuthStore, useConfigStore, useModeStore } from '@/stores'
+import { useAuthStore, useConfigStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
+import { useDevice } from '@/composables/useDevice'
 
 const configStore = useConfigStore()
-const modeStore = useModeStore()
 const authStore = useAuthStore()
+const { isMobile } = useDevice()
 
 const pageModeValue = ref('up_down')
 const singlePageBrowsingValue = ref(false)
@@ -353,7 +365,6 @@ const savingConfigDir = ref(false)
 const projectPassword = ref('')
 const projectPasswordConfirm = ref('')
 const savingProjectPassword = ref(false)
-const currentModeLabel = computed(() => (modeStore.isVideoMode ? '视频' : '漫画'))
 const isNormalSpace = computed(() => !authStore.enabled || authStore.mode === 'normal')
 const canChangeProjectPassword = computed(() => (
   authStore.authenticated && (authStore.mode === 'normal' || !authStore.enabled)
@@ -474,6 +485,11 @@ async function updateSinglePageBrowsing() {
   if (!ok) {
     showFailToast('单页浏览设置保存失败')
   }
+}
+
+function updateFloatingModeSwitch(value) {
+  // 纯客户端显示偏好，只写本地配置，不需要同步到服务端
+  configStore.setShowFloatingModeSwitch(value)
 }
 
 async function updatePreviewImportAssetDownload() {
@@ -695,6 +711,7 @@ onUnmounted(() => {
 .system-config {
   width: min(100%, 1080px);
   min-height: 95vh;
+  min-height: 95dvh;
   margin: 0 auto;
   background: transparent;
   padding: 0 var(--page-gutter) calc(28px + env(safe-area-inset-bottom, 0px));
@@ -775,11 +792,6 @@ onUnmounted(() => {
   margin-top: 4px;
   color: var(--text-tertiary);
   line-height: 1.5;
-}
-
-.mode-status-cell :deep(.van-cell__title) {
-  color: var(--text-tertiary);
-  font-size: 12px;
 }
 
 .select-row {

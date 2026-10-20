@@ -1074,6 +1074,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
   --manage-bar-reserved-space: 0px;
   padding-bottom: var(--manage-bar-reserved-space);
   transition: padding-bottom 180ms var(--ease-standard);

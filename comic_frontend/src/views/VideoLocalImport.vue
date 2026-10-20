@@ -1,6 +1,11 @@
 <template>
-  <div class="video-local-import-page desktop-page-shell">
+  <!-- 嵌入导入页时不再自带 desktop-page-shell（否则会带上 980px 最小宽度并溢出父容器） -->
+  <div
+    class="video-local-import-page"
+    :class="embedded ? 'is-embedded' : 'desktop-page-shell'"
+  >
     <van-nav-bar
+      v-if="!embedded"
       title="本地视频导入"
       left-arrow
       @click-left="$router.back()"
@@ -159,6 +164,11 @@ import { useVideoStore } from '@/stores'
 
 const videoStore = useVideoStore()
 
+// 嵌入「导入」页的选项卡时隐藏自带导航栏
+defineProps({
+  embedded: { type: Boolean, default: false }
+})
+
 const sourcePath = ref('')
 const importing = ref(false)
 const result = ref(null)
@@ -235,8 +245,15 @@ async function runImport() {
 <style scoped>
 .video-local-import-page {
   min-height: 95vh;
+  min-height: 95dvh;
   background: transparent;
   padding-bottom: 80px;
+}
+
+.video-local-import-page.is-embedded {
+  width: 100%;
+  min-height: auto;
+  padding-bottom: 24px;
 }
 
 .card-surface {
