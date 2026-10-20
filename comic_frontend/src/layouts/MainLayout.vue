@@ -586,6 +586,11 @@ async function loadTeleDriveNavState() {
   flex: 1;
   width: 100%;
   min-width: 0;
+  /* 切页动画的 translateX 会把内容撑出视口右侧，移动端浏览器会据此扩大布局视口
+     （innerWidth/innerHeight 一起变），整页缩放一下再弹回，表现为底部导航栏上下跳。
+     横向裁掉，且用 clip 不产生滚动容器，纵向滚动与 sticky 都不受影响。 */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .main-content.random-feed-immersive {
@@ -712,6 +717,13 @@ async function loadTeleDriveNavState() {
 
   .main-content {
     flex: 1;
+  }
+
+  /* 手机端切页只用淡入淡出：横向位移会让内容超出视口宽度，进而触发移动端
+     布局视口重算（整页缩放再弹回），底部导航栏就会上下跳一下。 */
+  .slide-left-enter-from,
+  .slide-left-leave-to {
+    transform: none;
   }
 
   .with-sidebar {
