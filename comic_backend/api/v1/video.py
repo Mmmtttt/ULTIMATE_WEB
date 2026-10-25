@@ -283,17 +283,31 @@ def _build_local_play_url(video_id: str, raw_url: str, episode_index: int = 0) -
 
 def _build_teledrive_video_sources(video: dict) -> list:
     display = video.get("display") if isinstance(video.get("display"), dict) else {}
-    teledrive = display.get("teledrive") if isinstance(display.get("teledrive"), dict) else {}
-    if str(teledrive.get("type") or "") != "video":
+    # 先认通用远程载荷（display.remote），再回落到旧的 telebridge 键。
+    # 这样任何声明了 library.sync.* 的插件都能复用这条播放链路。
+    payload: dict = {}
+    for key in ("remote", "teledrive"):
+        candidate = display.get(key)
+        if isinstance(candidate, dict) and str(candidate.get("type") or "") == "video":
+            payload = candidate
+            break
+    if not payload:
         return []
 
     sources = []
-    for index, episode in enumerate(teledrive.get("episodes") or [], start=1):
+    for index, episode in enumerate(payload.get("episodes") or [], start=1):
         if not isinstance(episode, dict):
             continue
         file_id = str(episode.get("file_id") or "").strip()
         name = str(episode.get("name") or "").strip()
-        url = _build_teledrive_file_url(file_id, name)
+        # 插件给的是占位地址（如 https://pikpak.local/file/<id>），包成宿主代理后
+        # 浏览器才拿得到字节。TeleDrive 没有 stream_url，继续走它原来的桥。
+        stream_url = str(episode.get("stream_url") or "").strip()
+        if stream_url:
+            encoded = base64.b64encode(stream_url.encode("utf-8")).decode("ascii")
+            url = f"/api/v1/video/proxy2?url={encoded}"
+        else:
+            url = _build_teledrive_file_url(file_id, name)
         if not url:
             continue
         sources.append(_build_direct_video_source(

@@ -20,6 +20,7 @@ from .v1 import (
     performance_bp,
     history_bp,
     transfer_bp,
+    library_sync_bp,
 )
 
 
@@ -43,3 +44,4 @@ def register_blueprints(app):
     app.register_blueprint(performance_bp, url_prefix='/api/v1/performance')
     app.register_blueprint(history_bp, url_prefix='/api/v1/history')
     app.register_blueprint(transfer_bp, url_prefix='/api/v1/transfer')
+    app.register_blueprint(library_sync_bp, url_prefix='/api/v1/library-sync')

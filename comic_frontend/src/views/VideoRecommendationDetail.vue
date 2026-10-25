@@ -1427,7 +1427,18 @@ async function playEpisode(episode) {
 
 async function loadPlayUrls(options = {}) {
   const playbackSource = String(options.playbackSource || resolveInitialPlaybackSourceKey()).trim()
-  if (!recommendation.value?.code && detailEpisodeList.value.length === 0) {
+  // 远程来源（display.remote / display.teledrive）自带剧集清单，本来就不需要番号。
+  // 这条守卫原来只认「番号 或 已加载的剧集」，会把没有番号的云端条目挡在门外。
+  const display = recommendation.value?.display || {}
+  const remotePayload = display.remote && typeof display.remote === 'object'
+    ? display.remote
+    : (display.teledrive && typeof display.teledrive === 'object' ? display.teledrive : null)
+  const remoteEpisodeCount = Array.isArray(remotePayload?.episodes) ? remotePayload.episodes.length : 0
+  if (
+    !recommendation.value?.code
+    && detailEpisodeList.value.length === 0
+    && remoteEpisodeCount === 0
+  ) {
     showFailToast('视频没有番号信息')
     return
   }
