@@ -3221,7 +3221,13 @@ class VideoAppService(BaseContentAppService):
         display = getattr(video, "display", {}) if video else {}
         if not isinstance(display, dict):
             return {}
-        teledrive = display.get("teledrive")
+        # 先认通用的远程来源（display.remote），再回落到旧的 telebridge 键。
+        teledrive: Dict[str, Any] = {}
+        for key in ("remote", "teledrive"):
+            candidate = display.get(key)
+            if isinstance(candidate, dict):
+                teledrive = candidate
+                break
         if not isinstance(teledrive, dict):
             return {}
         if str(teledrive.get("type") or "").strip().lower() != "video":
