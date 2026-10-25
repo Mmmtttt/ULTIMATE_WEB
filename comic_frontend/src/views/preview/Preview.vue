@@ -68,39 +68,46 @@
     </div>
 
     <!-- Content Area -->
-    <div class="content-area">
-      <van-loading v-if="isLoading" class="loading-center" />
-      
-      <EmptyState 
-        v-else-if="displayItems.length === 0" 
-        :title="emptyTitle" 
-        :description="emptyDescription"
-      />
+    <van-pull-refresh
+      v-model="pullRefreshing"
+      class="preview-pull"
+      :success-text="pullRefreshText"
+      @refresh="handlePullRefresh"
+    >
+      <div class="content-area">
+        <van-loading v-if="isLoading" class="loading-center" />
 
-      <MediaGrid 
-        v-else 
-        :items="pagedItems" 
-        :content-type="isVideoMode ? 'video' : 'comic'"
-        :show-favorite="true"
-        :is-favorited="isSaved"
-        :selectable="isManageMode"
-        :selected-ids="selectedIds"
-        :show-progress="!isVideoMode"
-        virtual
-        @click="onItemClick"
-        @toggle-favorite="toggleSave"
-        @select="toggleSelection"
-        :class="{ 'video-mode': isVideoMode }"
-      />
-    </div>
+        <EmptyState
+          v-else-if="displayItems.length === 0"
+          :title="emptyTitle"
+          :description="emptyDescription"
+        />
 
-    <AppPagination
-      v-if="displayItems.length > 0"
-      v-model="currentPage"
-      class="content-pagination"
-      :total-items="totalItems"
-      :page-size="pageSize"
-    />
+        <MediaGrid
+          v-else
+          :items="pagedItems"
+          :content-type="isVideoMode ? 'video' : 'comic'"
+          :show-favorite="true"
+          :is-favorited="isSaved"
+          :selectable="isManageMode"
+          :selected-ids="selectedIds"
+          :show-progress="!isVideoMode"
+          virtual
+          @click="onItemClick"
+          @toggle-favorite="toggleSave"
+          @select="toggleSelection"
+          :class="{ 'video-mode': isVideoMode }"
+        />
+      </div>
+
+      <AppPagination
+        v-if="displayItems.length > 0"
+        v-model="currentPage"
+        class="content-pagination"
+        :total-items="totalItems"
+        :page-size="pageSize"
+      />
+    </van-pull-refresh>
 
     <!-- Management Bar -->
     <transition name="slide-up">
@@ -233,7 +240,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useModeStore, useRecommendationStore, useVideoRecommendationStore, useListStore, useTagStore, useImportTaskStore, useConfigStore } from '@/stores'
-import { uiStateApi } from '@/api'
+import { uiStateApi, librarySyncApi } from '@/api'
 import MediaGrid from '@/components/common/MediaGrid.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -1064,8 +1071,107 @@ watch(searchKeyword, () => {
   debouncedSearchRefresh()
 })
 
+// ---------- 引用式入库：带冷却的懒同步 ----------
+//
+// 进页面时最多每 6 小时自动补一次；下拉刷新则强制同步一次。
+// 不做成「进入就同步」，是因为扫描要逐层走网盘：慢，而且费账号请求配额。
+const LIBRARY_SYNC_COOLDOWN_MS = 6 * 60 * 60 * 1000
+const LIBRARY_SYNC_STORAGE_KEY = 'ultimate.preview.librarySyncAt'
+
+const pullRefreshing = ref(false)
+const pullRefreshText = ref('')
+let librarySyncRunning = false
+
+function readLastLibrarySyncAt() {
+  try {
+    const value = Number(window.localStorage.getItem(LIBRARY_SYNC_STORAGE_KEY))
+    return Number.isFinite(value) && value > 0 ? value : 0
+  } catch (_) {
+    return 0
+  }
+}
+
+function writeLastLibrarySyncAt(timestamp) {
+  try {
+    window.localStorage.setItem(LIBRARY_SYNC_STORAGE_KEY, String(timestamp))
+  } catch (_) {
+    // 存不下就算了，最多下次多扫一遍
+  }
+}
+
+async function runLibrarySyncAll() {
+  if (librarySyncRunning) {
+    return { busy: true, applied: 0, changed: 0 }
+  }
+  librarySyncRunning = true
+  try {
+    const res = await librarySyncApi.listPlugins()
+    const plugins = Array.isArray(res?.data?.plugins) ? res.data.plugins : []
+    let applied = 0
+    let changed = 0
+    for (const plugin of plugins) {
+      const pluginId = String(plugin?.plugin_id || '').trim()
+      if (!pluginId) continue
+      try {
+        const appliedRes = await librarySyncApi.apply(pluginId)
+        const stats = appliedRes?.data?.stats || {}
+        changed += Number(stats.added || 0) + Number(stats.updated || 0)
+        applied += 1
+      } catch (err) {
+        // 单个插件失败不该拖累其它插件（比如还没配桥地址的）
+        console.warn('[preview][library-sync]', pluginId, err?.message || err)
+      }
+    }
+    if (applied > 0) {
+      writeLastLibrarySyncAt(Date.now())
+    }
+    return { busy: false, applied, changed }
+  } finally {
+    librarySyncRunning = false
+  }
+}
+
+async function maybeAutoLibrarySync() {
+  if (librarySyncRunning) return
+  const lastAt = readLastLibrarySyncAt()
+  if (lastAt > 0 && Date.now() - lastAt < LIBRARY_SYNC_COOLDOWN_MS) return
+  try {
+    const result = await runLibrarySyncAll()
+    if (result.changed > 0) {
+      await loadData(true)
+    }
+  } catch (err) {
+    console.warn('[preview][library-sync] auto sync failed', err?.message || err)
+  }
+}
+
+async function handlePullRefresh() {
+  pullRefreshing.value = true
+  pullRefreshText.value = ''
+  try {
+    const result = await runLibrarySyncAll()
+    await loadData(true)
+    if (result.changed > 0) {
+      pullRefreshText.value = `已同步 ${result.changed} 条更新`
+    } else if (result.applied > 0) {
+      pullRefreshText.value = '已同步，没有变化'
+    } else {
+      pullRefreshText.value = '没有可同步的插件'
+      showToast('没有可同步的插件')
+    }
+  } catch (err) {
+    console.warn('[preview][library-sync] pull sync failed', err?.message || err)
+    pullRefreshText.value = '同步失败'
+    showToast('同步失败，请稍后再试')
+  } finally {
+    pullRefreshing.value = false
+  }
+}
+
 onMounted(async () => {
   await initializePage(false)
+  // 首次进页面：过了冷却期就在后台补一次，不阻塞渲染
+  maybeAutoLibrarySync()
 })
 </script>
 
@@ -1082,6 +1188,14 @@ onMounted(async () => {
 
 .preview-page.is-manage-mode {
   --manage-bar-reserved-space: 112px;
+}
+
+/* 下拉刷新的包裹层：撑满剩余高度，列表短的时候也能下拉 */
+.preview-pull {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 55vh;
 }
 
 .preview-page.is-manage-mode .content-pagination {

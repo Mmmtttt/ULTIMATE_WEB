@@ -1,4 +1,4 @@
-﻿/**
+/**
  * API unified exports.
  */
 
@@ -19,6 +19,7 @@ export { feedApi } from './feed'
 export { organizeApi } from './organize'
 export { uiStateApi } from './uiState'
 export { teledriveApi } from './teledrive'
+export { librarySyncApi } from './librarySync'
 
 import { comicApi } from './comic'
 export default comicApi
