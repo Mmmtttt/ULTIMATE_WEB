@@ -18,3 +18,4 @@ from .performance import performance_bp
 from .history import history_bp
 from .transfer import transfer_bp
 from .library_sync import library_sync_bp
+from .semantic_search import semantic_search_bp

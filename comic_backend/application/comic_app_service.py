@@ -8,6 +8,7 @@ from application.content_sorting import (
     sort_content_items,
 )
 from application.catalog_query_service import CatalogQueryService
+from application.semantic_search_app_service import get_semantic_search_service
 from application.comic_online_update import build_update_check_payload, extract_remote_total_page
 from application.cover_thumbnail_service import warm_cover_thumbnails_for_items
 from application.cover_versioning import annotate_cover_url
@@ -94,6 +95,29 @@ class ComicAppService:
         )
         self._tag_document_repo = JsonDocumentRepository(TAGS_JSON_FILE, "tags")
         self._catalog_query_service = CatalogQueryService()
+        self._semantic_search_service = get_semantic_search_service()
+
+    # ---------- 语义检索（可选引擎） ----------
+    def _semantic_ranked_ids(self, keyword: str, *, limit: int = 500) -> Optional[Dict[str, int]]:
+        """语义引擎开启时返回 {comic_id: 名次}；未开启/不可用时返回 None。"""
+        text = str(keyword or "").strip()
+        if not text:
+            return None
+        try:
+            if not self._semantic_search_service.is_enabled():
+                return None
+            item_ids = self._semantic_search_service.search(
+                text,
+                source="local",
+                media_type="comic",
+                limit=limit,
+            )
+        except Exception as exc:  # 任何异常都不能影响列表主链路
+            error_logger.warning(f"语义检索不可用，回落到关键词匹配: {exc}")
+            return None
+        if not item_ids:
+            return None
+        return {str(item_id): rank for rank, item_id in enumerate(item_ids)}
 
     @staticmethod
     def _apply_persisted_fields(target: Any, updates: Dict[str, Any]) -> bool:
@@ -251,7 +275,9 @@ class ComicAppService:
                 f"[get_comic_list] sort_type={sort_type}, sort_order={sort_order}, "
                 f"min_score={min_score}, max_score={max_score}, paginate={paginate}"
             )
-            if paginate and not include_storage_usage:
+            semantic_order = self._semantic_ranked_ids(keyword) if keyword else None
+
+            if paginate and not include_storage_usage and semantic_order is None:
                 tags = self._tag_repo.get_all()
                 tag_map = {t.id: t.name for t in tags}
                 base_serializer = self._comic_to_card_dict if summary_only else (
@@ -311,13 +337,21 @@ class ComicAppService:
                 comics = [c for c in comics if list_id_set.intersection(set(c.list_ids or []))]
             if unread_only:
                 comics = [c for c in comics if normalize_total_page(c.current_page, default=1) == 1]
+            semantic_applied = False
             if keyword:
-                comics = [c for c in comics if matches_keyword(c, keyword, tag_map=tag_map)]
+                if semantic_order is not None:
+                    comics = [c for c in comics if str(c.id) in semantic_order]
+                    comics.sort(key=lambda c: semantic_order[str(c.id)])
+                    semantic_applied = True
+                else:
+                    comics = [c for c in comics if matches_keyword(c, keyword, tag_map=tag_map)]
 
             app_logger.info(f"[get_comic_list] 排序前漫画数量: {len(comics)}")
             if sort_type:
                 app_logger.info(f"[get_comic_list] 执行排序: {sort_type}")
                 comics = sort_content_items(comics, sort_type, sort_order)
+            elif semantic_applied:
+                app_logger.info("[get_comic_list] 语义检索模式，保持相关度排序")
 
             app_logger.info(f"[get_comic_list] 排序后漫画数量: {len(comics)}")
 
@@ -336,6 +370,7 @@ class ComicAppService:
                     serializer=serializer,
                     extra={
                         "available_authors": extract_available_authors(comics) if include_available_authors else [],
+                        **({"performance": {"index": "semantic", "keyword": keyword}} if semantic_applied else {}),
                     },
                 )
                 app_logger.info(
@@ -498,6 +533,20 @@ class ComicAppService:
         try:
             tags = self._tag_repo.get_all()
             tag_map = {t.id: t.name for t in tags}
+
+            semantic_order = self._semantic_ranked_ids(keyword)
+            if semantic_order is not None:
+                comics = [
+                    comic for comic in self._comic_repo.get_all()
+                    if not comic.is_deleted and str(comic.id) in semantic_order
+                ]
+                comics.sort(key=lambda comic: semantic_order[str(comic.id)])
+                results = [self._comic_to_summary_dict(c, tag_map, include_progress=False) for c in comics]
+                warm_cover_thumbnails_for_items(results)
+                app_logger.info(
+                    f"通过语义索引搜索漫画成功: 关键词 '{keyword}', 结果数量: {len(results)}"
+                )
+                return ServiceResult.ok(results)
 
             indexed_payload = self._catalog_query_service.query_local_all(
                 media_type="comic",

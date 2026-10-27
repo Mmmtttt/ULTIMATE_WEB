@@ -4059,6 +4059,12 @@ def write_pyinstaller_scripts(
         cmd.insert(-1, f"--add-data")
         cmd.insert(-1, f"{server_config_src}{sep}.")
 
+    # 识图补全的内置上下文文件（prompts/semantic_vision_context.md）要一起打包
+    prompts_src = staged_backend / "prompts"
+    if prompts_src.is_dir():
+        cmd.insert(-1, f"--add-data")
+        cmd.insert(-1, f"{prompts_src}{sep}prompts")
+
     ps1 = (
         "$ErrorActionPreference = 'Stop'\n"
         "param(\n"

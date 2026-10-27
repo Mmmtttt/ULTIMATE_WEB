@@ -26,7 +26,8 @@ from core.constants import (
     get_config_directory_info,
     set_app_config_dir,
 )
-from core.runtime_profile import is_third_party_enabled, runtime_capabilities
+from core.runtime_profile import is_mobile_core_profile, is_third_party_enabled, runtime_capabilities
+from domain.config.entity import mask_api_key as _mask_api_key
 from infrastructure.logger import app_logger, error_logger, configure_debug_mode
 from infrastructure.persistence.repositories import JsonDocumentRepository
 from infrastructure.recommendation_cache_manager import recommendation_cache_manager
@@ -49,6 +50,19 @@ _KNOWN_DATA_DIR_TOP_LEVELS = {
     "recommendation_cache",
     "logs",
 }
+
+
+def _mask_vision_config(config_data: dict) -> dict:
+    """把识图模型的 API Key 换成掩码，避免明文回传前端。"""
+    if not isinstance(config_data, dict):
+        return config_data
+    vision = dict(config_data.get("vision_config") or {})
+    raw_key = str(vision.get("api_key") or "")
+    vision["api_key"] = _mask_api_key(raw_key)
+    vision["has_api_key"] = bool(raw_key)
+    vision["ready"] = bool(vision.get("base_url") and raw_key and vision.get("model"))
+    config_data["vision_config"] = vision
+    return config_data
 
 
 def success_response(data=None, msg="成功"):
@@ -498,7 +512,7 @@ def get_config():
         result = config_service.get_config()
         if result.success:
             cache_stats = recommendation_cache_manager.get_cache_stats()
-            config_data = result.data
+            config_data = _mask_vision_config(result.data)
             config_data['cache_stats'] = cache_stats
             app_logger.info("获取配置成功")
             return success_response(config_data)
@@ -515,6 +529,11 @@ def update_config():
         if not data:
             return error_response(400, "缺少参数")
 
+        # 语义检索仅桌面端提供；Android（mobile_core）不接受该取值
+        requested_engine = str(data.get("search_engine", "") or "").strip().lower()
+        if requested_engine == "semantic" and is_mobile_core_profile():
+            return error_response(400, "当前平台不支持语义检索（仅桌面端可用）")
+
         result = config_service.update_config(**data)
         if result.success:
             if "debug_mode" in data:
@@ -527,7 +546,7 @@ def update_config():
                     app_logger.info(f"更新推荐缓存最大容量: {max_size_mb}MB")
 
             app_logger.info("更新配置成功: keys=%s, debug_mode=%s", sorted(data.keys()), result.data.get("debug_mode", False))
-            return success_response(result.data)
+            return success_response(_mask_vision_config(result.data))
         return error_response(400, result.message)
     except Exception as e:
         error_logger.error(f"更新配置失败: {e}")

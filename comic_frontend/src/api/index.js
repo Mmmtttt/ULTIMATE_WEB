@@ -20,6 +20,7 @@ export { organizeApi } from './organize'
 export { uiStateApi } from './uiState'
 export { teledriveApi } from './teledrive'
 export { librarySyncApi } from './librarySync'
+export { semanticApi } from './semantic'
 
 import { comicApi } from './comic'
 export default comicApi
