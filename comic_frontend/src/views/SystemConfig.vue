@@ -77,6 +77,217 @@
       </van-cell-group>
     </section>
 
+    <section v-if="semanticSupported" class="settings-section">
+      <div class="section-heading">
+        <div>
+          <span class="section-kicker">SEARCH ENGINE</span>
+          <h2>检索方式</h2>
+        </div>
+        <span class="section-note">桌面端可选</span>
+      </div>
+      <van-cell-group inset class="config-group settings-card">
+        <van-cell
+          title="语义检索"
+          label="开启后本地库搜关键词改用语义索引排序；关闭时保持默认的索引查询方式"
+        >
+          <template #right-icon>
+            <van-switch
+              :model-value="searchEngine === 'semantic'"
+              :loading="savingSearchEngine"
+              @update:model-value="updateSearchEngine"
+            />
+          </template>
+        </van-cell>
+        <div v-if="searchEngine === 'semantic'" class="semantic-panel">
+          <div class="semantic-line">
+            <span>索引状态</span>
+            <strong>{{ semanticIndexLabel }}</strong>
+          </div>
+          <div class="semantic-line">
+            <span>已入库</span>
+            <strong>{{ semanticIndex.doc_count || 0 }} 本</strong>
+          </div>
+          <div class="semantic-line">
+            <span>梗概 / 速览覆盖</span>
+            <strong>{{ semanticIndex.vibe_covered || 0 }} / {{ semanticIndex.catalog_covered || 0 }}</strong>
+          </div>
+          <div class="semantic-line">
+            <span>标签词表</span>
+            <strong>{{ semanticIndex.tag_vocabulary || 0 }} 条（含同义词）</strong>
+          </div>
+          <div class="semantic-line">
+            <span>向量召回</span>
+            <strong>{{ semanticVectorLabel }}</strong>
+          </div>
+          <div class="semantic-line">
+            <span>关键词索引</span>
+            <strong>{{ semanticKeywordLabel }}</strong>
+          </div>
+          <p class="semantic-note">{{ semanticHint }}</p>
+          <van-button
+            size="small"
+            type="primary"
+            round
+            plain
+            :loading="rebuildingSemantic || semanticRebuildingState"
+            :disabled="semanticRebuildingState"
+            @click="rebuildSemanticIndex"
+          >
+            重建语义索引
+          </van-button>
+        </div>
+        <details class="config-disclosure">
+          <summary class="config-disclosure-summary">
+            <span class="disclosure-icon"><van-icon name="photograph" size="17" /></span>
+            <span class="disclosure-copy">
+              <strong>识图补全（多模态模型）</strong>
+              <small>{{ visionSummary }}</small>
+            </span>
+            <van-icon name="arrow" size="16" class="disclosure-chevron" />
+          </summary>
+          <div class="disclosure-body">
+            <p class="disclosure-note">
+              读封面与目录页 → 模型写气质梗概 / 收录速览 / 标签 → 生成草稿；确认后才写回漫画。
+            </p>
+            <div class="vision-field">
+              <span class="vision-field-label">服务商预设</span>
+              <select class="vision-select" :value="visionProviderId" @change="applyVisionProvider">
+                <option value="">自定义 / 手动填写</option>
+                <option v-for="provider in visionProviders" :key="provider.id" :value="provider.id">
+                  {{ provider.name }}{{ provider.vision ? '' : '（不支持图片输入）' }}
+                </option>
+              </select>
+            </div>
+            <p v-if="visionProvider?.note" class="vision-provider-note">{{ visionProvider.note }}</p>
+            <div v-if="visionProvider" class="vision-endpoint">
+              <span>接口地址</span>
+              <code>{{ visionForm.base_url }}</code>
+            </div>
+            <van-field
+              v-else
+              v-model="visionForm.base_url"
+              label="Base URL"
+              placeholder="https://api.example.com/v1"
+            />
+            <van-field
+              v-model="visionForm.api_key"
+              type="password"
+              label="API Key"
+              :placeholder="visionKeyPlaceholder"
+              autocomplete="off"
+              @blur="refreshVisionModels"
+            />
+            <div class="vision-field">
+              <span class="vision-field-label">模型</span>
+              <select v-if="visionModelOptions.length" v-model="visionForm.model" class="vision-select">
+                <option v-for="model in visionModelOptions" :key="model" :value="model">{{ model }}</option>
+              </select>
+              <van-field v-else v-model="visionForm.model" placeholder="例如 Qwen/Qwen2.5-VL-72B-Instruct" />
+              <van-button
+                size="mini"
+                plain
+                round
+                :loading="loadingVisionModels"
+                @click="refreshVisionModels"
+              >
+                刷新
+              </van-button>
+            </div>
+            <p v-if="visionModelHint" class="vision-provider-note">{{ visionModelHint }}</p>
+            <van-field v-model.number="visionForm.max_gap" type="digit" label="采样间隔上限" placeholder="1-8 页" />
+            <van-field v-model.number="visionForm.max_images" type="digit" label="单本最多图片" placeholder="1-96 张" />
+            <div class="vision-context">
+              <div class="vision-context-copy">
+                <span class="vision-field-label">识图前附带的上下文文件</span>
+                <code class="vision-context-path">{{ visionContextLabel }}</code>
+              </div>
+              <van-switch
+                :model-value="visionForm.context_enabled"
+                size="20px"
+                @update:model-value="val => { visionForm.context_enabled = !!val }"
+              />
+            </div>
+            <p class="vision-provider-note">
+              文件内容会作为 system 消息先于图片发送；改文件即刻生效，保存配置后重新生成草稿即可。
+              若页面出现明显未成年角色，任务里固定追加的硬性要求会优先于该文件，不生成性化描述。
+            </p>
+            <div class="inline-actions single">
+              <van-button type="primary" block round :loading="savingVision" @click="saveVisionConfig">
+                保存识图配置
+              </van-button>
+            </div>
+          </div>
+        </details>
+        <div class="vision-batch">
+          <div class="vision-batch-head">
+            <strong>批量补全</strong>
+            <span>{{ visionBatchSummary }}</span>
+          </div>
+          <div v-if="visionBatch.total" class="vision-batch-bar">
+            <i :style="{ width: visionBatchPercent + '%' }"></i>
+          </div>
+          <p v-if="visionBatchUsage" class="vision-provider-note">{{ visionBatchUsage }}</p>
+          <div class="vision-batch-actions">
+            <van-button
+              size="mini"
+              type="primary"
+              round
+              :loading="Boolean(visionBatch.running)"
+              :disabled="Boolean(visionBatch.running) || !visionMissingCount"
+              @click="startVisionBatchAll"
+            >
+              批量补全缺失（{{ visionMissingCount }} 本）
+            </van-button>
+            <van-button
+              v-if="visionBatch.running"
+              size="mini"
+              plain
+              round
+              @click="stopVisionBatchRun"
+            >
+              停止
+            </van-button>
+          </div>
+          <p class="vision-provider-note">
+            逐本排队跑识图，结果进「待确认草稿」；跑完不会自动写回。顺序按页数从少到多。
+          </p>
+        </div>
+        <div v-if="visionFailures.length" class="vision-failures">
+          <div class="vision-batch-head">
+            <strong>识图失败</strong>
+            <span>{{ visionFailures.length }} 本 · 失败原因见下</span>
+          </div>
+          <div v-for="failure in visionFailures" :key="failure.comic_id" class="vision-failure">
+            <div class="vision-draft-head">
+              <strong>{{ failure.title || failure.comic_id }}</strong>
+              <span class="vision-draft-meta">{{ failure.at }}</span>
+            </div>
+            <p class="vision-failure-error">{{ failure.error }}</p>
+            <div class="vision-draft-actions">
+              <van-button size="mini" type="primary" round @click="retryVisionDraft(failure)">重试</van-button>
+              <van-button size="mini" plain round @click="clearVisionFailure(failure)">清除</van-button>
+            </div>
+          </div>
+        </div>
+        <div v-if="visionDrafts.length" class="vision-drafts">
+          <div v-for="draft in visionDrafts" :key="draft.comic_id" class="vision-draft">
+            <div class="vision-draft-head">
+              <strong>{{ draft.current_title || draft.title || draft.comic_id }}</strong>
+              <span class="vision-draft-meta">{{ draft.sampled_count || 0 }} 页 · {{ draft.model }}</span>
+            </div>
+            <p class="vision-draft-text">{{ draft.draft?.vibe || '（没有梗概）' }}</p>
+            <p class="vision-draft-text secondary">{{ draft.draft?.catalog || '（没有速览）' }}</p>
+            <p class="vision-draft-tags">{{ draftTagText(draft) }}</p>
+            <p v-if="draftUsageText(draft)" class="vision-draft-meta">{{ draftUsageText(draft) }}</p>
+            <div class="vision-draft-actions">
+              <van-button size="mini" type="primary" round @click="applyVisionDraft(draft)">写回</van-button>
+              <van-button size="mini" plain round @click="discardVisionDraft(draft)">丢弃</van-button>
+            </div>
+          </div>
+        </div>
+      </van-cell-group>
+    </section>
+
     <section class="settings-section settings-section--compact">
       <div class="section-heading">
         <div>
@@ -282,13 +493,15 @@ import { showConfirmDialog, showFailToast, showSuccessToast } from 'vant'
 
 import { comicApi } from '@/api/comic'
 import { configApi } from '@/api/config'
+import { semanticApi } from '@/api/semantic'
 import { reloadPage } from '@/runtime/browser'
-import { useAuthStore, useConfigStore } from '@/stores'
+import { useAuthStore, useConfigStore, useRuntimeStore } from '@/stores'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 import { useDevice } from '@/composables/useDevice'
 
 const configStore = useConfigStore()
 const authStore = useAuthStore()
+const runtimeStore = useRuntimeStore()
 const { isMobile } = useDevice()
 
 const pageModeValue = ref('up_down')
@@ -299,6 +512,474 @@ const pageSizeValue = ref(20)
 const leftRightReadingReversedValue = ref(false)
 const debugModeValue = ref(false)
 const pageSizeOptions = [20, 40, 60]
+
+// ---------- 检索方式（语义检索：仅桌面端可选） ----------
+const searchEngine = ref('catalog')
+const semanticStatus = ref({})
+const savingSearchEngine = ref(false)
+const rebuildingSemantic = ref(false)
+
+const semanticSupported = computed(() => !runtimeStore.isMobileCore)
+const semanticIndex = computed(() => semanticStatus.value?.index || {})
+const semanticRebuildingState = computed(() => Boolean(semanticStatus.value?.rebuild?.running))
+const semanticIndexLabel = computed(() => {
+  if (semanticRebuildingState.value) return '构建中…'
+  if (!semanticIndex.value.indexed) return '尚未建立'
+  if (semanticIndex.value.stale) return '已过期（下次搜索自动重建）'
+  return `已就绪 · ${String(semanticIndex.value.built_at || '').replace('T', ' ')}`
+})
+const semanticVectorLabel = computed(() => {
+  if (!semanticIndex.value.embedder_available) return '不可用'
+  if (!semanticIndex.value.vector_enabled) return `模型就绪（${semanticIndex.value.embed_dim || 0} 维）· 待重建`
+  return `已启用 · ${semanticIndex.value.embed_dim || 0} 维`
+})
+const semanticKeywordLabel = computed(() => (
+  semanticIndex.value.search_index === 'fts5_trigram_like' ? 'FTS5 trigram' : 'LIKE 扫描'
+))
+const semanticHint = computed(() => {
+  if (!semanticIndex.value.embedder_available) {
+    return '未安装 fastembed：语义检索目前只有「标签 + 关键词」两路。需要向量召回时安装 comic_backend/requirements-semantic.txt 后重建索引。'
+  }
+  if (!semanticIndex.value.vector_enabled) {
+    return '向量模型可用，点一次「重建语义索引」即可启用向量召回。'
+  }
+  const total = Number(semanticIndex.value.doc_count || 0)
+  const covered = Number(semanticIndex.value.vibe_covered || 0)
+  if (total > 0 && covered < total) {
+    return `标签、关键词、向量三路按 RRF 融合。还有 ${total - covered} 本没有气质梗概（vibe），这几本的向量只从标题与标签里取信息。`
+  }
+  return '标签、关键词、向量三路结果按 RRF 融合排序；未建索引时自动回落到原来的关键词匹配。'
+})
+
+async function refreshSemanticStatus() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await semanticApi.getStatus()
+    if (res?.code === 200) {
+      semanticStatus.value = res.data || {}
+    }
+  } catch {
+    semanticStatus.value = {}
+  }
+}
+
+async function loadSemanticState() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await configApi.get()
+    if (res?.code === 200 && res.data) {
+      searchEngine.value = String(res.data.search_engine || 'catalog').toLowerCase()
+    }
+  } catch {
+    searchEngine.value = 'catalog'
+  }
+  await refreshSemanticStatus()
+}
+
+async function updateSearchEngine(value) {
+  const next = value ? 'semantic' : 'catalog'
+  savingSearchEngine.value = true
+  try {
+    const res = await configApi.update({ search_engine: next })
+    if (res?.code === 200) {
+      searchEngine.value = next
+      showSuccessToast(next === 'semantic' ? '已切换到语义检索' : '已切回默认检索')
+      await refreshSemanticStatus()
+    } else {
+      showFailToast(res?.msg || '切换检索方式失败')
+    }
+  } catch {
+    showFailToast('切换检索方式失败')
+  } finally {
+    savingSearchEngine.value = false
+  }
+}
+
+async function rebuildSemanticIndex() {
+  rebuildingSemantic.value = true
+  try {
+    const res = await semanticApi.rebuild(true)
+    if (res?.code !== 200) {
+      showFailToast(res?.msg || '重建语义索引失败')
+      return
+    }
+    // 后台构建：轮询状态直到结束（首次带向量可能要下载模型）
+    const deadline = Date.now() + 10 * 60 * 1000
+    let finished = false
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await refreshSemanticStatus()
+      const rebuildState = semanticStatus.value?.rebuild || {}
+      if (!rebuildState.running) {
+        finished = true
+        if (rebuildState.error) {
+          showFailToast(`重建失败：${rebuildState.error}`)
+        } else {
+          showSuccessToast('语义索引已重建')
+        }
+        break
+      }
+    }
+    if (!finished) {
+      showFailToast('重建仍在后台进行，可稍后回到本页查看状态')
+    }
+  } catch {
+    showFailToast('重建语义索引失败')
+  } finally {
+    rebuildingSemantic.value = false
+  }
+}
+
+// ---------- 识图补全（VLM 草稿） ----------
+const visionForm = ref({ base_url: '', model: '', api_key: '', max_gap: 8, max_images: 48, context_enabled: true })
+const visionStatus = ref({})
+const visionDrafts = ref([])
+const savingVision = ref(false)
+const visionProviders = ref([])
+const visionProviderId = ref('')
+const visionLiveModels = ref([])
+const loadingVisionModels = ref(false)
+const visionModelHint = ref('')
+const visionMissing = ref([])
+const visionFailures = ref([])
+const visionBatch = ref({ running: false, total: 0, done: 0, failed: 0, current: '', error: '', items: [] })
+let visionBatchTimer = null
+
+const visionMissingCount = computed(() => visionMissing.value.length)
+const visionBatchPercent = computed(() => {
+  const total = Number(visionBatch.value?.total || 0)
+  if (!total) return 0
+  const finished = Number(visionBatch.value?.done || 0) + Number(visionBatch.value?.failed || 0)
+  return Math.min(100, Math.round((finished / total) * 100))
+})
+const visionBatchSummary = computed(() => {
+  const batch = visionBatch.value || {}
+  if (!batch.total) return '暂无需要补全的漫画'
+  if (batch.running) {
+    return `进行中 ${(batch.done || 0) + (batch.failed || 0)}/${batch.total}${batch.current ? ' · ' + batch.current : ''}`
+  }
+  const failed = Number(batch.failed || 0)
+  return `已完成 ${batch.done || 0}/${batch.total}${failed ? ` · 失败 ${failed}` : ''}`
+})
+const visionBatchUsage = computed(() => {
+  const usage = visionBatch.value?.usage || {}
+  const promptTokens = Number(usage.prompt_tokens || 0)
+  if (!promptTokens) return ''
+  const cached = Number(usage.cached_tokens || 0)
+  const percent = Math.round((cached / promptTokens) * 100)
+  return `输入 ${promptTokens} tokens · 缓存命中 ${percent}%（${cached}）`
+})
+
+function draftUsageText(draft) {
+  const usage = draft?.usage || {}
+  const promptTokens = Number(usage.prompt_tokens || 0)
+  if (!promptTokens) return ''
+  const cached = Number(usage.cached_tokens || 0)
+  return `${promptTokens} tokens · 缓存命中 ${Math.round((cached / promptTokens) * 100)}%`
+}
+
+const visionProvider = computed(() => visionProviders.value.find(item => item.id === visionProviderId.value) || null)
+const visionModelOptions = computed(() => {
+  const source = visionLiveModels.value.length
+    ? visionLiveModels.value
+    : ((visionProvider.value?.models) || [])
+  const models = [...source]
+  const current = String(visionForm.value.model || '').trim()
+  if (current && !models.includes(current)) {
+    models.unshift(current)
+  }
+  return models
+})
+const visionContext = computed(() => visionStatus.value?.context || {})
+const visionContextLabel = computed(() => {
+  const ctx = visionContext.value
+  if (!ctx.path) return '未找到内置上下文文件'
+  if (!ctx.exists) return `文件缺失：${ctx.path}`
+  return `${ctx.chars || 0} 字 · ${ctx.path}`
+})
+
+function applyVisionProvider(event) {
+  const id = typeof event === 'string' ? event : event?.target?.value
+  visionProviderId.value = id || ''
+  visionLiveModels.value = []
+  visionModelHint.value = ''
+  const provider = visionProviders.value.find(item => item.id === visionProviderId.value)
+  if (!provider) return
+  visionForm.value.base_url = provider.base_url
+  visionForm.value.model = (provider.models || [])[0] || ''
+  if (visionForm.value.api_key || visionStatus.value?.configured) {
+    refreshVisionModels()
+  }
+}
+
+async function refreshVisionModels() {
+  if (!semanticSupported.value || loadingVisionModels.value) return
+  loadingVisionModels.value = true
+  visionModelHint.value = ''
+  try {
+    const res = await semanticApi.fetchVisionModels({
+      base_url: visionForm.value.base_url,
+      api_key: visionForm.value.api_key,
+    })
+    if (res?.code === 200) {
+      const data = res.data || {}
+      visionLiveModels.value = data.models || []
+      if (data.live) {
+        visionModelHint.value = `已从接口拉取 ${visionLiveModels.value.length} 个模型`
+        if (!visionForm.value.model && visionLiveModels.value.length) {
+          visionForm.value.model = visionLiveModels.value[0]
+        }
+      } else {
+        visionModelHint.value = data.error ? `拉取失败：${data.error}（显示预设模型）` : '显示预设模型'
+      }
+    } else {
+      visionModelHint.value = res?.msg || '拉取模型列表失败'
+    }
+  } catch {
+    visionModelHint.value = '拉取模型列表失败'
+  } finally {
+    loadingVisionModels.value = false
+  }
+}
+
+const visionSummary = computed(() => (
+  visionStatus.value?.configured ? `已配置 · ${visionStatus.value.model}` : '未配置'
+))
+const visionKeyPlaceholder = computed(() => (
+  visionStatus.value?.configured ? '已保存；留空表示不修改' : 'sk-...'
+))
+
+function draftTagText(draft) {
+  const tags = (draft.draft?.tags || []).map(tag => tag.name).filter(Boolean)
+  return tags.length ? tags.join('、') : '（没有标签）'
+}
+
+async function loadVisionState() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await configApi.get()
+    const vision = res?.code === 200 ? (res.data?.vision_config || {}) : {}
+    visionForm.value = {
+      base_url: vision.base_url || '',
+      model: vision.model || '',
+      api_key: '',
+      max_gap: vision.max_gap || 8,
+      max_images: vision.max_images || 48,
+      context_enabled: vision.context_enabled !== false,
+    }
+    const matched = visionProviders.value.find(item => item.base_url === visionForm.value.base_url)
+    visionProviderId.value = matched?.id || ''
+  } catch {
+    // 读取失败时保留表单原值
+  }
+  try {
+    const res = await semanticApi.listDrafts()
+    if (res?.code === 200) {
+      visionDrafts.value = res.data?.drafts || []
+      visionFailures.value = res.data?.failures || []
+      visionStatus.value = res.data?.status || {}
+    }
+  } catch {
+    visionDrafts.value = []
+  }
+}
+
+async function retryVisionDraft(failure) {
+  const comicId = failure?.comic_id
+  if (!comicId) return
+  try {
+    const started = await semanticApi.createDraft(comicId)
+    if (started?.code !== 200) {
+      showFailToast(started?.msg || '重试失败')
+      return
+    }
+    showSuccessToast('已重新开始识图')
+    const deadline = Date.now() + 5 * 60 * 1000
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      const res = await semanticApi.getDraft(comicId)
+      const data = res?.data || {}
+      if (data.draft) {
+        showSuccessToast('草稿已生成')
+        break
+      }
+      const state = data.state || {}
+      if (!state.running && data.failure) {
+        showFailToast(`仍然失败：${data.failure.error}`)
+        break
+      }
+    }
+    await Promise.all([loadVisionState(), loadVisionMissing(), refreshSemanticStatus()])
+  } catch {
+    showFailToast('重试失败')
+  }
+}
+
+async function clearVisionFailure(failure) {
+  try {
+    const res = await semanticApi.clearVisionFailure(failure.comic_id)
+    if (res?.code === 200) {
+      await loadVisionState()
+    }
+  } catch {
+    showFailToast('清除失败')
+  }
+}
+
+async function loadVisionProviders() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await semanticApi.getVisionProviders()
+    if (res?.code === 200) {
+      visionProviders.value = res.data?.providers || []
+      if (res.data?.context) {
+        visionStatus.value = { ...visionStatus.value, context: res.data.context }
+      }
+    }
+  } catch {
+    visionProviders.value = []
+  }
+}
+
+async function loadVisionMissing() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await semanticApi.listVisionMissing(true)
+    if (res?.code === 200) {
+      visionMissing.value = res.data?.items || []
+    }
+  } catch {
+    visionMissing.value = []
+  }
+}
+
+async function loadVisionBatch() {
+  if (!semanticSupported.value) return
+  try {
+    const res = await semanticApi.getVisionBatch()
+    if (res?.code === 200) {
+      visionBatch.value = res.data || visionBatch.value
+      if (visionBatch.value?.running) {
+        startVisionBatchPolling()
+      }
+    }
+  } catch {
+    // 忽略
+  }
+}
+
+function startVisionBatchPolling() {
+  if (visionBatchTimer) return
+  visionBatchTimer = setInterval(async () => {
+    try {
+      const res = await semanticApi.getVisionBatch()
+      if (res?.code === 200) {
+        visionBatch.value = res.data || visionBatch.value
+      }
+      if (!visionBatch.value?.running) {
+        stopVisionBatchPolling()
+        await Promise.all([loadVisionState(), loadVisionMissing(), refreshSemanticStatus()])
+      }
+    } catch {
+      // 单次失败不打断轮询
+    }
+  }, 3000)
+}
+
+function stopVisionBatchPolling() {
+  if (visionBatchTimer) {
+    clearInterval(visionBatchTimer)
+    visionBatchTimer = null
+  }
+}
+
+async function startVisionBatchAll() {
+  try {
+    const res = await semanticApi.startVisionBatch({ only_missing: true })
+    if (res?.code === 200) {
+      visionBatch.value = res.data || visionBatch.value
+      if (visionBatch.value?.running) {
+        showSuccessToast(`已开始批量补全 ${visionBatch.value.total} 本`)
+        startVisionBatchPolling()
+      } else {
+        showFailToast(res?.msg || '没有需要补全的漫画')
+      }
+    } else {
+      showFailToast(res?.msg || '启动批量补全失败')
+    }
+  } catch {
+    showFailToast('启动批量补全失败')
+  }
+}
+
+async function stopVisionBatchRun() {
+  try {
+    const res = await semanticApi.stopVisionBatch()
+    if (res?.code === 200) {
+      showSuccessToast('已请求停止，当前这本跑完就停')
+    }
+  } catch {
+    showFailToast('停止失败')
+  }
+}
+
+async function saveVisionConfig() {
+  savingVision.value = true
+  try {
+    const payload = {
+      base_url: visionForm.value.base_url,
+      model: visionForm.value.model,
+      max_gap: visionForm.value.max_gap,
+      max_images: visionForm.value.max_images,
+      context_enabled: visionForm.value.context_enabled,
+    }
+    if (String(visionForm.value.api_key || '').trim()) {
+      payload.api_key = visionForm.value.api_key
+    }
+    const res = await configApi.update({ vision_config: payload })
+    if (res?.code === 200) {
+      showSuccessToast('识图配置已保存')
+      await loadVisionState()
+      if (payload.api_key) {
+        visionForm.value.api_key = ''
+      }
+      await refreshVisionModels()
+    } else {
+      showFailToast(res?.msg || '保存识图配置失败')
+    }
+  } catch {
+    showFailToast('保存识图配置失败')
+  } finally {
+    savingVision.value = false
+  }
+}
+
+async function applyVisionDraft(draft) {
+  try {
+    const res = await semanticApi.applyDraft(draft.comic_id)
+    if (res?.code === 200) {
+      showSuccessToast('已写回漫画元数据')
+      await loadVisionState()
+      await refreshSemanticStatus()
+    } else {
+      showFailToast(res?.msg || '写回失败')
+    }
+  } catch {
+    showFailToast('写回失败')
+  }
+}
+
+async function discardVisionDraft(draft) {
+  try {
+    const res = await semanticApi.deleteDraft(draft.comic_id)
+    if (res?.code === 200) {
+      showSuccessToast('草稿已丢弃')
+      await loadVisionState()
+    }
+  } catch {
+    showFailToast('丢弃草稿失败')
+  }
+}
 
 const activeDropdown = ref('')
 const dropdownPos = ref({ top: 0, left: 0, width: 0 })
@@ -698,12 +1379,27 @@ onMounted(async () => {
   }
   await configStore.loadConfigFromServer()
   initValues()
-  await Promise.all([loadSystemConfig(), loadConfigDirInfo()])
+  // 语义检索只在桌面端出现；先拿到运行时能力再决定是否渲染该分区
+  try {
+    await runtimeStore.fetchRuntime()
+  } catch {
+    // 读取失败按桌面端处理：后端若确实不支持会在接口层拒绝
+  }
+  await Promise.all([
+    loadSystemConfig(),
+    loadConfigDirInfo(),
+    loadSemanticState(),
+    loadVisionState(),
+    loadVisionProviders(),
+    loadVisionMissing(),
+    loadVisionBatch(),
+  ])
   document.addEventListener('click', onDocumentClick)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
+  stopVisionBatchPolling()
 })
 </script>
 
@@ -792,6 +1488,222 @@ onUnmounted(() => {
   margin-top: 4px;
   color: var(--text-tertiary);
   line-height: 1.5;
+}
+
+.semantic-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 16px 16px;
+}
+
+.semantic-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.semantic-line strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+.semantic-note {
+  margin: 2px 0 6px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.vision-drafts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 16px 16px;
+}
+
+.vision-batch {
+  padding: 4px 16px 12px;
+}
+
+.vision-batch-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-strong);
+  font-size: 13.5px;
+}
+
+.vision-batch-head span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.vision-batch-bar {
+  height: 4px;
+  margin: 8px 0 10px;
+  border-radius: 999px;
+  background: var(--border-soft, rgba(0, 0, 0, 0.08));
+  overflow: hidden;
+}
+
+.vision-batch-bar i {
+  display: block;
+  height: 100%;
+  background: var(--brand-600, #8a6f52);
+  transition: width 0.3s ease;
+}
+
+.vision-batch-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vision-failures {
+  padding: 4px 16px 12px;
+}
+
+.vision-failure {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(180, 84, 63, 0.24);
+  border-radius: 14px;
+  background: rgba(180, 84, 63, 0.04);
+}
+
+.vision-failure-error {
+  margin: 0 0 10px;
+  color: #b4543f;
+  font-size: 12.5px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.vision-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+}
+
+.vision-field-label {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.vision-select {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft, rgba(0, 0, 0, 0.1));
+  border-radius: 10px;
+  background: var(--surface-muted, rgba(0, 0, 0, 0.02));
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.vision-provider-note {
+  margin: 0 16px 10px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.vision-endpoint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+
+.vision-endpoint code {
+  color: var(--text-strong);
+  font-size: 12px;
+  word-break: break-all;
+  text-align: right;
+}
+
+.vision-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px 6px;
+}
+
+.vision-context-copy {
+  min-width: 0;
+}
+
+.vision-context-path {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.vision-draft {
+  border: 1px solid var(--border-soft, rgba(0, 0, 0, 0.08));
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--surface-muted, rgba(0, 0, 0, 0.02));
+}
+
+.vision-draft-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.vision-draft-head strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.vision-draft-meta {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.vision-draft-text {
+  margin: 0 0 6px;
+  color: var(--text-secondary, var(--text-strong));
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.vision-draft-text.secondary,
+.vision-draft-tags {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.vision-draft-tags {
+  margin: 0 0 10px;
+}
+
+.vision-draft-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .select-row {

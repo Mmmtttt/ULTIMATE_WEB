@@ -14,6 +14,11 @@ class Comic(BaseContent):
     soft_ref_locator: str = ""
     local_asset_dir_name: str = ""
     local_metadata_enriched: bool = False
+    # 语义检索专用元数据（可由识图补全写入）：
+    #   vibe    —— 整本的气质梗概，只喂向量
+    #   catalog —— 收录速览 / 篇名清单，只喂关键词索引
+    vibe: str = ""
+    catalog: str = ""
     
     @property
     def author(self) -> str:
@@ -76,6 +81,8 @@ class Comic(BaseContent):
             soft_ref_locator=data.get("soft_ref_locator", ""),
             local_asset_dir_name=data.get("local_asset_dir_name", ""),
             local_metadata_enriched=bool(data.get("local_metadata_enriched", False)),
+            vibe=str(data.get("vibe") or ""),
+            catalog=str(data.get("catalog") or ""),
             content_type=ContentType.COMIC
         )
     
@@ -107,7 +114,18 @@ class Comic(BaseContent):
             "soft_ref_locator": self.soft_ref_locator,
             "local_asset_dir_name": self.local_asset_dir_name,
             "local_metadata_enriched": bool(self.local_metadata_enriched),
+            "vibe": self.vibe,
+            "catalog": self.catalog,
         }
+
+    def update_meta(self, meta: dict):
+        super().update_meta(meta)
+        if not isinstance(meta, dict):
+            return
+        if "vibe" in meta:
+            self.vibe = str(meta.get("vibe") or "")
+        if "catalog" in meta:
+            self.catalog = str(meta.get("catalog") or "")
     
     def update_progress(self, page: int) -> bool:
         if 1 <= page <= self.total_units:

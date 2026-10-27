@@ -21,6 +21,7 @@ from .v1 import (
     history_bp,
     transfer_bp,
     library_sync_bp,
+    semantic_search_bp,
 )
 
 
@@ -45,3 +46,4 @@ def register_blueprints(app):
     app.register_blueprint(history_bp, url_prefix='/api/v1/history')
     app.register_blueprint(transfer_bp, url_prefix='/api/v1/transfer')
     app.register_blueprint(library_sync_bp, url_prefix='/api/v1/library-sync')
+    app.register_blueprint(semantic_search_bp, url_prefix='/api/v1/semantic-search')

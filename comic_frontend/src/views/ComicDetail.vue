@@ -278,6 +278,16 @@
           <van-button size="small" type="primary" icon="records-o" @click="openListManager">
             加入清单
           </van-button>
+          <van-button
+            v-if="visionDraftAvailable"
+            size="small"
+            plain
+            icon="photograph"
+            :loading="visionDrafting"
+            @click="handleVisionDraft"
+          >
+            识图补全
+          </van-button>
           <van-button size="small" type="danger" icon="delete-o" @click="handleMoveToTrash">
             删除
           </van-button>
@@ -437,9 +447,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useComicStore, useTagStore, useListStore } from '@/stores'
+import { useComicStore, useTagStore, useListStore, useRuntimeStore } from '@/stores'
 import { buildCoverUrl, buildImageUrl } from '@/api/image'
-import { authorApi, comicApi, historyApi } from '@/api'
+import { authorApi, comicApi, historyApi, semanticApi } from '@/api'
 import { tagApi } from '@/api/tag'
 import { showSuccessToast, showFailToast, showConfirmDialog } from 'vant'
 import { applyListMembershipChanges, buildListChangeMessage, isReadByProgress } from '@/utils'
@@ -449,8 +459,32 @@ const router = useRouter()
 const comicStore = useComicStore()
 const tagStore = useTagStore()
 const listStore = useListStore()
+const runtimeStore = useRuntimeStore()
 
 const comic = ref(null)
+const visionDrafting = ref(false)
+const visionDraftAvailable = computed(() => !runtimeStore.isMobileCore)
+
+async function handleVisionDraft() {
+  const comicId = comic.value?.id || route.params.id
+  if (!comicId) {
+    showFailToast('缺少漫画 ID')
+    return
+  }
+  visionDrafting.value = true
+  try {
+    const response = await semanticApi.createDraft(comicId)
+    if (response?.code === 200) {
+      showSuccessToast('已开始识图补全，完成后到「设置 → 检索方式」确认写回')
+    } else {
+      showFailToast(response?.msg || '启动识图补全失败')
+    }
+  } catch {
+    showFailToast('启动识图补全失败')
+  } finally {
+    visionDrafting.value = false
+  }
+}
 const isLoading = ref(true)
 const showActionSheet = ref(false)
 const showEditPopup = ref(false)

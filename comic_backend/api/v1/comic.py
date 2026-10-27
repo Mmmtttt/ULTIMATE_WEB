@@ -730,12 +730,22 @@ def edit_comic():
             'title': data.get('title'),
             'author': data.get('author'),
             'desc': data.get('desc'),
-            'cover_path': data.get('cover_path')
+            'cover_path': data.get('cover_path'),
+            # 语义检索元数据：气质梗概（喂向量）与收录速览（喂关键词）
+            'vibe': data.get('vibe'),
+            'catalog': data.get('catalog'),
         }
         meta = {k: v for k, v in meta.items() if v is not None}
         
         result = comic_service.update_meta(comic_id, meta)
         if result.success:
+            if ('vibe' in meta) or ('catalog' in meta):
+                try:
+                    from application.semantic_search_app_service import get_semantic_search_service
+
+                    get_semantic_search_service().start_rebuild(build_embeddings=True)
+                except Exception as rebuild_exc:
+                    app_logger.warning(f"元数据变更后触发语义索引重建失败: {rebuild_exc}")
             app_logger.info(f"编辑漫画元数据成功: {comic_id}")
             return success_response(result.data)
         else:

@@ -1,0 +1,17 @@
+# 语义检索（可选，仅桌面端）
+#
+# 默认安装不包含下面这些依赖：缺少它们时语义检索自动降级为
+# 「标签 + 关键词」两路（向量路关闭），列表与搜索功能不受影响。
+#
+# 需要真正的语义召回（按大意而不是字面找）时再装：
+#   pip install -r comic_backend/requirements-semantic.txt
+#
+# 说明：
+# - fastembed 会拉入 onnxruntime + numpy；onnxruntime 没有 Android 轮子，
+#   因此这份依赖只在桌面端安装，Android（mobile_core）不装也不会加载。
+# - opencc-python-reimplemented 是纯 Python 的简繁归一实现（检索前统一成简体）；
+#   没装也能跑，只是繁体查询不会自动映射到简体词条。
+# - 首次构建索引时会把 bge-small-zh-v1.5（约 90MB）下载到 data/cache/semantic_model。
+# - 国内网络可设置镜像：set HF_ENDPOINT=https://hf-mirror.com（PowerShell: $env:HF_ENDPOINT="https://hf-mirror.com"）
+fastembed==0.9.1
+opencc-python-reimplemented>=0.1.7
